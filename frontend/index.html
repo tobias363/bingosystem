@@ -10,7 +10,24 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/style.css?v=profile-drawer-20260304-3" />
+    <link rel="stylesheet" href="/style.css?v=profile-drawer-20260304-4" />
+    <style>
+      /* Hotfix: force profile drawer to open from right even if cached CSS is stale */
+      .profile-modal {
+        justify-content: flex-end;
+      }
+
+      .profile-modal-card {
+        border-left: 1px solid var(--line);
+        border-right: 0;
+        border-radius: 16px 0 0 16px;
+        transform: translateX(100%);
+      }
+
+      .profile-modal.open .profile-modal-card {
+        transform: translateX(0);
+      }
+    </style>
   </head>
   <body>
     <header id="appHeader" class="topbar hidden">
@@ -248,6 +265,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/app.js?v=profile-drawer-20260304-2"></script>
+    <script src="/app.js?v=profile-drawer-20260304-4"></script>
   </body>
 </html>
