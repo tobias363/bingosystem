@@ -179,10 +179,11 @@ body.modal-open {
   gap: 8px;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
-  padding: 7px 12px;
+  padding: 10px 12px;
   background: #ffffff;
   color: var(--text);
   box-shadow: 0 2px 8px rgba(17, 54, 48, 0.08);
+  margin-right: 20px;
 }
 
 .profile-btn .user-badge {
