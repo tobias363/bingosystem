@@ -137,7 +137,7 @@ function openSwedbankCheckoutModal(intent) {
     return false;
   }
 
-  const preferredUrl = (intent?.viewUrl || intent?.redirectUrl || "").trim();
+  const preferredUrl = (intent?.redirectUrl || intent?.viewUrl || "").trim();
   if (!preferredUrl) {
     return false;
   }
@@ -163,8 +163,8 @@ function formatSwedbankIntentLines(intent) {
 
 async function applySwedbankIntentStatus(intent, tone = "success") {
   state.lastSwedbankIntentId = intent.id;
-  if (intent.viewUrl || intent.redirectUrl) {
-    state.lastSwedbankCheckoutUrl = (intent.viewUrl || intent.redirectUrl || "").trim();
+  if (intent.redirectUrl || intent.viewUrl) {
+    state.lastSwedbankCheckoutUrl = (intent.redirectUrl || intent.viewUrl || "").trim();
   }
 
   const lines = formatSwedbankIntentLines(intent);
