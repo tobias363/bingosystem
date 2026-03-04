@@ -2,7 +2,7 @@
 
 const socket = io();
 const AUTH_STORAGE_KEY = "bingo.portal.auth";
-const CUSTOMER_VISIBLE_GAME_SLUGS = new Set(["candy"]);
+const CUSTOMER_VISIBLE_GAME_SLUGS = new Set(["candy", "bingo"]);
 
 const state = {
   accessToken: "",
@@ -33,6 +33,7 @@ const els = {
   walletTopupBtn: document.getElementById("walletTopupBtn"),
   walletSwedbankIntentBtn: document.getElementById("walletSwedbankIntentBtn"),
   walletRefreshBtn: document.getElementById("walletRefreshBtn"),
+  adminPortalBtn: document.getElementById("adminPortalBtn"),
   userBadge: document.getElementById("userBadge"),
   logoutBtn: document.getElementById("logoutBtn"),
   swedbankCheckoutModal: document.getElementById("swedbankCheckoutModal"),
@@ -45,6 +46,10 @@ const els = {
 
   authView: document.getElementById("authView"),
   appView: document.getElementById("appView"),
+  heroWelcome: document.getElementById("heroWelcome"),
+  heroGameTitle: document.getElementById("heroGameTitle"),
+  heroGameDescription: document.getElementById("heroGameDescription"),
+  gamesLobby: document.getElementById("gamesLobby"),
 
   loginEmail: document.getElementById("loginEmail"),
   loginPassword: document.getElementById("loginPassword"),
@@ -409,9 +414,81 @@ function renderLayoutForAuth() {
 function renderUserBadge() {
   if (!state.user) {
     els.userBadge.textContent = "Ikke innlogget";
+    if (els.adminPortalBtn) {
+      els.adminPortalBtn.classList.add("hidden");
+    }
     return;
   }
   els.userBadge.textContent = `${state.user.displayName} (${state.user.role})`;
+  if (els.adminPortalBtn) {
+    els.adminPortalBtn.classList.toggle("hidden", !isAdmin());
+  }
+}
+
+function renderHeroPanel() {
+  if (els.heroWelcome) {
+    els.heroWelcome.textContent = state.user
+      ? `Hei ${state.user.displayName}. Velkommen tilbake til bordet.`
+      : "Logg inn for a starte.";
+  }
+
+  if (!els.heroGameTitle || !els.heroGameDescription) {
+    return;
+  }
+
+  const selected = currentGame();
+  if (!selected) {
+    els.heroGameTitle.textContent = "Ingen spill tilgjengelig";
+    els.heroGameDescription.textContent = "Be admin aktivere spill i /admin.";
+    return;
+  }
+
+  els.heroGameTitle.textContent = selected.title || selected.slug;
+  els.heroGameDescription.textContent =
+    selected.description || "Velg bord under og ga videre til spillvisningen.";
+}
+
+function renderGameLobby() {
+  if (!els.gamesLobby) {
+    return;
+  }
+
+  els.gamesLobby.innerHTML = "";
+  if (!state.games.length) {
+    const empty = document.createElement("p");
+    empty.className = "subtle";
+    empty.textContent = "Ingen spill publisert ennå.";
+    els.gamesLobby.appendChild(empty);
+    return;
+  }
+
+  for (const game of state.games) {
+    const card = document.createElement("button");
+    card.className = "game-lobby-card";
+    card.classList.toggle("active", game.slug === state.selectedGameSlug);
+
+    const title = document.createElement("span");
+    title.className = "game-lobby-title";
+    title.textContent = game.title || game.slug;
+
+    const meta = document.createElement("span");
+    meta.className = "game-lobby-meta";
+    meta.textContent = `${game.route || "/"} • ${game.isEnabled ? "Live" : "Stengt"}`;
+
+    const description = document.createElement("span");
+    description.className = "game-lobby-description";
+    description.textContent = game.description || "Ingen beskrivelse tilgjengelig.";
+
+    card.appendChild(title);
+    card.appendChild(meta);
+    card.appendChild(description);
+
+    card.addEventListener("click", () => {
+      state.selectedGameSlug = game.slug;
+      renderSelectedGame();
+    });
+    els.gamesLobby.appendChild(card);
+  }
 }
 
 function renderGamesNav() {
@@ -419,6 +496,8 @@ function renderGamesNav() {
   if (!state.games.length) {
     els.activeGameLabel.textContent = "Ingen spill tilgjengelig";
     els.gamesNav.classList.add("hidden");
+    renderGameLobby();
+    renderHeroPanel();
     return;
   }
 
@@ -438,6 +517,8 @@ function renderGamesNav() {
   els.activeGameLabel.textContent = selected
     ? `${selected.title} (${selected.route})`
     : "Ingen spill valgt";
+  renderGameLobby();
+  renderHeroPanel();
 }
 
 function renderCandyCard() {
@@ -454,7 +535,7 @@ function renderCandyCard() {
     `Slug: ${game.slug}`,
     `Route: ${game.route}`,
     `Aktivt: ${game.isEnabled ? "Ja" : "Nei"}`,
-    "Romopprettelse/start styres fra /admin (ADMIN).",
+    "Kundeportalen viser spillstatus og romdata i sanntid.",
     "",
     game.description || "Ingen beskrivelse.",
     "",
@@ -464,7 +545,22 @@ function renderCandyCard() {
 }
 
 function onCandyPlay() {
-  window.location.assign("/admin");
+  const game = getCandyGame() || currentGame();
+  if (!game) {
+    setStatusBox(els.candyStatus, "Fant ikke spilldata for Candy.", "error");
+    return;
+  }
+
+  setStatusBox(
+    els.candyStatus,
+    [
+      "Candy klient styres fra egen app/terminal.",
+      `Valgt spill: ${game.title || game.slug}`,
+      `Route i katalog: ${game.route || "-"}`,
+      "Game-oppsett justeres i /admin."
+    ].join("\n"),
+    "success"
+  );
 }
 
 function renderWalletMini() {
@@ -745,43 +841,7 @@ function renderBackendControlledGameOps() {
 }
 
 function renderAdminEditor() {
-  if (!isAdmin()) {
-    els.adminGameCard.classList.add("hidden");
-    if (els.adminCandyPayoutField) {
-      els.adminCandyPayoutField.classList.add("hidden");
-    }
-    return;
-  }
-
-  els.adminGameCard.classList.remove("hidden");
-  const game = currentAdminGame();
-  if (!game) {
-    setStatusBox(els.adminGameStatus, "Ingen spill å redigere.", "error");
-    return;
-  }
-
-  const settings = getSettingsObject(game.settings);
-  els.adminGameTitle.value = game.title || "";
-  els.adminGameDescription.value = game.description || "";
-  els.adminGameRoute.value = game.route || "";
-  els.adminGameSortOrder.value = String(game.sortOrder ?? 100);
-  els.adminGameEnabled.checked = Boolean(game.isEnabled);
-  if (els.adminCandyPayoutField && els.adminCandyPayoutPercent) {
-    const isCandy = game.slug === "candy";
-    els.adminCandyPayoutField.classList.toggle("hidden", !isCandy);
-    if (isCandy) {
-      const payout = Number(settings.payoutPercent);
-      els.adminCandyPayoutPercent.value = Number.isFinite(payout) ? String(payout) : "0";
-    } else {
-      els.adminCandyPayoutPercent.value = "";
-    }
-  }
-  els.adminGameSettingsJson.value = JSON.stringify(settings, null, 2);
-
-  setStatusBox(
-    els.adminGameStatus,
-    `Redigerer: ${game.slug}\nVelg spill i header for å bytte hvilket spill du redigerer.`
-  );
+  // Admin-redigering er flyttet til dedikert portal: /admin
 }
 
 function renderSelectedGame() {
@@ -800,7 +860,6 @@ function renderSelectedGame() {
     renderBingoState();
   }
   renderBackendControlledGameOps();
-  renderAdminEditor();
 }
 
 function renderAfterLogin() {
@@ -830,12 +889,6 @@ async function loadWalletState() {
 }
 
 function ensureDefaultSelectedGame() {
-  const candy = state.games.find((game) => game.slug === "candy");
-  if (candy) {
-    state.selectedGameSlug = candy.slug;
-    return;
-  }
-
   if (!state.games.length) {
     state.selectedGameSlug = "";
     return;
@@ -883,13 +936,7 @@ async function loadAuthenticatedData() {
   state.halls = Array.isArray(halls) ? halls : [];
   ensureDefaultSelectedGame();
   ensureDefaultSelectedHall();
-
-  if (isAdmin()) {
-    const adminGames = await api("/api/admin/games");
-    state.adminGames = Array.isArray(adminGames) ? adminGames : [];
-  } else {
-    state.adminGames = [];
-  }
+  state.adminGames = [];
 
   await loadWalletState();
 }
@@ -1263,56 +1310,7 @@ async function onBingoClaim(type) {
 }
 
 async function onAdminSaveGame() {
-  const game = currentAdminGame();
-  if (!game) {
-    setStatusBox(els.adminGameStatus, "Fant ikke spill å lagre.", "error");
-    return;
-  }
-
-  let settings;
-  try {
-    settings = JSON.parse(els.adminGameSettingsJson.value || "{}");
-  } catch {
-    setStatusBox(els.adminGameStatus, "Settings JSON er ugyldig.", "error");
-    return;
-  }
-
-  if (game.slug === "candy") {
-    try {
-      const payoutPercent = parseCandyPayoutPercent(els.adminCandyPayoutPercent?.value || "0");
-      settings = {
-        ...settings,
-        payoutPercent
-      };
-    } catch (error) {
-      setStatusBox(els.adminGameStatus, error.message || "Ugyldig utbetaling %.", "error");
-      return;
-    }
-  }
-
-  try {
-    await api(`/api/admin/games/${encodeURIComponent(game.slug)}`, {
-      method: "PUT",
-      body: {
-        title: (els.adminGameTitle.value || "").trim(),
-        description: (els.adminGameDescription.value || "").trim(),
-        route: (els.adminGameRoute.value || "").trim(),
-        sortOrder: Number(els.adminGameSortOrder.value || 0),
-        isEnabled: els.adminGameEnabled.checked,
-        settings
-      }
-    });
-
-    const [games, adminGames] = await Promise.all([api("/api/games"), api("/api/admin/games")]);
-    state.games = Array.isArray(games) ? games : [];
-    state.adminGames = Array.isArray(adminGames) ? adminGames : [];
-    ensureDefaultSelectedGame();
-
-    renderSelectedGame();
-    setStatusBox(els.adminGameStatus, `Lagret ${game.slug}.`, "success");
-  } catch (error) {
-    setStatusBox(els.adminGameStatus, error.message || "Lagring feilet.", "error");
-  }
+  window.location.assign("/admin");
 }
 
 socket.on("room:update", (snapshot) => {
@@ -1348,6 +1346,11 @@ els.logoutBtn.addEventListener("click", onLogout);
 els.walletRefreshBtn.addEventListener("click", onWalletRefresh);
 els.walletTopupBtn.addEventListener("click", onWalletTopup);
 els.walletSwedbankIntentBtn.addEventListener("click", onSwedbankIntent);
+if (els.adminPortalBtn) {
+  els.adminPortalBtn.addEventListener("click", () => {
+    window.location.assign("/admin");
+  });
+}
 if (els.swedbankCloseBtn) {
   els.swedbankCloseBtn.addEventListener("click", onSwedbankClose);
 }
@@ -1385,12 +1388,16 @@ if (els.candyPlayBtn) {
   els.candyPlayBtn.addEventListener("click", onCandyPlay);
 }
 
-els.adminSaveGameBtn.addEventListener("click", onAdminSaveGame);
+if (els.adminSaveGameBtn) {
+  els.adminSaveGameBtn.addEventListener("click", onAdminSaveGame);
+}
 
 function initialRender() {
   closeSwedbankCheckoutModal();
   renderLayoutForAuth();
   renderUserBadge();
+  renderHeroPanel();
+  renderGameLobby();
   renderWalletMini();
   renderKycCard();
   renderWalletCard();
