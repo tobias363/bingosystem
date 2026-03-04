@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/style.css?v=wallet-transfer-20260304-3" />
+    <link rel="stylesheet" href="/style.css?v=wallet-transfer-20260304-4" />
   </head>
   <body>
     <header id="appHeader" class="topbar hidden">
@@ -165,21 +165,9 @@
           </section>
 
           <section class="profile-panel profile-personal-panel">
-            <h3 class="subsection-title">Personlig informasjon</h3>
-            <div class="profile-personal-list">
-              <p class="profile-info-row">
-                <span>Navn</span>
-                <strong id="profileInfoName">Spiller</strong>
-              </p>
-              <p class="profile-info-row">
-                <span>E-post</span>
-                <strong id="profileInfoEmail">Ikke innlogget</strong>
-              </p>
-              <p class="profile-info-row">
-                <span>KYC-status</span>
-                <strong id="profileInfoKycStatus">Ukjent</strong>
-              </p>
-            </div>
+            <button id="profilePersonalInfoBtn" class="profile-personal-open-btn" type="button">
+              Personlig informasjon
+            </button>
           </section>
 
           <section class="profile-panel">
@@ -252,6 +240,31 @@
           </button>
         </div>
 
+        <section id="profilePersonalInfoView" class="profile-personal-view hidden" aria-live="polite">
+          <div class="profile-personal-card">
+            <p class="profile-info-row">
+              <span>Navn</span>
+              <strong id="profileInfoName">Spiller</strong>
+            </p>
+            <p class="profile-info-row">
+              <span>E-postadresse</span>
+              <strong id="profileInfoEmail">Ikke innlogget</strong>
+            </p>
+            <p class="profile-info-row">
+              <span>KYC-status</span>
+              <strong id="profileInfoKycStatus">Ukjent</strong>
+            </p>
+            <p class="profile-info-row">
+              <span>Spillerkonto</span>
+              <strong id="profileInfoWalletId">-</strong>
+            </p>
+            <p class="profile-info-row">
+              <span>Saldo</span>
+              <strong id="profileInfoBalance">0 kr</strong>
+            </p>
+          </div>
+        </section>
+
         <section id="profileTransferView" class="profile-transfer hidden" aria-live="polite">
           <div class="transfer-segment" role="tablist" aria-label="Overføringstype">
             <button id="transferToPlayerBtn" class="transfer-segment-btn active" type="button">Til spillerkonto</button>
@@ -308,6 +321,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/app.js?v=wallet-transfer-20260304-3"></script>
+    <script src="/app.js?v=wallet-transfer-20260304-4"></script>
   </body>
 </html>

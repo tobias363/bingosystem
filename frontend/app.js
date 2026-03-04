@@ -10,6 +10,7 @@ const state = {
   sessionExpiresAt: "",
   isAuthBootstrapping: false,
   profileTransferOpen: false,
+  profilePersonalInfoOpen: false,
   transferDirection: "PLAYER",
   transferSelectedAmount: 100,
   transferCustomAmount: "",
@@ -50,6 +51,7 @@ const els = {
   profileModal: document.getElementById("profileModal"),
   profileModalCard: document.getElementById("profileModalCard"),
   profileMainView: document.getElementById("profileMainView"),
+  profilePersonalInfoView: document.getElementById("profilePersonalInfoView"),
   profileTransferView: document.getElementById("profileTransferView"),
   profileTitle: document.getElementById("profileTitle"),
   profileSummary: document.getElementById("profileSummary"),
@@ -59,6 +61,9 @@ const els = {
   profileInfoName: document.getElementById("profileInfoName"),
   profileInfoEmail: document.getElementById("profileInfoEmail"),
   profileInfoKycStatus: document.getElementById("profileInfoKycStatus"),
+  profileInfoWalletId: document.getElementById("profileInfoWalletId"),
+  profileInfoBalance: document.getElementById("profileInfoBalance"),
+  profilePersonalInfoBtn: document.getElementById("profilePersonalInfoBtn"),
   profileCloseBtn: document.getElementById("profileCloseBtn"),
   transferToPlayerBtn: document.getElementById("transferToPlayerBtn"),
   transferToBankBtn: document.getElementById("transferToBankBtn"),
@@ -349,6 +354,7 @@ function closeSwedbankCheckoutModal() {
 }
 
 function closeProfileModal() {
+  setProfilePersonalInfoMode(false);
   setProfileTransferMode(false);
   setProfileModalVisible(false);
 }
@@ -573,6 +579,28 @@ function getSettingsObject(value) {
   return value;
 }
 
+function resolveGameLaunchUrl(game) {
+  const settings = getSettingsObject(game?.settings);
+  const candidates = [
+    settings.launchUrl,
+    settings.portalLaunchUrl,
+    settings.clientUrl,
+    settings.playUrl
+  ];
+
+  for (const candidate of candidates) {
+    const raw = String(candidate ?? "").trim();
+    if (!raw) {
+      continue;
+    }
+    if (raw.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+      return raw;
+    }
+  }
+
+  return "";
+}
+
 function parseCandyPayoutPercent(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
@@ -681,7 +709,7 @@ function syncProfileCloseButton() {
   if (!els.profileCloseBtn) {
     return;
   }
-  if (state.profileTransferOpen) {
+  if (state.profileTransferOpen || state.profilePersonalInfoOpen) {
     els.profileCloseBtn.textContent = "×";
     els.profileCloseBtn.classList.add("profile-close-btn-icon");
     els.profileCloseBtn.setAttribute("aria-label", "Lukk");
@@ -764,19 +792,26 @@ function renderTransferPanel() {
 
 function setProfileTransferMode(enabled) {
   state.profileTransferOpen = Boolean(enabled);
+  if (state.profileTransferOpen) {
+    state.profilePersonalInfoOpen = false;
+  }
   state.transferSubmitting = false;
 
+  const inSubView = state.profileTransferOpen || state.profilePersonalInfoOpen;
   if (els.profileModalCard) {
     els.profileModalCard.classList.toggle("transfer-mode", state.profileTransferOpen);
   }
   if (els.profileMainView) {
-    els.profileMainView.classList.toggle("hidden", state.profileTransferOpen);
+    els.profileMainView.classList.toggle("hidden", inSubView);
+  }
+  if (els.profilePersonalInfoView) {
+    els.profilePersonalInfoView.classList.toggle("hidden", !state.profilePersonalInfoOpen);
   }
   if (els.profileTransferView) {
     els.profileTransferView.classList.toggle("hidden", !state.profileTransferOpen);
   }
   if (els.profileSummary) {
-    els.profileSummary.classList.toggle("hidden", state.profileTransferOpen);
+    els.profileSummary.classList.toggle("hidden", inSubView);
   }
 
   if (state.profileTransferOpen) {
@@ -787,11 +822,61 @@ function setProfileTransferMode(enabled) {
       els.profileTitle.textContent = "Overfør penger";
     }
     renderTransferPanel();
-  } else {
+  } else if (!state.profilePersonalInfoOpen) {
     renderProfileSummary();
   }
 
   syncProfileCloseButton();
+}
+
+function setProfilePersonalInfoMode(enabled) {
+  state.profilePersonalInfoOpen = Boolean(enabled);
+  if (state.profilePersonalInfoOpen) {
+    state.profileTransferOpen = false;
+    state.transferSubmitting = false;
+  }
+
+  const inSubView = state.profileTransferOpen || state.profilePersonalInfoOpen;
+  if (els.profileModalCard) {
+    els.profileModalCard.classList.toggle("transfer-mode", state.profileTransferOpen);
+  }
+  if (els.profileMainView) {
+    els.profileMainView.classList.toggle("hidden", inSubView);
+  }
+  if (els.profilePersonalInfoView) {
+    els.profilePersonalInfoView.classList.toggle("hidden", !state.profilePersonalInfoOpen);
+  }
+  if (els.profileTransferView) {
+    els.profileTransferView.classList.toggle("hidden", !state.profileTransferOpen);
+  }
+  if (els.profileSummary) {
+    els.profileSummary.classList.toggle("hidden", inSubView);
+  }
+
+  if (state.profilePersonalInfoOpen) {
+    if (els.profileTitle) {
+      els.profileTitle.textContent = "Personlig informasjon";
+    }
+    renderProfileSummary();
+  } else if (!state.profileTransferOpen) {
+    renderProfileSummary();
+  }
+
+  syncProfileCloseButton();
+}
+
+function formatKycStatusLabel(status) {
+  const rawKycStatus = String(status || "").trim().toUpperCase();
+  if (rawKycStatus === "VERIFIED") {
+    return "Verifisert";
+  }
+  if (rawKycStatus === "PENDING") {
+    return "Venter";
+  }
+  if (rawKycStatus) {
+    return rawKycStatus;
+  }
+  return "Ikke verifisert";
 }
 
 function renderProfileSummary() {
@@ -800,7 +885,7 @@ function renderProfileSummary() {
   }
 
   if (!state.user) {
-    if (!state.profileTransferOpen) {
+    if (!state.profileTransferOpen && !state.profilePersonalInfoOpen) {
       els.profileTitle.textContent = "Min profil";
       els.profileSummary.textContent = "Konto";
     }
@@ -817,13 +902,19 @@ function renderProfileSummary() {
     if (els.profileInfoKycStatus) {
       els.profileInfoKycStatus.textContent = "Ukjent";
     }
+    if (els.profileInfoWalletId) {
+      els.profileInfoWalletId.textContent = "-";
+    }
+    if (els.profileInfoBalance) {
+      els.profileInfoBalance.textContent = "0 kr";
+    }
     els.profileBigBalance.textContent = "0 kr";
     renderTransferPanel();
     return;
   }
 
   const balance = getCurrentWalletBalance();
-  if (!state.profileTransferOpen) {
+  if (!state.profileTransferOpen && !state.profilePersonalInfoOpen) {
     els.profileTitle.textContent = "Min profil";
     els.profileSummary.textContent = "Konto";
   }
@@ -838,16 +929,13 @@ function renderProfileSummary() {
     els.profileInfoEmail.textContent = state.user.email || "Ikke oppgitt";
   }
   if (els.profileInfoKycStatus) {
-    const rawKycStatus = String(state.user.kycStatus || "").trim().toUpperCase();
-    if (rawKycStatus === "VERIFIED") {
-      els.profileInfoKycStatus.textContent = "Verifisert";
-    } else if (rawKycStatus === "PENDING") {
-      els.profileInfoKycStatus.textContent = "Venter";
-    } else if (rawKycStatus) {
-      els.profileInfoKycStatus.textContent = rawKycStatus;
-    } else {
-      els.profileInfoKycStatus.textContent = "Ikke verifisert";
-    }
+    els.profileInfoKycStatus.textContent = formatKycStatusLabel(state.user.kycStatus);
+  }
+  if (els.profileInfoWalletId) {
+    els.profileInfoWalletId.textContent = state.user.walletId || state.walletState?.account?.id || "-";
+  }
+  if (els.profileInfoBalance) {
+    els.profileInfoBalance.textContent = formatNokWhole(balance);
   }
   els.profileBigBalance.textContent = `${formatNokWhole(balance)}`;
   renderTransferPanel();
@@ -859,6 +947,7 @@ async function openProfileModal() {
     return;
   }
 
+  setProfilePersonalInfoMode(false);
   setProfileTransferMode(false);
   setProfileModalVisible(true);
   renderProfileSummary();
@@ -998,7 +1087,11 @@ function renderGameLobby() {
       event.stopPropagation();
       state.selectedGameSlug = game.slug;
       renderSelectedGame();
-      const target = game.slug === "candy" ? els.candyView : els.bingoView;
+      if (game.slug === "candy") {
+        onCandyPlay();
+        return;
+      }
+      const target = els.bingoView;
       if (target && !target.classList.contains("hidden")) {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
@@ -1060,7 +1153,8 @@ function renderCandyCard() {
     `Slug: ${game.slug}`,
     `Route: ${game.route}`,
     `Aktivt: ${game.isEnabled ? "Ja" : "Nei"}`,
-    "Kundeportalen viser spillstatus og romdata i sanntid.",
+    "Spill nå åpner URL fra game.settings.launchUrl.",
+    "Sett launchUrl i /admin > Games > Settings JSON for Candy.",
     "",
     game.description || "Ingen beskrivelse.",
     "",
@@ -1076,16 +1170,22 @@ function onCandyPlay() {
     return;
   }
 
-  setStatusBox(
-    els.candyStatus,
-    [
-      "Candy klient styres fra egen app/terminal.",
-      `Valgt spill: ${game.title || game.slug}`,
-      `Route i katalog: ${game.route || "-"}`,
-      "Game-oppsett justeres i /admin."
-    ].join("\n"),
-    "success"
-  );
+  const launchUrl = resolveGameLaunchUrl(game);
+  if (!launchUrl) {
+    setStatusBox(
+      els.candyStatus,
+      [
+        "Mangler launchUrl for Candy.",
+        "Gå til /admin > Games > Candy > Settings JSON og sett f.eks.:",
+        '{ "launchUrl": "https://din-candy-url.no" }'
+      ].join("\n"),
+      "error"
+    );
+    return;
+  }
+
+  setStatusBox(els.candyStatus, `Starter Candy fra ${launchUrl}`, "success");
+  window.location.assign(launchUrl);
 }
 
 function renderWalletMini() {
@@ -1950,6 +2050,10 @@ async function onWalletTopup() {
   }
 }
 
+function onOpenPersonalInfo() {
+  setProfilePersonalInfoMode(true);
+}
+
 async function onSwedbankIntent() {
   try {
     const intentId = (state.lastSwedbankIntentId || "").trim();
@@ -2195,6 +2299,9 @@ if (els.walletRefreshBtn) {
 }
 if (els.walletTopupBtn) {
   els.walletTopupBtn.addEventListener("click", onWalletTopup);
+}
+if (els.profilePersonalInfoBtn) {
+  els.profilePersonalInfoBtn.addEventListener("click", onOpenPersonalInfo);
 }
 if (els.transferToPlayerBtn) {
   els.transferToPlayerBtn.addEventListener("click", () => setTransferDirection("PLAYER"));
