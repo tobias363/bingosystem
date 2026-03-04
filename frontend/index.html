@@ -10,47 +10,32 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/style.css?v=profile-drawer-20260304-4" />
-    <style>
-      /* Hotfix: force profile drawer to open from right even if cached CSS is stale */
-      .profile-modal {
-        justify-content: flex-end;
-      }
-
-      .profile-modal-card {
-        border-left: 1px solid var(--line);
-        border-right: 0;
-        border-radius: 16px 0 0 16px;
-        transform: translateX(100%);
-      }
-
-      .profile-modal.open .profile-modal-card {
-        transform: translateX(0);
-      }
-    </style>
+    <link rel="stylesheet" href="/style.css?v=profile-drawer-20260304-6" />
   </head>
   <body>
     <header id="appHeader" class="topbar hidden">
-      <div class="brand">
-        <img class="brand-logo" src="/assets/spillorama-logo.png?v=20260304-2" alt="Spillorama" />
-        <p class="brand-kicker">Spillorama</p>
-        <p id="activeGameLabel">Ingen spill valgt</p>
-      </div>
-
-      <nav id="gamesNav" class="games-nav"></nav>
-
-      <div class="topbar-actions">
-        <div class="wallet-mini">
-          <span id="walletMiniId">Wallet: -</span>
-          <strong id="walletMiniBalance">Saldo: 0</strong>
+      <div class="topbar-inner">
+        <div class="brand">
+          <img class="brand-logo" src="/assets/spillorama-logo.png?v=20260304-2" alt="Spillorama" />
+          <p class="brand-kicker">Spillorama</p>
+          <p id="activeGameLabel">Ingen spill valgt</p>
         </div>
 
-        <button id="adminPortalBtn" class="btn-secondary hidden">Admin</button>
-        <button id="profileBtn" class="profile-btn">
-          <span id="profileAvatar" class="profile-avatar">?</span>
-          <span id="userBadge" class="user-badge">Min profil</span>
-        </button>
-        <button id="logoutBtn" class="btn-ghost">Logg ut</button>
+        <nav id="gamesNav" class="games-nav"></nav>
+
+        <div class="topbar-actions">
+          <div class="wallet-mini">
+            <span id="walletMiniId">Wallet: -</span>
+            <strong id="walletMiniBalance">Saldo: 0</strong>
+          </div>
+
+          <button id="adminPortalBtn" class="btn-secondary hidden">Admin</button>
+          <button id="profileBtn" class="profile-btn">
+            <span id="profileAvatar" class="profile-avatar">?</span>
+            <span id="userBadge" class="user-badge">Min profil</span>
+          </button>
+          <button id="logoutBtn" class="btn-ghost">Logg ut</button>
+        </div>
       </div>
     </header>
 
@@ -198,47 +183,65 @@
           <p id="profileBigBalance" class="profile-big-balance">0 kr</p>
           <div class="row profile-account-actions">
             <button id="walletTopupBtn" class="btn-primary">Overfør penger</button>
-            <button id="walletSwedbankIntentBtn" class="btn-secondary">Sjekk betaling</button>
-            <button id="walletRefreshBtn" class="btn-secondary">Oppdater regnskap</button>
           </div>
         </section>
 
         <section class="profile-panel">
           <h3 class="subsection-title">Spillvett</h3>
-          <div class="form-grid spillvett-grid">
-            <label>
-              Hall (for tapsgrenser)
-              <select id="safetyHallId"></select>
-            </label>
-            <label>
-              Daglig tapsgrense
-              <input id="safetyDailyLossLimit" type="number" min="0" placeholder="f.eks. 900" />
-            </label>
-            <label>
-              Månedlig tapsgrense
-              <input id="safetyMonthlyLossLimit" type="number" min="0" placeholder="f.eks. 4400" />
-            </label>
-            <label>
-              Spillepause (minutter)
-              <input id="safetyPauseMinutes" type="number" min="1" value="15" />
-            </label>
+          <div class="safety-menu-list">
+            <details class="safety-menu-item" open>
+              <summary>Spillegrenser</summary>
+              <div class="safety-menu-content">
+                <label>
+                  Hall (for tapsgrenser)
+                  <select id="safetyHallId"></select>
+                </label>
+                <label>
+                  Daglig tapsgrense
+                  <input id="safetyDailyLossLimit" type="number" min="0" placeholder="f.eks. 900" />
+                </label>
+                <label>
+                  Månedlig tapsgrense
+                  <input id="safetyMonthlyLossLimit" type="number" min="0" placeholder="f.eks. 4400" />
+                </label>
+                <div class="row">
+                  <button id="safetySaveLossLimitsBtn" class="btn-secondary">Lagre spillegrenser</button>
+                  <button id="safetyRefreshBtn" class="btn-ghost">Oppdater data</button>
+                </div>
+              </div>
+            </details>
+
+            <details class="safety-menu-item">
+              <summary>Spillepause</summary>
+              <div class="safety-menu-content">
+                <label>
+                  Spillepause (minutter)
+                  <input id="safetyPauseMinutes" type="number" min="1" value="15" />
+                </label>
+                <div class="row">
+                  <button id="safetySetPauseBtn" class="btn-secondary">Sett pause</button>
+                  <button id="safetyClearPauseBtn" class="btn-ghost">Fjern pause</button>
+                </div>
+              </div>
+            </details>
+
+            <details class="safety-menu-item">
+              <summary>Utestenging</summary>
+              <div class="safety-menu-content">
+                <div class="row">
+                  <button id="safetySetSelfExclusionBtn" class="btn-primary">Utesteng meg selv</button>
+                  <button id="safetyClearSelfExclusionBtn" class="btn-ghost">Forsøk opphev utestenging</button>
+                </div>
+              </div>
+            </details>
+
+            <details class="safety-menu-item">
+              <summary>Spillregnskap</summary>
+              <div class="safety-menu-content">
+                <pre id="walletStatus" class="status-box">Ingen wallet lastet.</pre>
+              </div>
+            </details>
           </div>
-
-          <div class="row">
-            <button id="safetyRefreshBtn" class="btn-secondary">Oppdater spillvett</button>
-            <button id="safetySaveLossLimitsBtn" class="btn-secondary">Lagre tapsgrenser</button>
-            <button id="safetySetPauseBtn" class="btn-secondary">Sett pause</button>
-            <button id="safetyClearPauseBtn" class="btn-ghost">Fjern pause</button>
-            <button id="safetySetSelfExclusionBtn" class="btn-primary">Utesteng meg selv</button>
-            <button id="safetyClearSelfExclusionBtn" class="btn-ghost">Forsøk opphev utestenging</button>
-          </div>
-
-          <pre id="safetyStatus" class="status-box">Ingen spillvett-data lastet.</pre>
-        </section>
-
-        <section class="profile-panel">
-          <h3 class="subsection-title">Spillregnskap</h3>
-          <pre id="walletStatus" class="status-box">Ingen wallet lastet.</pre>
         </section>
       </div>
     </div>
@@ -265,6 +268,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/app.js?v=profile-drawer-20260304-4"></script>
+    <script src="/app.js?v=profile-drawer-20260304-6"></script>
   </body>
 </html>

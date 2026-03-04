@@ -1924,9 +1924,15 @@ els.loginBtn.addEventListener("click", onLogin);
 els.registerBtn.addEventListener("click", onRegister);
 els.logoutBtn.addEventListener("click", onLogout);
 
-els.walletRefreshBtn.addEventListener("click", onWalletRefresh);
-els.walletTopupBtn.addEventListener("click", onWalletTopup);
-els.walletSwedbankIntentBtn.addEventListener("click", onSwedbankIntent);
+if (els.walletRefreshBtn) {
+  els.walletRefreshBtn.addEventListener("click", onWalletRefresh);
+}
+if (els.walletTopupBtn) {
+  els.walletTopupBtn.addEventListener("click", onWalletTopup);
+}
+if (els.walletSwedbankIntentBtn) {
+  els.walletSwedbankIntentBtn.addEventListener("click", onSwedbankIntent);
+}
 if (els.adminPortalBtn) {
   els.adminPortalBtn.addEventListener("click", () => {
     window.location.assign("/admin");
