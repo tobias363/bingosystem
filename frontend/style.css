@@ -190,13 +190,13 @@ body.modal-open {
   background: transparent;
   padding: 0;
   letter-spacing: 0.01em;
-  font-size: 13px;
+  font-size: 18px;
   text-transform: none;
 }
 
 .profile-icon {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -205,8 +205,8 @@ body.modal-open {
 
 .profile-icon svg {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   fill: currentColor;
 }
 
