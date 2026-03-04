@@ -332,6 +332,10 @@ public class APIManager : MonoBehaviour
 
         if (!ack.ok)
         {
+            if (IsRoomNotFound(ack))
+            {
+                Debug.LogWarning("[APIManager] room ack feilet med ROOM_NOT_FOUND. Rommet kan vaere foreldet etter reconnect.");
+            }
             Debug.LogError($"[APIManager] room ack failed: {ack.errorCode} {ack.errorMessage}");
             return;
         }
@@ -433,7 +437,14 @@ public class APIManager : MonoBehaviour
         if (ack == null || !ack.ok)
         {
             Debug.LogError($"[APIManager] room:resume failed: {ack?.errorCode} {ack?.errorMessage}");
-            activePlayerId = string.Empty;
+            if (IsRoomNotFound(ack))
+            {
+                ResetActiveRoomState(clearDesiredRoomCode: true);
+            }
+            else
+            {
+                activePlayerId = string.Empty;
+            }
             if (joinOrCreateOnStart)
             {
                 JoinOrCreateRoom();
@@ -841,6 +852,31 @@ public class APIManager : MonoBehaviour
         }
 
         return 1;
+    }
+
+    private static bool IsRoomNotFound(SocketAck ack)
+    {
+        if (ack == null)
+        {
+            return false;
+        }
+
+        return string.Equals(ack.errorCode, "ROOM_NOT_FOUND", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ResetActiveRoomState(bool clearDesiredRoomCode)
+    {
+        activeRoomCode = string.Empty;
+        activePlayerId = string.Empty;
+        activeGameId = string.Empty;
+        processedDrawCount = 0;
+        currentTicketPage = 0;
+        activeTicketSets.Clear();
+
+        if (clearDesiredRoomCode)
+        {
+            roomCode = string.Empty;
+        }
     }
 
     public void CallApisForFetchData()

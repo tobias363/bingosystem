@@ -1371,6 +1371,26 @@ export class BingoEngine {
       .map((entry) => ({ ...entry }));
   }
 
+  recordAccountingEvent(input: {
+    hallId: string;
+    gameType: LedgerGameType;
+    channel: LedgerChannel;
+    eventType: "STAKE" | "PRIZE" | "EXTRA_PRIZE";
+    amount: number;
+    metadata?: Record<string, unknown>;
+  }): ComplianceLedgerEntry {
+    this.recordComplianceLedgerEvent({
+      hallId: input.hallId,
+      gameType: input.gameType,
+      channel: input.channel,
+      eventType: input.eventType,
+      amount: input.amount,
+      metadata: input.metadata
+    });
+    const latest = this.complianceLedger[0];
+    return { ...latest };
+  }
+
   generateDailyReport(input: {
     date: string;
     hallId?: string;
@@ -2071,6 +2091,114 @@ export class BingoEngine {
     };
   }
 
+  private makeHouseAccountId(hallId: string, gameType: LedgerGameType, channel: LedgerChannel): string {
+    return `house-${hallId.trim()}-${gameType.toLowerCase()}-${channel.toLowerCase()}`;
+  }
+
+  private recordComplianceLedgerEvent(input: {
+    hallId: string;
+    gameType: LedgerGameType;
+    channel: LedgerChannel;
+    eventType: LedgerEventType;
+    amount: number;
+    roomCode?: string;
+    gameId?: string;
+    claimId?: string;
+    playerId?: string;
+    walletId?: string;
+    sourceAccountId?: string;
+    targetAccountId?: string;
+    policyVersion?: string;
+    batchId?: string;
+    metadata?: Record<string, unknown>;
+  }): void {
+    const nowMs = Date.now();
+    const entry: ComplianceLedgerEntry = {
+      id: randomUUID(),
+      createdAt: new Date(nowMs).toISOString(),
+      createdAtMs: nowMs,
+      hallId: this.assertHallId(input.hallId),
+      gameType: this.assertLedgerGameType(input.gameType),
+      channel: this.assertLedgerChannel(input.channel),
+      eventType: input.eventType,
+      amount: this.roundCurrency(this.assertNonNegativeNumber(input.amount, "amount")),
+      currency: "NOK",
+      roomCode: input.roomCode?.trim() || undefined,
+      gameId: input.gameId?.trim() || undefined,
+      claimId: input.claimId?.trim() || undefined,
+      playerId: input.playerId?.trim() || undefined,
+      walletId: input.walletId?.trim() || undefined,
+      sourceAccountId: input.sourceAccountId?.trim() || undefined,
+      targetAccountId: input.targetAccountId?.trim() || undefined,
+      policyVersion: input.policyVersion?.trim() || undefined,
+      batchId: input.batchId?.trim() || undefined,
+      metadata: input.metadata
+    };
+    this.complianceLedger.unshift(entry);
+    if (this.complianceLedger.length > 50_000) {
+      this.complianceLedger.length = 50_000;
+    }
+  }
+
+  private appendPayoutAuditEvent(input: {
+    kind: "CLAIM_PRIZE" | "EXTRA_PRIZE";
+    claimId?: string;
+    gameId?: string;
+    roomCode?: string;
+    hallId: string;
+    policyVersion?: string;
+    amount: number;
+    walletId: string;
+    playerId?: string;
+    sourceAccountId?: string;
+    txIds: string[];
+  }): void {
+    const now = new Date().toISOString();
+    const normalizedTxIds = input.txIds.map((txId) => txId.trim()).filter(Boolean);
+    const chainIndex = this.payoutAuditTrail.length + 1;
+    const hashPayload = JSON.stringify({
+      kind: input.kind,
+      claimId: input.claimId,
+      gameId: input.gameId,
+      roomCode: input.roomCode,
+      hallId: input.hallId,
+      policyVersion: input.policyVersion,
+      amount: input.amount,
+      walletId: input.walletId,
+      playerId: input.playerId,
+      sourceAccountId: input.sourceAccountId,
+      txIds: normalizedTxIds,
+      createdAt: now,
+      previousHash: this.lastPayoutAuditHash,
+      chainIndex
+    });
+    const eventHash = createHash("sha256").update(hashPayload).digest("hex");
+    const event: PayoutAuditEvent = {
+      id: randomUUID(),
+      createdAt: now,
+      claimId: input.claimId?.trim() || undefined,
+      gameId: input.gameId?.trim() || undefined,
+      roomCode: input.roomCode?.trim() || undefined,
+      hallId: this.assertHallId(input.hallId),
+      policyVersion: input.policyVersion?.trim() || undefined,
+      amount: this.roundCurrency(this.assertNonNegativeNumber(input.amount, "amount")),
+      currency: "NOK",
+      walletId: input.walletId.trim(),
+      playerId: input.playerId?.trim() || undefined,
+      sourceAccountId: input.sourceAccountId?.trim() || undefined,
+      txIds: normalizedTxIds,
+      kind: input.kind,
+      chainIndex,
+      previousHash: this.lastPayoutAuditHash,
+      eventHash
+    };
+    this.payoutAuditTrail.unshift(event);
+    this.lastPayoutAuditHash = eventHash;
+    if (this.payoutAuditTrail.length > 10_000) {
+      this.payoutAuditTrail.length = 10_000;
+    }
+  }
+
   private getRestrictionState(walletId: string, nowMs: number): RestrictionState {
     const existing = this.restrictionsByWallet.get(walletId) ?? {};
     const next: RestrictionState = { ...existing };
@@ -2220,6 +2348,113 @@ export class BingoEngine {
       dailyExtraPrizeCap: policy.dailyExtraPrizeCap,
       createdAt: new Date(policy.createdAtMs).toISOString()
     };
+  }
+
+  private assertLedgerGameType(value: string): LedgerGameType {
+    const normalized = value.trim().toUpperCase();
+    if (normalized === "MAIN_GAME" || normalized === "DATABINGO") {
+      return normalized;
+    }
+    throw new DomainError("INVALID_INPUT", "gameType må være MAIN_GAME eller DATABINGO.");
+  }
+
+  private assertLedgerChannel(value: string): LedgerChannel {
+    const normalized = value.trim().toUpperCase();
+    if (normalized === "HALL" || normalized === "INTERNET") {
+      return normalized;
+    }
+    throw new DomainError("INVALID_INPUT", "channel må være HALL eller INTERNET.");
+  }
+
+  private assertDateKey(value: string, fieldName: string): string {
+    const normalized = value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      throw new DomainError("INVALID_INPUT", `${fieldName} må være i format YYYY-MM-DD.`);
+    }
+    const [yearText, monthText, dayText] = normalized.split("-");
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const date = new Date(year, month - 1, day);
+    if (
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      throw new DomainError("INVALID_INPUT", `${fieldName} er ikke en gyldig dato.`);
+    }
+    return normalized;
+  }
+
+  private dayRangeMs(dateKey: string): { startMs: number; endMs: number } {
+    const normalized = this.assertDateKey(dateKey, "date");
+    const [yearText, monthText, dayText] = normalized.split("-");
+    const startMs = new Date(Number(yearText), Number(monthText) - 1, Number(dayText)).getTime();
+    const endMs = startMs + 24 * 60 * 60 * 1000 - 1;
+    return { startMs, endMs };
+  }
+
+  private dateKeyFromMs(referenceMs: number): string {
+    const date = new Date(referenceMs);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  private assertOrganizationAllocations(
+    allocations: OrganizationAllocationInput[]
+  ): OrganizationAllocationInput[] {
+    if (!Array.isArray(allocations) || allocations.length === 0) {
+      throw new DomainError("INVALID_INPUT", "allocations må inneholde minst én organisasjon.");
+    }
+
+    const normalized = allocations.map((allocation) => {
+      const organizationId = allocation.organizationId?.trim();
+      const organizationAccountId = allocation.organizationAccountId?.trim();
+      const sharePercent = Number(allocation.sharePercent);
+      if (!organizationId) {
+        throw new DomainError("INVALID_INPUT", "organizationId mangler.");
+      }
+      if (!organizationAccountId) {
+        throw new DomainError("INVALID_INPUT", "organizationAccountId mangler.");
+      }
+      if (!Number.isFinite(sharePercent) || sharePercent <= 0) {
+        throw new DomainError("INVALID_INPUT", "sharePercent må være større enn 0.");
+      }
+      return {
+        organizationId,
+        organizationAccountId,
+        sharePercent
+      };
+    });
+
+    const totalShare = normalized.reduce((sum, allocation) => sum + allocation.sharePercent, 0);
+    if (Math.abs(totalShare - 100) > 0.0001) {
+      throw new DomainError("INVALID_INPUT", "Summen av sharePercent må være 100.");
+    }
+    return normalized;
+  }
+
+  private roundCurrency(value: number): number {
+    return Math.round(value * 100) / 100;
+  }
+
+  private allocateAmountByShares(totalAmount: number, shares: number[]): number[] {
+    const total = this.roundCurrency(totalAmount);
+    if (shares.length === 0) {
+      return [];
+    }
+    const sumShares = shares.reduce((sum, share) => sum + share, 0);
+    if (!Number.isFinite(sumShares) || sumShares <= 0) {
+      throw new DomainError("INVALID_INPUT", "Ugyldige andeler for fordeling.");
+    }
+
+    const amounts = shares.map((share) => this.roundCurrency((total * share) / sumShares));
+    const allocated = this.roundCurrency(amounts.reduce((sum, amount) => sum + amount, 0));
+    const remainder = this.roundCurrency(total - allocated);
+    amounts[0] = this.roundCurrency(amounts[0] + remainder);
+    return amounts;
   }
 
   private startOfLocalDayMs(referenceMs: number): number {

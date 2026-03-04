@@ -166,6 +166,11 @@ const autoRoundTicketsPerPlayer = Math.min(
 const autoDrawEnabled = isProductionRuntime ? false : requestedAutoDrawEnabled;
 const autoDrawIntervalMs = parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 1200);
 const schedulerTickMs = parsePositiveIntEnv(process.env.AUTO_ROUND_SCHEDULER_TICK_MS, 250);
+const dailyReportJobEnabled = parseBooleanEnv(process.env.DAILY_REPORT_JOB_ENABLED, true);
+const dailyReportJobIntervalMs = Math.max(
+  60_000,
+  parsePositiveIntEnv(process.env.DAILY_REPORT_JOB_INTERVAL_MS, 60 * 60 * 1000)
+);
 
 if (isProductionRuntime && (requestedAutoRoundStartEnabled || requestedAutoDrawEnabled)) {
   console.warn("[scheduler] Autoplay er deaktivert i production (AUTO_ROUND_START_ENABLED/AUTO_DRAW_ENABLED ignoreres).");
@@ -276,6 +281,34 @@ function parseOptionalPositiveInteger(value: unknown, fieldName: string): number
     throw new DomainError("INVALID_INPUT", `${fieldName} må være større enn 0.`);
   }
   return parsed;
+}
+
+function parseOptionalLedgerGameType(value: unknown): "MAIN_GAME" | "DATABINGO" | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new DomainError("INVALID_INPUT", "gameType må være MAIN_GAME eller DATABINGO.");
+  }
+  const normalized = value.trim().toUpperCase();
+  if (normalized !== "MAIN_GAME" && normalized !== "DATABINGO") {
+    throw new DomainError("INVALID_INPUT", "gameType må være MAIN_GAME eller DATABINGO.");
+  }
+  return normalized;
+}
+
+function parseOptionalLedgerChannel(value: unknown): "HALL" | "INTERNET" | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new DomainError("INVALID_INPUT", "channel må være HALL eller INTERNET.");
+  }
+  const normalized = value.trim().toUpperCase();
+  if (normalized !== "HALL" && normalized !== "INTERNET") {
+    throw new DomainError("INVALID_INPUT", "channel må være HALL eller INTERNET.");
+  }
+  return normalized;
 }
 
 function parseBooleanQueryValue(value: unknown, fallback: boolean): boolean {
@@ -592,6 +625,44 @@ if (autoRoundStartEnabled || autoDrawEnabled) {
     });
   }, schedulerTickMs);
   scheduler.unref();
+}
+
+function formatDateKeyLocal(reference: Date): string {
+  const year = reference.getFullYear();
+  const month = String(reference.getMonth() + 1).padStart(2, "0");
+  const day = String(reference.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function yesterdayDateKeyLocal(nowMs: number): string {
+  const now = new Date(nowMs);
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  return formatDateKeyLocal(yesterday);
+}
+
+let lastDailyReportDateKey = "";
+async function runDailyReportSchedulerTick(nowMs: number): Promise<void> {
+  const dateKey = yesterdayDateKeyLocal(nowMs);
+  if (dateKey === lastDailyReportDateKey) {
+    return;
+  }
+  const report = engine.runDailyReportJob({ date: dateKey });
+  lastDailyReportDateKey = dateKey;
+  console.log(
+    `[daily-report] generated date=${report.date} rows=${report.rows.length} turnover=${report.totals.grossTurnover} prizes=${report.totals.prizesPaid}`
+  );
+}
+
+if (dailyReportJobEnabled) {
+  runDailyReportSchedulerTick(Date.now()).catch((error) => {
+    console.error("[daily-report] initial run feilet", error);
+  });
+  const reportScheduler = setInterval(() => {
+    runDailyReportSchedulerTick(Date.now()).catch((error) => {
+      console.error("[daily-report] scheduler feilet", error);
+    });
+  }, dailyReportJobIntervalMs);
+  reportScheduler.unref();
 }
 
 app.post("/api/auth/register", async (req, res) => {
@@ -1130,6 +1201,176 @@ app.post("/api/admin/wallets/:walletId/extra-prize", async (req, res) => {
   }
 });
 
+app.get("/api/admin/payout-audit", async (req, res) => {
+  try {
+    await requireAdminUser(req);
+    const limit = parseLimit(req.query.limit, 100);
+    const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+    const gameId = typeof req.query.gameId === "string" ? req.query.gameId.trim() : undefined;
+    const walletId = typeof req.query.walletId === "string" ? req.query.walletId.trim() : undefined;
+    const events = engine.listPayoutAuditTrail({
+      limit,
+      hallId,
+      gameId,
+      walletId
+    });
+    apiSuccess(res, events);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.get("/api/admin/ledger/entries", async (req, res) => {
+  try {
+    await requireAdminUser(req);
+    const limit = parseLimit(req.query.limit, 200);
+    const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : undefined;
+    const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : undefined;
+    const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+    const gameType = parseOptionalLedgerGameType(req.query.gameType);
+    const channel = parseOptionalLedgerChannel(req.query.channel);
+    const entries = engine.listComplianceLedgerEntries({
+      limit,
+      dateFrom,
+      dateTo,
+      hallId,
+      gameType,
+      channel
+    });
+    apiSuccess(res, entries);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.post("/api/admin/ledger/entries", async (req, res) => {
+  try {
+    await requireAdminUser(req);
+    const eventTypeRaw = mustBeNonEmptyString(req.body?.eventType, "eventType").toUpperCase();
+    if (eventTypeRaw !== "STAKE" && eventTypeRaw !== "PRIZE" && eventTypeRaw !== "EXTRA_PRIZE") {
+      throw new DomainError("INVALID_INPUT", "eventType må være STAKE, PRIZE eller EXTRA_PRIZE.");
+    }
+    const entry = engine.recordAccountingEvent({
+      hallId: mustBeNonEmptyString(req.body?.hallId, "hallId"),
+      gameType: parseOptionalLedgerGameType(req.body?.gameType) ?? "DATABINGO",
+      channel: parseOptionalLedgerChannel(req.body?.channel) ?? "INTERNET",
+      eventType: eventTypeRaw,
+      amount: mustBePositiveAmount(req.body?.amount),
+      metadata:
+        req.body?.metadata && typeof req.body.metadata === "object" && !Array.isArray(req.body.metadata)
+          ? req.body.metadata
+          : undefined
+    });
+    apiSuccess(res, entry);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.post("/api/admin/reports/daily/run", async (req, res) => {
+  try {
+    await requireAdminUser(req);
+    const date = typeof req.body?.date === "string" ? req.body.date.trim() : undefined;
+    const hallId = typeof req.body?.hallId === "string" ? req.body.hallId.trim() : undefined;
+    const gameType = parseOptionalLedgerGameType(req.body?.gameType);
+    const channel = parseOptionalLedgerChannel(req.body?.channel);
+    const report = engine.runDailyReportJob({
+      date,
+      hallId,
+      gameType,
+      channel
+    });
+    apiSuccess(res, report);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.get("/api/admin/reports/daily", async (req, res) => {
+  try {
+    await requireAdminUser(req);
+    const date = mustBeNonEmptyString(req.query.date, "date");
+    const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+    const gameType = parseOptionalLedgerGameType(req.query.gameType);
+    const channel = parseOptionalLedgerChannel(req.query.channel);
+    const format = typeof req.query.format === "string" ? req.query.format.trim().toLowerCase() : "json";
+    if (format === "csv") {
+      const csv = engine.exportDailyReportCsv({
+        date,
+        hallId,
+        gameType,
+        channel
+      });
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="daily-report-${date}.csv"`);
+      res.status(200).send(csv);
+      return;
+    }
+    const report = engine.generateDailyReport({
+      date,
+      hallId,
+      gameType,
+      channel
+    });
+    apiSuccess(res, report);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.get("/api/admin/reports/daily/archive/:date", async (req, res) => {
+  try {
+    await requireAdminUser(req);
+    const date = mustBeNonEmptyString(req.params.date, "date");
+    const report = engine.getArchivedDailyReport(date);
+    if (!report) {
+      throw new DomainError("REPORT_NOT_FOUND", "Fant ikke arkivert dagsrapport for valgt dato.");
+    }
+    apiSuccess(res, report);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.post("/api/admin/overskudd/distributions", async (req, res) => {
+  try {
+    await requireAdminUser(req);
+    const date = mustBeNonEmptyString(req.body?.date, "date");
+    if (!Array.isArray(req.body?.allocations) || req.body.allocations.length === 0) {
+      throw new DomainError("INVALID_INPUT", "allocations må inneholde minst én rad.");
+    }
+    const allocations = req.body.allocations.map((allocation: unknown) => {
+      const typed = allocation as Record<string, unknown>;
+      return {
+        organizationId: mustBeNonEmptyString(typed?.organizationId, "organizationId"),
+        organizationAccountId: mustBeNonEmptyString(typed?.organizationAccountId, "organizationAccountId"),
+        sharePercent: Number(typed?.sharePercent)
+      };
+    });
+    const batch = await engine.createOverskuddDistributionBatch({
+      date,
+      allocations,
+      hallId: typeof req.body?.hallId === "string" ? req.body.hallId : undefined,
+      gameType: parseOptionalLedgerGameType(req.body?.gameType),
+      channel: parseOptionalLedgerChannel(req.body?.channel)
+    });
+    apiSuccess(res, batch);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.get("/api/admin/overskudd/distributions/:batchId", async (req, res) => {
+  try {
+    await requireAdminUser(req);
+    const batchId = mustBeNonEmptyString(req.params.batchId, "batchId");
+    const batch = engine.getOverskuddDistributionBatch(batchId);
+    apiSuccess(res, batch);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.post("/api/payments/swedbank/topup-intent", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
@@ -1560,6 +1801,9 @@ server.listen(PORT, () => {
   );
   console.log(
     `[scheduler] autoDraw=${autoDrawEnabled} interval=${autoDrawIntervalMs}ms tick=${schedulerTickMs}ms`
+  );
+  console.log(
+    `[daily-report] enabled=${dailyReportJobEnabled} interval=${dailyReportJobIntervalMs}ms lastDate=${lastDailyReportDateKey || "-"}`
   );
   console.log(`[swedbank] configured=${swedbankPayService.isConfigured()}`);
 });
