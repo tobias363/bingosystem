@@ -841,7 +841,9 @@ function renderGameLobby() {
 function renderGamesNav() {
   els.gamesNav.innerHTML = "";
   if (!state.games.length) {
-    els.activeGameLabel.textContent = "Ingen spill tilgjengelig";
+    if (els.activeGameLabel) {
+      els.activeGameLabel.textContent = "Ingen spill tilgjengelig";
+    }
     els.gamesNav.classList.add("hidden");
     renderGameLobby();
     renderHeroPanel();
@@ -851,9 +853,11 @@ function renderGamesNav() {
   els.gamesNav.classList.add("hidden");
 
   const selected = currentGame();
-  els.activeGameLabel.textContent = selected
-    ? `${selected.title} (${selected.route})`
-    : "Ingen spill valgt";
+  if (els.activeGameLabel) {
+    els.activeGameLabel.textContent = selected
+      ? `${selected.title} (${selected.route})`
+      : "Ingen spill valgt";
+  }
   renderGameLobby();
   renderHeroPanel();
 }

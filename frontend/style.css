@@ -56,7 +56,7 @@ body.modal-open {
   margin: 0 auto;
   padding: 14px 18px;
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) minmax(280px, auto) minmax(320px, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 12px;
   align-items: center;
 }
@@ -73,6 +73,7 @@ body.modal-open {
 .brand {
   display: grid;
   gap: 3px;
+  grid-column: 2;
   justify-items: center;
   text-align: center;
 }
@@ -100,7 +101,9 @@ body.modal-open {
 }
 
 .games-nav {
+  grid-column: 1;
   display: flex;
+  justify-self: start;
   justify-content: center;
   flex-wrap: wrap;
   gap: 8px;
@@ -124,10 +127,12 @@ body.modal-open {
 }
 
 .topbar-actions {
+  grid-column: 3;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
+  justify-self: end;
   justify-content: flex-end;
 }
 
