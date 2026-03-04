@@ -189,6 +189,13 @@ public class APIManager : MonoBehaviour
 
     private void HandleRealtimeError(string message)
     {
+        if (!string.IsNullOrWhiteSpace(message) &&
+            message.IndexOf("closed the WebSocket connection without completing the close handshake", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            Debug.LogWarning("[APIManager] Realtime reconnect: " + message);
+            return;
+        }
+
         Debug.LogError("[APIManager] Realtime error: " + message);
     }
 
@@ -420,6 +427,16 @@ public class APIManager : MonoBehaviour
         {
             if (ack == null || !ack.ok)
             {
+                if (IsRoomNotFound(ack))
+                {
+                    Debug.LogWarning("[APIManager] room:state feilet med ROOM_NOT_FOUND. Nullstiller stale room-state.");
+                    ResetActiveRoomState(clearDesiredRoomCode: true);
+                    if (joinOrCreateOnStart)
+                    {
+                        JoinOrCreateRoom();
+                    }
+                    return;
+                }
                 Debug.LogError($"[APIManager] room:state failed: {ack?.errorCode} {ack?.errorMessage}");
                 return;
             }
@@ -463,6 +480,16 @@ public class APIManager : MonoBehaviour
         {
             if (stateAck == null || !stateAck.ok)
             {
+                if (IsRoomNotFound(stateAck))
+                {
+                    Debug.LogWarning("[APIManager] room:state after resume feilet med ROOM_NOT_FOUND. Oppretter nytt rom.");
+                    ResetActiveRoomState(clearDesiredRoomCode: true);
+                    if (joinOrCreateOnStart)
+                    {
+                        JoinOrCreateRoom();
+                    }
+                    return;
+                }
                 Debug.LogError($"[APIManager] room:state after resume failed: {stateAck?.errorCode} {stateAck?.errorMessage}");
                 return;
             }
