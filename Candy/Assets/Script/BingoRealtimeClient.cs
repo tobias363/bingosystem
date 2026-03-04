@@ -199,12 +199,21 @@ public class BingoRealtimeClient : MonoBehaviour
         EmitWithAck("room:resume", payload, onAck);
     }
 
-    public void StartGame(string roomCode, string playerId, int entryFee = 0, Action<SocketAck> onAck = null)
+    public void StartGame(
+        string roomCode,
+        string playerId,
+        int entryFee = 0,
+        int? ticketsPerPlayer = null,
+        Action<SocketAck> onAck = null)
     {
         JSONObject payload = new();
         payload["roomCode"] = (roomCode ?? string.Empty).Trim().ToUpperInvariant();
         payload["playerId"] = playerId ?? string.Empty;
         payload["entryFee"] = entryFee;
+        if (ticketsPerPlayer.HasValue)
+        {
+            payload["ticketsPerPlayer"] = ticketsPerPlayer.Value;
+        }
         AppendAccessToken(payload);
         EmitWithAck("game:start", payload, onAck);
     }

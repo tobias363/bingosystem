@@ -5,36 +5,29 @@ using UnityEngine;
 
 public static class RemoveMissingScriptsTool
 {
+    private const string AutoCleanupBeforePlayPrefKey = "Candy.AutoCleanupMissingScriptsBeforePlay";
+
     [MenuItem("Tools/Candy/Cleanup/Remove Missing Scripts (Open Scene)")]
     public static void RemoveMissingScriptsInOpenScene()
     {
-        int removed = 0;
-        SceneAsset activeSceneAsset = AssetDatabase.LoadAssetAtPath<SceneAsset>(EditorSceneManager.GetActiveScene().path);
-        if (activeSceneAsset == null)
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
         {
-            Debug.LogWarning("[Cleanup] Ingen aktiv scene funnet.");
+            Debug.LogWarning("[Cleanup] Stopp Play Mode før du kjører cleanup.");
             return;
         }
 
-        foreach (GameObject root in EditorSceneManager.GetActiveScene().GetRootGameObjects())
-        {
-            removed += RemoveMissingScriptsRecursively(root);
-        }
-
-        if (removed > 0)
-        {
-            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
-            Debug.Log($"[Cleanup] Fjernet {removed} missing-script komponent(er) fra åpen scene.");
-        }
-        else
-        {
-            Debug.Log("[Cleanup] Fant ingen missing-script komponenter i åpen scene.");
-        }
+        RemoveMissingScriptsInOpenSceneInternal(markSceneDirty: true, logWhenNone: true);
     }
 
     [MenuItem("Tools/Candy/Cleanup/Remove Missing Scripts (Selected Prefabs)")]
     public static void RemoveMissingScriptsInSelectedPrefabs()
     {
+        if (EditorApplication.isPlayingOrWillChangePlaymode)
+        {
+            Debug.LogWarning("[Cleanup] Stopp Play Mode før du kjører cleanup.");
+            return;
+        }
+
         Object[] selected = Selection.objects;
         if (selected == null || selected.Length == 0)
         {
@@ -94,6 +87,66 @@ public static class RemoveMissingScriptsTool
         return false;
     }
 
+    [MenuItem("Tools/Candy/Cleanup/Remove Missing Scripts (Open Scene)", true)]
+    public static bool ValidateRemoveMissingScriptsInOpenScene()
+    {
+        return EditorSceneManager.GetActiveScene().IsValid();
+    }
+
+    [MenuItem("Tools/Candy/Cleanup/Auto Cleanup Missing Scripts Before Play")]
+    public static void ToggleAutoCleanupBeforePlay()
+    {
+        bool enabled = !IsAutoCleanupBeforePlayEnabled();
+        EditorPrefs.SetBool(AutoCleanupBeforePlayPrefKey, enabled);
+        Menu.SetChecked("Tools/Candy/Cleanup/Auto Cleanup Missing Scripts Before Play", enabled);
+        Debug.Log(enabled
+            ? "[Cleanup] Auto-cleanup før Play er aktivert."
+            : "[Cleanup] Auto-cleanup før Play er deaktivert.");
+    }
+
+    [MenuItem("Tools/Candy/Cleanup/Auto Cleanup Missing Scripts Before Play", true)]
+    public static bool ValidateToggleAutoCleanupBeforePlay()
+    {
+        Menu.SetChecked("Tools/Candy/Cleanup/Auto Cleanup Missing Scripts Before Play", IsAutoCleanupBeforePlayEnabled());
+        return true;
+    }
+
+    internal static int RemoveMissingScriptsInOpenSceneInternal(bool markSceneDirty, bool logWhenNone)
+    {
+        int removed = 0;
+        SceneAsset activeSceneAsset = AssetDatabase.LoadAssetAtPath<SceneAsset>(EditorSceneManager.GetActiveScene().path);
+        if (activeSceneAsset == null)
+        {
+            Debug.LogWarning("[Cleanup] Ingen aktiv scene funnet.");
+            return 0;
+        }
+
+        foreach (GameObject root in EditorSceneManager.GetActiveScene().GetRootGameObjects())
+        {
+            removed += RemoveMissingScriptsRecursively(root);
+        }
+
+        if (removed > 0)
+        {
+            if (markSceneDirty)
+            {
+                EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            }
+            Debug.Log($"[Cleanup] Fjernet {removed} missing-script komponent(er) fra åpen scene.");
+        }
+        else if (logWhenNone)
+        {
+            Debug.Log("[Cleanup] Fant ingen missing-script komponenter i åpen scene.");
+        }
+
+        return removed;
+    }
+
+    private static bool IsAutoCleanupBeforePlayEnabled()
+    {
+        return EditorPrefs.GetBool(AutoCleanupBeforePlayPrefKey, true);
+    }
+
     private static int RemoveMissingScriptsRecursively(GameObject root)
     {
         int removed = 0;
@@ -112,5 +165,30 @@ public static class RemoveMissingScriptsTool
         }
 
         return removed;
+    }
+}
+
+[InitializeOnLoad]
+public static class RemoveMissingScriptsBeforePlayHook
+{
+    static RemoveMissingScriptsBeforePlayHook()
+    {
+        EditorApplication.playModeStateChanged -= HandlePlayModeStateChanged;
+        EditorApplication.playModeStateChanged += HandlePlayModeStateChanged;
+    }
+
+    private static void HandlePlayModeStateChanged(PlayModeStateChange state)
+    {
+        if (state != PlayModeStateChange.ExitingEditMode)
+        {
+            return;
+        }
+
+        if (!EditorPrefs.GetBool("Candy.AutoCleanupMissingScriptsBeforePlay", true))
+        {
+            return;
+        }
+
+        RemoveMissingScriptsTool.RemoveMissingScriptsInOpenSceneInternal(markSceneDirty: true, logWhenNone: false);
     }
 }

@@ -1,3 +1,4 @@
+import dotenv from "dotenv";
 import cors from "cors";
 import express from "express";
 import http from "node:http";
@@ -71,6 +72,7 @@ interface ExtraDrawPayload extends RoomActionPayload {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
 const frontendDir = path.resolve(__dirname, "../../frontend");
 const projectDir = path.resolve(__dirname, "../..");
 
@@ -150,6 +152,9 @@ const bingoSelfExclusionMinMs = Math.max(
 );
 
 const isProductionRuntime = (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
+const bingoMinPlayersToStart = isProductionRuntime
+  ? Math.max(2, parsePositiveIntEnv(process.env.BINGO_MIN_PLAYERS_TO_START, 2))
+  : Math.max(1, parsePositiveIntEnv(process.env.BINGO_MIN_PLAYERS_TO_START, 2));
 const requestedAutoRoundStartEnabled = parseBooleanEnv(process.env.AUTO_ROUND_START_ENABLED, true);
 const requestedAutoDrawEnabled = parseBooleanEnv(process.env.AUTO_DRAW_ENABLED, true);
 const autoRoundStartEnabled = isProductionRuntime ? false : requestedAutoRoundStartEnabled;
@@ -158,7 +163,10 @@ const autoRoundStartIntervalMs = Math.max(
   parsePositiveIntEnv(process.env.AUTO_ROUND_START_INTERVAL_MS, bingoMinRoundIntervalMs)
 );
 const autoRoundEntryFee = parseNonNegativeNumberEnv(process.env.AUTO_ROUND_ENTRY_FEE, 0);
-const autoRoundMinPlayers = Math.max(2, parsePositiveIntEnv(process.env.AUTO_ROUND_MIN_PLAYERS, 2));
+const autoRoundMinPlayers = Math.max(
+  bingoMinPlayersToStart,
+  parsePositiveIntEnv(process.env.AUTO_ROUND_MIN_PLAYERS, bingoMinPlayersToStart)
+);
 const autoRoundTicketsPerPlayer = Math.min(
   5,
   Math.max(1, parsePositiveIntEnv(process.env.AUTO_ROUND_TICKETS_PER_PLAYER, 4))
@@ -178,6 +186,7 @@ if (isProductionRuntime && (requestedAutoRoundStartEnabled || requestedAutoDrawE
 
 const engine = new BingoEngine(new LocalBingoSystemAdapter(), walletAdapter, {
   minRoundIntervalMs: bingoMinRoundIntervalMs,
+  minPlayersToStart: bingoMinPlayersToStart,
   dailyLossLimit: bingoDailyLossLimit,
   monthlyLossLimit: bingoMonthlyLossLimit,
   playSessionLimitMs: bingoPlaySessionLimitMs,
@@ -539,12 +548,22 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
       return;
     }
 
-    await engine.startGame({
-      roomCode,
-      actorPlayerId: latestSnapshot.hostPlayerId,
-      entryFee: autoRoundEntryFee,
-      ticketsPerPlayer: autoRoundTicketsPerPlayer
-    });
+    try {
+      await engine.startGame({
+        roomCode,
+        actorPlayerId: latestSnapshot.hostPlayerId,
+        entryFee: autoRoundEntryFee,
+        ticketsPerPlayer: autoRoundTicketsPerPlayer
+      });
+    } catch (error) {
+      if (error instanceof DomainError && error.code === "PLAYER_ALREADY_IN_RUNNING_GAME") {
+        // Expected when same wallet is present in multiple rooms in local dev.
+        // Back off this room and retry later without noisy scheduler error logs.
+        nextAutoStartAtByRoom.set(roomCode, Date.now() + autoRoundStartIntervalMs);
+        return;
+      }
+      throw error;
+    }
     nextAutoStartAtByRoom.delete(roomCode);
     lastAutoDrawAtByRoom.delete(roomCode);
     await emitRoomUpdate(roomCode);
@@ -1794,7 +1813,7 @@ const PORT = Number(process.env.PORT ?? 4000);
 server.listen(PORT, () => {
   console.log(`Bingo backend kjører på http://localhost:${PORT}`);
   console.log(
-    `[compliance] minRoundInterval=${bingoMinRoundIntervalMs}ms dailyLoss=${bingoDailyLossLimit} monthlyLoss=${bingoMonthlyLossLimit} playSessionLimit=${bingoPlaySessionLimitMs}ms pauseDuration=${bingoPauseDurationMs}ms selfExclusionMin=${bingoSelfExclusionMinMs}ms`
+    `[compliance] minRoundInterval=${bingoMinRoundIntervalMs}ms minPlayersToStart=${bingoMinPlayersToStart} dailyLoss=${bingoDailyLossLimit} monthlyLoss=${bingoMonthlyLossLimit} playSessionLimit=${bingoPlaySessionLimitMs}ms pauseDuration=${bingoPauseDurationMs}ms selfExclusionMin=${bingoSelfExclusionMinMs}ms`
   );
   console.log(
     `[scheduler] autoStart=${autoRoundStartEnabled} interval=${autoRoundStartIntervalMs}ms minPlayers=${autoRoundMinPlayers} ticketsPerPlayer=${autoRoundTicketsPerPlayer} entryFee=${autoRoundEntryFee}`

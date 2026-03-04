@@ -21,6 +21,11 @@ public class APIManager : MonoBehaviour
     [SerializeField] private bool duplicateTicketAcrossAllCards = true;
     [SerializeField] private bool enableTicketPaging = true;
     [SerializeField] private bool triggerAutoLoginWhenAuthMissing = true;
+    [SerializeField] private bool logBootstrapEvents = false;
+    [SerializeField] private bool playButtonStartsAndDrawsRealtime = true;
+    [SerializeField] private bool drawImmediatelyAfterManualStart = true;
+    [SerializeField] [Range(1, 5)] private int realtimeTicketsPerPlayer = 4;
+    [SerializeField] private int realtimeEntryFee = 0;
     [SerializeField] private string roomCode = "";
     [SerializeField] private string hallId = "";
     [SerializeField] private string playerName = "Player";
@@ -44,6 +49,8 @@ public class APIManager : MonoBehaviour
     private int processedDrawCount = 0;
     private int currentTicketPage = 0;
     private List<List<int>> activeTicketSets = new();
+    private bool isJoinOrCreatePending = false;
+    private float joinOrCreateIssuedAtRealtime = -1f;
 
     public bool UseRealtimeBackend => useRealtimeBackend;
     public string ActiveRoomCode => activeRoomCode;
@@ -91,7 +98,14 @@ public class APIManager : MonoBehaviour
             BindRealtimeClient();
             if (joinOrCreateOnStart)
             {
-                JoinOrCreateRoom();
+                if (NeedsAuthBootstrap())
+                {
+                    TryStartAutoLogin("Oppstart uten accessToken/hallId.");
+                }
+                else
+                {
+                    JoinOrCreateRoom();
+                }
             }
             return;
         }
@@ -118,7 +132,7 @@ public class APIManager : MonoBehaviour
         {
             GameObject clientObject = new("BingoRealtimeClient_Auto");
             realtimeClient = clientObject.AddComponent<BingoRealtimeClient>();
-            Debug.LogWarning("[APIManager] BingoRealtimeClient manglet i scenen. Opprettet automatisk runtime-klient.");
+            LogBootstrap("BingoRealtimeClient manglet i scenen. Opprettet automatisk runtime-klient.");
         }
 
         realtimeClient.OnConnectionChanged -= HandleRealtimeConnectionChanged;
@@ -146,7 +160,7 @@ public class APIManager : MonoBehaviour
 
         GameObject autoLoginObject = new("BingoAutoLogin_Auto");
         autoLogin = autoLoginObject.AddComponent<BingoAutoLogin>();
-        Debug.LogWarning("[APIManager] BingoAutoLogin manglet i scenen. Opprettet runtime auto-login med default credentials.");
+        LogBootstrap("BingoAutoLogin manglet i scenen. Opprettet runtime auto-login med default credentials.");
         return autoLogin;
     }
 
@@ -163,9 +177,33 @@ public class APIManager : MonoBehaviour
             return false;
         }
 
-        Debug.LogWarning($"[APIManager] {reason} Starter auto-login.");
+        if (!string.IsNullOrWhiteSpace(reason))
+        {
+            LogBootstrap($"{reason} Starter auto-login.");
+        }
         loginBootstrap.StartAutoLogin();
         return true;
+    }
+
+    private bool NeedsAuthBootstrap()
+    {
+        if (!triggerAutoLoginWhenAuthMissing)
+        {
+            return false;
+        }
+
+        return string.IsNullOrWhiteSpace((accessToken ?? string.Empty).Trim()) ||
+               string.IsNullOrWhiteSpace((hallId ?? string.Empty).Trim());
+    }
+
+    private void LogBootstrap(string message)
+    {
+        if (!logBootstrapEvents)
+        {
+            return;
+        }
+
+        Debug.Log("[APIManager] " + message);
     }
 
     private void HandleRealtimeConnectionChanged(bool connected)
@@ -173,6 +211,18 @@ public class APIManager : MonoBehaviour
         if (!connected)
         {
             return;
+        }
+
+        if (isJoinOrCreatePending)
+        {
+            if (IsJoinOrCreateTimedOut())
+            {
+                ClearJoinOrCreatePending();
+            }
+            else
+            {
+                return;
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(activeRoomCode) && !string.IsNullOrWhiteSpace(activePlayerId))
@@ -307,6 +357,18 @@ public class APIManager : MonoBehaviour
             return;
         }
 
+        if (isJoinOrCreatePending)
+        {
+            if (IsJoinOrCreateTimedOut())
+            {
+                ClearJoinOrCreatePending();
+            }
+            else
+            {
+                return;
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(activeRoomCode) && !string.IsNullOrWhiteSpace(activePlayerId))
         {
             RequestRealtimeState();
@@ -319,18 +381,22 @@ public class APIManager : MonoBehaviour
 
         if (!string.IsNullOrWhiteSpace(desiredRoomCode))
         {
+            MarkJoinOrCreatePending();
             realtimeClient.JoinRoom(desiredRoomCode, desiredHallId, desiredPlayerName, desiredWalletId, HandleJoinOrCreateAck);
             return;
         }
 
         if (autoCreateRoomWhenRoomCodeIsEmpty)
         {
+            MarkJoinOrCreatePending();
             realtimeClient.CreateRoom(desiredHallId, desiredPlayerName, desiredWalletId, HandleJoinOrCreateAck);
         }
     }
 
     private void HandleJoinOrCreateAck(SocketAck ack)
     {
+        ClearJoinOrCreatePending();
+
         if (ack == null)
         {
             Debug.LogError("[APIManager] room ack is null.");
@@ -442,6 +508,163 @@ public class APIManager : MonoBehaviour
             }
 
             JSONNode snapshot = ack.data?["snapshot"];
+            if (snapshot != null && !snapshot.IsNull)
+            {
+                HandleRealtimeRoomUpdate(snapshot);
+            }
+        });
+    }
+
+    public void PlayRealtimeRound()
+    {
+        if (!useRealtimeBackend)
+        {
+            return;
+        }
+
+        if (!playButtonStartsAndDrawsRealtime)
+        {
+            RequestRealtimeState();
+            return;
+        }
+
+        BindRealtimeClient();
+        if (realtimeClient == null)
+        {
+            return;
+        }
+
+        string desiredAccessToken = (accessToken ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(desiredAccessToken))
+        {
+            RequestRealtimeState();
+            return;
+        }
+
+        string desiredHallId = (hallId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(desiredHallId))
+        {
+            RequestRealtimeState();
+            return;
+        }
+
+        if (!realtimeClient.IsReady)
+        {
+            realtimeClient.Connect();
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            JoinOrCreateRoom();
+            return;
+        }
+
+        realtimeClient.RequestRoomState(activeRoomCode, HandlePlayRoomStateAck);
+    }
+
+    private void HandlePlayRoomStateAck(SocketAck ack)
+    {
+        if (ack == null || !ack.ok)
+        {
+            if (IsRoomNotFound(ack))
+            {
+                Debug.LogWarning("[APIManager] Play: room finnes ikke lenger. Oppretter nytt rom.");
+                ResetActiveRoomState(clearDesiredRoomCode: true);
+                JoinOrCreateRoom();
+                return;
+            }
+
+            Debug.LogError($"[APIManager] Play: room:state failed: {ack?.errorCode} {ack?.errorMessage}");
+            return;
+        }
+
+        JSONNode snapshot = ack.data?["snapshot"];
+        if (snapshot != null && !snapshot.IsNull)
+        {
+            HandleRealtimeRoomUpdate(snapshot);
+        }
+
+        JSONNode currentGame = snapshot?["currentGame"];
+        bool isRunning = currentGame != null &&
+                         !currentGame.IsNull &&
+                         string.Equals(currentGame["status"], "RUNNING", StringComparison.OrdinalIgnoreCase);
+
+        if (!isRunning)
+        {
+            StartRealtimeGameFromPlayButton();
+            return;
+        }
+
+        DrawRealtimeNumberFromPlayButton();
+    }
+
+    private void StartRealtimeGameFromPlayButton()
+    {
+        if (realtimeClient == null || !realtimeClient.IsReady)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            return;
+        }
+
+        int ticketsPerPlayer = Mathf.Clamp(realtimeTicketsPerPlayer, 1, 5);
+        int entryFee = Mathf.Max(0, realtimeEntryFee);
+
+        realtimeClient.StartGame(activeRoomCode, activePlayerId, entryFee, ticketsPerPlayer, (startAck) =>
+        {
+            if (startAck == null || !startAck.ok)
+            {
+                if (string.Equals(startAck?.errorCode, "NOT_ENOUGH_PLAYERS", StringComparison.OrdinalIgnoreCase))
+                {
+                    string serverMessage = string.IsNullOrWhiteSpace(startAck?.errorMessage)
+                        ? "Trenger flere spillere i rommet."
+                        : startAck.errorMessage;
+                    Debug.LogWarning("[APIManager] Kan ikke starte runde: " + serverMessage);
+                    return;
+                }
+
+                Debug.LogError($"[APIManager] game:start failed: {startAck?.errorCode} {startAck?.errorMessage}");
+                return;
+            }
+
+            JSONNode snapshot = startAck.data?["snapshot"];
+            if (snapshot != null && !snapshot.IsNull)
+            {
+                HandleRealtimeRoomUpdate(snapshot);
+            }
+
+            if (drawImmediatelyAfterManualStart)
+            {
+                DrawRealtimeNumberFromPlayButton();
+            }
+        });
+    }
+
+    private void DrawRealtimeNumberFromPlayButton()
+    {
+        if (realtimeClient == null || !realtimeClient.IsReady)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            return;
+        }
+
+        realtimeClient.DrawNext(activeRoomCode, activePlayerId, (drawAck) =>
+        {
+            if (drawAck == null || !drawAck.ok)
+            {
+                Debug.LogError($"[APIManager] draw:next failed: {drawAck?.errorCode} {drawAck?.errorMessage}");
+                return;
+            }
+
+            JSONNode snapshot = drawAck.data?["snapshot"];
             if (snapshot != null && !snapshot.IsNull)
             {
                 HandleRealtimeRoomUpdate(snapshot);
@@ -893,6 +1116,7 @@ public class APIManager : MonoBehaviour
 
     private void ResetActiveRoomState(bool clearDesiredRoomCode)
     {
+        ClearJoinOrCreatePending();
         activeRoomCode = string.Empty;
         activePlayerId = string.Empty;
         activeGameId = string.Empty;
@@ -904,6 +1128,33 @@ public class APIManager : MonoBehaviour
         {
             roomCode = string.Empty;
         }
+    }
+
+    private void MarkJoinOrCreatePending()
+    {
+        isJoinOrCreatePending = true;
+        joinOrCreateIssuedAtRealtime = Time.realtimeSinceStartup;
+    }
+
+    private void ClearJoinOrCreatePending()
+    {
+        isJoinOrCreatePending = false;
+        joinOrCreateIssuedAtRealtime = -1f;
+    }
+
+    private bool IsJoinOrCreateTimedOut()
+    {
+        if (!isJoinOrCreatePending)
+        {
+            return false;
+        }
+
+        if (joinOrCreateIssuedAtRealtime < 0f)
+        {
+            return true;
+        }
+
+        return (Time.realtimeSinceStartup - joinOrCreateIssuedAtRealtime) > 8f;
     }
 
     public void CallApisForFetchData()

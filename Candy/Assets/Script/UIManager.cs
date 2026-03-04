@@ -59,7 +59,7 @@ public class UIManager : MonoBehaviour
         if (IsRealtimeMode())
         {
             playBtn.interactable = false;
-            APIManager.instance.RequestRealtimeState();
+            APIManager.instance.PlayRealtimeRound();
             Invoke(nameof(ActivePlayBtn), 0.5f);
             return;
         }

@@ -67,6 +67,7 @@ interface EndGameInput {
 
 interface ComplianceOptions {
   minRoundIntervalMs?: number;
+  minPlayersToStart?: number;
   dailyLossLimit?: number;
   monthlyLossLimit?: number;
   playSessionLimitMs?: number;
@@ -320,6 +321,7 @@ export class BingoEngine {
   private lastPayoutAuditHash = "GENESIS";
 
   private readonly minRoundIntervalMs: number;
+  private readonly minPlayersToStart: number;
   private readonly regulatoryLossLimits: LossLimits;
   private readonly playSessionLimitMs: number;
   private readonly pauseDurationMs: number;
@@ -331,6 +333,11 @@ export class BingoEngine {
     options: ComplianceOptions = {}
   ) {
     this.minRoundIntervalMs = Math.max(30000, Math.floor(options.minRoundIntervalMs ?? 30000));
+    const minPlayersToStart = options.minPlayersToStart ?? 2;
+    if (!Number.isFinite(minPlayersToStart) || !Number.isInteger(minPlayersToStart) || minPlayersToStart < 1) {
+      throw new DomainError("INVALID_CONFIG", "minPlayersToStart må være et heltall >= 1.");
+    }
+    this.minPlayersToStart = Math.floor(minPlayersToStart);
 
     const dailyLossLimit = options.dailyLossLimit ?? 900;
     const monthlyLossLimit = options.monthlyLossLimit ?? 4400;
@@ -443,8 +450,11 @@ export class BingoEngine {
     const nowMs = Date.now();
     this.assertRoundStartInterval(room, nowMs);
 
-    if (room.players.size < 2) {
-      throw new DomainError("NOT_ENOUGH_PLAYERS", "Du trenger minst 2 spillere for å starte.");
+    if (room.players.size < this.minPlayersToStart) {
+      throw new DomainError(
+        "NOT_ENOUGH_PLAYERS",
+        `Du trenger minst ${this.minPlayersToStart} spiller${this.minPlayersToStart == 1 ? "" : "e"} for å starte.`
+      );
     }
 
     const entryFee = input.entryFee ?? 0;
@@ -1785,7 +1795,7 @@ export class BingoEngine {
         }
         throw new DomainError(
           "PLAYER_ALREADY_IN_RUNNING_GAME",
-          `Spiller ${otherPlayer.name} deltar allerede i et annet aktivt spill.`
+          `Spiller ${otherPlayer.name} deltar allerede i et annet aktivt spill (rom ${otherRoom.code}).`
         );
       }
     }
@@ -1817,7 +1827,7 @@ export class BingoEngine {
         }
         throw new DomainError(
           "PLAYER_ALREADY_IN_RUNNING_GAME",
-          `Spiller ${player.name} deltar allerede i et annet aktivt spill.`
+          `Spiller ${player.name} deltar allerede i et annet aktivt spill (rom ${room.code}).`
         );
       }
     }

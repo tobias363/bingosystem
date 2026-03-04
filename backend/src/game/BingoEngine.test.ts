@@ -923,7 +923,8 @@ test("overskudd distribution enforces minimum percentages and links transfers to
 
   const orgOne = await wallet.getBalance("org-wallet-1");
   const orgTwo = await wallet.getBalance("org-wallet-2");
-  assert.equal(Math.round((orgOne + orgTwo) * 100) / 100, 420);
+  // InMemoryWalletAdapter seeds new ensured accounts with 1000 in these tests.
+  assert.equal(Math.round((orgOne + orgTwo - 2000) * 100) / 100, 420);
 
   const fetchedBatch = engine.getOverskuddDistributionBatch(batch.id);
   assert.equal(fetchedBatch.id, batch.id);

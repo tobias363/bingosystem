@@ -58,6 +58,63 @@ npm run dev
 - [http://localhost:4000](http://localhost:4000)
 - Health-check: [http://localhost:4000/health](http://localhost:4000/health)
 
+## Compliance test-suite (BG-026)
+
+Egen compliance-suite ligger i `backend/src/compliance/` og kjøres med:
+
+```bash
+npm --prefix backend run test:compliance
+```
+
+Denne dekker nå kjernekrav for:
+
+- tapsgrenser (regulatoriske + personlige)
+- pauser (obligatorisk og frivillig/timed pause)
+- selvutelukkelse
+- 30 sekunders intervall mellom runder
+- maks antall bonger / hall-cap validering
+- premiecaps + payout-audit trail
+
+CI-gate er lagt i `.github/workflows/compliance-gate.yml` og krever grønn `test:compliance`.
+
+## Hall pilot runbook (BG-027)
+
+Pilotprosedyrer ligger i:
+
+- `HALL_PILOT_RUNBOOK.md`
+
+Runbooken dekker:
+
+- preflight-checkliste
+- rollback-kriterier og steg
+- support contact chain og eskalering
+
+## Rollout-plan 1 -> 3 -> 20 (BG-028)
+
+Staged rollout-plan med eksplisitte go/no-go gates ligger i:
+
+- `ROLLOUT_PLAN_1_3_20.md`
+
+## P0 sign-off
+
+Samlet status for `BG-001..BG-028` med aapne risikoer:
+
+- `P0_SIGNOFF.md`
+
+## Wave 1 go/no-go dokument
+
+Konkret sign-off mal for Wave 1 pilot:
+
+- `WAVE1_GO_NO_GO_SIGNOFF_2026-03-09.md`
+
+## Release-artefakter (Wave 1)
+
+Samlet release-dokumentasjon for pilotleveransen:
+
+- `RELEASE_PACKAGE_WAVE1.md`
+- `CHANGELOG.md`
+- `RELEASE_NOTES_WAVE1.md`
+
 ## Automatisk rundestart (hver 30. sekund)
 
 Backenden støtter nå automatisk rundestart per rom.
