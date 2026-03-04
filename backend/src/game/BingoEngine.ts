@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { BingoSystemAdapter } from "../adapters/BingoSystemAdapter.js";
 import { WalletError } from "../adapters/WalletAdapter.js";
 import type { WalletAdapter } from "../adapters/WalletAdapter.js";
@@ -156,6 +156,112 @@ interface ExtraDrawDenialAudit {
   metadata?: Record<string, unknown>;
 }
 
+type LedgerGameType = "MAIN_GAME" | "DATABINGO";
+type LedgerChannel = "HALL" | "INTERNET";
+type LedgerEventType = "STAKE" | "PRIZE" | "EXTRA_PRIZE" | "ORG_DISTRIBUTION";
+
+interface ComplianceLedgerEntry {
+  id: string;
+  createdAt: string;
+  createdAtMs: number;
+  hallId: string;
+  gameType: LedgerGameType;
+  channel: LedgerChannel;
+  eventType: LedgerEventType;
+  amount: number;
+  currency: "NOK";
+  roomCode?: string;
+  gameId?: string;
+  claimId?: string;
+  playerId?: string;
+  walletId?: string;
+  sourceAccountId?: string;
+  targetAccountId?: string;
+  policyVersion?: string;
+  batchId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface PayoutAuditEvent {
+  id: string;
+  createdAt: string;
+  claimId?: string;
+  gameId?: string;
+  roomCode?: string;
+  hallId: string;
+  policyVersion?: string;
+  amount: number;
+  currency: "NOK";
+  walletId: string;
+  playerId?: string;
+  sourceAccountId?: string;
+  txIds: string[];
+  kind: "CLAIM_PRIZE" | "EXTRA_PRIZE";
+  chainIndex: number;
+  previousHash: string;
+  eventHash: string;
+}
+
+interface DailyComplianceReportRow {
+  hallId: string;
+  gameType: LedgerGameType;
+  channel: LedgerChannel;
+  grossTurnover: number;
+  prizesPaid: number;
+  net: number;
+  stakeCount: number;
+  prizeCount: number;
+  extraPrizeCount: number;
+}
+
+interface DailyComplianceReport {
+  date: string;
+  generatedAt: string;
+  rows: DailyComplianceReportRow[];
+  totals: {
+    grossTurnover: number;
+    prizesPaid: number;
+    net: number;
+    stakeCount: number;
+    prizeCount: number;
+    extraPrizeCount: number;
+  };
+}
+
+interface OrganizationAllocationInput {
+  organizationId: string;
+  organizationAccountId: string;
+  sharePercent: number;
+}
+
+interface OverskuddDistributionTransfer {
+  id: string;
+  batchId: string;
+  createdAt: string;
+  date: string;
+  hallId: string;
+  gameType: LedgerGameType;
+  channel: LedgerChannel;
+  sourceAccountId: string;
+  organizationId: string;
+  organizationAccountId: string;
+  amount: number;
+  txIds: string[];
+}
+
+interface OverskuddDistributionBatch {
+  id: string;
+  createdAt: string;
+  date: string;
+  hallId?: string;
+  gameType?: LedgerGameType;
+  channel?: LedgerChannel;
+  requiredMinimum: number;
+  distributedAmount: number;
+  transfers: OverskuddDistributionTransfer[];
+  allocations: OrganizationAllocationInput[];
+}
+
 interface PlayerComplianceSnapshot {
   walletId: string;
   hallId?: string;
@@ -207,6 +313,11 @@ export class BingoEngine {
   private readonly prizePoliciesByScope = new Map<string, PrizePolicyVersion[]>();
   private readonly extraPrizeEntriesByScope = new Map<string, ExtraPrizeEntry[]>();
   private readonly extraDrawDenials: ExtraDrawDenialAudit[] = [];
+  private readonly payoutAuditTrail: PayoutAuditEvent[] = [];
+  private readonly complianceLedger: ComplianceLedgerEntry[] = [];
+  private readonly dailyReportArchive = new Map<string, DailyComplianceReport>();
+  private readonly overskuddBatches = new Map<string, OverskuddDistributionBatch>();
+  private lastPayoutAuditHash = "GENESIS";
 
   private readonly minRoundIntervalMs: number;
   private readonly regulatoryLossLimits: LossLimits;
@@ -351,20 +462,43 @@ export class BingoEngine {
     this.assertPlayersNotOnRequiredPause(players, nowMs);
     await this.refreshPlayerObjectsFromWallet(players);
     await this.assertLossLimitsBeforeBuyIn(players, entryFee, nowMs, room.hallId);
+    const gameId = randomUUID();
+    const gameType: LedgerGameType = "DATABINGO";
+    const channel: LedgerChannel = "INTERNET";
+    const houseAccountId = this.makeHouseAccountId(room.hallId, gameType, channel);
     if (entryFee > 0) {
       await this.ensureSufficientBalance(players, entryFee);
       for (const player of players) {
-        await this.walletAdapter.debit(player.walletId, entryFee, `Bingo buy-in ${room.code}`);
+        const transfer = await this.walletAdapter.transfer(
+          player.walletId,
+          houseAccountId,
+          entryFee,
+          `Bingo buy-in ${room.code}`
+        );
         player.balance -= entryFee;
         this.recordLossEntry(player.walletId, room.hallId, {
           type: "BUYIN",
           amount: entryFee,
-          createdAtMs: Date.now()
+          createdAtMs: nowMs
+        });
+        this.recordComplianceLedgerEvent({
+          hallId: room.hallId,
+          gameType,
+          channel,
+          eventType: "STAKE",
+          amount: entryFee,
+          roomCode: room.code,
+          gameId,
+          playerId: player.id,
+          walletId: player.walletId,
+          sourceAccountId: transfer.fromTx.accountId,
+          targetAccountId: transfer.toTx.accountId,
+          metadata: {
+            reason: "BINGO_BUYIN"
+          }
         });
       }
     }
-
-    const gameId = randomUUID();
     const tickets = new Map<string, Ticket[]>();
     const marks = new Map<string, Set<number>[]>();
 
@@ -1070,6 +1204,370 @@ export class BingoEngine {
   listExtraDrawDenials(limit = 100): ExtraDrawDenialAudit[] {
     const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.floor(limit))) : 100;
     return this.extraDrawDenials.slice(0, normalizedLimit).map((entry) => ({ ...entry }));
+  }
+
+  listPayoutAuditTrail(input?: {
+    limit?: number;
+    hallId?: string;
+    gameId?: string;
+    walletId?: string;
+  }): PayoutAuditEvent[] {
+    const limit = Number.isFinite(input?.limit) ? Math.max(1, Math.min(500, Math.floor(input!.limit!))) : 100;
+    const hallId = input?.hallId?.trim();
+    const gameId = input?.gameId?.trim();
+    const walletId = input?.walletId?.trim();
+    return this.payoutAuditTrail
+      .filter((event) => {
+        if (hallId && event.hallId !== hallId) {
+          return false;
+        }
+        if (gameId && event.gameId !== gameId) {
+          return false;
+        }
+        if (walletId && event.walletId !== walletId) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, limit)
+      .map((event) => ({ ...event, txIds: [...event.txIds] }));
+  }
+
+  listComplianceLedgerEntries(input?: {
+    limit?: number;
+    dateFrom?: string;
+    dateTo?: string;
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+  }): ComplianceLedgerEntry[] {
+    const limit = Number.isFinite(input?.limit) ? Math.max(1, Math.min(2000, Math.floor(input!.limit!))) : 200;
+    const fromMs = input?.dateFrom ? this.assertIsoTimestampMs(input.dateFrom, "dateFrom") : undefined;
+    const toMs = input?.dateTo ? this.assertIsoTimestampMs(input.dateTo, "dateTo") : undefined;
+    const hallId = input?.hallId?.trim();
+    const gameType = input?.gameType ? this.assertLedgerGameType(input.gameType) : undefined;
+    const channel = input?.channel ? this.assertLedgerChannel(input.channel) : undefined;
+
+    return this.complianceLedger
+      .filter((entry) => {
+        if (fromMs !== undefined && entry.createdAtMs < fromMs) {
+          return false;
+        }
+        if (toMs !== undefined && entry.createdAtMs > toMs) {
+          return false;
+        }
+        if (hallId && entry.hallId !== hallId) {
+          return false;
+        }
+        if (gameType && entry.gameType !== gameType) {
+          return false;
+        }
+        if (channel && entry.channel !== channel) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, limit)
+      .map((entry) => ({ ...entry }));
+  }
+
+  generateDailyReport(input: {
+    date: string;
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+  }): DailyComplianceReport {
+    const dateKey = this.assertDateKey(input.date, "date");
+    const hallId = input.hallId?.trim();
+    const gameType = input.gameType ? this.assertLedgerGameType(input.gameType) : undefined;
+    const channel = input.channel ? this.assertLedgerChannel(input.channel) : undefined;
+    const dateRange = this.dayRangeMs(dateKey);
+    const rowsByKey = new Map<string, DailyComplianceReportRow>();
+
+    for (const entry of this.complianceLedger) {
+      if (entry.createdAtMs < dateRange.startMs || entry.createdAtMs > dateRange.endMs) {
+        continue;
+      }
+      if (hallId && entry.hallId !== hallId) {
+        continue;
+      }
+      if (gameType && entry.gameType !== gameType) {
+        continue;
+      }
+      if (channel && entry.channel !== channel) {
+        continue;
+      }
+
+      const key = `${entry.hallId}::${entry.gameType}::${entry.channel}`;
+      const row = rowsByKey.get(key) ?? {
+        hallId: entry.hallId,
+        gameType: entry.gameType,
+        channel: entry.channel,
+        grossTurnover: 0,
+        prizesPaid: 0,
+        net: 0,
+        stakeCount: 0,
+        prizeCount: 0,
+        extraPrizeCount: 0
+      };
+
+      if (entry.eventType === "STAKE") {
+        row.grossTurnover += entry.amount;
+        row.stakeCount += 1;
+      }
+      if (entry.eventType === "PRIZE") {
+        row.prizesPaid += entry.amount;
+        row.prizeCount += 1;
+      }
+      if (entry.eventType === "EXTRA_PRIZE") {
+        row.prizesPaid += entry.amount;
+        row.extraPrizeCount += 1;
+      }
+
+      row.net = row.grossTurnover - row.prizesPaid;
+      rowsByKey.set(key, row);
+    }
+
+    const rows = [...rowsByKey.values()].sort((a, b) => {
+      const byHall = a.hallId.localeCompare(b.hallId);
+      if (byHall !== 0) {
+        return byHall;
+      }
+      const byGame = a.gameType.localeCompare(b.gameType);
+      if (byGame !== 0) {
+        return byGame;
+      }
+      return a.channel.localeCompare(b.channel);
+    });
+
+    const totals = rows.reduce(
+      (acc, row) => {
+        acc.grossTurnover += row.grossTurnover;
+        acc.prizesPaid += row.prizesPaid;
+        acc.net += row.net;
+        acc.stakeCount += row.stakeCount;
+        acc.prizeCount += row.prizeCount;
+        acc.extraPrizeCount += row.extraPrizeCount;
+        return acc;
+      },
+      {
+        grossTurnover: 0,
+        prizesPaid: 0,
+        net: 0,
+        stakeCount: 0,
+        prizeCount: 0,
+        extraPrizeCount: 0
+      }
+    );
+
+    return {
+      date: dateKey,
+      generatedAt: new Date().toISOString(),
+      rows,
+      totals
+    };
+  }
+
+  runDailyReportJob(input?: {
+    date?: string;
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+  }): DailyComplianceReport {
+    const date = input?.date ?? this.dateKeyFromMs(Date.now());
+    const report = this.generateDailyReport({
+      date,
+      hallId: input?.hallId,
+      gameType: input?.gameType,
+      channel: input?.channel
+    });
+    this.dailyReportArchive.set(report.date, report);
+    return report;
+  }
+
+  getArchivedDailyReport(dateInput: string): DailyComplianceReport | null {
+    const date = this.assertDateKey(dateInput, "date");
+    const archived = this.dailyReportArchive.get(date);
+    if (!archived) {
+      return null;
+    }
+    return {
+      ...archived,
+      rows: archived.rows.map((row) => ({ ...row })),
+      totals: { ...archived.totals }
+    };
+  }
+
+  exportDailyReportCsv(input: {
+    date: string;
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+  }): string {
+    const report = this.generateDailyReport(input);
+    const headers = [
+      "date",
+      "hall_id",
+      "game_type",
+      "channel",
+      "gross_turnover",
+      "prizes_paid",
+      "net",
+      "stake_count",
+      "prize_count",
+      "extra_prize_count"
+    ];
+    const lines = [headers.join(",")];
+
+    for (const row of report.rows) {
+      lines.push(
+        [
+          report.date,
+          row.hallId,
+          row.gameType,
+          row.channel,
+          row.grossTurnover,
+          row.prizesPaid,
+          row.net,
+          row.stakeCount,
+          row.prizeCount,
+          row.extraPrizeCount
+        ].join(",")
+      );
+    }
+
+    lines.push(
+      [
+        report.date,
+        "ALL",
+        "ALL",
+        "ALL",
+        report.totals.grossTurnover,
+        report.totals.prizesPaid,
+        report.totals.net,
+        report.totals.stakeCount,
+        report.totals.prizeCount,
+        report.totals.extraPrizeCount
+      ].join(",")
+    );
+    return lines.join("\n");
+  }
+
+  async createOverskuddDistributionBatch(input: {
+    date: string;
+    allocations: OrganizationAllocationInput[];
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+  }): Promise<OverskuddDistributionBatch> {
+    const date = this.assertDateKey(input.date, "date");
+    const allocations = this.assertOrganizationAllocations(input.allocations);
+    const report = this.generateDailyReport({
+      date,
+      hallId: input.hallId,
+      gameType: input.gameType,
+      channel: input.channel
+    });
+
+    const rowsWithMinimum = report.rows
+      .map((row) => {
+        const minimumPercent = row.gameType === "DATABINGO" ? 0.3 : 0.15;
+        const net = Math.max(0, row.net);
+        const minimumAmount = this.roundCurrency(net * minimumPercent);
+        return {
+          row,
+          minimumPercent,
+          minimumAmount
+        };
+      })
+      .filter((entry) => entry.minimumAmount > 0);
+
+    const requiredMinimum = this.roundCurrency(
+      rowsWithMinimum.reduce((sum, entry) => sum + entry.minimumAmount, 0)
+    );
+    const batchId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const transfers: OverskuddDistributionTransfer[] = [];
+
+    for (const { row, minimumAmount } of rowsWithMinimum) {
+      const sourceAccountId = this.makeHouseAccountId(row.hallId, row.gameType, row.channel);
+      const parts = this.allocateAmountByShares(minimumAmount, allocations.map((allocation) => allocation.sharePercent));
+      for (let i = 0; i < allocations.length; i += 1) {
+        const amount = parts[i];
+        if (amount <= 0) {
+          continue;
+        }
+        const allocation = allocations[i];
+        const transfer = await this.walletAdapter.transfer(
+          sourceAccountId,
+          allocation.organizationAccountId,
+          amount,
+          `Overskudd ${batchId} ${date}`
+        );
+        const record: OverskuddDistributionTransfer = {
+          id: randomUUID(),
+          batchId,
+          createdAt: new Date().toISOString(),
+          date,
+          hallId: row.hallId,
+          gameType: row.gameType,
+          channel: row.channel,
+          sourceAccountId,
+          organizationId: allocation.organizationId,
+          organizationAccountId: allocation.organizationAccountId,
+          amount,
+          txIds: [transfer.fromTx.id, transfer.toTx.id]
+        };
+        transfers.push(record);
+
+        this.recordComplianceLedgerEvent({
+          hallId: row.hallId,
+          gameType: row.gameType,
+          channel: row.channel,
+          eventType: "ORG_DISTRIBUTION",
+          amount,
+          sourceAccountId,
+          targetAccountId: allocation.organizationAccountId,
+          batchId,
+          metadata: {
+            organizationId: allocation.organizationId,
+            date
+          }
+        });
+      }
+    }
+
+    const distributedAmount = this.roundCurrency(transfers.reduce((sum, transfer) => sum + transfer.amount, 0));
+    const batch: OverskuddDistributionBatch = {
+      id: batchId,
+      createdAt,
+      date,
+      hallId: input.hallId?.trim() || undefined,
+      gameType: input.gameType ? this.assertLedgerGameType(input.gameType) : undefined,
+      channel: input.channel ? this.assertLedgerChannel(input.channel) : undefined,
+      requiredMinimum,
+      distributedAmount,
+      transfers: transfers.map((transfer) => ({ ...transfer, txIds: [...transfer.txIds] })),
+      allocations: allocations.map((allocation) => ({ ...allocation }))
+    };
+    this.overskuddBatches.set(batchId, batch);
+    return batch;
+  }
+
+  getOverskuddDistributionBatch(batchIdInput: string): OverskuddDistributionBatch {
+    const batchId = batchIdInput.trim();
+    if (!batchId) {
+      throw new DomainError("INVALID_INPUT", "batchId mangler.");
+    }
+    const batch = this.overskuddBatches.get(batchId);
+    if (!batch) {
+      throw new DomainError("BATCH_NOT_FOUND", "Fordelingsbatch finnes ikke.");
+    }
+    return {
+      ...batch,
+      transfers: batch.transfers.map((transfer) => ({ ...transfer, txIds: [...transfer.txIds] })),
+      allocations: batch.allocations.map((allocation) => ({ ...allocation }))
+    };
   }
 
   async refreshPlayerBalancesForWallet(walletId: string): Promise<string[]> {
