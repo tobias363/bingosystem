@@ -130,7 +130,7 @@ body.modal-open {
   grid-column: 3;
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-self: end;
   justify-content: flex-end;

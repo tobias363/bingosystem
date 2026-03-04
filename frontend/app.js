@@ -905,6 +905,11 @@ function onCandyPlay() {
 }
 
 function renderWalletMini() {
+  if (!els.walletMiniId || !els.walletMiniBalance) {
+    renderProfileSummary();
+    return;
+  }
+
   if (!state.user) {
     els.walletMiniId.textContent = "Wallet: -";
     els.walletMiniBalance.textContent = "Saldo: 0";
@@ -1926,7 +1931,9 @@ socket.on("disconnect", () => {
 
 els.loginBtn.addEventListener("click", onLogin);
 els.registerBtn.addEventListener("click", onRegister);
-els.logoutBtn.addEventListener("click", onLogout);
+if (els.logoutBtn) {
+  els.logoutBtn.addEventListener("click", onLogout);
+}
 
 if (els.walletRefreshBtn) {
   els.walletRefreshBtn.addEventListener("click", onWalletRefresh);
