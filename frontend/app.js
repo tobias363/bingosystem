@@ -429,7 +429,7 @@ function renderHeroPanel() {
   if (els.heroWelcome) {
     els.heroWelcome.textContent = state.user
       ? `Hei ${state.user.displayName}. Velkommen tilbake til bordet.`
-      : "Logg inn for a starte.";
+      : "Logg inn for å starte.";
   }
 
   if (!els.heroGameTitle || !els.heroGameDescription) {
@@ -445,7 +445,7 @@ function renderHeroPanel() {
 
   els.heroGameTitle.textContent = selected.title || selected.slug;
   els.heroGameDescription.textContent =
-    selected.description || "Velg bord under og ga videre til spillvisningen.";
+    selected.description || "Velg bord under og gå videre til spillvisningen.";
 }
 
 function renderGameLobby() {
