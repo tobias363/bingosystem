@@ -661,7 +661,7 @@ button:hover {
 }
 
 .profile-modal-card {
-  width: min(420px, 94vw);
+  width: min(483px, 94vw);
   height: 100vh;
   max-height: 100vh;
   overflow: auto;
@@ -669,7 +669,7 @@ button:hover {
   border-right: 0;
   border-radius: 16px 0 0 16px;
   background: #f8fcfb;
-  padding: 18px 14px;
+  padding: 22px 18px;
   box-shadow: 0 14px 34px rgba(21, 71, 62, 0.18);
   display: flex;
   flex-direction: column;
@@ -704,12 +704,12 @@ button:hover {
 }
 
 .profile-close-btn.profile-close-btn-icon {
-  min-width: 42px;
+  min-width: 46px;
   border: 0;
   background: transparent;
   padding: 2px 6px;
   font-size: 38px;
-  line-height: 1;
+  line-height: 0.7;
   color: #232b2a;
 }
 
@@ -772,36 +772,55 @@ button:hover {
   width: 100%;
 }
 
-.profile-personal-panel .subsection-title {
-  margin-top: 0;
+.profile-personal-panel {
+  padding: 10px;
 }
 
-.profile-personal-list {
+.profile-personal-open-btn {
+  width: 100%;
+  border-radius: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  background: #ffffff;
+  color: #173c36;
+  text-align: left;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.profile-personal-view {
   display: grid;
-  gap: 8px;
+  gap: 12px;
+}
+
+.profile-personal-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: #ffffff;
+  overflow: hidden;
 }
 
 .profile-info-row {
   margin: 0;
-  border: 1px solid var(--line-soft);
-  border-radius: 10px;
-  background: var(--panel-soft);
-  padding: 10px 12px;
+  padding: 12px 14px;
   display: grid;
-  gap: 4px;
+  gap: 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.profile-info-row:last-child {
+  border-bottom: 0;
 }
 
 .profile-info-row span {
   font-size: 12px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
 .profile-info-row strong {
-  font-size: 16px;
-  line-height: 1.2;
-  color: #173c36;
+  font-size: 20px;
+  line-height: 1.15;
+  color: #2d244f;
 }
 
 .profile-transfer {
@@ -809,37 +828,38 @@ button:hover {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 28px;
+  padding: 8px 6px 12px;
 }
 
 .transfer-segment {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
+  gap: 8px;
   border-radius: 999px;
-  background: #d9d8e0;
-  padding: 4px;
+  background: transparent;
+  padding: 6px;
 }
 
 .transfer-segment-btn {
-  border: 0;
-  border-radius: 999px;
+  border: 1px solid #000000;
+  border-radius: 5px;
   background: transparent;
-  color: #5d5a75;
+  color: #000000;
   padding: 6px 10px;
   font-size: 16px;
   font-weight: 700;
 }
 
 .transfer-segment-btn.active {
-  background: #ffffff;
-  color: #2d2742;
+  background: #2d2d2d;
+  color: #ffffff;
   box-shadow: 0 2px 6px rgba(40, 35, 64, 0.14);
 }
 
 .transfer-segment-btn:hover {
   transform: none;
-  border: 0;
+  border: 1px solid #000000;
 }
 
 .transfer-balance {
@@ -857,12 +877,12 @@ button:hover {
   font-size: 23px;
   line-height: 1.06;
   color: #11151f;
-  margin-top: 10px;
+  margin-top: 3px;
 }
 
 .transfer-amount-block {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .transfer-amount-block p {
@@ -874,7 +894,7 @@ button:hover {
 .transfer-amount-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 
 .transfer-amount-btn {
@@ -920,8 +940,8 @@ button:hover {
 .transfer-continue-btn {
   margin-top: auto;
   width: 100%;
-  border: 1px solid #bcbcbc;
-  border-radius: 999px;
+  border: 1px solid #9f9f9f;
+  border-radius: 5px;
   background: #ffffff;
   color: #000000;
   min-height: 50px;
@@ -1108,7 +1128,7 @@ button:hover {
   }
 
   .profile-modal-card {
-    width: min(420px, 94vw);
+    width: min(483px, 94vw);
   }
 
 }
@@ -1170,7 +1190,7 @@ button:hover {
   }
 
   .profile-close-btn.profile-close-btn-icon {
-    font-size: 32px;
+    font-size: 38px;
   }
 
   .profile-full-name {

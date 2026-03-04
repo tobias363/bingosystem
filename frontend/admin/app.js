@@ -95,6 +95,7 @@ const elements = {
   entryFee: document.getElementById("entryFee"),
   ticketsPerPlayer: document.getElementById("ticketsPerPlayer"),
   createRoomBtn: document.getElementById("createRoomBtn"),
+  createAndStartRoomBtn: document.getElementById("createAndStartRoomBtn"),
   refreshRoomsBtn: document.getElementById("refreshRoomsBtn"),
   startRoomBtn: document.getElementById("startRoomBtn"),
   drawNextBtn: document.getElementById("drawNextBtn"),
@@ -901,7 +902,7 @@ async function handleCreateRoom() {
   }
 }
 
-async function handleStartRoom() {
+function getRoomStartPayload() {
   let entryFee = Number(elements.entryFee.value || 0);
   if (!Number.isFinite(entryFee) || entryFee < 0) {
     entryFee = 0;
@@ -909,20 +910,26 @@ async function handleStartRoom() {
 
   const ticketsPerPlayer = Number.parseInt(elements.ticketsPerPlayer.value || "4", 10);
   if (!Number.isInteger(ticketsPerPlayer) || ticketsPerPlayer < 1 || ticketsPerPlayer > 5) {
-    setStatus(elements.roomStatus, "ticketsPerPlayer må være et heltall mellom 1 og 5.", "error");
+    throw new Error("ticketsPerPlayer må være et heltall mellom 1 og 5.");
+  }
+  return { entryFee, ticketsPerPlayer };
+}
+
+async function handleStartRoom() {
+  let startPayload;
+  try {
+    startPayload = getRoomStartPayload();
+  } catch (error) {
+    setStatus(elements.roomStatus, error.message || "Ugyldig start-input.", "error");
     return;
   }
-
   const roomCode = getSelectedRoomCode();
   setLoading(elements.startRoomBtn, true, "Starter...", "Start spill");
   try {
     const result = await apiRequest(`/api/admin/rooms/${encodeURIComponent(roomCode)}/start`, {
       method: "POST",
       auth: true,
-      body: {
-        entryFee,
-        ticketsPerPlayer
-      }
+      body: startPayload
     });
 
     await loadRooms();
@@ -939,6 +946,73 @@ async function handleStartRoom() {
     setStatus(elements.roomStatus, error.message || "Klarte ikke starte spill.", "error");
   } finally {
     setLoading(elements.startRoomBtn, false, "Starter...", "Start spill");
+  }
+}
+
+async function handleCreateAndStartRoom() {
+  const hallId = getSelectedRoomHallId();
+  const hostName = (elements.hostName.value || "").trim();
+  const hostWalletId = (elements.hostWalletId.value || "").trim();
+  let startPayload;
+  try {
+    startPayload = getRoomStartPayload();
+  } catch (error) {
+    setStatus(elements.roomStatus, error.message || "Ugyldig start-input.", "error");
+    return;
+  }
+
+  let createdRoomCode = "";
+  let createdPlayerId = "";
+  setLoading(elements.createAndStartRoomBtn, true, "Oppretter + starter...", "Opprett + Start");
+  try {
+    const created = await apiRequest("/api/admin/rooms", {
+      method: "POST",
+      auth: true,
+      body: {
+        hallId,
+        hostName: hostName || undefined,
+        hostWalletId: hostWalletId || undefined
+      }
+    });
+
+    createdRoomCode = created.roomCode;
+    createdPlayerId = created.playerId;
+    const started = await apiRequest(`/api/admin/rooms/${encodeURIComponent(createdRoomCode)}/start`, {
+      method: "POST",
+      auth: true,
+      body: startPayload
+    });
+
+    await loadRooms();
+    elements.roomSelect.value = createdRoomCode;
+    setStatus(
+      elements.roomStatus,
+      [
+        `Rom opprettet + startet: ${createdRoomCode}`,
+        `Host playerId: ${createdPlayerId}`,
+        `Status: ${started.snapshot?.currentGame?.status || "-"}`,
+        `Trukket: ${started.snapshot?.currentGame?.drawnNumbers?.length || 0}`
+      ].join("\n"),
+      "success"
+    );
+  } catch (error) {
+    if (createdRoomCode) {
+      await loadRooms().catch(() => undefined);
+      elements.roomSelect.value = createdRoomCode;
+      setStatus(
+        elements.roomStatus,
+        [
+          `Rom opprettet: ${createdRoomCode}`,
+          `Host playerId: ${createdPlayerId || "-"}`,
+          `Start feilet: ${error.message || "Ukjent feil"}`
+        ].join("\n"),
+        "error"
+      );
+    } else {
+      setStatus(elements.roomStatus, error.message || "Klarte ikke opprette + starte rom.", "error");
+    }
+  } finally {
+    setLoading(elements.createAndStartRoomBtn, false, "Oppretter + starter...", "Opprett + Start");
   }
 }
 
@@ -1602,6 +1676,12 @@ async function bootstrap() {
   elements.createRoomBtn.addEventListener("click", () => {
     handleCreateRoom().catch((error) => {
       setStatus(elements.roomStatus, error.message || "Kunne ikke opprette rom.", "error");
+    });
+  });
+
+  elements.createAndStartRoomBtn.addEventListener("click", () => {
+    handleCreateAndStartRoom().catch((error) => {
+      setStatus(elements.roomStatus, error.message || "Kunne ikke opprette + starte rom.", "error");
     });
   });
 
