@@ -44,6 +44,7 @@ const els = {
   profileTitle: document.getElementById("profileTitle"),
   profileSummary: document.getElementById("profileSummary"),
   profileFullName: document.getElementById("profileFullName"),
+  profileEmail: document.getElementById("profileEmail"),
   profileBigBalance: document.getElementById("profileBigBalance"),
   profileCloseBtn: document.getElementById("profileCloseBtn"),
   swedbankCheckoutModal: document.getElementById("swedbankCheckoutModal"),
@@ -633,8 +634,11 @@ function renderProfileSummary() {
 
   if (!state.user) {
     els.profileTitle.textContent = "Min profil";
-    els.profileSummary.textContent = "Ikke innlogget.";
+    els.profileSummary.textContent = "Konto";
     els.profileFullName.textContent = "Spiller";
+    if (els.profileEmail) {
+      els.profileEmail.textContent = "Ikke innlogget.";
+    }
     els.profileBigBalance.textContent = "0 kr";
     return;
   }
@@ -643,8 +647,11 @@ function renderProfileSummary() {
     state.walletState?.account?.balance ??
     (Number.isFinite(state.user.balance) ? state.user.balance : 0);
   els.profileTitle.textContent = "Min profil";
-  els.profileSummary.textContent = state.user.email || "";
+  els.profileSummary.textContent = "Konto";
   els.profileFullName.textContent = state.user.displayName || "Spiller";
+  if (els.profileEmail) {
+    els.profileEmail.textContent = state.user.email || "";
+  }
   els.profileBigBalance.textContent = `${formatNok(balance)}`;
 }
 

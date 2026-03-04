@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/style.css?v=profile-drawer-20260304-6" />
+    <link rel="stylesheet" href="/style.css?v=profile-drawer-20260304-7" />
   </head>
   <body>
     <header id="appHeader" class="topbar hidden">
@@ -170,13 +170,14 @@
         <div class="profile-modal-header">
           <div>
             <h2 id="profileTitle">Min profil</h2>
-            <p id="profileSummary" class="subtle">Kontoinformasjon</p>
+            <p id="profileSummary" class="subtle">Konto</p>
           </div>
           <button id="profileCloseBtn" class="btn-ghost">Lukk</button>
         </div>
 
         <section class="profile-panel profile-account-panel">
           <p id="profileFullName" class="profile-full-name">Spiller</p>
+          <p id="profileEmail" class="profile-email">ikke-innlogget@eksempel.no</p>
           <p id="profileBigBalance" class="profile-big-balance">0 kr</p>
           <div class="row profile-account-actions">
             <button id="walletTopupBtn" class="btn-primary">Overfør penger</button>
@@ -186,7 +187,7 @@
         <section class="profile-panel">
           <h3 class="subsection-title">Spillvett</h3>
           <div class="safety-menu-list">
-            <details class="safety-menu-item" open>
+            <details class="safety-menu-item">
               <summary>Spillegrenser</summary>
               <div class="safety-menu-content">
                 <label>
@@ -240,6 +241,17 @@
             </details>
           </div>
         </section>
+
+        <button id="logoutBtn" class="profile-logout-btn" type="button">
+          <span class="profile-logout-icon" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+              <path
+                d="M14 3a1 1 0 0 1 1 1v2a1 1 0 1 1-2 0V5H6v14h7v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h9zm3.293 5.293a1 1 0 0 1 1.414 0l3.999 4a1 1 0 0 1 0 1.414l-3.999 4a1 1 0 1 1-1.414-1.414L19.586 13H10a1 1 0 1 1 0-2h9.586l-2.293-2.293a1 1 0 0 1 0-1.414z"
+              />
+            </svg>
+          </span>
+          <span>Logg ut</span>
+        </button>
       </div>
     </div>
 
@@ -265,6 +277,6 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/app.js?v=profile-drawer-20260304-6"></script>
+    <script src="/app.js?v=profile-drawer-20260304-7"></script>
   </body>
 </html>
