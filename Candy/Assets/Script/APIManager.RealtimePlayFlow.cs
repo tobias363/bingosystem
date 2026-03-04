@@ -117,10 +117,9 @@ public partial class APIManager
             return;
         }
 
-        if (realtimeScheduler.ShouldFallbackToManualStart())
-        {
-            StartRealtimeGameFromPlayButton();
-        }
+        TryStartRealtimeRoundFromSchedulerFallback(
+            allowManualWhenSchedulerDisabled: true,
+            source: "scheduled-play-state");
     }
 
     private void HandlePlayRoomStateAck(SocketAck ack)

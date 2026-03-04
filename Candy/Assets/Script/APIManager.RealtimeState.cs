@@ -25,6 +25,12 @@ public partial class APIManager
             hallId = snapshotHallId.Trim();
         }
 
+        string snapshotHostPlayerId = snapshot["hostPlayerId"];
+        if (!string.IsNullOrWhiteSpace(snapshotHostPlayerId))
+        {
+            activeHostPlayerId = snapshotHostPlayerId.Trim();
+        }
+
         ApplySchedulerMetadata(snapshot);
 
         JSONNode currentGame = snapshot["currentGame"];
@@ -318,6 +324,7 @@ public partial class APIManager
         ClearJoinOrCreatePending();
         activeRoomCode = string.Empty;
         activePlayerId = string.Empty;
+        activeHostPlayerId = string.Empty;
         activeGameId = string.Empty;
         realtimeScheduler.Reset();
         realtimeRoomConfigurator.ResetWarningState();
@@ -325,6 +332,8 @@ public partial class APIManager
         processedDrawCount = 0;
         currentTicketPage = 0;
         activeTicketSets.Clear();
+        nextScheduledRoomStateRefreshAt = -1f;
+        nextScheduledManualStartAttemptAt = -1f;
 
         if (clearDesiredRoomCode)
         {

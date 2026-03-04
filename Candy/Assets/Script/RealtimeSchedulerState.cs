@@ -8,14 +8,18 @@ public sealed class RealtimeSchedulerState
     public long NextScheduledRoundStartAtMs { get; private set; }
     public string LatestGameStatus { get; private set; } = IdleStatus;
     public bool SchedulerEnabled { get; private set; } = true;
+    public bool CanStartNow { get; private set; }
     public int MinPlayers { get; private set; } = 1;
     public int PlayerCount { get; private set; }
+    public bool IsGameRunning =>
+        string.Equals(LatestGameStatus, "RUNNING", StringComparison.OrdinalIgnoreCase);
 
     public void Reset()
     {
         NextScheduledRoundStartAtMs = 0;
         LatestGameStatus = IdleStatus;
         SchedulerEnabled = true;
+        CanStartNow = false;
         MinPlayers = 1;
         PlayerCount = 0;
     }
@@ -24,6 +28,7 @@ public sealed class RealtimeSchedulerState
     {
         NextScheduledRoundStartAtMs = 0;
         SchedulerEnabled = true;
+        CanStartNow = false;
         MinPlayers = 1;
         PlayerCount = 0;
 
@@ -45,6 +50,7 @@ public sealed class RealtimeSchedulerState
         }
 
         SchedulerEnabled = scheduler["enabled"].AsBool;
+        CanStartNow = scheduler["canStartNow"].AsBool;
         MinPlayers = Math.Max(1, scheduler["minPlayers"].AsInt);
         PlayerCount = Math.Max(PlayerCount, scheduler["playerCount"].AsInt);
 
@@ -63,7 +69,7 @@ public sealed class RealtimeSchedulerState
 
     public string BuildCountdownLabel(long nowMs)
     {
-        if (string.Equals(LatestGameStatus, "RUNNING", StringComparison.OrdinalIgnoreCase))
+        if (IsGameRunning)
         {
             return "Spill pågår";
         }
@@ -91,8 +97,54 @@ public sealed class RealtimeSchedulerState
         return $"Neste runde\n{minutes:00}:{seconds:00}";
     }
 
+    public bool ShouldAttemptClientStart(long nowMs)
+    {
+        if (IsGameRunning)
+        {
+            return false;
+        }
+
+        if (PlayerCount < MinPlayers)
+        {
+            return false;
+        }
+
+        if (!SchedulerEnabled)
+        {
+            return true;
+        }
+
+        if (CanStartNow)
+        {
+            return true;
+        }
+
+        return NextScheduledRoundStartAtMs > 0 && nowMs >= NextScheduledRoundStartAtMs;
+    }
+
+    public bool ShouldSyncAroundBoundary(long nowMs, long leadTimeMs = 1200)
+    {
+        if (IsGameRunning || !SchedulerEnabled)
+        {
+            return false;
+        }
+
+        if (CanStartNow)
+        {
+            return true;
+        }
+
+        if (NextScheduledRoundStartAtMs <= 0)
+        {
+            return false;
+        }
+
+        long normalizedLeadTimeMs = Math.Max(250, leadTimeMs);
+        return nowMs >= (NextScheduledRoundStartAtMs - normalizedLeadTimeMs);
+    }
+
     public bool ShouldFallbackToManualStart()
     {
-        return !SchedulerEnabled || PlayerCount < MinPlayers;
+        return !SchedulerEnabled;
     }
 }

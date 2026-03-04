@@ -55,6 +55,7 @@ public partial class APIManager : MonoBehaviour
 
     private string activeRoomCode = "";
     private string activePlayerId = "";
+    private string activeHostPlayerId = "";
     private string activeGameId = "";
     private int processedDrawCount = 0;
     private int currentTicketPage = 0;
@@ -62,6 +63,8 @@ public partial class APIManager : MonoBehaviour
     private bool isJoinOrCreatePending = false;
     private float joinOrCreateIssuedAtRealtime = -1f;
     private float nextCountdownRefreshAt = -1f;
+    private float nextScheduledRoomStateRefreshAt = -1f;
+    private float nextScheduledManualStartAttemptAt = -1f;
     private readonly RealtimeSchedulerState realtimeScheduler = new();
     private readonly RealtimeCountdownPresenter realtimeCountdownPresenter = new();
     private readonly RealtimeRoomConfigurator realtimeRoomConfigurator = new();
@@ -138,6 +141,7 @@ public partial class APIManager : MonoBehaviour
         }
 
         RefreshRealtimeCountdownLabel();
+        TickScheduledRoundStateRefresh();
     }
 
     private void BindRealtimeClient()
@@ -410,6 +414,99 @@ public partial class APIManager : MonoBehaviour
         PositionRealtimeCountdownBelowBalls();
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         generator.autoSpinRemainingPlayText.text = realtimeScheduler.BuildCountdownLabel(nowMs);
+    }
+
+    private void TickScheduledRoundStateRefresh()
+    {
+        if (!scheduledModeManualStartFallback)
+        {
+            return;
+        }
+
+        if (Time.unscaledTime < nextScheduledRoomStateRefreshAt)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            return;
+        }
+
+        BindRealtimeClient();
+        if (realtimeClient == null || !realtimeClient.IsReady)
+        {
+            return;
+        }
+
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!realtimeScheduler.ShouldSyncAroundBoundary(nowMs))
+        {
+            return;
+        }
+
+        nextScheduledRoomStateRefreshAt = Time.unscaledTime + 0.75f;
+        RequestRealtimeStateForScheduledPlay();
+    }
+
+    private bool TryStartRealtimeRoundFromSchedulerFallback(bool allowManualWhenSchedulerDisabled, string source)
+    {
+        if (!scheduledModeManualStartFallback)
+        {
+            return false;
+        }
+
+        if (Time.unscaledTime < nextScheduledManualStartAttemptAt)
+        {
+            return false;
+        }
+
+        if (realtimeClient == null || !realtimeClient.IsReady)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            return false;
+        }
+
+        if (!IsActivePlayerHost())
+        {
+            return false;
+        }
+
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        bool shouldStart = realtimeScheduler.ShouldAttemptClientStart(nowMs);
+        if (!shouldStart && allowManualWhenSchedulerDisabled && realtimeScheduler.ShouldFallbackToManualStart())
+        {
+            shouldStart = true;
+        }
+
+        if (!shouldStart)
+        {
+            return false;
+        }
+
+        nextScheduledManualStartAttemptAt = Time.unscaledTime + 1.5f;
+        Debug.Log($"[APIManager] Scheduler fallback start ({source}).");
+        StartRealtimeGameFromPlayButton();
+        return true;
+    }
+
+    private bool IsActivePlayerHost()
+    {
+        if (string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeHostPlayerId))
+        {
+            return true;
+        }
+
+        return string.Equals(activePlayerId, activeHostPlayerId, StringComparison.Ordinal);
     }
 
     public void NextTicketPage()
