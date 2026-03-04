@@ -223,7 +223,6 @@ public class BingoAutoLogin : MonoBehaviour
 
         if (autoConnectAndJoin && apiManager != null)
         {
-            apiManager.JoinOrCreateRoom();
             apiManager.RequestRealtimeState();
         }
 
