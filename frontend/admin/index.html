@@ -346,6 +346,117 @@
         </article>
 
         <article class="card">
+          <h2>Wallet Compliance</h2>
+          <p class="muted">
+            Hent compliance-status for wallet og styr tapsgrenser, pause og selvekskludering.
+          </p>
+          <div class="grid">
+            <div class="field">
+              <label for="complianceWalletId">Wallet ID</label>
+              <input id="complianceWalletId" placeholder="wallet-..." />
+            </div>
+            <div class="field">
+              <label for="complianceHallSelect">Hall (for tapsgrenser)</label>
+              <select id="complianceHallSelect"></select>
+            </div>
+            <div class="field">
+              <label for="complianceDailyLossLimit">Daglig tapsgrense</label>
+              <input id="complianceDailyLossLimit" type="number" min="0" placeholder="f.eks. 900" />
+            </div>
+            <div class="field">
+              <label for="complianceMonthlyLossLimit">Månedlig tapsgrense</label>
+              <input id="complianceMonthlyLossLimit" type="number" min="0" placeholder="f.eks. 4400" />
+            </div>
+            <div class="field">
+              <label for="compliancePauseMinutes">Pause (minutter)</label>
+              <input id="compliancePauseMinutes" type="number" min="1" value="15" />
+            </div>
+            <div class="field">
+              <label for="extraDrawDenialsLimit">Extra draw denials (limit)</label>
+              <input id="extraDrawDenialsLimit" type="number" min="1" value="25" />
+            </div>
+          </div>
+          <div class="toolbar">
+            <button id="loadComplianceBtn">Hent compliance</button>
+            <button id="saveLossLimitsBtn" class="secondary">Lagre tapsgrenser</button>
+            <button id="setTimedPauseBtn" class="secondary">Sett pause</button>
+            <button id="clearTimedPauseBtn" class="secondary">Fjern pause</button>
+            <button id="setSelfExclusionBtn" class="secondary">Sett selvekskludering</button>
+            <button id="clearSelfExclusionBtn" class="secondary">Fjern selvekskludering</button>
+            <button id="loadExtraDrawDenialsBtn" class="secondary">Hent denials</button>
+          </div>
+          <pre id="complianceStatus" class="status">Ingen compliance-data hentet.</pre>
+          <pre id="extraDrawDenialsStatus" class="status">Ingen denial-data hentet.</pre>
+        </article>
+
+        <article class="card">
+          <h2>Prize Policy & Extra Prize</h2>
+          <p class="muted">
+            Se aktiv premiepolicy, oppdater policy og tildel ekstra premie manuelt.
+          </p>
+          <div class="grid">
+            <div class="field">
+              <label for="prizePolicyHallSelect">Hall (policy)</label>
+              <select id="prizePolicyHallSelect"></select>
+            </div>
+            <div class="field">
+              <label for="prizePolicyLinkId">Link ID (valgfri)</label>
+              <input id="prizePolicyLinkId" placeholder="f.eks. hall-link-1" />
+            </div>
+            <div class="field">
+              <label for="prizePolicyAt">Policy @ tidspunkt (ISO, valgfri)</label>
+              <input id="prizePolicyAt" placeholder="2026-03-04T18:00:00.000Z" />
+            </div>
+            <div class="field">
+              <label for="prizePolicyEffectiveFrom">Effective from (ISO)</label>
+              <input id="prizePolicyEffectiveFrom" />
+            </div>
+            <div class="field">
+              <label for="prizePolicySinglePrizeCap">Single prize cap</label>
+              <input id="prizePolicySinglePrizeCap" type="number" min="0" placeholder="f.eks. 10000" />
+            </div>
+            <div class="field">
+              <label for="prizePolicyDailyExtraPrizeCap">Daily extra prize cap</label>
+              <input id="prizePolicyDailyExtraPrizeCap" type="number" min="0" placeholder="f.eks. 5000" />
+            </div>
+          </div>
+          <div class="toolbar">
+            <button id="loadPrizePolicyBtn">Hent aktiv policy</button>
+            <button id="savePrizePolicyBtn" class="secondary">Lagre policy</button>
+          </div>
+          <pre id="prizePolicyStatus" class="status">Ingen policy lastet.</pre>
+
+          <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 14px 0" />
+
+          <div class="grid">
+            <div class="field">
+              <label for="extraPrizeWalletId">Wallet ID (extra prize)</label>
+              <input id="extraPrizeWalletId" placeholder="wallet-..." />
+            </div>
+            <div class="field">
+              <label for="extraPrizeHallSelect">Hall (extra prize)</label>
+              <select id="extraPrizeHallSelect"></select>
+            </div>
+            <div class="field">
+              <label for="extraPrizeLinkId">Link ID (valgfri)</label>
+              <input id="extraPrizeLinkId" placeholder="f.eks. hall-link-1" />
+            </div>
+            <div class="field">
+              <label for="extraPrizeAmount">Beløp</label>
+              <input id="extraPrizeAmount" type="number" min="0.01" step="0.01" />
+            </div>
+            <div class="field full">
+              <label for="extraPrizeReason">Årsak (valgfri)</label>
+              <input id="extraPrizeReason" placeholder="f.eks. goodwill / kampanje" />
+            </div>
+          </div>
+          <div class="toolbar">
+            <button id="awardExtraPrizeBtn">Tildel extra prize</button>
+          </div>
+          <pre id="extraPrizeStatus" class="status">Ingen extra prize sendt.</pre>
+        </article>
+
+        <article class="card">
           <h2>Romkontroll (Backend)</h2>
           <div class="grid">
             <div class="field">

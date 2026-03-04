@@ -54,6 +54,40 @@ const elements = {
   reloadConfigBtn: document.getElementById("reloadConfigBtn"),
   configStatus: document.getElementById("configStatus"),
 
+  complianceWalletId: document.getElementById("complianceWalletId"),
+  complianceHallSelect: document.getElementById("complianceHallSelect"),
+  complianceDailyLossLimit: document.getElementById("complianceDailyLossLimit"),
+  complianceMonthlyLossLimit: document.getElementById("complianceMonthlyLossLimit"),
+  compliancePauseMinutes: document.getElementById("compliancePauseMinutes"),
+  extraDrawDenialsLimit: document.getElementById("extraDrawDenialsLimit"),
+  loadComplianceBtn: document.getElementById("loadComplianceBtn"),
+  saveLossLimitsBtn: document.getElementById("saveLossLimitsBtn"),
+  setTimedPauseBtn: document.getElementById("setTimedPauseBtn"),
+  clearTimedPauseBtn: document.getElementById("clearTimedPauseBtn"),
+  setSelfExclusionBtn: document.getElementById("setSelfExclusionBtn"),
+  clearSelfExclusionBtn: document.getElementById("clearSelfExclusionBtn"),
+  loadExtraDrawDenialsBtn: document.getElementById("loadExtraDrawDenialsBtn"),
+  complianceStatus: document.getElementById("complianceStatus"),
+  extraDrawDenialsStatus: document.getElementById("extraDrawDenialsStatus"),
+
+  prizePolicyHallSelect: document.getElementById("prizePolicyHallSelect"),
+  prizePolicyLinkId: document.getElementById("prizePolicyLinkId"),
+  prizePolicyAt: document.getElementById("prizePolicyAt"),
+  prizePolicyEffectiveFrom: document.getElementById("prizePolicyEffectiveFrom"),
+  prizePolicySinglePrizeCap: document.getElementById("prizePolicySinglePrizeCap"),
+  prizePolicyDailyExtraPrizeCap: document.getElementById("prizePolicyDailyExtraPrizeCap"),
+  loadPrizePolicyBtn: document.getElementById("loadPrizePolicyBtn"),
+  savePrizePolicyBtn: document.getElementById("savePrizePolicyBtn"),
+  prizePolicyStatus: document.getElementById("prizePolicyStatus"),
+
+  extraPrizeWalletId: document.getElementById("extraPrizeWalletId"),
+  extraPrizeHallSelect: document.getElementById("extraPrizeHallSelect"),
+  extraPrizeLinkId: document.getElementById("extraPrizeLinkId"),
+  extraPrizeAmount: document.getElementById("extraPrizeAmount"),
+  extraPrizeReason: document.getElementById("extraPrizeReason"),
+  awardExtraPrizeBtn: document.getElementById("awardExtraPrizeBtn"),
+  extraPrizeStatus: document.getElementById("extraPrizeStatus"),
+
   hallSelect: document.getElementById("hallSelect"),
   roomSelect: document.getElementById("roomSelect"),
   hostName: document.getElementById("hostName"),
@@ -139,6 +173,38 @@ function setSelectOptions(selectEl, options, selectedValue, placeholder) {
 
 function asBooleanString(value) {
   return value ? "true" : "false";
+}
+
+function parseOptionalNonNegativeNumber(value, label) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`${label} må være et tall som er 0 eller høyere.`);
+  }
+  return parsed;
+}
+
+function parseOptionalPositiveInteger(value, label) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} må være et heltall større enn 0.`);
+  }
+  return parsed;
+}
+
+function requireNonEmptyInput(value, label) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) {
+    throw new Error(`${label} må fylles ut.`);
+  }
+  return trimmed;
 }
 
 async function apiRequest(path, options) {
@@ -303,6 +369,9 @@ function renderHallOptions() {
   const previousTerminalFilter = elements.terminalHallFilter.value;
   const previousTerminalHallId = elements.terminalHallId.value;
   const previousConfigHall = elements.configHallSelect.value;
+  const previousComplianceHall = elements.complianceHallSelect.value;
+  const previousPrizePolicyHall = elements.prizePolicyHallSelect.value;
+  const previousExtraPrizeHall = elements.extraPrizeHallSelect.value;
 
   const hallOptionsAll = state.halls.map((hall) => ({
     value: hall.id,
@@ -321,6 +390,9 @@ function renderHallOptions() {
   setSelectOptions(elements.terminalHallFilter, hallOptionsAll, previousTerminalFilter, "Ingen haller");
   setSelectOptions(elements.terminalHallId, hallOptionsAll, previousTerminalHallId, "Ingen haller");
   setSelectOptions(elements.configHallSelect, hallOptionsAll, previousConfigHall, "Ingen haller");
+  setSelectOptions(elements.complianceHallSelect, hallOptionsAll, previousComplianceHall, "Ingen haller");
+  setSelectOptions(elements.prizePolicyHallSelect, hallOptionsAll, previousPrizePolicyHall, "Ingen haller");
+  setSelectOptions(elements.extraPrizeHallSelect, hallOptionsAll, previousExtraPrizeHall, "Ingen haller");
 
   renderSelectedHallEditor();
   renderSelectedHallGameConfig();
@@ -384,6 +456,299 @@ async function loadHallGameConfigs() {
   state.hallGameConfigs = Array.isArray(configs) ? configs : [];
   renderSelectedHallGameConfig();
   setStatus(elements.configStatus, `Lastet ${state.hallGameConfigs.length} konfig-linjer for valgt hall.`, "success");
+}
+
+function ensurePrizePolicyEffectiveFromDefault() {
+  if (!elements.prizePolicyEffectiveFrom) {
+    return;
+  }
+  const current = (elements.prizePolicyEffectiveFrom.value || "").trim();
+  if (current) {
+    return;
+  }
+  elements.prizePolicyEffectiveFrom.value = new Date().toISOString();
+}
+
+function getComplianceWalletId() {
+  return requireNonEmptyInput(elements.complianceWalletId.value, "Wallet ID");
+}
+
+function formatComplianceSnapshot(snapshot) {
+  const dailyReg = snapshot?.regulatoryLossLimits?.daily;
+  const monthlyReg = snapshot?.regulatoryLossLimits?.monthly;
+  const dailyPersonal = snapshot?.personalLossLimits?.daily;
+  const monthlyPersonal = snapshot?.personalLossLimits?.monthly;
+  const netDaily = snapshot?.netLoss?.daily;
+  const netMonthly = snapshot?.netLoss?.monthly;
+
+  return [
+    `walletId: ${snapshot?.walletId || "-"}`,
+    `hallId: ${snapshot?.hallId || "-"}`,
+    `blocked: ${snapshot?.restrictions?.isBlocked ? "Ja" : "Nei"}`,
+    `blockedBy: ${snapshot?.restrictions?.blockedBy || "-"}`,
+    `timedPause: ${snapshot?.restrictions?.timedPause?.isActive ? "Aktiv" : "Ikke aktiv"}`,
+    `timedPauseUntil: ${snapshot?.restrictions?.timedPause?.pauseUntil || "-"}`,
+    `selfExclusion: ${snapshot?.restrictions?.selfExclusion?.isActive ? "Aktiv" : "Ikke aktiv"}`,
+    `selfExclusionUntil: ${snapshot?.restrictions?.selfExclusion?.minimumUntil || "-"}`,
+    `reg.daily=${dailyReg ?? "-"} | reg.monthly=${monthlyReg ?? "-"}`,
+    `personal.daily=${dailyPersonal ?? "-"} | personal.monthly=${monthlyPersonal ?? "-"}`,
+    `net.daily=${netDaily ?? "-"} | net.monthly=${netMonthly ?? "-"}`
+  ].join("\n");
+}
+
+function syncComplianceLimitInputs(snapshot) {
+  const daily = snapshot?.personalLossLimits?.daily;
+  const monthly = snapshot?.personalLossLimits?.monthly;
+  elements.complianceDailyLossLimit.value = Number.isFinite(daily) ? String(daily) : "";
+  elements.complianceMonthlyLossLimit.value = Number.isFinite(monthly) ? String(monthly) : "";
+}
+
+async function handleLoadCompliance() {
+  const walletId = getComplianceWalletId();
+  const hallId = (elements.complianceHallSelect.value || "").trim();
+  const query = new URLSearchParams();
+  if (hallId) {
+    query.set("hallId", hallId);
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  const compliance = await apiRequest(
+    `/api/admin/wallets/${encodeURIComponent(walletId)}/compliance${suffix}`,
+    { auth: true }
+  );
+  syncComplianceLimitInputs(compliance);
+  setStatus(elements.complianceStatus, formatComplianceSnapshot(compliance), "success");
+}
+
+function buildLossLimitPayload() {
+  const hallId = requireNonEmptyInput(elements.complianceHallSelect.value, "Hall");
+  const dailyLossLimit = parseOptionalNonNegativeNumber(elements.complianceDailyLossLimit.value, "Daglig tapsgrense");
+  const monthlyLossLimit = parseOptionalNonNegativeNumber(
+    elements.complianceMonthlyLossLimit.value,
+    "Månedlig tapsgrense"
+  );
+
+  if (dailyLossLimit === undefined && monthlyLossLimit === undefined) {
+    throw new Error("Fyll ut minst én tapsgrense.");
+  }
+
+  return {
+    hallId,
+    dailyLossLimit,
+    monthlyLossLimit
+  };
+}
+
+async function handleSaveLossLimits() {
+  const walletId = getComplianceWalletId();
+  const payload = buildLossLimitPayload();
+  const compliance = await apiRequest(
+    `/api/admin/wallets/${encodeURIComponent(walletId)}/loss-limits`,
+    {
+      method: "PUT",
+      auth: true,
+      body: payload
+    }
+  );
+  setStatus(elements.complianceStatus, formatComplianceSnapshot(compliance), "success");
+}
+
+async function handleSetTimedPause() {
+  const walletId = getComplianceWalletId();
+  const durationMinutes = parseOptionalPositiveInteger(
+    elements.compliancePauseMinutes.value,
+    "Pause (minutter)"
+  );
+  const compliance = await apiRequest(
+    `/api/admin/wallets/${encodeURIComponent(walletId)}/timed-pause`,
+    {
+      method: "POST",
+      auth: true,
+      body: {
+        durationMinutes
+      }
+    }
+  );
+  setStatus(elements.complianceStatus, formatComplianceSnapshot(compliance), "success");
+}
+
+async function handleClearTimedPause() {
+  const walletId = getComplianceWalletId();
+  const compliance = await apiRequest(
+    `/api/admin/wallets/${encodeURIComponent(walletId)}/timed-pause`,
+    {
+      method: "DELETE",
+      auth: true
+    }
+  );
+  setStatus(elements.complianceStatus, formatComplianceSnapshot(compliance), "success");
+}
+
+async function handleSetSelfExclusion() {
+  const walletId = getComplianceWalletId();
+  const compliance = await apiRequest(
+    `/api/admin/wallets/${encodeURIComponent(walletId)}/self-exclusion`,
+    {
+      method: "POST",
+      auth: true
+    }
+  );
+  setStatus(elements.complianceStatus, formatComplianceSnapshot(compliance), "success");
+}
+
+async function handleClearSelfExclusion() {
+  const walletId = getComplianceWalletId();
+  const compliance = await apiRequest(
+    `/api/admin/wallets/${encodeURIComponent(walletId)}/self-exclusion`,
+    {
+      method: "DELETE",
+      auth: true
+    }
+  );
+  setStatus(elements.complianceStatus, formatComplianceSnapshot(compliance), "success");
+}
+
+async function handleLoadExtraDrawDenials() {
+  const requestedLimit = parseOptionalPositiveInteger(elements.extraDrawDenialsLimit.value, "Denials limit");
+  const limit = requestedLimit ?? 25;
+  const denials = await apiRequest(`/api/admin/compliance/extra-draw-denials?limit=${limit}`, { auth: true });
+  if (!Array.isArray(denials) || denials.length === 0) {
+    setStatus(elements.extraDrawDenialsStatus, "Ingen extra draw denials registrert.", "success");
+    return;
+  }
+  const lines = denials.slice(0, limit).map((item) => {
+    return [
+      `${item.createdAt} | source=${item.source} | reason=${item.reasonCode}`,
+      `room=${item.roomCode || "-"} | player=${item.playerId || "-"} | wallet=${item.walletId || "-"}`
+    ].join("\n");
+  });
+  setStatus(elements.extraDrawDenialsStatus, lines.join("\n\n"), "success");
+}
+
+function getPrizePolicyHallId() {
+  return requireNonEmptyInput(elements.prizePolicyHallSelect.value, "Hall (policy)");
+}
+
+function buildPrizePolicyPayload() {
+  const hallId = getPrizePolicyHallId();
+  const linkId = (elements.prizePolicyLinkId.value || "").trim();
+  const effectiveFrom = requireNonEmptyInput(elements.prizePolicyEffectiveFrom.value, "Effective from");
+  const singlePrizeCap = parseOptionalNonNegativeNumber(
+    elements.prizePolicySinglePrizeCap.value,
+    "Single prize cap"
+  );
+  const dailyExtraPrizeCap = parseOptionalNonNegativeNumber(
+    elements.prizePolicyDailyExtraPrizeCap.value,
+    "Daily extra prize cap"
+  );
+
+  return {
+    hallId,
+    linkId: linkId || undefined,
+    effectiveFrom,
+    singlePrizeCap,
+    dailyExtraPrizeCap
+  };
+}
+
+function applyPrizePolicyToInputs(policy) {
+  if (!policy) {
+    return;
+  }
+  elements.prizePolicyHallSelect.value = policy.hallId || elements.prizePolicyHallSelect.value;
+  elements.prizePolicyLinkId.value = policy.linkId || "";
+  elements.prizePolicyEffectiveFrom.value = policy.effectiveFrom || elements.prizePolicyEffectiveFrom.value;
+  elements.prizePolicySinglePrizeCap.value = Number.isFinite(policy.singlePrizeCap)
+    ? String(policy.singlePrizeCap)
+    : "";
+  elements.prizePolicyDailyExtraPrizeCap.value = Number.isFinite(policy.dailyExtraPrizeCap)
+    ? String(policy.dailyExtraPrizeCap)
+    : "";
+}
+
+function formatPrizePolicy(policy) {
+  return [
+    `id: ${policy?.id || "-"}`,
+    `hallId: ${policy?.hallId || "-"}`,
+    `linkId: ${policy?.linkId || "-"}`,
+    `effectiveFrom: ${policy?.effectiveFrom || "-"}`,
+    `singlePrizeCap: ${policy?.singlePrizeCap ?? "-"}`,
+    `dailyExtraPrizeCap: ${policy?.dailyExtraPrizeCap ?? "-"}`,
+    `createdAt: ${policy?.createdAt || "-"}`
+  ].join("\n");
+}
+
+async function handleLoadPrizePolicy() {
+  const hallId = getPrizePolicyHallId();
+  const linkId = (elements.prizePolicyLinkId.value || "").trim();
+  const at = (elements.prizePolicyAt.value || "").trim();
+  const query = new URLSearchParams({ hallId });
+  if (linkId) {
+    query.set("linkId", linkId);
+  }
+  if (at) {
+    query.set("at", at);
+  }
+  const policy = await apiRequest(`/api/admin/prize-policy/active?${query.toString()}`, { auth: true });
+  applyPrizePolicyToInputs(policy);
+  setStatus(elements.prizePolicyStatus, formatPrizePolicy(policy), "success");
+}
+
+async function handleSavePrizePolicy() {
+  const payload = buildPrizePolicyPayload();
+  const policy = await apiRequest("/api/admin/prize-policy", {
+    method: "PUT",
+    auth: true,
+    body: payload
+  });
+  applyPrizePolicyToInputs(policy);
+  setStatus(elements.prizePolicyStatus, formatPrizePolicy(policy), "success");
+}
+
+function buildExtraPrizePayload() {
+  const walletId = requireNonEmptyInput(elements.extraPrizeWalletId.value, "Wallet ID (extra prize)");
+  const hallId = requireNonEmptyInput(elements.extraPrizeHallSelect.value, "Hall (extra prize)");
+  const amountRaw = requireNonEmptyInput(elements.extraPrizeAmount.value, "Beløp");
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Beløp må være et tall større enn 0.");
+  }
+  const linkId = (elements.extraPrizeLinkId.value || "").trim();
+  const reason = (elements.extraPrizeReason.value || "").trim();
+
+  return {
+    walletId,
+    body: {
+      hallId,
+      amount,
+      linkId: linkId || undefined,
+      reason: reason || undefined
+    }
+  };
+}
+
+async function handleAwardExtraPrize() {
+  const payload = buildExtraPrizePayload();
+  const result = await apiRequest(
+    `/api/admin/wallets/${encodeURIComponent(payload.walletId)}/extra-prize`,
+    {
+      method: "POST",
+      auth: true,
+      body: payload.body
+    }
+  );
+
+  setStatus(
+    elements.extraPrizeStatus,
+    [
+      `walletId: ${result.walletId || payload.walletId}`,
+      `hallId: ${result.hallId || payload.body.hallId}`,
+      `linkId: ${result.linkId || payload.body.linkId || "-"}`,
+      `amount: ${result.amount ?? payload.body.amount}`,
+      `policyId: ${result.policyId || "-"}`,
+      `remainingDailyExtraPrizeLimit: ${result.remainingDailyExtraPrizeLimit ?? "-"}`
+    ].join("\n"),
+    "success"
+  );
 }
 
 function getSelectedTerminal() {
@@ -1008,6 +1373,10 @@ async function handleLogout() {
     setStatus(elements.hallStatus, "Ingen haller lastet.");
     setStatus(elements.terminalStatus, "Ingen terminaler lastet.");
     setStatus(elements.configStatus, "Ingen konfig lastet.");
+    setStatus(elements.complianceStatus, "Ingen compliance-data hentet.");
+    setStatus(elements.extraDrawDenialsStatus, "Ingen denial-data hentet.");
+    setStatus(elements.prizePolicyStatus, "Ingen policy lastet.");
+    setStatus(elements.extraPrizeStatus, "Ingen extra prize sendt.");
     setStatus(elements.roomStatus, "Ingen rom valgt.");
     elements.adminIdentity.textContent = "";
     setLoading(elements.logoutBtn, false, "Logger ut...", "Logg ut");
@@ -1017,6 +1386,7 @@ async function handleLogout() {
 async function loadAllAdminData() {
   await loadGames();
   await loadHalls();
+  ensurePrizePolicyEffectiveFromDefault();
   await loadHallGameConfigs();
   await loadTerminals();
   await loadRooms();
@@ -1147,6 +1517,70 @@ async function bootstrap() {
       .catch((error) => {
         setStatus(elements.configStatus, error.message || "Kunne ikke oppdatere hall-konfig.", "error");
       });
+  });
+
+  elements.loadComplianceBtn.addEventListener("click", () => {
+    handleLoadCompliance().catch((error) => {
+      setStatus(elements.complianceStatus, error.message || "Kunne ikke hente compliance.", "error");
+    });
+  });
+
+  elements.saveLossLimitsBtn.addEventListener("click", () => {
+    handleSaveLossLimits().catch((error) => {
+      setStatus(elements.complianceStatus, error.message || "Kunne ikke lagre tapsgrenser.", "error");
+    });
+  });
+
+  elements.setTimedPauseBtn.addEventListener("click", () => {
+    handleSetTimedPause().catch((error) => {
+      setStatus(elements.complianceStatus, error.message || "Kunne ikke sette pause.", "error");
+    });
+  });
+
+  elements.clearTimedPauseBtn.addEventListener("click", () => {
+    handleClearTimedPause().catch((error) => {
+      setStatus(elements.complianceStatus, error.message || "Kunne ikke fjerne pause.", "error");
+    });
+  });
+
+  elements.setSelfExclusionBtn.addEventListener("click", () => {
+    handleSetSelfExclusion().catch((error) => {
+      setStatus(elements.complianceStatus, error.message || "Kunne ikke sette selvekskludering.", "error");
+    });
+  });
+
+  elements.clearSelfExclusionBtn.addEventListener("click", () => {
+    handleClearSelfExclusion().catch((error) => {
+      setStatus(elements.complianceStatus, error.message || "Kunne ikke fjerne selvekskludering.", "error");
+    });
+  });
+
+  elements.loadExtraDrawDenialsBtn.addEventListener("click", () => {
+    handleLoadExtraDrawDenials().catch((error) => {
+      setStatus(
+        elements.extraDrawDenialsStatus,
+        error.message || "Kunne ikke hente extra draw denials.",
+        "error"
+      );
+    });
+  });
+
+  elements.loadPrizePolicyBtn.addEventListener("click", () => {
+    handleLoadPrizePolicy().catch((error) => {
+      setStatus(elements.prizePolicyStatus, error.message || "Kunne ikke hente aktiv policy.", "error");
+    });
+  });
+
+  elements.savePrizePolicyBtn.addEventListener("click", () => {
+    handleSavePrizePolicy().catch((error) => {
+      setStatus(elements.prizePolicyStatus, error.message || "Kunne ikke lagre policy.", "error");
+    });
+  });
+
+  elements.awardExtraPrizeBtn.addEventListener("click", () => {
+    handleAwardExtraPrize().catch((error) => {
+      setStatus(elements.extraPrizeStatus, error.message || "Kunne ikke tildele extra prize.", "error");
+    });
   });
 
   elements.roomSelect.addEventListener("change", () => {
