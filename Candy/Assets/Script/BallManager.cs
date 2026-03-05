@@ -40,6 +40,7 @@ public class BallManager : MonoBehaviour
     private Coroutine extraBallBatchRoutine;
     private TextMeshProUGUI cachedBigBallText;
     private Animator cachedGlassAnimator;
+    private float appliedGlassAnimatorSpeed = -1f;
 
     private void OnEnable()
     {
@@ -54,7 +55,7 @@ public class BallManager : MonoBehaviour
         CacheExtraBallTextRefs();
         cachedBigBallText = ResolveBigBallText();
         CacheGlassAnimator();
-        ApplyGlassAnimationSpeed();
+        ApplyGlassAnimationSpeed(force: true);
 
         SetActiveIfChanged(ballOutMachineAnimParent, true);
         SetActiveIfChanged(bigBallImg != null ? bigBallImg.gameObject : null, false);
@@ -65,6 +66,18 @@ public class BallManager : MonoBehaviour
         CacheRealtimeBallLayoutPositions();
 
 
+    }
+
+    private void Start()
+    {
+        // Ensure speed sync after all Awake calls (GameManager sets testing Time.timeScale in Awake).
+        ApplyGlassAnimationSpeed(force: true);
+    }
+
+    private void Update()
+    {
+        // Keep glass animation speed in sync if pause/play or test timescale changes at runtime.
+        ApplyGlassAnimationSpeed();
     }
 
     private void CacheGlassAnimator()
@@ -82,7 +95,7 @@ public class BallManager : MonoBehaviour
         cachedGlassAnimator = ballOutMachineAnimParent.GetComponent<Animator>();
     }
 
-    private void ApplyGlassAnimationSpeed()
+    private void ApplyGlassAnimationSpeed(bool force = false)
     {
         if (cachedGlassAnimator == null)
         {
@@ -90,9 +103,17 @@ public class BallManager : MonoBehaviour
         }
 
         bool isTestingSpeedContext = Time.timeScale > 1f && (Application.isEditor || Debug.isDebugBuild);
-        cachedGlassAnimator.speed = isTestingSpeedContext
+        float desiredSpeed = isTestingSpeedContext
             ? Mathf.Clamp(testingGlassAnimationSpeedMultiplier, 0.1f, 1f)
             : 1f;
+
+        if (!force && Mathf.Abs(appliedGlassAnimatorSpeed - desiredSpeed) < 0.001f)
+        {
+            return;
+        }
+
+        cachedGlassAnimator.speed = desiredSpeed;
+        appliedGlassAnimatorSpeed = desiredSpeed;
     }
 
     private void OnDisable()
