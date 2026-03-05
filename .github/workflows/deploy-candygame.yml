@@ -1,6 +1,9 @@
 name: Deploy Candygame
 
 on:
+  push:
+    branches:
+      - staging
   workflow_dispatch:
     inputs:
       expected_release_version:
