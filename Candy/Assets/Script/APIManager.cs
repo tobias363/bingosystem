@@ -26,6 +26,7 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private bool realtimeScheduledRounds = true;
     [SerializeField] private bool drawImmediatelyAfterManualStart = true;
     [SerializeField] private bool scheduledModeManualStartFallback = true;
+    [SerializeField] [Min(0.5f)] private float scheduledRoomStateHeartbeatSeconds = 2f;
     [SerializeField] private bool syncRealtimeEntryFeeWithBetSelector = true;
     [SerializeField] private bool centerRealtimeCountdownUnderBalls = true;
     [SerializeField] private Vector2 realtimeCountdownOffset = new Vector2(0f, -155f);
@@ -65,6 +66,7 @@ public partial class APIManager : MonoBehaviour
     private float nextCountdownRefreshAt = -1f;
     private float nextScheduledRoomStateRefreshAt = -1f;
     private float nextScheduledManualStartAttemptAt = -1f;
+    private float nextScheduledHeartbeatAt = -1f;
     private readonly RealtimeSchedulerState realtimeScheduler = new();
     private readonly RealtimeCountdownPresenter realtimeCountdownPresenter = new();
     private readonly RealtimeRoomConfigurator realtimeRoomConfigurator = new();
@@ -142,6 +144,7 @@ public partial class APIManager : MonoBehaviour
 
         RefreshRealtimeCountdownLabel();
         TickScheduledRoundStateRefresh();
+        TickScheduledRoomStateHeartbeat();
         TryStartRealtimeRoundFromSchedulerFallback(
             allowManualWhenSchedulerDisabled: false,
             source: "scheduled-update-loop");
@@ -450,6 +453,31 @@ public partial class APIManager : MonoBehaviour
 
         nextScheduledRoomStateRefreshAt = Time.unscaledTime + 0.75f;
         RequestRealtimeStateForScheduledPlay();
+    }
+
+    private void TickScheduledRoomStateHeartbeat()
+    {
+        if (Time.unscaledTime < nextScheduledHeartbeatAt)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            return;
+        }
+
+        BindRealtimeClient();
+        if (realtimeClient == null || !realtimeClient.IsReady)
+        {
+            return;
+        }
+
+        float waitingInterval = Mathf.Max(0.5f, scheduledRoomStateHeartbeatSeconds);
+        float runningInterval = Mathf.Max(waitingInterval, waitingInterval * 2f);
+        nextScheduledHeartbeatAt = Time.unscaledTime + (realtimeScheduler.IsGameRunning ? runningInterval : waitingInterval);
+
+        realtimeClient.RequestRoomState(activeRoomCode, HandleScheduledPlayRoomStateAck);
     }
 
     private bool TryStartRealtimeRoundFromSchedulerFallback(bool allowManualWhenSchedulerDisabled, string source)
