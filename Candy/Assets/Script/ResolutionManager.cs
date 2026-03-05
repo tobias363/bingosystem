@@ -62,7 +62,7 @@ public class ResolutionManager : MonoBehaviour
             return;
         }
 
-        QualitySettings.masterTextureLimit = 0;
+        QualitySettings.globalTextureMipmapLimit = 0;
         QualitySettings.anisotropicFiltering = anisotropicFiltering;
 
         int targetAntiAliasing = ResolveSupportedAntiAliasingLevel(minimumAntiAliasing);
