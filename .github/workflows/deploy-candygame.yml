@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: Trigger Render candygame deploy hook
         env:
-          CANDYGAME_DEPLOY_HOOK_URL: ${{ secrets.RENDER_CANDYGAME_DEPLOY_HOOK_URL || secrets.RENDER_KEY }}
+          CANDYGAME_DEPLOY_HOOK_URL: ${{ secrets.RENDER_CANDYGAME_DEPLOY_HOOK_URL || secrets.RENDER_CANDYGAME_DEPLOY_HOOK_UR || secrets.RENDER_KEY }}
           CANDYGAME_HEALTHCHECK_URL: ${{ secrets.RENDER_CANDYGAME_HEALTHCHECK_URL || vars.RENDER_CANDYGAME_HEALTHCHECK_URL || 'https://candygame-9q3h.onrender.com/' }}
           CANDYGAME_RELEASE_JSON_URL: ${{ vars.RENDER_CANDYGAME_RELEASE_JSON_URL || 'https://candygame-9q3h.onrender.com/release.json' }}
           CANDYGAME_DEPLOY_WAIT_TIMEOUT_SECONDS: ${{ vars.RENDER_CANDYGAME_WAIT_TIMEOUT_SECONDS || '900' }}
