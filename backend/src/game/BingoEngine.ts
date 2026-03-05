@@ -621,6 +621,13 @@ export class BingoEngine {
         drawIndex: game.drawnNumbers.length
       });
     }
+    if (game.drawnNumbers.length >= this.maxDrawsPerRound) {
+      const endedAt = new Date();
+      game.status = "ENDED";
+      game.endedAt = endedAt.toISOString();
+      game.endedReason = "MAX_DRAWS_REACHED";
+      this.finishPlaySessionsForGame(room, game, endedAt.getTime());
+    }
     return nextNumber;
   }
 

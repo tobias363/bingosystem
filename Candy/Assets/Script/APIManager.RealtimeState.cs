@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using SimpleJSON;
 using TMPro;
 using UnityEngine;
@@ -53,6 +54,7 @@ public partial class APIManager
             processedDrawCount = 0;
             currentTicketPage = 0;
             activeTicketSets.Clear();
+            ApplyWinningAmountToUi(0);
             RefreshRealtimeCountdownLabel(forceRefresh: true);
             return;
         }
@@ -83,6 +85,7 @@ public partial class APIManager
         ApplyMyTicketToCards(currentGame);
         ApplyDrawnNumbers(currentGame);
         RefreshRealtimeWinningPatternVisuals(currentGame);
+        RefreshRealtimeWinningAmount(currentGame);
         RefreshRealtimeCountdownLabel(forceRefresh: true);
     }
 
@@ -311,6 +314,71 @@ public partial class APIManager
         }
 
         return string.Empty;
+    }
+
+    private void RefreshRealtimeWinningAmount(JSONNode currentGame)
+    {
+        if (currentGame == null || currentGame.IsNull || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            ApplyWinningAmountToUi(0);
+            return;
+        }
+
+        JSONNode claims = currentGame["claims"];
+        if (claims == null || claims.IsNull || !claims.IsArray)
+        {
+            ApplyWinningAmountToUi(0);
+            return;
+        }
+
+        double totalWinning = 0;
+        for (int i = 0; i < claims.Count; i++)
+        {
+            JSONNode claim = claims[i];
+            if (claim == null || claim.IsNull || !claim["valid"].AsBool)
+            {
+                continue;
+            }
+
+            string claimPlayerId = claim["playerId"];
+            if (!string.Equals(claimPlayerId?.Trim(), activePlayerId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string payoutRaw = claim["payoutAmount"];
+            if (!double.TryParse(payoutRaw, NumberStyles.Float, CultureInfo.InvariantCulture, out double payout))
+            {
+                continue;
+            }
+
+            if (double.IsNaN(payout) || double.IsInfinity(payout))
+            {
+                continue;
+            }
+
+            totalWinning += payout;
+        }
+
+        ApplyWinningAmountToUi(totalWinning);
+    }
+
+    private void ApplyWinningAmountToUi(double totalWinning)
+    {
+        GameManager manager = GameManager.instance;
+        if (manager?.winAmtText == null)
+        {
+            return;
+        }
+
+        double rounded = Math.Round(totalWinning, 2, MidpointRounding.AwayFromZero);
+        if (Math.Abs(rounded - Math.Round(rounded)) < 0.005d)
+        {
+            manager.winAmtText.text = Math.Round(rounded).ToString(CultureInfo.InvariantCulture);
+            return;
+        }
+
+        manager.winAmtText.text = rounded.ToString("0.##", CultureInfo.InvariantCulture);
     }
 
     private int GetCardSlotsCount()

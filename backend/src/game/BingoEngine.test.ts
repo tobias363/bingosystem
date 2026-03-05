@@ -400,8 +400,8 @@ test("round ends automatically when max draws is reached", async () => {
 
   const snapshotAfterThirdDraw = limitedEngine.getRoomSnapshot(limitedRoomCode);
   assert.equal(snapshotAfterThirdDraw.currentGame?.drawnNumbers.length, 3);
-  assert.equal(snapshotAfterThirdDraw.currentGame?.status, "RUNNING");
-  assert.equal(snapshotAfterThirdDraw.currentGame?.endedReason, undefined);
+  assert.equal(snapshotAfterThirdDraw.currentGame?.status, "ENDED");
+  assert.equal(snapshotAfterThirdDraw.currentGame?.endedReason, "MAX_DRAWS_REACHED");
 
   await assert.rejects(
     async () =>
@@ -409,12 +409,8 @@ test("round ends automatically when max draws is reached", async () => {
         roomCode: limitedRoomCode,
         actorPlayerId: limitedHostPlayerId
       }),
-    (error: unknown) => error instanceof DomainError && error.code === "NO_MORE_NUMBERS"
+    (error: unknown) => error instanceof DomainError && error.code === "GAME_NOT_RUNNING"
   );
-
-  const snapshotAfterRejectedDraw = limitedEngine.getRoomSnapshot(limitedRoomCode);
-  assert.equal(snapshotAfterRejectedDraw.currentGame?.status, "ENDED");
-  assert.equal(snapshotAfterRejectedDraw.currentGame?.endedReason, "MAX_DRAWS_REACHED");
 });
 
 test("joinRoom rejects duplicate wallet in same room", async () => {
