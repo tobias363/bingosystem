@@ -15,6 +15,22 @@ public partial class APIManager
         public JSONNode ClaimNode;
     }
 
+    private readonly struct RealtimeNearWinState
+    {
+        public readonly int PatternIndex;
+        public readonly int CardNo;
+        public readonly int CellIndex;
+        public readonly int MissingNumber;
+
+        public RealtimeNearWinState(int patternIndex, int cardNo, int cellIndex, int missingNumber)
+        {
+            PatternIndex = patternIndex;
+            CardNo = cardNo;
+            CellIndex = cellIndex;
+            MissingNumber = missingNumber;
+        }
+    }
+
     private void HandleRealtimeRoomUpdate(JSONNode snapshot)
     {
         if (snapshot == null || snapshot.IsNull)
@@ -312,7 +328,7 @@ public partial class APIManager
 
         HideAllMissingPatternVisuals(generator.cardClasses);
 
-        HashSet<int> activeNearWinKeys = new();
+        Dictionary<int, RealtimeNearWinState> activeNearWinStates = new();
         for (int cardNo = 0; cardNo < generator.cardClasses.Length; cardNo++)
         {
             CardClass card = generator.cardClasses[cardNo];
@@ -331,11 +347,11 @@ public partial class APIManager
                 activePatternIndexes,
                 wonPatternIndex,
                 allowNearWin: !hasAnyWonPattern,
-                activeNearWinKeys);
+                activeNearWinStates);
         }
 
-        SyncRealtimeNearWinBlinking(activeNearWinKeys, generator.cardClasses);
-        NumberGenerator.isPrizeMissedByOneCard = activeNearWinKeys.Count > 0;
+        SyncRealtimeNearWinBlinking(activeNearWinStates, generator.cardClasses);
+        NumberGenerator.isPrizeMissedByOneCard = activeNearWinStates.Count > 0;
         RefreshRealtimeBonusFlow(currentGame, latestClaim, winningPatternsByCard);
     }
 
@@ -642,7 +658,7 @@ public partial class APIManager
         List<int> activePatternIndexes,
         int wonPatternIndex,
         bool allowNearWin,
-        HashSet<int> activeNearWinKeys)
+        Dictionary<int, RealtimeNearWinState> activeNearWinStates)
     {
         if (generator == null || generator.cardClasses == null || cardNo < 0 || cardNo >= generator.cardClasses.Length)
         {
@@ -710,8 +726,9 @@ public partial class APIManager
                 cardNo,
                 generator.patternList[patternIndex].pattern,
                 state,
+                patternIndex,
                 missingCellIndex,
-                activeNearWinKeys);
+                activeNearWinStates);
         }
     }
 
@@ -720,8 +737,9 @@ public partial class APIManager
         int cardNo,
         List<byte> mask,
         TicketUiState state,
+        int patternIndex,
         int missingCellIndex,
-        HashSet<int> activeNearWinKeys)
+        Dictionary<int, RealtimeNearWinState> activeNearWinStates)
     {
         if (card == null || mask == null)
         {
@@ -741,12 +759,13 @@ public partial class APIManager
             return;
         }
 
-        int blinkKey = BuildNearWinBlinkKey(cardNo, missingCellIndex);
-        activeNearWinKeys.Add(blinkKey);
-        if (!realtimeNearWinBlinkCoroutines.ContainsKey(blinkKey))
+        int nearWinKey = BuildNearWinKey(cardNo, patternIndex, missingCellIndex);
+        int missingNumber = ResolveNearWinMissingNumber(card, missingCellIndex);
+        if (!activeNearWinStates.ContainsKey(nearWinKey))
         {
-            Coroutine blinkRoutine = StartCoroutine(BlinkRealtimeNearWinCell(blinkKey, card.missingPatternImg[missingCellIndex]));
-            realtimeNearWinBlinkCoroutines[blinkKey] = blinkRoutine;
+            activeNearWinStates.Add(
+                nearWinKey,
+                new RealtimeNearWinState(patternIndex, cardNo, missingCellIndex, missingNumber));
         }
     }
 
@@ -782,33 +801,27 @@ public partial class APIManager
         return requiredCount > 0 && matchedCount == requiredCount - 1 && missingCellIndex >= 0;
     }
 
-    private IEnumerator BlinkRealtimeNearWinCell(int blinkKey, GameObject nearWinCell)
+    private int ResolveNearWinMissingNumber(CardClass card, int missingCellIndex)
     {
-        bool visible = false;
-        WaitForSeconds wait = new WaitForSeconds(realtimeNearWinBlinkInterval);
-        while (realtimeNearWinBlinkCoroutines.ContainsKey(blinkKey))
+        if (card == null || card.numb == null || missingCellIndex < 0 || missingCellIndex >= card.numb.Count)
         {
-            visible = !visible;
-            if (nearWinCell != null)
-            {
-                SetActiveIfChanged(nearWinCell, visible);
-            }
-
-            yield return wait;
+            return 0;
         }
 
-        if (nearWinCell != null)
-        {
-            SetActiveIfChanged(nearWinCell, false);
-        }
+        return Mathf.Max(0, card.numb[missingCellIndex]);
     }
 
-    private void SyncRealtimeNearWinBlinking(HashSet<int> activeNearWinKeys, CardClass[] cards)
+    private int BuildNearWinKey(int cardNo, int patternIndex, int cellIndex)
     {
-        List<int> keysToStop = new();
-        foreach (int key in realtimeNearWinBlinkCoroutines.Keys)
+        return (cardNo * 10000) + (patternIndex * 100) + cellIndex;
+    }
+
+    private void SyncRealtimeNearWinBlinking(Dictionary<int, RealtimeNearWinState> activeNearWinStates, CardClass[] cards)
+    {
+        List<int> keysToStop = new List<int>();
+        foreach (int key in realtimeNearWinStates.Keys)
         {
-            if (!activeNearWinKeys.Contains(key))
+            if (!activeNearWinStates.ContainsKey(key))
             {
                 keysToStop.Add(key);
             }
@@ -817,13 +830,40 @@ public partial class APIManager
         for (int i = 0; i < keysToStop.Count; i++)
         {
             int key = keysToStop[i];
-            if (realtimeNearWinBlinkCoroutines.TryGetValue(key, out Coroutine routine) && routine != null)
+            if (realtimeNearWinStates.TryGetValue(key, out RealtimeNearWinState nearWinState))
             {
-                StopCoroutine(routine);
+                EventManager.ShowMissingPattern(
+                    nearWinState.PatternIndex,
+                    nearWinState.CellIndex,
+                    false,
+                    0,
+                    nearWinState.CardNo);
+
+                SetNearWinCellActive(cards, nearWinState.CardNo, nearWinState.CellIndex, false);
             }
 
-            realtimeNearWinBlinkCoroutines.Remove(key);
-            SetNearWinCellActive(cards, key, false);
+            realtimeNearWinStates.Remove(key);
+        }
+
+        foreach (KeyValuePair<int, RealtimeNearWinState> entry in activeNearWinStates)
+        {
+            int key = entry.Key;
+            RealtimeNearWinState state = entry.Value;
+
+            bool shouldNotify = !realtimeNearWinStates.TryGetValue(key, out RealtimeNearWinState previousState) ||
+                                previousState.MissingNumber != state.MissingNumber;
+
+            if (shouldNotify)
+            {
+                EventManager.ShowMissingPattern(
+                    state.PatternIndex,
+                    state.CellIndex,
+                    true,
+                    state.MissingNumber,
+                    state.CardNo);
+            }
+
+            realtimeNearWinStates[key] = state;
         }
     }
 
@@ -853,20 +893,8 @@ public partial class APIManager
         }
     }
 
-    private int BuildNearWinBlinkKey(int cardNo, int cellIndex)
+    private void SetNearWinCellActive(CardClass[] cards, int cardNo, int cellIndex, bool active)
     {
-        return (cardNo * 100) + cellIndex;
-    }
-
-    private void DecodeNearWinBlinkKey(int key, out int cardNo, out int cellIndex)
-    {
-        cardNo = key / 100;
-        cellIndex = key % 100;
-    }
-
-    private void SetNearWinCellActive(CardClass[] cards, int blinkKey, bool active)
-    {
-        DecodeNearWinBlinkKey(blinkKey, out int cardNo, out int cellIndex);
         if (cards == null || cardNo < 0 || cardNo >= cards.Length)
         {
             return;
@@ -896,18 +924,14 @@ public partial class APIManager
     private void StopRealtimeNearWinBlinking()
     {
         CardClass[] cards = GameManager.instance?.numberGenerator?.cardClasses;
-
-        foreach (KeyValuePair<int, Coroutine> entry in realtimeNearWinBlinkCoroutines)
+        foreach (KeyValuePair<int, RealtimeNearWinState> entry in realtimeNearWinStates)
         {
-            if (entry.Value != null)
-            {
-                StopCoroutine(entry.Value);
-            }
-
-            SetNearWinCellActive(cards, entry.Key, false);
+            RealtimeNearWinState state = entry.Value;
+            EventManager.ShowMissingPattern(state.PatternIndex, state.CellIndex, false, 0, state.CardNo);
+            SetNearWinCellActive(cards, state.CardNo, state.CellIndex, false);
         }
 
-        realtimeNearWinBlinkCoroutines.Clear();
+        realtimeNearWinStates.Clear();
         HideAllMissingPatternVisuals(cards);
     }
 

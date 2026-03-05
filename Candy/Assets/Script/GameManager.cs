@@ -77,7 +77,15 @@ public class GameManager : MonoBehaviour
     {
         SetTotalMoney(-currentBet);
         winAmt = 0;
-        if(winList.Count > 0) { winList.Clear(); }
+        if (winList == null)
+        {
+            winList = new List<int>();
+        }
+        else if (winList.Count > 0)
+        {
+            winList.Clear();
+        }
+
         winAmtText.text = "0";
         for (int i = 0; i < displayCardWinPoints.Count; i++)
         {
@@ -172,7 +180,11 @@ public class GameManager : MonoBehaviour
     
     void ShowWinAmt(int cardNo, int index)
     {
-        
+        if (winList == null)
+        {
+            winList = new List<int>();
+        }
+
         if (index < 5) //other
         {
             winAmt = currentWinPoints[index];
@@ -195,8 +207,11 @@ public class GameManager : MonoBehaviour
         displayCardWinPoints[cardNo].text = "WIN - "+ cardWin[cardNo].ToString() ;
 
         winList.Add(winAmt);
-        winAmtText.text = winList.Sum(x => Convert.ToInt32(x)).ToString();
-        SetTotalMoney(winList.Sum(x => Convert.ToInt32(x)));
+        int totalRoundWin = winList.Sum(x => Convert.ToInt32(x));
+        winAmtText.text = totalRoundWin.ToString();
+
+        // Keep credit updates incremental to avoid double counting the full round sum.
+        SetTotalMoney(winAmt);
 
        
     }

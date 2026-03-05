@@ -81,7 +81,7 @@ public partial class APIManager : MonoBehaviour
     private readonly RealtimeSchedulerState realtimeScheduler = new();
     private readonly RealtimeCountdownPresenter realtimeCountdownPresenter = new();
     private readonly RealtimeRoomConfigurator realtimeRoomConfigurator = new();
-    private readonly Dictionary<int, Coroutine> realtimeNearWinBlinkCoroutines = new();
+    private readonly Dictionary<int, RealtimeNearWinState> realtimeNearWinStates = new();
     private string realtimeBonusTriggeredGameId = string.Empty;
     private string realtimeBonusTriggeredClaimId = string.Empty;
     private string realtimeBonusMissingDataLogKey = string.Empty;
