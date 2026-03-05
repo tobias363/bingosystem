@@ -40,6 +40,8 @@ public class BingoAutoLogin : MonoBehaviour
 
     private bool isBusy;
 
+    public string BackendBaseUrl => NormalizeBaseUrl(backendBaseUrl);
+
     private void OnEnable()
     {
         BindLoginButton();
@@ -73,6 +75,11 @@ public class BingoAutoLogin : MonoBehaviour
     public void OnLoginButtonClicked()
     {
         StartAutoLogin();
+    }
+
+    public void ConfigureBackendBaseUrl(string baseUrl)
+    {
+        backendBaseUrl = NormalizeBaseUrl(baseUrl);
     }
 
     private IEnumerator LoginAndApplyRoutine()
@@ -185,19 +192,26 @@ public class BingoAutoLogin : MonoBehaviour
             configuredHallId = (hallIdInput.text ?? string.Empty).Trim();
         }
 
-        if (string.IsNullOrWhiteSpace(configuredHallId))
+        string discoveredHallId = string.Empty;
+        string hallLookupError = string.Empty;
+        yield return RequestHallId(normalizedBaseUrl, token, (success, message, fetchedHallId) =>
         {
-            yield return RequestHallId(normalizedBaseUrl, token, (success, message, fetchedHallId) =>
+            if (!success)
             {
-                if (!success)
-                {
-                    SetStatus("Kunne ikke hente hall: " + message);
-                    configuredHallId = string.Empty;
-                    return;
-                }
+                hallLookupError = message;
+                return;
+            }
 
-                configuredHallId = fetchedHallId;
-            });
+            discoveredHallId = fetchedHallId;
+        });
+
+        if (!string.IsNullOrWhiteSpace(discoveredHallId))
+        {
+            configuredHallId = discoveredHallId;
+        }
+        else if (!string.IsNullOrWhiteSpace(hallLookupError) && string.IsNullOrWhiteSpace(configuredHallId))
+        {
+            SetStatus("Kunne ikke hente hall: " + hallLookupError);
         }
 
         if (string.IsNullOrWhiteSpace(configuredHallId))
@@ -522,12 +536,12 @@ public class BingoAutoLogin : MonoBehaviour
         string normalized = (baseUrl ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(normalized))
         {
-            normalized = "http://localhost:4000";
+            normalized = "https://bingosystem-3.onrender.com";
         }
         if (!normalized.StartsWith("http://", System.StringComparison.OrdinalIgnoreCase) &&
             !normalized.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase))
         {
-            normalized = "http://" + normalized;
+            normalized = "https://" + normalized;
         }
         return normalized.TrimEnd('/');
     }

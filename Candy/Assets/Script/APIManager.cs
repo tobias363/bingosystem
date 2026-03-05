@@ -47,6 +47,8 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private int realtimeEntryFee = 0;
     [SerializeField] [Min(1)] private int realtimeClientMaxDrawsPerRound = 30;
     [SerializeField] [Min(1)] private int realtimeDefaultBonusAmount = 150;
+    [SerializeField] private bool enableLaunchTokenBootstrap = true;
+    [SerializeField] private string launchResolveBaseUrl = "https://bingosystem-3.onrender.com";
     [SerializeField] private BallManager ballManager;
     [SerializeField] private string roomCode = "";
     [SerializeField] private string hallId = "";
@@ -134,17 +136,7 @@ public partial class APIManager : MonoBehaviour
         if (useRealtimeBackend)
         {
             BindRealtimeClient();
-            if (joinOrCreateOnStart)
-            {
-                if (NeedsAuthBootstrap())
-                {
-                    TryStartAutoLogin("Oppstart uten accessToken/hallId.");
-                }
-                else
-                {
-                    JoinOrCreateRoom();
-                }
-            }
+            StartCoroutine(BootstrapRealtimeStartupRoutine());
             return;
         }
 
@@ -152,6 +144,24 @@ public partial class APIManager : MonoBehaviour
         {
             CallApisForFetchData();
         }
+    }
+
+    private IEnumerator BootstrapRealtimeStartupRoutine()
+    {
+        yield return ResolveLaunchContextFromUrlIfPresent();
+
+        if (!joinOrCreateOnStart)
+        {
+            yield break;
+        }
+
+        if (NeedsAuthBootstrap())
+        {
+            TryStartAutoLogin("Oppstart uten accessToken/hallId.");
+            yield break;
+        }
+
+        JoinOrCreateRoom();
     }
 
     void Update()
@@ -353,6 +363,296 @@ public partial class APIManager : MonoBehaviour
         {
             realtimeClient.SetAccessToken(accessToken);
         }
+    }
+
+    public void ConfigureBackendBaseUrl(string baseUrl)
+    {
+        string normalized = NormalizeAbsoluteHttpUrlForRuntime(baseUrl, launchResolveBaseUrl);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        launchResolveBaseUrl = normalized;
+
+        if (realtimeClient != null)
+        {
+            realtimeClient.ConfigureBackendBaseUrl(normalized);
+        }
+
+        BingoAutoLogin login = ResolveAutoLogin();
+        if (login != null)
+        {
+            login.ConfigureBackendBaseUrl(normalized);
+        }
+    }
+
+    private IEnumerator ResolveLaunchContextFromUrlIfPresent()
+    {
+        if (!enableLaunchTokenBootstrap)
+        {
+            yield break;
+        }
+
+        string absoluteUrl = Application.absoluteURL;
+        if (!TryExtractLaunchTokenFromAbsoluteUrl(absoluteUrl, out string launchToken))
+        {
+            yield break;
+        }
+
+        string resolveBaseUrl = ResolveLaunchApiBaseUrlFromAbsoluteUrl(absoluteUrl);
+        if (string.IsNullOrWhiteSpace(resolveBaseUrl))
+        {
+            Debug.LogError("[APIManager] Fant ikke gyldig base URL for launch-resolve.");
+            yield break;
+        }
+
+        string endpoint = resolveBaseUrl + "/api/games/candy/launch-resolve";
+        JSONObject payload = new();
+        payload["launchToken"] = launchToken;
+
+        using UnityWebRequest request = new UnityWebRequest(endpoint, UnityWebRequest.kHttpVerbPOST);
+        byte[] body = System.Text.Encoding.UTF8.GetBytes(payload.ToString());
+        request.uploadHandler = new UploadHandlerRaw(body);
+        request.downloadHandler = new DownloadHandlerBuffer();
+        request.SetRequestHeader("Content-Type", "application/json");
+
+        yield return request.SendWebRequest();
+
+        if (request.result != UnityWebRequest.Result.Success)
+        {
+            Debug.LogError("[APIManager] launch-resolve feilet: " + BuildTransportError(request));
+            yield break;
+        }
+
+        JSONNode root = SafeParseJsonNode(request.downloadHandler.text);
+        if (root == null)
+        {
+            Debug.LogError("[APIManager] launch-resolve returnerte ugyldig JSON.");
+            yield break;
+        }
+
+        bool ok = root["ok"] == null || root["ok"].AsBool;
+        if (!ok)
+        {
+            string code = FirstNonEmptyValue(root["error"]?["code"], "INVALID_LAUNCH_TOKEN");
+            string message = FirstNonEmptyValue(root["error"]?["message"], "Ukjent launch-resolve-feil.");
+            Debug.LogError($"[APIManager] launch-resolve avvist ({code}): {message}");
+            yield break;
+        }
+
+        JSONNode data = root["data"];
+        if (data == null || data.IsNull)
+        {
+            Debug.LogError("[APIManager] launch-resolve mangler data.");
+            yield break;
+        }
+
+        string resolvedApiBaseUrl = NormalizeAbsoluteHttpUrlForRuntime(
+            FirstNonEmptyValue(data["apiBaseUrl"], resolveBaseUrl),
+            resolveBaseUrl);
+        ConfigureBackendBaseUrl(resolvedApiBaseUrl);
+
+        string resolvedAccessToken = FirstNonEmptyValue(data["accessToken"], accessToken);
+        string resolvedHallId = FirstNonEmptyValue(data["hallId"], hallId);
+        string resolvedPlayerName = FirstNonEmptyValue(data["playerName"], playerName);
+        string resolvedWalletId = FirstNonEmptyValue(data["walletId"], walletId);
+
+        ConfigureAccessToken(resolvedAccessToken);
+        ConfigureHall(resolvedHallId);
+        ConfigurePlayer(resolvedPlayerName, resolvedWalletId);
+
+        if (logBootstrapEvents)
+        {
+            Debug.Log($"[APIManager] Launch bootstrap OK. hall={resolvedHallId}, player={resolvedPlayerName}, wallet={resolvedWalletId}");
+        }
+    }
+
+    private string ResolveLaunchApiBaseUrlFromAbsoluteUrl(string absoluteUrl)
+    {
+        if (TryExtractUrlParamFromAbsoluteUrl(absoluteUrl, "apiBaseUrl", out string apiBaseFromUrl) ||
+            TryExtractUrlParamFromAbsoluteUrl(absoluteUrl, "apiBase", out apiBaseFromUrl))
+        {
+            return NormalizeAbsoluteHttpUrlForRuntime(apiBaseFromUrl, launchResolveBaseUrl);
+        }
+
+        if (realtimeClient != null && !string.IsNullOrWhiteSpace(realtimeClient.BackendBaseUrl))
+        {
+            return NormalizeAbsoluteHttpUrlForRuntime(realtimeClient.BackendBaseUrl, launchResolveBaseUrl);
+        }
+
+        BingoAutoLogin login = autoLogin != null ? autoLogin : FindObjectOfType<BingoAutoLogin>();
+        if (login != null && !string.IsNullOrWhiteSpace(login.BackendBaseUrl))
+        {
+            return NormalizeAbsoluteHttpUrlForRuntime(login.BackendBaseUrl, launchResolveBaseUrl);
+        }
+
+        return NormalizeAbsoluteHttpUrlForRuntime(launchResolveBaseUrl, "https://bingosystem-3.onrender.com");
+    }
+
+    private static bool TryExtractLaunchTokenFromAbsoluteUrl(string absoluteUrl, out string launchToken)
+    {
+        if (TryExtractUrlParamFromAbsoluteUrl(absoluteUrl, "lt", out launchToken))
+        {
+            return !string.IsNullOrWhiteSpace(launchToken);
+        }
+
+        launchToken = string.Empty;
+        return false;
+    }
+
+    private static bool TryExtractUrlParamFromAbsoluteUrl(string absoluteUrl, string key, out string value)
+    {
+        value = string.Empty;
+        if (string.IsNullOrWhiteSpace(absoluteUrl) || string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        string trimmedKey = key.Trim();
+        if (Uri.TryCreate(absoluteUrl, UriKind.Absolute, out Uri uri))
+        {
+            string queryValue = ParseFormEncodedKey(uri.Query, trimmedKey);
+            if (!string.IsNullOrWhiteSpace(queryValue))
+            {
+                value = queryValue;
+                return true;
+            }
+        }
+
+        int hashIndex = absoluteUrl.IndexOf('#');
+        if (hashIndex >= 0 && hashIndex + 1 < absoluteUrl.Length)
+        {
+            string fragmentValue = ParseFormEncodedKey(absoluteUrl.Substring(hashIndex + 1), trimmedKey);
+            if (!string.IsNullOrWhiteSpace(fragmentValue))
+            {
+                value = fragmentValue;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string ParseFormEncodedKey(string rawSection, string key)
+    {
+        if (string.IsNullOrWhiteSpace(rawSection) || string.IsNullOrWhiteSpace(key))
+        {
+            return string.Empty;
+        }
+
+        string section = rawSection.Trim();
+        if (section.StartsWith("?") || section.StartsWith("#"))
+        {
+            section = section.Substring(1);
+        }
+
+        if (section.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        string[] pairs = section.Split('&');
+        for (int i = 0; i < pairs.Length; i++)
+        {
+            string pair = pairs[i];
+            if (string.IsNullOrWhiteSpace(pair))
+            {
+                continue;
+            }
+
+            int separatorIndex = pair.IndexOf('=');
+            string rawKey = separatorIndex >= 0 ? pair.Substring(0, separatorIndex) : pair;
+            if (!string.Equals(Uri.UnescapeDataString(rawKey), key, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string rawValue = separatorIndex >= 0 && separatorIndex + 1 < pair.Length
+                ? pair.Substring(separatorIndex + 1)
+                : string.Empty;
+            string decoded = Uri.UnescapeDataString(rawValue.Replace('+', ' ')).Trim();
+            return decoded;
+        }
+
+        return string.Empty;
+    }
+
+    private static string NormalizeAbsoluteHttpUrlForRuntime(string value, string fallback)
+    {
+        string candidate = FirstNonEmptyValue(value, fallback);
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return string.Empty;
+        }
+
+        if (!candidate.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !candidate.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            candidate = "https://" + candidate;
+        }
+
+        if (!Uri.TryCreate(candidate, UriKind.Absolute, out Uri uri))
+        {
+            return string.Empty;
+        }
+
+        string scheme = uri.Scheme.ToLowerInvariant();
+        if (scheme != "http" && scheme != "https")
+        {
+            return string.Empty;
+        }
+
+        return candidate.TrimEnd('/');
+    }
+
+    private static string FirstNonEmptyValue(params string[] values)
+    {
+        if (values == null)
+        {
+            return string.Empty;
+        }
+
+        for (int i = 0; i < values.Length; i++)
+        {
+            string candidate = values[i];
+            if (!string.IsNullOrWhiteSpace(candidate))
+            {
+                return candidate.Trim();
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static JSONNode SafeParseJsonNode(string jsonText)
+    {
+        if (string.IsNullOrWhiteSpace(jsonText))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JSON.Parse(jsonText);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string BuildTransportError(UnityWebRequest request)
+    {
+        string status = request.responseCode > 0 ? $"HTTP {request.responseCode}" : "No HTTP status";
+        string body = request.downloadHandler != null ? request.downloadHandler.text : string.Empty;
+        string error = string.IsNullOrWhiteSpace(request.error) ? "Ukjent transportfeil." : request.error;
+        if (!string.IsNullOrWhiteSpace(body))
+        {
+            return $"{status}: {error}. Body: {body}";
+        }
+
+        return $"{status}: {error}";
     }
 
     public void SetRoomCode(string newRoomCode)
@@ -690,6 +990,14 @@ public partial class APIManager : MonoBehaviour
 
         if (!ack.ok)
         {
+            if (string.Equals(ack.errorCode, "HALL_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+            {
+                Debug.LogWarning("[APIManager] hallId er ugyldig i backend. Nullstiller hallId og forsoker auto-login for oppfriskning.");
+                ConfigureHall(string.Empty);
+                TryStartAutoLogin("Ugyldig hallId ved room:create/join.");
+                return;
+            }
+
             if (RealtimeRoomStateUtils.IsPlayerAlreadyInRunningGame(ack))
             {
                 string existingRoomCode = RealtimeRoomStateUtils.ExtractRoomCodeFromAlreadyRunningMessage(ack.errorMessage);
@@ -944,22 +1252,24 @@ public partial class APIManager : MonoBehaviour
             if (isSlotDataFetched)
             {
                 int currentBet = GameManager.instance.currentBet;
+                NumberManager numberManager = NumberManager.instance;
+                NumberGenerator numberGenerator = GameManager.instance.numberGenerator;
 
                 foreach (SlotData slotData in slotDataList)
                 {
                     if (slotData.bet == currentBet)
                     {
                         int fetchNo = GameManager.instance.betlevel + 1;
+                        int resolvedPatternNumber = slotData.number;
 
                         if (fetchNo != 0)
                         {
                             fetchNo = slotData.number / fetchNo;
                             Debug.Log("Original Fetched number: " + slotData.number);
-                            NumberManager.instance.num = fetchNo;
+                            resolvedPatternNumber = fetchNo;
                         }
                         else
                         {
-                            NumberManager.instance.num = slotData.number;
                             Debug.Log("Fetched number: " + slotData.number);
                             Debug.Log("GameManager.instance.betlevel is zero. Division by zero is not allowed.");
                         }
@@ -967,14 +1277,28 @@ public partial class APIManager : MonoBehaviour
                         if (fetchNo > 150)
                         {
                             Debug.Log("Bonus Is Present :::");
-                            NumberManager.instance.num = 150;
+                            resolvedPatternNumber = 150;
 
                             int bonus = fetchNo - 150;
                             bonusAMT = bonus;
                             Debug.Log("Bonus Is Present ::: " + bonus);
                         }
 
-                        NumberManager.instance.DoAvailablePattern();
+                        if (numberManager != null)
+                        {
+                            numberManager.num = resolvedPatternNumber;
+                            numberManager.DoAvailablePattern();
+                        }
+                        else if (numberGenerator != null)
+                        {
+                            Debug.LogWarning("[APIManager] NumberManager mangler i scenen. Starter runde med NumberGenerator fallback.");
+                            numberGenerator.PlaceBallAsPerFetch();
+                        }
+                        else
+                        {
+                            Debug.LogError("[APIManager] Mangler både NumberManager og NumberGenerator. Kan ikke starte runde.");
+                        }
+
                         slotData.selected = true;
                     }
                     else

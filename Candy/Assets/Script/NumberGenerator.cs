@@ -73,6 +73,12 @@ public class NumberGenerator : MonoBehaviour
     private string realtimeBonusOpenedGameId = string.Empty;
     private string realtimeBonusOpenedClaimId = string.Empty;
     private readonly Dictionary<GameObject, TextMeshProUGUI> missingPatternLabelCache = new Dictionary<GameObject, TextMeshProUGUI>();
+    private bool hasLoggedMissingAutoSpinRemainingPlayText;
+    private bool hasLoggedMissingExtraBallCountText;
+    private bool hasLoggedMissingSlotController;
+    private bool hasLoggedMissingExtraBallObj;
+    private bool hasLoggedMissingNumberManager;
+    private bool hasLoggedMissingApiManager;
 
     private void OnEnable()
     {
@@ -97,14 +103,25 @@ public class NumberGenerator : MonoBehaviour
     // Start is called before the first frame update
     void Start()
     {
-
-        paylineManager = new PaylineManager(this);
-        extraBallObj.SetActive(false);
-        ResetRealtimeBonusFlow(closeBonusPanel: true);
-        autoSpinRemainingPlayText.text = "";
-        EventManager.isPlayOver = true;
-        totalSelectedPatterns.Clear();
-        totalSelectedPatterns = NumberManager.instance.currentPatternIndex;
+        try
+        {
+            paylineManager = new PaylineManager(this);
+            ResolveOptionalSceneReferences();
+            SetActiveIfChanged(extraBallObj, false);
+            ResetRealtimeBonusFlow(closeBonusPanel: true);
+            TrySetAutoSpinRemainingPlayText(string.Empty);
+            EventManager.isPlayOver = true;
+            InitializeSelectedPatterns();
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError($"[NumberGenerator] Start feilet, fortsetter med fallback-init. {ex}");
+            if (totalSelectedPatterns == null)
+            {
+                totalSelectedPatterns = new List<int>();
+            }
+            EventManager.isPlayOver = true;
+        }
 
     }
 
@@ -134,7 +151,7 @@ public class NumberGenerator : MonoBehaviour
     void CheckRemainingPlay()
     {
         EventManager.isPlayOver = true;
-        autoSpinRemainingPlayText.text = "";
+        TrySetAutoSpinRemainingPlayText(string.Empty);
         autoSpinCount -= 1;
         if (isShowTimer)
         {
@@ -158,7 +175,7 @@ public class NumberGenerator : MonoBehaviour
         {
             EventManager.isAutoSpinStart = false;
 
-            autoSpinRemainingPlayText.text = "";
+            TrySetAutoSpinRemainingPlayText(string.Empty);
 
             return;
         }
@@ -199,7 +216,20 @@ public class NumberGenerator : MonoBehaviour
         {
             allNumbers.Clear();
         }
-       APIManager.instance.CallApisForFetchData();
+        if (APIManager.instance != null)
+        {
+            APIManager.instance.CallApisForFetchData();
+        }
+        else
+        {
+            if (!hasLoggedMissingApiManager)
+            {
+                Debug.LogWarning("[NumberGenerator] APIManager.instance mangler i scenen. Starter fallback-runde uten API.");
+                hasLoggedMissingApiManager = true;
+            }
+
+            PlaceBallAsPerFetch();
+        }
     }
 
     public void PlaceBallAsPerFetch()
@@ -670,7 +700,7 @@ public class NumberGenerator : MonoBehaviour
         //if (isExtraBallDone) { return; }
         totalExtraBallCount = extraballCount;
 
-        extraBallCountText.text = extraballCount.ToString();
+        TrySetExtraBallCountText(extraballCount);
         EventManager.TapForExtraBall(true);
         //isExtraBallDone = true;
     }
@@ -688,8 +718,17 @@ public class NumberGenerator : MonoBehaviour
         }
 
         totalExtraBallCount--;
-        slotController.extraBallCount--;
-        extraBallCountText.text = totalExtraBallCount.ToString();
+        if (slotController != null)
+        {
+            slotController.extraBallCount--;
+        }
+        else if (!hasLoggedMissingSlotController)
+        {
+            Debug.LogWarning("[NumberGenerator] slotController mangler. Hopper over lokal extraBallCount decrement.");
+            hasLoggedMissingSlotController = true;
+        }
+
+        TrySetExtraBallCountText(totalExtraBallCount);
     }
     public void ShowFreeExtraBalls(int extraballCount)
     { 
@@ -1138,6 +1177,117 @@ public class NumberGenerator : MonoBehaviour
         return label;
     }
 
+    private void InitializeSelectedPatterns()
+    {
+        try
+        {
+            if (totalSelectedPatterns == null)
+            {
+                totalSelectedPatterns = new List<int>();
+            }
+
+            List<int> runtimePatternIndexes = NumberManager.instance != null
+                ? NumberManager.instance.currentPatternIndex
+                : null;
+
+            if (runtimePatternIndexes != null && runtimePatternIndexes.Count > 0)
+            {
+                totalSelectedPatterns.Clear();
+                totalSelectedPatterns.AddRange(runtimePatternIndexes);
+                return;
+            }
+
+            if (totalSelectedPatterns.Count == 0)
+            {
+                // Legacy Theme2 mangler ofte NumberManager-binding; behold en enkel default pattern.
+                totalSelectedPatterns.Add(1);
+            }
+
+            if (!hasLoggedMissingNumberManager)
+            {
+                if (NumberManager.instance == null)
+                {
+                    Debug.LogWarning("[NumberGenerator] NumberManager.instance mangler. Bruker serialized/fallback totalSelectedPatterns.");
+                }
+                else
+                {
+                    Debug.LogWarning("[NumberGenerator] currentPatternIndex er tom. Bruker serialized/fallback totalSelectedPatterns.");
+                }
+                hasLoggedMissingNumberManager = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (totalSelectedPatterns == null)
+            {
+                totalSelectedPatterns = new List<int>();
+            }
+
+            if (!hasLoggedMissingNumberManager)
+            {
+                Debug.LogWarning($"[NumberGenerator] Fallback i InitializeSelectedPatterns pga exception: {ex.Message}");
+                hasLoggedMissingNumberManager = true;
+            }
+        }
+    }
+
+    private void ResolveOptionalSceneReferences()
+    {
+        if (extraBallObj == null)
+        {
+            extraBallObj = GameObject.Find("ExtraBalls");
+            if (extraBallObj == null && !hasLoggedMissingExtraBallObj)
+            {
+                Debug.LogWarning("[NumberGenerator] extraBallObj er ikke satt og fant ikke GameObject 'ExtraBalls'.");
+                hasLoggedMissingExtraBallObj = true;
+            }
+        }
+
+        if (slotController == null)
+        {
+            SlotController[] slotControllers = UnityEngine.Object.FindObjectsOfType<SlotController>(true);
+            if (slotControllers != null && slotControllers.Length > 0)
+            {
+                slotController = slotControllers[0];
+            }
+            if (slotController == null && !hasLoggedMissingSlotController)
+            {
+                Debug.LogWarning("[NumberGenerator] slotController er ikke satt i scenen.");
+                hasLoggedMissingSlotController = true;
+            }
+        }
+    }
+
+    private void TrySetAutoSpinRemainingPlayText(string value)
+    {
+        if (autoSpinRemainingPlayText != null)
+        {
+            autoSpinRemainingPlayText.text = value;
+            return;
+        }
+
+        if (!hasLoggedMissingAutoSpinRemainingPlayText)
+        {
+            Debug.LogWarning("[NumberGenerator] autoSpinRemainingPlayText mangler. Hopper over tekstoppdatering.");
+            hasLoggedMissingAutoSpinRemainingPlayText = true;
+        }
+    }
+
+    private void TrySetExtraBallCountText(int value)
+    {
+        if (extraBallCountText != null)
+        {
+            extraBallCountText.text = value.ToString();
+            return;
+        }
+
+        if (!hasLoggedMissingExtraBallCountText)
+        {
+            Debug.LogWarning("[NumberGenerator] extraBallCountText mangler. Hopper over tekstoppdatering.");
+            hasLoggedMissingExtraBallCountText = true;
+        }
+    }
+
     private static void SetActiveIfChanged(GameObject target, bool active)
     {
         if (target != null && target.activeSelf != active)
@@ -1178,7 +1328,7 @@ public class NumberGenerator : MonoBehaviour
             remTime = 30 - (int)(getGameTime());
             if (remTime >= 1 && isShowTimer)
             {
-                autoSpinRemainingPlayText.text = remTime.ToString();
+                TrySetAutoSpinRemainingPlayText(remTime.ToString());
             }
         }
     }

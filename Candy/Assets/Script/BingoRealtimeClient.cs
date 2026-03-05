@@ -36,6 +36,7 @@ public class BingoRealtimeClient : MonoBehaviour
     public event Action<string> OnError;
 
     public bool IsReady => _namespaceConnected && IsSocketOpen;
+    public string BackendBaseUrl => backendBaseUrl;
 
     private ClientWebSocket _socket;
     private CancellationTokenSource _cts;
@@ -151,6 +152,23 @@ public class BingoRealtimeClient : MonoBehaviour
     public void SetAccessToken(string token)
     {
         accessToken = (token ?? string.Empty).Trim();
+    }
+
+    public void ConfigureBackendBaseUrl(string baseUrl)
+    {
+        string normalized = NormalizeBaseUrl(baseUrl);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        bool changed = !string.Equals(backendBaseUrl, normalized, StringComparison.OrdinalIgnoreCase);
+        backendBaseUrl = normalized;
+
+        if (changed && verboseLogging)
+        {
+            Debug.Log($"[BingoRealtime] Backend base URL satt til {backendBaseUrl}");
+        }
     }
 
     public void CreateRoom(string hallId, string playerName, string walletId, Action<SocketAck> onAck = null)
@@ -712,19 +730,7 @@ public class BingoRealtimeClient : MonoBehaviour
 
     private static Uri BuildSocketIoUri(string baseUrl)
     {
-        string normalized = (baseUrl ?? string.Empty).Trim();
-        if (normalized.Length == 0)
-        {
-            normalized = "http://localhost:4000";
-        }
-
-        if (!normalized.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
-            !normalized.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
-            !normalized.StartsWith("ws://", StringComparison.OrdinalIgnoreCase) &&
-            !normalized.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
-        {
-            normalized = "http://" + normalized;
-        }
+        string normalized = NormalizeBaseUrl(baseUrl);
 
         Uri baseUri = new(normalized);
         string scheme = baseUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ||
@@ -736,6 +742,25 @@ public class BingoRealtimeClient : MonoBehaviour
         string socketPath = "/socket.io/?EIO=4&transport=websocket";
 
         return new Uri($"{scheme}://{authority}{socketPath}");
+    }
+
+    private static string NormalizeBaseUrl(string baseUrl)
+    {
+        string normalized = (baseUrl ?? string.Empty).Trim();
+        if (normalized.Length == 0)
+        {
+            normalized = "https://bingosystem-3.onrender.com";
+        }
+
+        if (!normalized.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !normalized.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
+            !normalized.StartsWith("ws://", StringComparison.OrdinalIgnoreCase) &&
+            !normalized.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = "https://" + normalized;
+        }
+
+        return normalized.TrimEnd('/');
     }
 
     private void QueueError(string message)
