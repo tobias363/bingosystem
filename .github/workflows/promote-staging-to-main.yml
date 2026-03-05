@@ -19,15 +19,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check promotion token
+        id: token_check
+        env:
+          PROMOTE_TOKEN: ${{ secrets.REPO_PROMOTE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${PROMOTE_TOKEN}" ]]; then
+            echo "::warning::REPO_PROMOTE_TOKEN mangler. Hopper over auto-promotering til main."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
+        if: ${{ steps.token_check.outputs.available == 'true' }}
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Create or reuse staging -> main PR
+        if: ${{ steps.token_check.outputs.available == 'true' }}
         id: ensure_pr
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.REPO_PROMOTE_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -65,8 +80,9 @@ jobs:
           echo "number=${created_pr}" >> "$GITHUB_OUTPUT"
 
       - name: Enable auto-merge (squash)
+        if: ${{ steps.token_check.outputs.available == 'true' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.REPO_PROMOTE_TOKEN }}
         run: |
           set -euo pipefail
           pr_number="${{ steps.ensure_pr.outputs.number }}"

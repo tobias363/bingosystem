@@ -3,7 +3,7 @@ import cors from "cors";
 import express from "express";
 import http from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { URL, fileURLToPath } from "node:url";
 import { Server, type Socket } from "socket.io";
 import { createWalletAdapter } from "./adapters/createWalletAdapter.js";
 import { LocalBingoSystemAdapter } from "./adapters/LocalBingoSystemAdapter.js";
@@ -11,6 +11,7 @@ import { LocalKycAdapter } from "./adapters/LocalKycAdapter.js";
 import { assertTicketsPerPlayerWithinHallLimit } from "./game/compliance.js";
 import { BingoEngine, DomainError, toPublicError } from "./game/BingoEngine.js";
 import type { ClaimType, RoomSnapshot, RoomSummary } from "./game/types.js";
+import { CandyLaunchTokenStore } from "./launch/CandyLaunchTokenStore.js";
 import {
   ADMIN_ACCESS_POLICY,
   assertAdminPermission,
@@ -120,6 +121,15 @@ interface PersistCandySettingsOptions {
   effectiveFromMs?: number;
 }
 
+interface CandyLaunchSettings {
+  launchUrl?: string;
+  apiBaseUrl?: string;
+}
+
+interface NormalizeGameSettingsOptions {
+  requireCandyLaunchUrl?: boolean;
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
@@ -201,6 +211,10 @@ const bingoSelfExclusionMinMs = Math.max(
   365 * 24 * 60 * 60 * 1000,
   parsePositiveIntEnv(process.env.BINGO_SELF_EXCLUSION_MIN_MS, 365 * 24 * 60 * 60 * 1000)
 );
+const bingoMaxDrawsPerRound = Math.min(
+  75,
+  Math.max(1, parsePositiveIntEnv(process.env.BINGO_MAX_DRAWS_PER_ROUND, 30))
+);
 
 const isProductionRuntime = (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
 const minPlayersFloor = 1;
@@ -210,6 +224,10 @@ const requestedAutoDrawEnabled = parseBooleanEnv(process.env.AUTO_DRAW_ENABLED, 
 const allowAutoplayInProduction = parseBooleanEnv(process.env.BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION, true);
 const forceCandyAutoStart = true;
 const forceCandyAutoDraw = true;
+const enforceSingleCandyRoomPerHall = parseBooleanEnv(
+  process.env.CANDY_SINGLE_ACTIVE_ROOM_PER_HALL,
+  true
+);
 const autoplayAllowed = !isProductionRuntime || allowAutoplayInProduction;
 const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
   autoRoundStartEnabled: forceCandyAutoStart
@@ -244,6 +262,10 @@ const dailyReportJobIntervalMs = Math.max(
   60_000,
   parsePositiveIntEnv(process.env.DAILY_REPORT_JOB_INTERVAL_MS, 60 * 60 * 1000)
 );
+const candyLaunchTokenTtlMs = Math.max(
+  15_000,
+  parsePositiveIntEnv(process.env.CANDY_LAUNCH_TOKEN_TTL_SECONDS, 120) * 1000
+);
 
 if (isProductionRuntime && !autoplayAllowed && (requestedAutoRoundStartEnabled || requestedAutoDrawEnabled)) {
   console.warn(
@@ -258,7 +280,8 @@ const engine = new BingoEngine(new LocalBingoSystemAdapter(), walletAdapter, {
   monthlyLossLimit: bingoMonthlyLossLimit,
   playSessionLimitMs: bingoPlaySessionLimitMs,
   pauseDurationMs: bingoPauseDurationMs,
-  selfExclusionMinMs: bingoSelfExclusionMinMs
+  selfExclusionMinMs: bingoSelfExclusionMinMs,
+  maxDrawsPerRound: bingoMaxDrawsPerRound
 });
 
 const platformService = new PlatformService(walletAdapter, {
@@ -287,6 +310,9 @@ const swedbankPayService = new SwedbankPayService(walletAdapter, {
   cancelUrl: process.env.SWEDBANK_PAY_CANCEL_URL,
   termsOfServiceUrl: process.env.SWEDBANK_PAY_TERMS_URL,
   requestTimeoutMs: parsePositiveIntEnv(process.env.SWEDBANK_PAY_REQUEST_TIMEOUT_MS, 10000)
+});
+const candyLaunchTokenStore = new CandyLaunchTokenStore({
+  ttlMs: candyLaunchTokenTtlMs
 });
 
 function ackSuccess<T>(callback: (response: AckResponse<T>) => void, data: T): void {
@@ -413,9 +439,71 @@ function parseTicketsPerPlayerInput(value: unknown): number {
   return parsed;
 }
 
+function normalizeAbsoluteHttpUrl(rawValue: string, fieldName: string, errorCode: string): string {
+  const candidate = rawValue.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new DomainError(errorCode, `${fieldName} må være en gyldig http/https URL.`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new DomainError(errorCode, `${fieldName} må starte med http:// eller https://.`);
+  }
+
+  return parsed.toString();
+}
+
+function parseOptionalAbsoluteHttpUrl(
+  value: unknown,
+  fieldName: string,
+  errorCode: string
+): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new DomainError(errorCode, `${fieldName} må være tekst.`);
+  }
+  if (!value.trim()) {
+    return undefined;
+  }
+  return normalizeAbsoluteHttpUrl(value, fieldName, errorCode);
+}
+
+function readCandyLaunchSettings(
+  settings: Record<string, unknown>,
+  options: { requireLaunchUrl: boolean }
+): CandyLaunchSettings {
+  const launchUrl = parseOptionalAbsoluteHttpUrl(
+    settings.launchUrl,
+    "launchUrl",
+    "INVALID_CANDY_LAUNCH_URL"
+  );
+  const apiBaseUrl = parseOptionalAbsoluteHttpUrl(
+    settings.apiBaseUrl,
+    "apiBaseUrl",
+    "INVALID_CANDY_API_BASE_URL"
+  );
+
+  if (options.requireLaunchUrl && !launchUrl) {
+    throw new DomainError(
+      "INVALID_CANDY_LAUNCH_URL",
+      "Candy launchUrl må settes og være en gyldig http/https URL."
+    );
+  }
+
+  return {
+    launchUrl,
+    apiBaseUrl
+  };
+}
+
 function normalizeGameSettingsForUpdate(
   gameSlug: string,
-  settings: Record<string, unknown> | undefined
+  settings: Record<string, unknown> | undefined,
+  options: NormalizeGameSettingsOptions = {}
 ): Record<string, unknown> | undefined {
   if (!settings) {
     return undefined;
@@ -427,6 +515,20 @@ function normalizeGameSettingsForUpdate(
   }
 
   const nextSettings: Record<string, unknown> = { ...settings };
+  const launchSettings = readCandyLaunchSettings(nextSettings, {
+    requireLaunchUrl: options.requireCandyLaunchUrl === true
+  });
+  if (launchSettings.launchUrl) {
+    nextSettings.launchUrl = launchSettings.launchUrl;
+  } else {
+    delete nextSettings.launchUrl;
+  }
+  if (launchSettings.apiBaseUrl) {
+    nextSettings.apiBaseUrl = launchSettings.apiBaseUrl;
+  } else {
+    delete nextSettings.apiBaseUrl;
+  }
+
   const payoutRaw = nextSettings.payoutPercent;
 
   if (payoutRaw === undefined || payoutRaw === null || payoutRaw === "") {
@@ -678,6 +780,7 @@ function getCandyManiaAdminSettingsResponse(): Record<string, unknown> {
       forceCandyAutoDraw,
       minRoundIntervalMs: bingoMinRoundIntervalMs,
       minPlayersToStart: bingoMinPlayersToStart,
+      maxDrawsPerRound: bingoMaxDrawsPerRound,
       maxTicketsPerPlayer: 5,
       minPayoutPercent: 0,
       maxPayoutPercent: 100,
@@ -812,6 +915,52 @@ async function hydrateCandyManiaSettingsFromCatalog(): Promise<void> {
   } catch (error) {
     console.warn("[candy-mania] Klarte ikke laste scheduler settings fra game-catalog. Bruker env/default.", error);
   }
+}
+
+function readForwardedHeaderValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value[0] : "";
+  }
+  return typeof value === "string" ? value.split(",")[0].trim() : "";
+}
+
+function deriveRequestApiBaseUrl(req: express.Request): string {
+  const forwardedProto = readForwardedHeaderValue(req.headers["x-forwarded-proto"]);
+  const forwardedHost = readForwardedHeaderValue(req.headers["x-forwarded-host"]);
+  const protocolCandidate = (forwardedProto || req.protocol || "https").trim().toLowerCase();
+  const protocol = protocolCandidate === "http" || protocolCandidate === "https" ? protocolCandidate : "https";
+  const host = (forwardedHost || req.get("host") || "").trim();
+
+  if (!host) {
+    throw new DomainError("INVALID_CONFIG", "Kunne ikke utlede apiBaseUrl fra request.");
+  }
+
+  return normalizeAbsoluteHttpUrl(`${protocol}://${host}`, "apiBaseUrl", "INVALID_CANDY_API_BASE_URL");
+}
+
+async function resolveCandyLaunchHallId(inputHallId: unknown): Promise<string> {
+  if (typeof inputHallId === "string" && inputHallId.trim()) {
+    const hall = await platformService.requireActiveHall(inputHallId);
+    return hall.id;
+  }
+
+  const halls = await platformService.listHalls({ includeInactive: false });
+  if (halls.length === 0) {
+    throw new DomainError("HALL_NOT_FOUND", "Fant ingen aktiv hall for Candy-launch.");
+  }
+
+  return halls[0].id;
+}
+
+async function getCandyLaunchSettingsForRuntime(requireLaunchUrl = true): Promise<CandyLaunchSettings> {
+  const candyGame = await platformService.getGame("candy");
+  const settings = normalizeGameSettingsForUpdate("candy", candyGame.settings ?? {}, {
+    requireCandyLaunchUrl: requireLaunchUrl
+  });
+  if (!settings) {
+    throw new DomainError("INVALID_CANDY_LAUNCH_URL", "Candy settings mangler.");
+  }
+  return readCandyLaunchSettings(settings, { requireLaunchUrl });
 }
 
 function getAccessTokenFromRequest(req: express.Request): string {
@@ -993,6 +1142,61 @@ const lastAutoDrawAtByRoom = new Map<string, number>();
 const roomConfiguredEntryFeeByRoom = new Map<string, number>();
 const roomSchedulerLocks = new Set<string>();
 let schedulerTickInProgress = false;
+
+function compareCandyRoomPriority(a: RoomSummary, b: RoomSummary): number {
+  const runningScoreA = a.gameStatus === "RUNNING" ? 1 : 0;
+  const runningScoreB = b.gameStatus === "RUNNING" ? 1 : 0;
+  if (runningScoreA !== runningScoreB) {
+    return runningScoreB - runningScoreA;
+  }
+
+  if (a.playerCount !== b.playerCount) {
+    return b.playerCount - a.playerCount;
+  }
+
+  const createdAtA = Date.parse(a.createdAt);
+  const createdAtB = Date.parse(b.createdAt);
+  const normalizedCreatedAtA = Number.isFinite(createdAtA) ? createdAtA : Number.MAX_SAFE_INTEGER;
+  const normalizedCreatedAtB = Number.isFinite(createdAtB) ? createdAtB : Number.MAX_SAFE_INTEGER;
+  if (normalizedCreatedAtA !== normalizedCreatedAtB) {
+    return normalizedCreatedAtA - normalizedCreatedAtB;
+  }
+
+  return a.code.localeCompare(b.code);
+}
+
+function selectCanonicalCandyRoomSummariesByHall(summaries: RoomSummary[]): RoomSummary[] {
+  if (!enforceSingleCandyRoomPerHall) {
+    return summaries;
+  }
+
+  const canonicalByHall = new Map<string, RoomSummary>();
+  for (const summary of summaries) {
+    const existing = canonicalByHall.get(summary.hallId);
+    if (!existing || compareCandyRoomPriority(summary, existing) < 0) {
+      canonicalByHall.set(summary.hallId, summary);
+    }
+  }
+
+  return [...canonicalByHall.values()].sort((a, b) => a.code.localeCompare(b.code));
+}
+
+function getCanonicalCandyRoomForHall(hallId: string, summaries = engine.listRoomSummaries()): RoomSummary | null {
+  const hallSummaries = summaries.filter((summary) => summary.hallId === hallId);
+  if (hallSummaries.length === 0) {
+    return null;
+  }
+  hallSummaries.sort(compareCandyRoomPriority);
+  return hallSummaries[0];
+}
+
+function findPlayerInRoomByWallet(snapshot: RoomSnapshot, walletId: string): RoomSnapshot["players"][number] | null {
+  const normalizedWalletId = walletId.trim();
+  if (!normalizedWalletId) {
+    return null;
+  }
+  return snapshot.players.find((player) => player.walletId === normalizedWalletId) ?? null;
+}
 
 function getNextRoundBoundaryMs(nowMs: number): number {
   return (
@@ -1298,9 +1502,10 @@ async function runSchedulerTick(): Promise<void> {
     if (await applyPendingCandyManiaSettingsIfDue(now, summaries)) {
       summaries = engine.listRoomSummaries();
     }
-    cleanupSchedulerState(new Set(summaries.map((summary) => summary.code)));
+    const schedulerSummaries = selectCanonicalCandyRoomSummariesByHall(summaries);
+    cleanupSchedulerState(new Set(schedulerSummaries.map((summary) => summary.code)));
 
-    for (const summary of summaries) {
+    for (const summary of schedulerSummaries) {
       try {
         await processAutoStart(summary, now);
         await processAutoDraw(summary, now);
@@ -1512,6 +1717,52 @@ app.get("/api/games", async (req, res) => {
   }
 });
 
+app.post("/api/games/candy/launch-token", async (req, res) => {
+  try {
+    const accessToken = getAccessTokenFromRequest(req);
+    const user = await platformService.getUserFromAccessToken(accessToken);
+    platformService.assertUserEligibleForGameplay(user);
+    engine.assertWalletAllowedForGameplay(user.walletId);
+
+    const launchSettings = await getCandyLaunchSettingsForRuntime(true);
+    const hallId = await resolveCandyLaunchHallId(req.body?.hallId);
+    const apiBaseUrl = launchSettings.apiBaseUrl || deriveRequestApiBaseUrl(req);
+    const issued = candyLaunchTokenStore.issue({
+      accessToken,
+      hallId,
+      playerName: user.displayName,
+      walletId: user.walletId,
+      apiBaseUrl
+    });
+
+    apiSuccess(res, {
+      launchToken: issued.launchToken,
+      issuedAt: issued.issuedAt,
+      expiresAt: issued.expiresAt,
+      launchUrl: launchSettings.launchUrl
+    });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.post("/api/games/candy/launch-resolve", async (req, res) => {
+  try {
+    const launchToken = mustBeNonEmptyString(req.body?.launchToken, "launchToken");
+    const resolved = candyLaunchTokenStore.consume(launchToken);
+    if (!resolved) {
+      throw new DomainError(
+        "INVALID_LAUNCH_TOKEN",
+        "Launch-token er ugyldig eller utløpt. Start spillet på nytt fra portalen."
+      );
+    }
+
+    apiSuccess(res, resolved);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.get("/api/admin/games", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "GAME_CATALOG_READ");
@@ -1678,7 +1929,9 @@ app.put("/api/admin/games/:slug", async (req, res) => {
       route: typeof req.body?.route === "string" ? req.body.route : undefined,
       isEnabled: typeof req.body?.isEnabled === "boolean" ? req.body.isEnabled : undefined,
       sortOrder: Number.isFinite(req.body?.sortOrder) ? Number(req.body.sortOrder) : undefined,
-      settings: normalizeGameSettingsForUpdate(slug, rawSettings)
+      settings: normalizeGameSettingsForUpdate(slug, rawSettings, {
+        requireCandyLaunchUrl: normalizedSlug === "candy"
+      })
     }, {
       changedBy: {
         userId: adminUser.id,
@@ -2753,6 +3006,33 @@ io.on("connection", (socket: Socket) => {
   socket.on("room:create", async (payload: CreateRoomPayload, callback: (response: AckResponse<{ roomCode: string; playerId: string; snapshot: RoomSnapshot }>) => void) => {
     try {
       const identity = await resolveIdentityFromPayload(payload);
+      if (enforceSingleCandyRoomPerHall) {
+        const canonicalRoom = getCanonicalCandyRoomForHall(identity.hallId);
+        if (canonicalRoom) {
+          const canonicalSnapshot = engine.getRoomSnapshot(canonicalRoom.code);
+          const existingPlayer = findPlayerInRoomByWallet(canonicalSnapshot, identity.walletId);
+
+          let playerId = existingPlayer?.id ?? "";
+          if (existingPlayer) {
+            engine.attachPlayerSocket(canonicalRoom.code, existingPlayer.id, socket.id);
+          } else {
+            const joined = await engine.joinRoom({
+              roomCode: canonicalRoom.code,
+              hallId: identity.hallId,
+              playerName: identity.playerName,
+              walletId: identity.walletId,
+              socketId: socket.id
+            });
+            playerId = joined.playerId;
+          }
+
+          socket.join(canonicalRoom.code);
+          const snapshot = await emitRoomUpdate(canonicalRoom.code);
+          ackSuccess(callback, { roomCode: canonicalRoom.code, playerId, snapshot });
+          return;
+        }
+      }
+
       const { roomCode, playerId } = await engine.createRoom({
         playerName: identity.playerName,
         hallId: identity.hallId,
@@ -2771,6 +3051,26 @@ io.on("connection", (socket: Socket) => {
     try {
       const roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
       const identity = await resolveIdentityFromPayload(payload);
+      if (enforceSingleCandyRoomPerHall) {
+        const canonicalRoom = getCanonicalCandyRoomForHall(identity.hallId);
+        if (canonicalRoom && canonicalRoom.code !== roomCode) {
+          throw new DomainError(
+            "SINGLE_ROOM_ONLY",
+            `Kun ett Candy-rom er aktivt per hall. Bruk rom ${canonicalRoom.code}.`
+          );
+        }
+      }
+
+      const roomSnapshot = engine.getRoomSnapshot(roomCode);
+      const existingPlayer = findPlayerInRoomByWallet(roomSnapshot, identity.walletId);
+      if (existingPlayer) {
+        engine.attachPlayerSocket(roomCode, existingPlayer.id, socket.id);
+        socket.join(roomCode);
+        const snapshot = await emitRoomUpdate(roomCode);
+        ackSuccess(callback, { roomCode, playerId: existingPlayer.id, snapshot });
+        return;
+      }
+
       const { playerId } = await engine.joinRoom({
         roomCode,
         hallId: identity.hallId,
@@ -2964,10 +3264,10 @@ hydrateCandyManiaSettingsFromCatalog()
     server.listen(PORT, () => {
       console.log(`Bingo backend kjører på http://localhost:${PORT}`);
       console.log(
-        `[compliance] minRoundInterval=${bingoMinRoundIntervalMs}ms minPlayersToStart=${bingoMinPlayersToStart} dailyLoss=${bingoDailyLossLimit} monthlyLoss=${bingoMonthlyLossLimit} playSessionLimit=${bingoPlaySessionLimitMs}ms pauseDuration=${bingoPauseDurationMs}ms selfExclusionMin=${bingoSelfExclusionMinMs}ms`
+        `[compliance] minRoundInterval=${bingoMinRoundIntervalMs}ms minPlayersToStart=${bingoMinPlayersToStart} maxDrawsPerRound=${bingoMaxDrawsPerRound} dailyLoss=${bingoDailyLossLimit} monthlyLoss=${bingoMonthlyLossLimit} playSessionLimit=${bingoPlaySessionLimitMs}ms pauseDuration=${bingoPauseDurationMs}ms selfExclusionMin=${bingoSelfExclusionMinMs}ms`
       );
       console.log(
-        `[scheduler] autoStart=${runtimeCandyManiaSettings.autoRoundStartEnabled} autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} forceAutoStart=${forceCandyAutoStart} forceAutoDraw=${forceCandyAutoDraw} autoAllowedInProd=${allowAutoplayInProduction} interval=${runtimeCandyManiaSettings.autoRoundStartIntervalMs}ms minPlayers=${runtimeCandyManiaSettings.autoRoundMinPlayers} ticketsPerPlayer=${runtimeCandyManiaSettings.autoRoundTicketsPerPlayer} entryFee=${runtimeCandyManiaSettings.autoRoundEntryFee} payoutPercent=${runtimeCandyManiaSettings.payoutPercent}`
+        `[scheduler] autoStart=${runtimeCandyManiaSettings.autoRoundStartEnabled} autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} forceAutoStart=${forceCandyAutoStart} forceAutoDraw=${forceCandyAutoDraw} autoAllowedInProd=${allowAutoplayInProduction} singleRoomPerHall=${enforceSingleCandyRoomPerHall} interval=${runtimeCandyManiaSettings.autoRoundStartIntervalMs}ms minPlayers=${runtimeCandyManiaSettings.autoRoundMinPlayers} ticketsPerPlayer=${runtimeCandyManiaSettings.autoRoundTicketsPerPlayer} entryFee=${runtimeCandyManiaSettings.autoRoundEntryFee} payoutPercent=${runtimeCandyManiaSettings.payoutPercent}`
       );
       console.log(
         `[scheduler] autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} interval=${runtimeCandyManiaSettings.autoDrawIntervalMs}ms tick=${schedulerTickMs}ms`
