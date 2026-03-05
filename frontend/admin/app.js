@@ -1,4 +1,5 @@
 const ADMIN_TOKEN_KEY = "bingo_admin_access_token";
+const CANDY_GAME_SLUG = "candy";
 
 const elements = {
   loginCard: document.getElementById("loginCard"),
@@ -16,12 +17,20 @@ const elements = {
   description: document.getElementById("description"),
   sortOrder: document.getElementById("sortOrder"),
   enabled: document.getElementById("enabled"),
-  payoutPercentField: document.getElementById("payoutPercentField"),
-  payoutPercent: document.getElementById("payoutPercent"),
   settingsJson: document.getElementById("settingsJson"),
   saveBtn: document.getElementById("saveBtn"),
   reloadBtn: document.getElementById("reloadBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
+
+  candyGameTitle: document.getElementById("candyGameTitle"),
+  candyGameRoute: document.getElementById("candyGameRoute"),
+  candyGameDescription: document.getElementById("candyGameDescription"),
+  candyGameSortOrder: document.getElementById("candyGameSortOrder"),
+  candyGameEnabled: document.getElementById("candyGameEnabled"),
+  candyGameSettingsJson: document.getElementById("candyGameSettingsJson"),
+  candyLoadGameBtn: document.getElementById("candyLoadGameBtn"),
+  candySaveGameBtn: document.getElementById("candySaveGameBtn"),
+  candyGameStatus: document.getElementById("candyGameStatus"),
 
   hallEditorSelect: document.getElementById("hallEditorSelect"),
   hallSlug: document.getElementById("hallSlug"),
@@ -266,37 +275,16 @@ function getSelectedGame() {
   return state.games.find((game) => game.slug === slug) || null;
 }
 
+function getCandyGame() {
+  return state.games.find((game) => game.slug === CANDY_GAME_SLUG) || null;
+}
+
 function getSettingsObject(game) {
   const settings = game?.settings;
   if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
     return {};
   }
   return settings;
-}
-
-function parseCandyPayoutPercent(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
-    throw new Error("Candy utbetaling (%) må være et tall mellom 0 og 100.");
-  }
-  return Math.round(parsed * 100) / 100;
-}
-
-function renderCandyPayoutField(game) {
-  const isCandy = game?.slug === "candy";
-  if (!elements.payoutPercentField || !elements.payoutPercent) {
-    return;
-  }
-
-  elements.payoutPercentField.classList.toggle("hidden", !isCandy);
-  if (!isCandy) {
-    elements.payoutPercent.value = "";
-    return;
-  }
-
-  const settings = getSettingsObject(game);
-  const payout = Number(settings.payoutPercent);
-  elements.payoutPercent.value = Number.isFinite(payout) ? String(payout) : "0";
 }
 
 function renderSelectedGame() {
@@ -307,7 +295,6 @@ function renderSelectedGame() {
     elements.description.value = "";
     elements.sortOrder.value = "0";
     elements.enabled.value = "false";
-    renderCandyPayoutField(null);
     elements.settingsJson.value = "{}";
     return;
   }
@@ -318,20 +305,54 @@ function renderSelectedGame() {
   elements.description.value = selected.description || "";
   elements.sortOrder.value = String(selected.sortOrder ?? 0);
   elements.enabled.value = selected.isEnabled ? "true" : "false";
-  renderCandyPayoutField(selected);
   elements.settingsJson.value = JSON.stringify(settings, null, 2);
+}
+
+function applyCandyGameToForm(game) {
+  if (!game) {
+    elements.candyGameTitle.value = "";
+    elements.candyGameRoute.value = "";
+    elements.candyGameDescription.value = "";
+    elements.candyGameSortOrder.value = "0";
+    elements.candyGameEnabled.value = "false";
+    elements.candyGameSettingsJson.value = "{}";
+    return;
+  }
+
+  elements.candyGameTitle.value = game.title || "";
+  elements.candyGameRoute.value = game.route || "";
+  elements.candyGameDescription.value = game.description || "";
+  elements.candyGameSortOrder.value = String(game.sortOrder ?? 0);
+  elements.candyGameEnabled.value = game.isEnabled ? "true" : "false";
+  elements.candyGameSettingsJson.value = JSON.stringify(getSettingsObject(game), null, 2);
+}
+
+function formatCandyGame(game) {
+  if (!game) {
+    return "Fant ikke Candy i spillkatalogen.";
+  }
+
+  return [
+    `slug: ${game.slug}`,
+    `title: ${game.title || "-"}`,
+    `route: ${game.route || "-"}`,
+    `enabled: ${game.isEnabled ? "Ja" : "Nei"}`,
+    `sortOrder: ${game.sortOrder ?? "-"}`,
+    `updatedAt: ${game.updatedAt || "-"}`
+  ].join("\n");
 }
 
 function renderGameOptions() {
   const previous = elements.gameSelect.value;
+  const nonCandyGames = state.games.filter((game) => game.slug !== CANDY_GAME_SLUG);
   setSelectOptions(
     elements.gameSelect,
-    state.games.map((game) => ({
+    nonCandyGames.map((game) => ({
       value: game.slug,
       label: `${game.title} (${game.slug})`
     })),
     previous,
-    "Ingen spill"
+    "Ingen spill (Candy styres i egen seksjon)"
   );
 
   const previousConfigGame = elements.configGameSelect.value;
@@ -346,6 +367,7 @@ function renderGameOptions() {
   );
 
   renderSelectedGame();
+  applyCandyGameToForm(getCandyGame());
   renderSelectedHallGameConfig();
 }
 
@@ -354,6 +376,8 @@ async function loadGames() {
   state.games = Array.isArray(games) ? games : [];
   renderGameOptions();
   setStatus(elements.adminStatus, `Lastet ${state.games.length} spill.`, "success");
+  const candyGame = getCandyGame();
+  setStatus(elements.candyGameStatus, formatCandyGame(candyGame), candyGame ? "success" : "error");
 }
 
 function getSelectedHallEditor() {
@@ -1306,7 +1330,7 @@ async function handleEndRoom() {
   }
 }
 
-function buildGameUpdatePayload(selectedGame) {
+function buildGameUpdatePayload() {
   let parsedSettings;
   try {
     parsedSettings = JSON.parse(elements.settingsJson.value || "{}");
@@ -1316,14 +1340,6 @@ function buildGameUpdatePayload(selectedGame) {
 
   if (!parsedSettings || typeof parsedSettings !== "object" || Array.isArray(parsedSettings)) {
     throw new Error("Settings må være et JSON-objekt (ikke liste).");
-  }
-
-  if (selectedGame?.slug === "candy") {
-    const payoutPercent = parseCandyPayoutPercent(elements.payoutPercent.value || "0");
-    parsedSettings = {
-      ...parsedSettings,
-      payoutPercent
-    };
   }
 
   const sortOrder = Number.parseInt(elements.sortOrder.value || "0", 10);
@@ -1341,6 +1357,67 @@ function buildGameUpdatePayload(selectedGame) {
   };
 }
 
+function buildCandyGameUpdatePayload() {
+  let parsedSettings;
+  try {
+    parsedSettings = JSON.parse(elements.candyGameSettingsJson.value || "{}");
+  } catch (_error) {
+    throw new Error("Candy Settings JSON er ugyldig JSON.");
+  }
+
+  if (!parsedSettings || typeof parsedSettings !== "object" || Array.isArray(parsedSettings)) {
+    throw new Error("Candy settings må være et JSON-objekt (ikke liste).");
+  }
+
+  const sortOrder = Number.parseInt(elements.candyGameSortOrder.value || "0", 10);
+  if (!Number.isFinite(sortOrder)) {
+    throw new Error("Candy sortering må være et tall.");
+  }
+
+  return {
+    title: elements.candyGameTitle.value.trim(),
+    route: elements.candyGameRoute.value.trim(),
+    description: elements.candyGameDescription.value.trim(),
+    sortOrder,
+    isEnabled: elements.candyGameEnabled.value === "true",
+    settings: parsedSettings
+  };
+}
+
+async function handleSaveCandyGame() {
+  const candy = getCandyGame();
+  if (!candy) {
+    setStatus(elements.candyGameStatus, "Fant ikke Candy i spillkatalogen.", "error");
+    return;
+  }
+
+  let payload;
+  try {
+    payload = buildCandyGameUpdatePayload();
+  } catch (error) {
+    setStatus(elements.candyGameStatus, error.message || "Ugyldig Candy-input.", "error");
+    return;
+  }
+
+  setLoading(elements.candySaveGameBtn, true, "Lagrer Candy...", "Lagre Candy-spill");
+  setStatus(elements.candyGameStatus, "Lagrer Candy-spill...");
+  try {
+    const updatedGame = await apiRequest(`/api/admin/games/${encodeURIComponent(CANDY_GAME_SLUG)}`, {
+      method: "PUT",
+      auth: true,
+      body: payload
+    });
+    state.games = state.games.map((game) => (game.slug === updatedGame.slug ? updatedGame : game));
+    renderGameOptions();
+    applyCandyGameToForm(updatedGame);
+    setStatus(elements.candyGameStatus, formatCandyGame(updatedGame), "success");
+  } catch (error) {
+    setStatus(elements.candyGameStatus, error.message || "Lagring av Candy-spill feilet.", "error");
+  } finally {
+    setLoading(elements.candySaveGameBtn, false, "Lagrer Candy...", "Lagre Candy-spill");
+  }
+}
+
 async function handleSaveGame() {
   const selected = getSelectedGame();
   if (!selected) {
@@ -1350,7 +1427,7 @@ async function handleSaveGame() {
 
   let payload;
   try {
-    payload = buildGameUpdatePayload(selected);
+    payload = buildGameUpdatePayload();
   } catch (error) {
     setStatus(elements.adminStatus, error.message || "Ugyldig input.", "error");
     return;
@@ -1683,7 +1760,8 @@ async function handleLogout() {
     setStatus(elements.hallStatus, "Ingen haller lastet.");
     setStatus(elements.terminalStatus, "Ingen terminaler lastet.");
     setStatus(elements.configStatus, "Ingen konfig lastet.");
-    setStatus(elements.candySettingsStatus, "Ingen Candy Mania-innstillinger lastet.");
+    setStatus(elements.candyGameStatus, "Ingen Candy-spilldata lastet.");
+    setStatus(elements.candySettingsStatus, "Ingen Candy-driftinnstillinger lastet.");
     setStatus(elements.complianceStatus, "Ingen compliance-data hentet.");
     setStatus(elements.extraDrawDenialsStatus, "Ingen denial-data hentet.");
     setStatus(elements.prizePolicyStatus, "Ingen policy lastet.");
@@ -1739,6 +1817,23 @@ async function bootstrap() {
       .catch((error) => {
         setStatus(elements.adminStatus, error.message || "Kunne ikke laste spill.", "error");
       });
+  });
+
+  elements.candyLoadGameBtn.addEventListener("click", () => {
+    loadGames()
+      .then(() => {
+        const candyGame = getCandyGame();
+        setStatus(elements.candyGameStatus, formatCandyGame(candyGame), candyGame ? "success" : "error");
+      })
+      .catch((error) => {
+        setStatus(elements.candyGameStatus, error.message || "Kunne ikke laste Candy-spill.", "error");
+      });
+  });
+
+  elements.candySaveGameBtn.addEventListener("click", () => {
+    handleSaveCandyGame().catch((error) => {
+      setStatus(elements.candyGameStatus, error.message || "Kunne ikke lagre Candy-spill.", "error");
+    });
   });
 
   elements.hallEditorSelect.addEventListener("change", () => {
@@ -1835,7 +1930,7 @@ async function bootstrap() {
     loadCandyManiaSettings().catch((error) => {
       setStatus(
         elements.candySettingsStatus,
-        error.message || "Kunne ikke hente Candy Mania-innstillinger.",
+        error.message || "Kunne ikke hente Candy-driftinnstillinger.",
         "error"
       );
     });
@@ -1845,7 +1940,7 @@ async function bootstrap() {
     handleSaveCandyManiaSettings().catch((error) => {
       setStatus(
         elements.candySettingsStatus,
-        error.message || "Kunne ikke lagre Candy Mania-innstillinger.",
+        error.message || "Kunne ikke lagre Candy-driftinnstillinger.",
         "error"
       );
     });

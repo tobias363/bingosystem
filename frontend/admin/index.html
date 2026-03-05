@@ -246,11 +246,11 @@
           <aside class="card admin-sidebar">
             <h2>Meny</h2>
             <nav class="admin-nav">
-              <a href="#section-games">Spillkatalog</a>
+              <a href="#section-candy-mania">Candy (spill + drift)</a>
+              <a href="#section-games">Spillkatalog (andre spill)</a>
               <a href="#section-halls">Haller</a>
               <a href="#section-terminals">Terminaler</a>
               <a href="#section-hall-rules">Hall-spillregler</a>
-              <a href="#section-candy-mania">Candy Mania</a>
               <a href="#section-wallet-compliance">Wallet Compliance</a>
               <a href="#section-prize-policy">Prize Policy & Extra Prize</a>
               <a href="#section-room-control">Romkontroll</a>
@@ -260,9 +260,10 @@
           <div class="admin-content">
         <article id="section-games" class="card">
           <div class="section-header">
-            <h2>Spillkatalog</h2>
+            <h2>Spillkatalog (andre spill)</h2>
             <p id="adminIdentity" class="muted"></p>
           </div>
+          <p class="muted">Candy styres i egen seksjon: <strong>Candy (spill + drift)</strong>.</p>
           <div class="grid">
             <div class="field full">
               <label for="gameSelect">Velg spill</label>
@@ -290,10 +291,6 @@
                 <option value="true">Ja</option>
                 <option value="false">Nei</option>
               </select>
-            </div>
-            <div id="payoutPercentField" class="field hidden">
-              <label for="payoutPercent">Candy utbetaling (%)</label>
-              <input id="payoutPercent" type="number" min="0" max="100" step="0.01" />
             </div>
             <div class="field full">
               <label for="settingsJson">Settings JSON</label>
@@ -422,7 +419,46 @@
         </article>
 
         <article id="section-candy-mania" class="card">
-          <h2>Candy Mania</h2>
+          <h2>Candy (spill + drift)</h2>
+          <p class="muted">
+            Alt som gjelder Candy styres her: spillkatalog-felt, scheduler, auto-trekk og RTP.
+          </p>
+          <h3>Candy spillkatalog</h3>
+          <div class="grid">
+            <div class="field">
+              <label for="candyGameTitle">Tittel</label>
+              <input id="candyGameTitle" />
+            </div>
+            <div class="field">
+              <label for="candyGameRoute">Route</label>
+              <input id="candyGameRoute" />
+            </div>
+            <div class="field full">
+              <label for="candyGameDescription">Beskrivelse</label>
+              <textarea id="candyGameDescription"></textarea>
+            </div>
+            <div class="field">
+              <label for="candyGameSortOrder">Sortering</label>
+              <input id="candyGameSortOrder" type="number" />
+            </div>
+            <div class="field">
+              <label for="candyGameEnabled">Aktivert</label>
+              <select id="candyGameEnabled">
+                <option value="true">Ja</option>
+                <option value="false">Nei</option>
+              </select>
+            </div>
+            <div class="field full">
+              <label for="candyGameSettingsJson">Candy settings JSON</label>
+              <textarea id="candyGameSettingsJson"></textarea>
+            </div>
+          </div>
+          <div class="toolbar">
+            <button id="candyLoadGameBtn" class="secondary">Last Candy-spill</button>
+            <button id="candySaveGameBtn">Lagre Candy-spill</button>
+          </div>
+          <pre id="candyGameStatus" class="status">Ingen Candy-spilldata lastet.</pre>
+          <h3>Candy drift og RTP</h3>
           <p class="muted">
             Backend-styring for auto-trekning og realtime-runder. Endringer lagres i Candy settings og brukes uten redeploy.
           </p>
@@ -476,9 +512,9 @@
           </div>
           <div class="toolbar">
             <button id="candyLoadSettingsBtn" class="secondary">Last fra backend</button>
-            <button id="candySaveSettingsBtn">Lagre Candy Mania</button>
+            <button id="candySaveSettingsBtn">Lagre Candy-drift</button>
           </div>
-          <pre id="candySettingsStatus" class="status">Ingen Candy Mania-innstillinger lastet.</pre>
+          <pre id="candySettingsStatus" class="status">Ingen Candy-driftinnstillinger lastet.</pre>
         </article>
 
         <article id="section-wallet-compliance" class="card">
