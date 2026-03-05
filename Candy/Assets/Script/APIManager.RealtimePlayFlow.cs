@@ -60,6 +60,43 @@ public partial class APIManager
         realtimeClient.RequestRoomState(activeRoomCode, HandlePlayRoomStateAck);
     }
 
+    public void StartRealtimeRoundNow()
+    {
+        if (!useRealtimeBackend)
+        {
+            return;
+        }
+
+        BindRealtimeClient();
+        if (realtimeClient == null)
+        {
+            return;
+        }
+
+        SyncRealtimeEntryFeeWithCurrentBet();
+        PushRealtimeRoomConfiguration();
+
+        if (!realtimeClient.IsReady)
+        {
+            realtimeClient.Connect();
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            JoinOrCreateRoom();
+            return;
+        }
+
+        if (!IsActivePlayerHost())
+        {
+            Debug.LogWarning("[APIManager] Start naa krever host/admin i aktivt rom.");
+            return;
+        }
+
+        StartRealtimeGameFromPlayButton();
+    }
+
     private void RequestRealtimeStateForScheduledPlay()
     {
         if (!scheduledModeManualStartFallback)

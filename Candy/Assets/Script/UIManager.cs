@@ -42,6 +42,25 @@ public class UIManager : MonoBehaviour
         label.text = IsRealtimeMode() ? "Plasser innsats" : "Play";
     }
 
+    private void ApplyAutoPlayButtonLabel()
+    {
+        if (autoPlayBtn == null)
+        {
+            return;
+        }
+
+        TMP_Text label = autoPlayBtn.GetComponentInChildren<TMP_Text>(true);
+        if (label == null)
+        {
+            return;
+        }
+
+        if (IsRealtimeMode())
+        {
+            label.text = "Start nå";
+        }
+    }
+
     private bool IsProductionAutoPlayBlocked()
     {
         return !Application.isEditor && !Debug.isDebugBuild;
@@ -60,6 +79,21 @@ public class UIManager : MonoBehaviour
         }
 
         playBtn.interactable = true;
+    }
+
+    private void EnsureRealtimeStartNowButtonVisible()
+    {
+        if (autoPlayBtn == null)
+        {
+            return;
+        }
+
+        if (!autoPlayBtn.gameObject.activeSelf)
+        {
+            autoPlayBtn.gameObject.SetActive(true);
+        }
+
+        autoPlayBtn.interactable = true;
     }
 
     private static bool IsValidIndex<T>(List<T> list, int index)
@@ -100,9 +134,14 @@ public class UIManager : MonoBehaviour
         }
 
         ApplyPlayButtonLabel();
+        ApplyAutoPlayButtonLabel();
         ResetAutoSpinHighlights();
 
-        if (autoPlayBtn != null && IsProductionAutoPlayBlocked())
+        if (IsRealtimeMode())
+        {
+            EnsureRealtimeStartNowButtonVisible();
+        }
+        else if (autoPlayBtn != null && IsProductionAutoPlayBlocked())
         {
             autoPlayBtn.interactable = false;
         }
@@ -150,6 +189,12 @@ public class UIManager : MonoBehaviour
 
     public void AutoSpin()
     {
+        if (IsRealtimeMode())
+        {
+            StartNow();
+            return;
+        }
+
         if (settingsPanel != null)
         {
             settingsPanel.SetActive(false);
@@ -189,6 +234,21 @@ public class UIManager : MonoBehaviour
         {
             settingsPanel.SetActive(true);
         }
+    }
+
+    public void StartNow()
+    {
+        if (!IsRealtimeMode())
+        {
+            return;
+        }
+
+        if (settingsPanel != null)
+        {
+            settingsPanel.SetActive(false);
+        }
+
+        APIManager.instance?.StartRealtimeRoundNow();
     }
 
     public void SelectSettingsOption(int index)
