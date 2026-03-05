@@ -16,9 +16,12 @@ public class TopperManager : MonoBehaviour
     [SerializeField] private Color missingPrizeBlinkColor = new Color(1f, 0.92f, 0.3f, 1f);
     [SerializeField] private float missingPatternBlinkInterval = 0.2f;
     [SerializeField] private bool useSolidMissingHighlight = true;
+    [SerializeField] private bool showMissingNumberInPrizeLabel = true;
+    [SerializeField] private string missingNumberLabelPrefix = "Mangler";
 
     private readonly Dictionary<KeyValuePair<int, int>, Coroutine> missingPatternBlinkRoutines = new Dictionary<KeyValuePair<int, int>, Coroutine>();
     private readonly List<Color> defaultPrizeColors = new List<Color>();
+    private readonly List<string> defaultPrizeTexts = new List<string>();
     private Sprite solidHighlightSprite;
 
     private void OnEnable()
@@ -27,6 +30,7 @@ public class TopperManager : MonoBehaviour
         EventManager.OnMatchedPattern += ShowMatchedPattern;
         EventManager.OnMissingPattern += ShowMissingPattern;
         CacheDefaultPrizeColors();
+        CacheDefaultPrizeTexts();
     }
 
     private void OnDisable()
@@ -94,12 +98,13 @@ public class TopperManager : MonoBehaviour
             if (patternIndex < prizes.Count)
             {
                 prizes[patternIndex].color = GetDefaultPrizeColor(patternIndex);
+                prizes[patternIndex].text = GetDefaultPrizeText(patternIndex);
             }
         }
     }
 
 
-    private void ShowMissingPattern(int patternIndex, int colIndex, bool active)
+    private void ShowMissingPattern(int patternIndex, int colIndex, bool active, int missingNumber)
     {
         patternIndex = GetPatternIndex(patternIndex);
 
@@ -112,7 +117,7 @@ public class TopperManager : MonoBehaviour
 
         if (active)
         {
-            StartMissingPatternBlink(key, missingCell);
+            StartMissingPatternBlink(key, missingCell, missingNumber);
         }
         else
         {
@@ -120,8 +125,10 @@ public class TopperManager : MonoBehaviour
         }
     }
 
-    private void StartMissingPatternBlink(KeyValuePair<int, int> key, GameObject missingCell)
+    private void StartMissingPatternBlink(KeyValuePair<int, int> key, GameObject missingCell, int missingNumber)
     {
+        UpdatePatternMissingNumberLabel(key.Key, missingNumber);
+
         if (missingPatternBlinkRoutines.ContainsKey(key))
         {
             return;
@@ -150,6 +157,7 @@ public class TopperManager : MonoBehaviour
         if (key.Key < prizes.Count && !HasActiveBlinkForPattern(key.Key))
         {
             prizes[key.Key].color = GetDefaultPrizeColor(key.Key);
+            prizes[key.Key].text = GetDefaultPrizeText(key.Key);
         }
 
         NumberGenerator.isPrizeMissedByOneCard = missingPatternBlinkRoutines.Count > 0;
@@ -255,6 +263,16 @@ public class TopperManager : MonoBehaviour
         }
     }
 
+    private void CacheDefaultPrizeTexts()
+    {
+        defaultPrizeTexts.Clear();
+
+        for (int i = 0; i < prizes.Count; i++)
+        {
+            defaultPrizeTexts.Add(prizes[i] != null ? prizes[i].text : string.Empty);
+        }
+    }
+
     private Color GetDefaultPrizeColor(int index)
     {
         if (index >= 0 && index < defaultPrizeColors.Count)
@@ -263,6 +281,35 @@ public class TopperManager : MonoBehaviour
         }
 
         return Color.white;
+    }
+
+    private string GetDefaultPrizeText(int index)
+    {
+        if (index >= 0 && index < defaultPrizeTexts.Count)
+        {
+            return defaultPrizeTexts[index];
+        }
+
+        return string.Empty;
+    }
+
+    private void UpdatePatternMissingNumberLabel(int patternIndex, int missingNumber)
+    {
+        if (!showMissingNumberInPrizeLabel || missingNumber <= 0)
+        {
+            return;
+        }
+
+        if (patternIndex < 0 || patternIndex >= prizes.Count || prizes[patternIndex] == null)
+        {
+            return;
+        }
+
+        string baseLabel = GetDefaultPrizeText(patternIndex);
+        string prefix = string.IsNullOrWhiteSpace(missingNumberLabelPrefix)
+            ? "Mangler"
+            : missingNumberLabelPrefix.Trim();
+        prizes[patternIndex].text = $"{baseLabel} ({prefix} {missingNumber})";
     }
 
 
@@ -292,6 +339,7 @@ public class TopperManager : MonoBehaviour
         for (int i = 0; i < prizes.Count; i++)
         {
             prizes[i].color = GetDefaultPrizeColor(i);
+            prizes[i].text = GetDefaultPrizeText(i);
         }
         NumberGenerator.isPrizeMissedByOneCard = false;
     }
