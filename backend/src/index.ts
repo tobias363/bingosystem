@@ -920,7 +920,7 @@ function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<
   const millisUntilNextStart = nextStartAtMs === null ? null : Math.max(0, nextStartAtMs - nowMs);
   const canStartNow =
     runtimeCandyManiaSettings.autoRoundStartEnabled &&
-    !snapshot.currentGame &&
+    snapshot.currentGame?.status !== "RUNNING" &&
     snapshot.players.length >= runtimeCandyManiaSettings.autoRoundMinPlayers &&
     millisUntilNextStart !== null &&
     millisUntilNextStart <= Math.max(1000, schedulerTickMs * 2);
