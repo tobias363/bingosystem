@@ -27,7 +27,8 @@ public class BallManager : MonoBehaviour
     [SerializeField]
     private List<int> ballIndexList = new List<int>();
     [SerializeField] private bool verboseDrawLogging = false;
-    [SerializeField] [Range(0.1f, 1f)] private float testingGlassAnimationSpeedMultiplier = 0.5f;
+    [SerializeField] private bool overrideGlassAnimationSpeed = true;
+    [SerializeField] [Range(0.1f, 1f)] private float glassAnimationSpeedMultiplier = 0.5f;
     private int[] extraBallPosArr = new int[5] { -140, -70, 140, 70, 0 };
     private List<GameObject> instantiatedExtraBall = new List<GameObject>();
     private readonly List<Vector3> realtimeBallLayoutPositions = new List<Vector3>();
@@ -39,7 +40,7 @@ public class BallManager : MonoBehaviour
     private Coroutine ballAnimationRoutine;
     private Coroutine extraBallBatchRoutine;
     private TextMeshProUGUI cachedBigBallText;
-    private Animator cachedGlassAnimator;
+    private readonly List<Animator> cachedGlassAnimators = new List<Animator>();
     private float appliedGlassAnimatorSpeed = -1f;
 
     private void OnEnable()
@@ -70,19 +71,18 @@ public class BallManager : MonoBehaviour
 
     private void Start()
     {
-        // Ensure speed sync after all Awake calls (GameManager sets testing Time.timeScale in Awake).
+        // Ensure speed sync after all Awake calls and scene activation.
         ApplyGlassAnimationSpeed(force: true);
     }
 
     private void Update()
     {
-        // Keep glass animation speed in sync if pause/play or test timescale changes at runtime.
         ApplyGlassAnimationSpeed();
     }
 
     private void CacheGlassAnimator()
     {
-        if (cachedGlassAnimator != null)
+        if (cachedGlassAnimators.Count > 0)
         {
             return;
         }
@@ -92,19 +92,31 @@ public class BallManager : MonoBehaviour
             return;
         }
 
-        cachedGlassAnimator = ballOutMachineAnimParent.GetComponent<Animator>();
-    }
-
-    private void ApplyGlassAnimationSpeed(bool force = false)
-    {
-        if (cachedGlassAnimator == null)
+        Animator[] animators = ballOutMachineAnimParent.GetComponentsInChildren<Animator>(true);
+        if (animators == null || animators.Length == 0)
         {
             return;
         }
 
-        bool isTestingSpeedContext = Time.timeScale > 1f && (Application.isEditor || Debug.isDebugBuild);
-        float desiredSpeed = isTestingSpeedContext
-            ? Mathf.Clamp(testingGlassAnimationSpeedMultiplier, 0.1f, 1f)
+        for (int i = 0; i < animators.Length; i++)
+        {
+            Animator animator = animators[i];
+            if (animator != null)
+            {
+                cachedGlassAnimators.Add(animator);
+            }
+        }
+    }
+
+    private void ApplyGlassAnimationSpeed(bool force = false)
+    {
+        if (cachedGlassAnimators.Count == 0)
+        {
+            return;
+        }
+
+        float desiredSpeed = overrideGlassAnimationSpeed
+            ? Mathf.Clamp(glassAnimationSpeedMultiplier, 0.1f, 1f)
             : 1f;
 
         if (!force && Mathf.Abs(appliedGlassAnimatorSpeed - desiredSpeed) < 0.001f)
@@ -112,7 +124,15 @@ public class BallManager : MonoBehaviour
             return;
         }
 
-        cachedGlassAnimator.speed = desiredSpeed;
+        for (int i = 0; i < cachedGlassAnimators.Count; i++)
+        {
+            Animator animator = cachedGlassAnimators[i];
+            if (animator != null)
+            {
+                animator.speed = desiredSpeed;
+            }
+        }
+
         appliedGlassAnimatorSpeed = desiredSpeed;
     }
 
