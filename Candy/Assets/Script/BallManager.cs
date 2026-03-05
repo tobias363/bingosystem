@@ -27,7 +27,6 @@ public class BallManager : MonoBehaviour
     [SerializeField]
     private List<int> ballIndexList = new List<int>();
     [SerializeField] private bool verboseDrawLogging = false;
-    [SerializeField] private bool overrideGlassAnimationSpeed = true;
     [SerializeField] [Range(0.1f, 1f)] private float glassAnimationSpeedMultiplier = 0.59f;
     private int[] extraBallPosArr = new int[5] { -140, -70, 140, 70, 0 };
     private List<GameObject> instantiatedExtraBall = new List<GameObject>();
@@ -115,9 +114,10 @@ public class BallManager : MonoBehaviour
             return;
         }
 
-        float desiredSpeed = overrideGlassAnimationSpeed
-            ? Mathf.Clamp(glassAnimationSpeedMultiplier, 0.1f, 1f)
-            : 1f;
+        // Keep a stable visual speed even when global testing Time.timeScale is > 1.
+        float visualSpeed = Mathf.Clamp(glassAnimationSpeedMultiplier, 0.1f, 1f);
+        float timeScaleCompensation = Mathf.Max(0.01f, Time.timeScale);
+        float desiredSpeed = visualSpeed / timeScaleCompensation;
 
         if (!force && Mathf.Abs(appliedGlassAnimatorSpeed - desiredSpeed) < 0.001f)
         {
