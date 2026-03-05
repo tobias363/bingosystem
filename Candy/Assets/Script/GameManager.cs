@@ -3,8 +3,6 @@ using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
 using UnityEngine.UI;
-using System.Linq;
-using System;
 
 public class GameManager : MonoBehaviour
 {
@@ -33,6 +31,8 @@ public class GameManager : MonoBehaviour
     public int currentBet;
     public static int winAmt;
     private List<int> cardWin = new List<int>();
+    private int roundBonusTotal = 0;
+    private int creditedRoundWinTotal = 0;
     public int betlevel;
     public List<int> winList;
     private ThemeMathEngine themeMathEngine;
@@ -61,9 +61,44 @@ public class GameManager : MonoBehaviour
     {
         SetTotalMoney(1000);
         SetCurrentBets(betlevel);
-        for (int i = 0; i < displayCardWinPoints.Count; i++)
+        EnsureRoundStateCollections();
+        ResetRoundWinState();
+    }
+
+    private void EnsureRoundStateCollections()
+    {
+        if (winList == null)
+        {
+            winList = new List<int>();
+        }
+
+        if (cardWin == null)
+        {
+            cardWin = new List<int>();
+        }
+
+        while (cardWin.Count < displayCardWinPoints.Count)
         {
             cardWin.Add(0);
+        }
+    }
+
+    private void ResetRoundWinState()
+    {
+        EnsureRoundStateCollections();
+
+        winAmt = 0;
+        roundBonusTotal = 0;
+        creditedRoundWinTotal = 0;
+        winList.Clear();
+        if (winAmtText != null)
+        {
+            winAmtText.text = "0";
+        }
+
+        for (int i = 0; i < displayCardWinPoints.Count; i++)
+        {
+            cardWin[i] = 0;
             displayCardWinPoints[i].text = "WIN - 0";
         }
     }
@@ -76,14 +111,7 @@ public class GameManager : MonoBehaviour
     private void OnPlay()
     {
         SetTotalMoney(-currentBet);
-        winAmt = 0;
-        if(winList.Count > 0) { winList.Clear(); }
-        winAmtText.text = "0";
-        for (int i = 0; i < displayCardWinPoints.Count; i++)
-        {
-            cardWin[i] = 0;
-            displayCardWinPoints[i].text = "WIN - 0";
-        }
+        ResetRoundWinState();
     }
     public void BetUp()
     {
@@ -158,47 +186,106 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        if (winList == null)
-        {
-            winList = new List<int>();
-        }
-
-        winList.Add(bonusAmount);
-        int totalWin = winList.Sum(x => Convert.ToInt32(x));
-        winAmt = totalWin;
-        winAmtText.text = totalWin.ToString();
-        SetTotalMoney(bonusAmount);
+        roundBonusTotal += bonusAmount;
+        RefreshRoundWinningTotals();
     }
-    
+
     void ShowWinAmt(int cardNo, int index)
     {
-        
-        if (index < 5) //other
+        EnsureRoundStateCollections();
+        if (cardNo < 0 || cardNo >= cardWin.Count)
         {
-            winAmt = currentWinPoints[index];
-        }
-        else if (index >= 5 && index <= 7) //For 2L
-        {
-            winAmt = currentWinPoints[5];
-        }
-        else if (index > 7 && index < 13)
-        {
-            winAmt = currentWinPoints[index - 2];
-        }
-        else if (index >= 13) //For 1L
-        {
-            winAmt = currentWinPoints[currentWinPoints.Count - 1]; 
+            return;
         }
 
-        cardWin[cardNo] += winAmt;
+        int resolvedWin = ResolvePatternWinAmount(index);
+        if (resolvedWin <= cardWin[cardNo])
+        {
+            return;
+        }
 
-        displayCardWinPoints[cardNo].text = "WIN - "+ cardWin[cardNo].ToString() ;
+        cardWin[cardNo] = resolvedWin;
+        if (cardNo < displayCardWinPoints.Count && displayCardWinPoints[cardNo] != null)
+        {
+            displayCardWinPoints[cardNo].text = "WIN - " + cardWin[cardNo];
+        }
 
-        winList.Add(winAmt);
-        winAmtText.text = winList.Sum(x => Convert.ToInt32(x)).ToString();
-        SetTotalMoney(winList.Sum(x => Convert.ToInt32(x)));
+        RefreshRoundWinningTotals();
+    }
 
-       
+    private int ResolvePatternWinAmount(int patternIndex)
+    {
+        if (currentWinPoints == null || currentWinPoints.Count == 0)
+        {
+            return 0;
+        }
+
+        if (patternIndex < 5)
+        {
+            return currentWinPoints[Mathf.Clamp(patternIndex, 0, currentWinPoints.Count - 1)];
+        }
+
+        if (patternIndex >= 5 && patternIndex <= 7)
+        {
+            return currentWinPoints[Mathf.Clamp(5, 0, currentWinPoints.Count - 1)];
+        }
+
+        if (patternIndex > 7 && patternIndex < 13)
+        {
+            return currentWinPoints[Mathf.Clamp(patternIndex - 2, 0, currentWinPoints.Count - 1)];
+        }
+
+        return currentWinPoints[currentWinPoints.Count - 1];
+    }
+
+    private void RefreshRoundWinningTotals()
+    {
+        EnsureRoundStateCollections();
+
+        int cardTotal = 0;
+        for (int i = 0; i < cardWin.Count; i++)
+        {
+            cardTotal += Mathf.Max(0, cardWin[i]);
+        }
+
+        int totalRoundWinning = Mathf.Max(0, cardTotal + roundBonusTotal);
+        winAmt = totalRoundWinning;
+        if (winAmtText != null)
+        {
+            winAmtText.text = totalRoundWinning.ToString();
+        }
+
+        winList.Clear();
+        winList.Add(totalRoundWinning);
+
+        int delta = totalRoundWinning - creditedRoundWinTotal;
+        if (delta > 0)
+        {
+            SetTotalMoney(delta);
+            creditedRoundWinTotal = totalRoundWinning;
+        }
+    }
+
+    public void SetRoundWinningTotalFromRealtime(int totalRoundWinning)
+    {
+        totalRoundWinning = Mathf.Max(0, totalRoundWinning);
+        roundBonusTotal = 0;
+        winAmt = totalRoundWinning;
+        if (winAmtText != null)
+        {
+            winAmtText.text = totalRoundWinning.ToString();
+        }
+
+        EnsureRoundStateCollections();
+        winList.Clear();
+        winList.Add(totalRoundWinning);
+
+        int delta = totalRoundWinning - creditedRoundWinTotal;
+        if (delta > 0)
+        {
+            SetTotalMoney(delta);
+        }
+        creditedRoundWinTotal = totalRoundWinning;
     }
 
     private void ApplyTestingSpeedIfEnabled()

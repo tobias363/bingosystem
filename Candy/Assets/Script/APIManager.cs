@@ -45,6 +45,7 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] [Min(0)] private int realtimeBonusPatternIndex = 1;
     [SerializeField] [Range(1, 5)] private int realtimeTicketsPerPlayer = 4;
     [SerializeField] private int realtimeEntryFee = 0;
+    [SerializeField] [Min(1)] private int realtimeClientMaxDrawsPerRound = 30;
     [SerializeField] [Min(1)] private int realtimeDefaultBonusAmount = 150;
     [SerializeField] private BallManager ballManager;
     [SerializeField] private string roomCode = "";

@@ -65,6 +65,7 @@ public partial class APIManager
             processedDrawCount = 0;
             currentTicketPage = 0;
             activeTicketSets.Clear();
+            GameManager.instance?.SetRoundWinningTotalFromRealtime(0);
             RefreshRealtimeCountdownLabel(forceRefresh: true);
             return;
         }
@@ -85,6 +86,7 @@ public partial class APIManager
             processedDrawCount = 0;
             currentTicketPage = 0;
             activeTicketSets.Clear();
+            GameManager.instance?.SetRoundWinningTotalFromRealtime(0);
             ResetRealtimeRoundVisuals();
             NumberGenerator nextRoundGenerator = GameManager.instance?.numberGenerator;
             if (nextRoundGenerator != null)
@@ -98,6 +100,7 @@ public partial class APIManager
 
         ApplyMyTicketToCards(currentGame);
         ApplyDrawnNumbers(currentGame);
+        RefreshRealtimeRoundWinning(currentGame);
         RefreshRealtimeWinningPatternVisuals(currentGame);
         RefreshRealtimeCountdownLabel(forceRefresh: true);
     }
@@ -251,8 +254,11 @@ public partial class APIManager
             return;
         }
 
-        int previousProcessedDrawCount = Mathf.Max(0, processedDrawCount);
-        for (int drawIndex = 0; drawIndex < drawnNumbers.Count; drawIndex++)
+        int drawCountCap = Mathf.Max(1, realtimeClientMaxDrawsPerRound);
+        int cappedDrawCount = Mathf.Min(drawnNumbers.Count, drawCountCap);
+        int previousProcessedDrawCount = Mathf.Clamp(processedDrawCount, 0, drawCountCap);
+
+        for (int drawIndex = 0; drawIndex < cappedDrawCount; drawIndex++)
         {
             int drawnNumber = drawnNumbers[drawIndex].AsInt;
             RealtimeTicketSetUtils.MarkDrawnNumberOnCards(generator, drawnNumber);
@@ -275,7 +281,106 @@ public partial class APIManager
             }
         }
 
-        processedDrawCount = drawnNumbers.Count;
+        if (drawnNumbers.Count > cappedDrawCount)
+        {
+            Debug.LogWarning(
+                $"[APIManager] Mottok {drawnNumbers.Count} trekk i snapshot, men klient-cap er {drawCountCap}. " +
+                "Ekstra trekk ignoreres i UI.");
+        }
+
+        processedDrawCount = cappedDrawCount;
+    }
+
+    private void RefreshRealtimeRoundWinning(JSONNode currentGame)
+    {
+        GameManager manager = GameManager.instance;
+        if (manager == null)
+        {
+            return;
+        }
+
+        if (currentGame == null || currentGame.IsNull || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            manager.SetRoundWinningTotalFromRealtime(0);
+            return;
+        }
+
+        JSONNode claims = currentGame["claims"];
+        if (claims == null || claims.IsNull || !claims.IsArray)
+        {
+            manager.SetRoundWinningTotalFromRealtime(0);
+            return;
+        }
+
+        int resolvedRoundWinning = 0;
+        for (int i = 0; i < claims.Count; i++)
+        {
+            JSONNode claim = claims[i];
+            if (claim == null || claim.IsNull || !claim["valid"].AsBool)
+            {
+                continue;
+            }
+
+            string claimPlayerId = claim["playerId"];
+            if (!string.Equals(claimPlayerId?.Trim(), activePlayerId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (TryResolveClaimPayoutAmount(claim, out int claimPayout))
+            {
+                resolvedRoundWinning += claimPayout;
+            }
+        }
+
+        manager.SetRoundWinningTotalFromRealtime(resolvedRoundWinning);
+    }
+
+    private bool TryResolveClaimPayoutAmount(JSONNode claimNode, out int payoutAmount)
+    {
+        payoutAmount = 0;
+        if (claimNode == null || claimNode.IsNull)
+        {
+            return false;
+        }
+
+        if (TryParsePositiveAmount(claimNode["payoutAmount"], out payoutAmount))
+        {
+            return true;
+        }
+
+        if (TryParsePositiveAmount(claimNode["amount"], out payoutAmount))
+        {
+            return true;
+        }
+
+        if (TryParsePositiveAmount(claimNode["payout"], out payoutAmount))
+        {
+            return true;
+        }
+
+        JSONNode payload = claimNode["payload"];
+        if (payload == null || payload.IsNull)
+        {
+            return false;
+        }
+
+        if (TryParsePositiveAmount(payload["payoutAmount"], out payoutAmount))
+        {
+            return true;
+        }
+
+        if (TryParsePositiveAmount(payload["amount"], out payoutAmount))
+        {
+            return true;
+        }
+
+        if (TryParsePositiveAmount(payload["payout"], out payoutAmount))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private void RefreshRealtimeWinningPatternVisuals(JSONNode currentGame)

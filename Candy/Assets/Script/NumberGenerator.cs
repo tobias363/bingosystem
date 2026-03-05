@@ -59,9 +59,11 @@ public class NumberGenerator : MonoBehaviour
     public UIManager uiManager;
 
     public bool isInitialApiCalled;
-     [SerializeField]
+    [SerializeField]
     int extraballMatchingNo;
     [SerializeField] private bool verboseRuntimeLogs = false;
+    [SerializeField] [Min(1)] private int roundDrawCap = 30;
+    [SerializeField] private bool allowExtraBallsAfterRoundCap = false;
     int randomSkipIndex;
     float startingGameTime;
     DateTime startingGameDate;
@@ -753,6 +755,11 @@ public class NumberGenerator : MonoBehaviour
 
     public void CheckSelectedNumb(int num)
     {
+        if (generatedNO == null || num < 0 || num >= generatedNO.Count)
+        {
+            return;
+        }
+
         int drawnNumber = generatedNO[num];
         for (int i = 0; i < totalActiveCard; i++)
         {
@@ -765,9 +772,11 @@ public class NumberGenerator : MonoBehaviour
             }
         }
 
-        if (num == 29)
+        int capIndex = Mathf.Max(0, roundDrawCap - 1);
+        if (num == capIndex)
         {
-            if (isPrizeMissedByOneCard)
+            bool canShowExtraBalls = allowExtraBallsAfterRoundCap && isPrizeMissedByOneCard;
+            if (canShowExtraBalls)
             {
                 //Invoke(nameof(ShowExtraBalls), 1);
                 Invoke(nameof(StartExtraBallScreen), 2);
