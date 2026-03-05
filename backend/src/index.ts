@@ -50,6 +50,10 @@ interface StartGamePayload extends RoomActionPayload {
   ticketsPerPlayer?: number;
 }
 
+interface ConfigureRoomPayload extends RoomActionPayload {
+  entryFee?: number;
+}
+
 interface EndGamePayload extends RoomActionPayload {
   reason?: string;
 }
@@ -69,6 +73,22 @@ interface RoomStatePayload extends AuthenticatedSocketPayload {
 interface ExtraDrawPayload extends RoomActionPayload {
   requestedCount?: number;
   packageId?: string;
+}
+
+interface CandyManiaSchedulerSettings {
+  autoRoundStartEnabled: boolean;
+  autoRoundStartIntervalMs: number;
+  autoRoundMinPlayers: number;
+  autoRoundTicketsPerPlayer: number;
+  autoRoundEntryFee: number;
+  payoutPercent: number;
+  autoDrawEnabled: boolean;
+  autoDrawIntervalMs: number;
+}
+
+interface PendingCandyManiaSettingsUpdate {
+  effectiveFromMs: number;
+  settings: CandyManiaSchedulerSettings;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -154,27 +174,40 @@ const bingoSelfExclusionMinMs = Math.max(
 );
 
 const isProductionRuntime = (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
-const bingoMinPlayersToStart = isProductionRuntime
-  ? Math.max(2, parsePositiveIntEnv(process.env.BINGO_MIN_PLAYERS_TO_START, 2))
-  : Math.max(1, parsePositiveIntEnv(process.env.BINGO_MIN_PLAYERS_TO_START, 2));
+const allowSinglePlayerInProduction = parseBooleanEnv(
+  process.env.BINGO_ALLOW_SINGLE_PLAYER_IN_PRODUCTION,
+  false
+);
+const minPlayersFloor = isProductionRuntime ? (allowSinglePlayerInProduction ? 1 : 2) : 1;
+const requestedMinPlayersToStart = parsePositiveIntEnv(process.env.BINGO_MIN_PLAYERS_TO_START, 1);
+const bingoMinPlayersToStart = Math.max(minPlayersFloor, requestedMinPlayersToStart);
 const requestedAutoRoundStartEnabled = parseBooleanEnv(process.env.AUTO_ROUND_START_ENABLED, true);
 const requestedAutoDrawEnabled = parseBooleanEnv(process.env.AUTO_DRAW_ENABLED, true);
-const autoRoundStartEnabled = isProductionRuntime ? false : requestedAutoRoundStartEnabled;
-const autoRoundStartIntervalMs = Math.max(
-  bingoMinRoundIntervalMs,
-  parsePositiveIntEnv(process.env.AUTO_ROUND_START_INTERVAL_MS, bingoMinRoundIntervalMs)
-);
-const autoRoundEntryFee = parseNonNegativeNumberEnv(process.env.AUTO_ROUND_ENTRY_FEE, 0);
-const autoRoundMinPlayers = Math.max(
-  bingoMinPlayersToStart,
-  parsePositiveIntEnv(process.env.AUTO_ROUND_MIN_PLAYERS, bingoMinPlayersToStart)
-);
-const autoRoundTicketsPerPlayer = Math.min(
-  5,
-  Math.max(1, parsePositiveIntEnv(process.env.AUTO_ROUND_TICKETS_PER_PLAYER, 4))
-);
-const autoDrawEnabled = isProductionRuntime ? false : requestedAutoDrawEnabled;
-const autoDrawIntervalMs = parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 1200);
+const allowAutoplayInProduction = parseBooleanEnv(process.env.BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION, false);
+const autoplayAllowed = !isProductionRuntime || allowAutoplayInProduction;
+const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
+  autoRoundStartEnabled: autoplayAllowed ? requestedAutoRoundStartEnabled : false,
+  autoRoundStartIntervalMs: Math.max(
+    bingoMinRoundIntervalMs,
+    parsePositiveIntEnv(process.env.AUTO_ROUND_START_INTERVAL_MS, 3 * 60 * 1000)
+  ),
+  autoRoundEntryFee: parseNonNegativeNumberEnv(process.env.AUTO_ROUND_ENTRY_FEE, 0),
+  autoRoundMinPlayers: Math.max(
+    bingoMinPlayersToStart,
+    parsePositiveIntEnv(process.env.AUTO_ROUND_MIN_PLAYERS, bingoMinPlayersToStart)
+  ),
+  autoRoundTicketsPerPlayer: Math.min(
+    5,
+    Math.max(1, parsePositiveIntEnv(process.env.AUTO_ROUND_TICKETS_PER_PLAYER, 4))
+  ),
+  payoutPercent: Math.round(
+    Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 100))) * 100
+  ) / 100,
+  autoDrawEnabled: autoplayAllowed ? requestedAutoDrawEnabled : false,
+  autoDrawIntervalMs: parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 1200)
+};
+let candyManiaSettingsEffectiveFromMs = Date.now();
+let pendingCandyManiaSettingsUpdate: PendingCandyManiaSettingsUpdate | null = null;
 const schedulerTickMs = parsePositiveIntEnv(process.env.AUTO_ROUND_SCHEDULER_TICK_MS, 250);
 const dailyReportJobEnabled = parseBooleanEnv(process.env.DAILY_REPORT_JOB_ENABLED, true);
 const dailyReportJobIntervalMs = Math.max(
@@ -182,8 +215,15 @@ const dailyReportJobIntervalMs = Math.max(
   parsePositiveIntEnv(process.env.DAILY_REPORT_JOB_INTERVAL_MS, 60 * 60 * 1000)
 );
 
-if (isProductionRuntime && (requestedAutoRoundStartEnabled || requestedAutoDrawEnabled)) {
-  console.warn("[scheduler] Autoplay er deaktivert i production (AUTO_ROUND_START_ENABLED/AUTO_DRAW_ENABLED ignoreres).");
+if (isProductionRuntime && !autoplayAllowed && (requestedAutoRoundStartEnabled || requestedAutoDrawEnabled)) {
+  console.warn(
+    "[scheduler] Autoplay er deaktivert i production (sett BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION=true for aa tillate AUTO_ROUND_START_ENABLED/AUTO_DRAW_ENABLED)."
+  );
+}
+if (isProductionRuntime && minPlayersFloor === 2 && requestedMinPlayersToStart < 2) {
+  console.warn(
+    "[compliance] BINGO_MIN_PLAYERS_TO_START<2 ble overstyrt i production (sett BINGO_ALLOW_SINGLE_PLAYER_IN_PRODUCTION=true for aa tillate 1 spiller)."
+  );
 }
 
 const engine = new BingoEngine(new LocalBingoSystemAdapter(), walletAdapter, {
@@ -377,6 +417,272 @@ function normalizeGameSettingsForUpdate(
   return nextSettings;
 }
 
+function parseOptionalBooleanInput(value: unknown, fieldName: string): boolean | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  throw new DomainError("INVALID_INPUT", `${fieldName} må være true/false.`);
+}
+
+function parseOptionalIsoTimestampMs(value: unknown, fieldName: string): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new DomainError("INVALID_INPUT", `${fieldName} må være en ISO-8601 dato/tid.`);
+  }
+  const parsed = Date.parse(value.trim());
+  if (!Number.isFinite(parsed)) {
+    throw new DomainError("INVALID_INPUT", `${fieldName} må være en ISO-8601 dato/tid.`);
+  }
+  return parsed;
+}
+
+function parseCandyManiaSettingsPatch(value: unknown): Partial<CandyManiaSchedulerSettings> {
+  if (value === undefined || value === null) {
+    return {};
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new DomainError("INVALID_INPUT", "Payload må være et objekt.");
+  }
+
+  const payload = value as Record<string, unknown>;
+  const patch: Partial<CandyManiaSchedulerSettings> = {};
+
+  const autoRoundStartEnabled = parseOptionalBooleanInput(payload.autoRoundStartEnabled, "autoRoundStartEnabled");
+  if (autoRoundStartEnabled !== undefined) {
+    patch.autoRoundStartEnabled = autoRoundStartEnabled;
+  }
+
+  const autoRoundStartIntervalMs = parseOptionalPositiveInteger(
+    payload.autoRoundStartIntervalMs,
+    "autoRoundStartIntervalMs"
+  );
+  if (autoRoundStartIntervalMs !== undefined) {
+    patch.autoRoundStartIntervalMs = autoRoundStartIntervalMs;
+  }
+
+  const autoRoundMinPlayers = parseOptionalPositiveInteger(payload.autoRoundMinPlayers, "autoRoundMinPlayers");
+  if (autoRoundMinPlayers !== undefined) {
+    patch.autoRoundMinPlayers = autoRoundMinPlayers;
+  }
+
+  const autoRoundTicketsPerPlayer = parseOptionalPositiveInteger(
+    payload.autoRoundTicketsPerPlayer,
+    "autoRoundTicketsPerPlayer"
+  );
+  if (autoRoundTicketsPerPlayer !== undefined) {
+    patch.autoRoundTicketsPerPlayer = autoRoundTicketsPerPlayer;
+  }
+
+  const autoRoundEntryFee = parseOptionalNonNegativeNumber(payload.autoRoundEntryFee, "autoRoundEntryFee");
+  if (autoRoundEntryFee !== undefined) {
+    patch.autoRoundEntryFee = autoRoundEntryFee;
+  }
+
+  const payoutPercent = parseOptionalNonNegativeNumber(payload.payoutPercent, "payoutPercent");
+  if (payoutPercent !== undefined) {
+    if (payoutPercent > 100) {
+      throw new DomainError("INVALID_INPUT", "payoutPercent må være mellom 0 og 100.");
+    }
+    patch.payoutPercent = payoutPercent;
+  }
+
+  const autoDrawEnabled = parseOptionalBooleanInput(payload.autoDrawEnabled, "autoDrawEnabled");
+  if (autoDrawEnabled !== undefined) {
+    patch.autoDrawEnabled = autoDrawEnabled;
+  }
+
+  const autoDrawIntervalMs = parseOptionalPositiveInteger(payload.autoDrawIntervalMs, "autoDrawIntervalMs");
+  if (autoDrawIntervalMs !== undefined) {
+    patch.autoDrawIntervalMs = autoDrawIntervalMs;
+  }
+
+  return patch;
+}
+
+function normalizeCandyManiaSchedulerSettings(
+  current: CandyManiaSchedulerSettings,
+  patch: Partial<CandyManiaSchedulerSettings>
+): CandyManiaSchedulerSettings {
+  const next: CandyManiaSchedulerSettings = {
+    autoRoundStartEnabled:
+      patch.autoRoundStartEnabled !== undefined
+        ? patch.autoRoundStartEnabled
+        : current.autoRoundStartEnabled,
+    autoRoundStartIntervalMs:
+      patch.autoRoundStartIntervalMs !== undefined
+        ? patch.autoRoundStartIntervalMs
+        : current.autoRoundStartIntervalMs,
+    autoRoundMinPlayers:
+      patch.autoRoundMinPlayers !== undefined ? patch.autoRoundMinPlayers : current.autoRoundMinPlayers,
+    autoRoundTicketsPerPlayer:
+      patch.autoRoundTicketsPerPlayer !== undefined
+        ? patch.autoRoundTicketsPerPlayer
+        : current.autoRoundTicketsPerPlayer,
+    autoRoundEntryFee:
+      patch.autoRoundEntryFee !== undefined ? patch.autoRoundEntryFee : current.autoRoundEntryFee,
+    payoutPercent: patch.payoutPercent !== undefined ? patch.payoutPercent : current.payoutPercent,
+    autoDrawEnabled: patch.autoDrawEnabled !== undefined ? patch.autoDrawEnabled : current.autoDrawEnabled,
+    autoDrawIntervalMs:
+      patch.autoDrawIntervalMs !== undefined ? patch.autoDrawIntervalMs : current.autoDrawIntervalMs
+  };
+
+  next.autoRoundStartIntervalMs = Math.max(
+    bingoMinRoundIntervalMs,
+    Math.floor(next.autoRoundStartIntervalMs)
+  );
+  next.autoRoundMinPlayers = Math.max(bingoMinPlayersToStart, Math.floor(next.autoRoundMinPlayers));
+  next.autoRoundTicketsPerPlayer = Math.min(5, Math.max(1, Math.floor(next.autoRoundTicketsPerPlayer)));
+  next.autoRoundEntryFee = Math.max(0, Math.round(next.autoRoundEntryFee * 100) / 100);
+  next.payoutPercent = Math.min(100, Math.max(0, Math.round(next.payoutPercent * 100) / 100));
+  next.autoDrawIntervalMs = Math.max(250, Math.floor(next.autoDrawIntervalMs));
+
+  if (!autoplayAllowed && (next.autoRoundStartEnabled || next.autoDrawEnabled)) {
+    throw new DomainError(
+      "INVALID_INPUT",
+      "Autoplay er deaktivert i production. Sett BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION=true for aa aktivere autoStart/autoDraw."
+    );
+  }
+
+  return next;
+}
+
+function candyManiaSettingsCoreToRecord(settings: CandyManiaSchedulerSettings): Record<string, unknown> {
+  return {
+    autoRoundStartEnabled: settings.autoRoundStartEnabled,
+    autoRoundStartIntervalMs: settings.autoRoundStartIntervalMs,
+    autoRoundMinPlayers: settings.autoRoundMinPlayers,
+    autoRoundTicketsPerPlayer: settings.autoRoundTicketsPerPlayer,
+    autoRoundEntryFee: settings.autoRoundEntryFee,
+    payoutPercent: settings.payoutPercent,
+    autoDrawEnabled: settings.autoDrawEnabled,
+    autoDrawIntervalMs: settings.autoDrawIntervalMs
+  };
+}
+
+function candyManiaSettingsToRecord(): Record<string, unknown> {
+  return {
+    ...candyManiaSettingsCoreToRecord(runtimeCandyManiaSettings),
+    schedulerCurrentEffectiveFrom: new Date(candyManiaSettingsEffectiveFromMs).toISOString(),
+    schedulerPending: pendingCandyManiaSettingsUpdate
+      ? {
+          effectiveFrom: new Date(pendingCandyManiaSettingsUpdate.effectiveFromMs).toISOString(),
+          settings: candyManiaSettingsCoreToRecord(pendingCandyManiaSettingsUpdate.settings)
+        }
+      : null
+  };
+}
+
+function readCandyManiaSettingsFromRecord(settings: Record<string, unknown> | undefined): Partial<CandyManiaSchedulerSettings> {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    return {};
+  }
+  return parseCandyManiaSettingsPatch(settings);
+}
+
+function readPendingCandyManiaSettingsFromRecord(
+  settings: Record<string, unknown> | undefined
+): PendingCandyManiaSettingsUpdate | null {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    return null;
+  }
+  const pendingRaw = settings.schedulerPending;
+  if (pendingRaw === undefined || pendingRaw === null) {
+    return null;
+  }
+  if (typeof pendingRaw !== "object" || Array.isArray(pendingRaw)) {
+    throw new DomainError("INVALID_INPUT", "Ugyldig schedulerPending i Candy settings.");
+  }
+  const pending = pendingRaw as Record<string, unknown>;
+  const effectiveFromMs = parseOptionalIsoTimestampMs(pending.effectiveFrom, "schedulerPending.effectiveFrom");
+  if (effectiveFromMs === undefined) {
+    return null;
+  }
+  const patch = parseCandyManiaSettingsPatch(pending.settings);
+  const normalizedSettings = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+  return {
+    effectiveFromMs,
+    settings: normalizedSettings
+  };
+}
+
+function hasAnyRunningCandyManiaRound(summaries?: ReturnType<typeof engine.listRoomSummaries>): boolean {
+  const roomSummaries = summaries ?? engine.listRoomSummaries();
+  return roomSummaries.some((summary) => summary.gameStatus === "RUNNING");
+}
+
+function getCandyManiaAdminSettingsResponse(): Record<string, unknown> {
+  const lockActive = hasAnyRunningCandyManiaRound();
+  return {
+    ...runtimeCandyManiaSettings,
+    effectiveFrom: new Date(candyManiaSettingsEffectiveFromMs).toISOString(),
+    pendingUpdate: pendingCandyManiaSettingsUpdate
+      ? {
+          effectiveFrom: new Date(pendingCandyManiaSettingsUpdate.effectiveFromMs).toISOString(),
+          settings: { ...pendingCandyManiaSettingsUpdate.settings }
+        }
+      : null,
+    schedulerTickMs,
+    constraints: {
+      runtime: isProductionRuntime ? "production" : "non-production",
+      autoplayAllowed,
+      allowAutoplayInProduction,
+      minRoundIntervalMs: bingoMinRoundIntervalMs,
+      minPlayersToStart: bingoMinPlayersToStart,
+      maxTicketsPerPlayer: 5,
+      minPayoutPercent: 0,
+      maxPayoutPercent: 100,
+      runningRoundLockActive: lockActive
+    },
+    locks: {
+      runningRoundLockActive: lockActive
+    }
+  };
+}
+
+async function persistCandyManiaSettingsToCatalog(): Promise<void> {
+  const candyGame = await platformService.getGame("candy");
+  const nextSettings = normalizeGameSettingsForUpdate("candy", {
+    ...(candyGame.settings ?? {}),
+    ...candyManiaSettingsToRecord()
+  });
+  await platformService.updateGame("candy", {
+    settings: nextSettings
+  });
+}
+
+async function hydrateCandyManiaSettingsFromCatalog(): Promise<void> {
+  try {
+    const candyGame = await platformService.getGame("candy");
+    const patch = readCandyManiaSettingsFromRecord(candyGame.settings);
+    const normalized = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+    Object.assign(runtimeCandyManiaSettings, normalized);
+    const currentEffectiveFromMs = parseOptionalIsoTimestampMs(
+      (candyGame.settings as Record<string, unknown> | undefined)?.schedulerCurrentEffectiveFrom,
+      "schedulerCurrentEffectiveFrom"
+    );
+    if (currentEffectiveFromMs !== undefined) {
+      candyManiaSettingsEffectiveFromMs = currentEffectiveFromMs;
+    }
+    pendingCandyManiaSettingsUpdate = readPendingCandyManiaSettingsFromRecord(candyGame.settings);
+  } catch (error) {
+    console.warn("[candy-mania] Klarte ikke laste scheduler settings fra game-catalog. Bruker env/default.", error);
+  }
+}
+
 function getAccessTokenFromRequest(req: express.Request): string {
   const header = req.headers.authorization;
   if (!header) {
@@ -522,8 +828,9 @@ function apiFailure(res: express.Response, error: unknown): void {
 
 async function emitRoomUpdate(roomCode: string): Promise<RoomSnapshot> {
   const snapshot = engine.getRoomSnapshot(roomCode);
-  io.to(roomCode).emit("room:update", snapshot);
-  return snapshot;
+  const payload = buildRoomUpdatePayload(snapshot);
+  io.to(roomCode).emit("room:update", payload);
+  return payload;
 }
 
 async function emitManyRoomUpdates(roomCodes: Iterable<string>): Promise<void> {
@@ -545,8 +852,95 @@ async function emitWalletRoomUpdates(walletIds: string[]): Promise<void> {
 
 const nextAutoStartAtByRoom = new Map<string, number>();
 const lastAutoDrawAtByRoom = new Map<string, number>();
+const roomConfiguredEntryFeeByRoom = new Map<string, number>();
 const roomSchedulerLocks = new Set<string>();
 let schedulerTickInProgress = false;
+
+function getNextRoundBoundaryMs(nowMs: number): number {
+  return (
+    Math.ceil(nowMs / runtimeCandyManiaSettings.autoRoundStartIntervalMs) *
+    runtimeCandyManiaSettings.autoRoundStartIntervalMs
+  );
+}
+
+function normalizeRoomNextAutoStartAt(roomCode: string, nowMs: number): number {
+  if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
+    nextAutoStartAtByRoom.delete(roomCode);
+    return nowMs;
+  }
+
+  const fallbackNextStartAt = getNextRoundBoundaryMs(nowMs);
+  const existing = nextAutoStartAtByRoom.get(roomCode);
+  const staleToleranceMs = Math.max(1500, schedulerTickMs * 4);
+
+  if (existing === undefined || !Number.isFinite(existing)) {
+    nextAutoStartAtByRoom.set(roomCode, fallbackNextStartAt);
+    return fallbackNextStartAt;
+  }
+
+  if (existing < nowMs - staleToleranceMs) {
+    nextAutoStartAtByRoom.set(roomCode, fallbackNextStartAt);
+    return fallbackNextStartAt;
+  }
+
+  return existing;
+}
+
+function setNextRoundForRoom(roomCode: string, nowMs: number): number {
+  const nextStartAt = getNextRoundBoundaryMs(nowMs + 1);
+  nextAutoStartAtByRoom.set(roomCode, nextStartAt);
+  return nextStartAt;
+}
+
+function getRoomConfiguredEntryFee(roomCode: string): number {
+  const configured = roomConfiguredEntryFeeByRoom.get(roomCode);
+  if (configured === undefined || !Number.isFinite(configured)) {
+    return runtimeCandyManiaSettings.autoRoundEntryFee;
+  }
+  return configured;
+}
+
+function setRoomConfiguredEntryFee(roomCode: string, entryFee: number): number {
+  const normalized = Math.max(0, Math.round(entryFee * 100) / 100);
+  roomConfiguredEntryFeeByRoom.set(roomCode, normalized);
+  return normalized;
+}
+
+function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<string, unknown> {
+  const nextStartAtMs = runtimeCandyManiaSettings.autoRoundStartEnabled
+    ? normalizeRoomNextAutoStartAt(snapshot.code, nowMs)
+    : null;
+  const millisUntilNextStart = nextStartAtMs === null ? null : Math.max(0, nextStartAtMs - nowMs);
+  const canStartNow =
+    runtimeCandyManiaSettings.autoRoundStartEnabled &&
+    !snapshot.currentGame &&
+    snapshot.players.length >= runtimeCandyManiaSettings.autoRoundMinPlayers &&
+    millisUntilNextStart !== null &&
+    millisUntilNextStart <= Math.max(1000, schedulerTickMs * 2);
+
+  return {
+    enabled: runtimeCandyManiaSettings.autoRoundStartEnabled,
+    intervalMs: runtimeCandyManiaSettings.autoRoundStartIntervalMs,
+    minPlayers: runtimeCandyManiaSettings.autoRoundMinPlayers,
+    playerCount: snapshot.players.length,
+    entryFee: getRoomConfiguredEntryFee(snapshot.code),
+    payoutPercent: runtimeCandyManiaSettings.payoutPercent,
+    nextStartAt: nextStartAtMs === null ? null : new Date(nextStartAtMs).toISOString(),
+    millisUntilNextStart,
+    canStartNow,
+    serverTime: new Date(nowMs).toISOString()
+  };
+}
+
+function buildRoomUpdatePayload(
+  snapshot: RoomSnapshot,
+  nowMs = Date.now()
+): RoomSnapshot & { scheduler: Record<string, unknown> } {
+  return {
+    ...snapshot,
+    scheduler: buildRoomSchedulerState(snapshot, nowMs)
+  };
+}
 
 async function withRoomSchedulerLock(roomCode: string, work: () => Promise<void>): Promise<void> {
   if (roomSchedulerLocks.has(roomCode)) {
@@ -571,39 +965,114 @@ function cleanupSchedulerState(activeRoomCodes: Set<string>): void {
       lastAutoDrawAtByRoom.delete(roomCode);
     }
   }
+  for (const roomCode of roomConfiguredEntryFeeByRoom.keys()) {
+    if (!activeRoomCodes.has(roomCode)) {
+      roomConfiguredEntryFeeByRoom.delete(roomCode);
+    }
+  }
+}
+
+function syncSchedulerStateAfterCandySettingsChange(previous: CandyManiaSchedulerSettings): void {
+  const autoStartToggled =
+    previous.autoRoundStartEnabled !== runtimeCandyManiaSettings.autoRoundStartEnabled;
+  const roundIntervalChanged =
+    previous.autoRoundStartIntervalMs !== runtimeCandyManiaSettings.autoRoundStartIntervalMs;
+  const autoDrawToggled =
+    previous.autoDrawEnabled !== runtimeCandyManiaSettings.autoDrawEnabled;
+
+  if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
+    nextAutoStartAtByRoom.clear();
+  }
+  if (!runtimeCandyManiaSettings.autoDrawEnabled) {
+    lastAutoDrawAtByRoom.clear();
+  }
+
+  if (runtimeCandyManiaSettings.autoRoundStartEnabled && (autoStartToggled || roundIntervalChanged)) {
+    const nowMs = Date.now();
+    for (const roomCode of engine.getAllRoomCodes()) {
+      setNextRoundForRoom(roomCode, nowMs);
+    }
+  }
+
+  if (autoDrawToggled && runtimeCandyManiaSettings.autoDrawEnabled) {
+    lastAutoDrawAtByRoom.clear();
+  }
+}
+
+async function applyPendingCandyManiaSettingsIfDue(
+  nowMs: number,
+  summaries: ReturnType<typeof engine.listRoomSummaries>
+): Promise<boolean> {
+  if (!pendingCandyManiaSettingsUpdate) {
+    return false;
+  }
+  if (pendingCandyManiaSettingsUpdate.effectiveFromMs > nowMs) {
+    return false;
+  }
+  if (hasAnyRunningCandyManiaRound(summaries)) {
+    return false;
+  }
+
+  const previous: CandyManiaSchedulerSettings = { ...runtimeCandyManiaSettings };
+  const previousEffectiveFromMs = candyManiaSettingsEffectiveFromMs;
+  const pendingToApply = {
+    effectiveFromMs: pendingCandyManiaSettingsUpdate.effectiveFromMs,
+    settings: { ...pendingCandyManiaSettingsUpdate.settings }
+  };
+  pendingCandyManiaSettingsUpdate = null;
+  Object.assign(runtimeCandyManiaSettings, pendingToApply.settings);
+  candyManiaSettingsEffectiveFromMs = pendingToApply.effectiveFromMs;
+  syncSchedulerStateAfterCandySettingsChange(previous);
+
+  try {
+    await persistCandyManiaSettingsToCatalog();
+  } catch (error) {
+    Object.assign(runtimeCandyManiaSettings, previous);
+    candyManiaSettingsEffectiveFromMs = previousEffectiveFromMs;
+    pendingCandyManiaSettingsUpdate = pendingToApply;
+    syncSchedulerStateAfterCandySettingsChange(pendingToApply.settings);
+    throw error;
+  }
+
+  await emitManyRoomUpdates(engine.getAllRoomCodes());
+  return true;
 }
 
 async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummaries>[number], now: number): Promise<void> {
   const roomCode = summary.code;
-  if (!autoRoundStartEnabled) {
+  if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
     nextAutoStartAtByRoom.delete(roomCode);
     return;
   }
+
+  const scheduledStartAt = normalizeRoomNextAutoStartAt(roomCode, now);
 
   if (summary.gameStatus === "RUNNING") {
-    nextAutoStartAtByRoom.delete(roomCode);
+    if (scheduledStartAt <= now) {
+      setNextRoundForRoom(roomCode, now);
+    }
     return;
   }
 
-  if (summary.playerCount < autoRoundMinPlayers) {
-    nextAutoStartAtByRoom.delete(roomCode);
+  if (summary.playerCount < runtimeCandyManiaSettings.autoRoundMinPlayers) {
+    if (scheduledStartAt <= now) {
+      setNextRoundForRoom(roomCode, now);
+    }
     return;
   }
 
-  const nextStartAt = nextAutoStartAtByRoom.get(roomCode) ?? now + autoRoundStartIntervalMs;
-  if (now < nextStartAt) {
-    nextAutoStartAtByRoom.set(roomCode, nextStartAt);
+  if (now < scheduledStartAt) {
     return;
   }
 
   await withRoomSchedulerLock(roomCode, async () => {
     const latestSnapshot = engine.getRoomSnapshot(roomCode);
     if (latestSnapshot.currentGame?.status === "RUNNING") {
-      nextAutoStartAtByRoom.delete(roomCode);
+      setNextRoundForRoom(roomCode, Date.now());
       return;
     }
-    if (latestSnapshot.players.length < autoRoundMinPlayers) {
-      nextAutoStartAtByRoom.set(roomCode, Date.now() + autoRoundStartIntervalMs);
+    if (latestSnapshot.players.length < runtimeCandyManiaSettings.autoRoundMinPlayers) {
+      setNextRoundForRoom(roomCode, Date.now());
       return;
     }
 
@@ -611,19 +1080,23 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
       await engine.startGame({
         roomCode,
         actorPlayerId: latestSnapshot.hostPlayerId,
-        entryFee: autoRoundEntryFee,
-        ticketsPerPlayer: autoRoundTicketsPerPlayer
+        entryFee: getRoomConfiguredEntryFee(roomCode),
+        ticketsPerPlayer: runtimeCandyManiaSettings.autoRoundTicketsPerPlayer,
+        payoutPercent: runtimeCandyManiaSettings.payoutPercent
       });
     } catch (error) {
-      if (error instanceof DomainError && error.code === "PLAYER_ALREADY_IN_RUNNING_GAME") {
-        // Expected when same wallet is present in multiple rooms in local dev.
-        // Back off this room and retry later without noisy scheduler error logs.
-        nextAutoStartAtByRoom.set(roomCode, Date.now() + autoRoundStartIntervalMs);
+      if (
+        error instanceof DomainError &&
+        (error.code === "PLAYER_ALREADY_IN_RUNNING_GAME" ||
+          error.code === "ROUND_START_TOO_SOON" ||
+          error.code === "NOT_ENOUGH_PLAYERS")
+      ) {
+        setNextRoundForRoom(roomCode, Date.now());
         return;
       }
       throw error;
     }
-    nextAutoStartAtByRoom.delete(roomCode);
+    setNextRoundForRoom(roomCode, Date.now());
     lastAutoDrawAtByRoom.delete(roomCode);
     await emitRoomUpdate(roomCode);
   });
@@ -631,13 +1104,13 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
 
 async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummaries>[number], now: number): Promise<void> {
   const roomCode = summary.code;
-  if (!autoDrawEnabled || summary.gameStatus !== "RUNNING") {
+  if (!runtimeCandyManiaSettings.autoDrawEnabled || summary.gameStatus !== "RUNNING") {
     lastAutoDrawAtByRoom.delete(roomCode);
     return;
   }
 
   const lastDrawAt = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
-  if (now - lastDrawAt < autoDrawIntervalMs) {
+  if (now - lastDrawAt < runtimeCandyManiaSettings.autoDrawIntervalMs) {
     return;
   }
 
@@ -650,7 +1123,7 @@ async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummari
 
     const refreshedLastDrawAt = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
     const currentNow = Date.now();
-    if (currentNow - refreshedLastDrawAt < autoDrawIntervalMs) {
+    if (currentNow - refreshedLastDrawAt < runtimeCandyManiaSettings.autoDrawIntervalMs) {
       return;
     }
 
@@ -679,9 +1152,12 @@ async function runSchedulerTick(): Promise<void> {
   schedulerTickInProgress = true;
 
   try {
-    const summaries = engine.listRoomSummaries();
-    cleanupSchedulerState(new Set(summaries.map((summary) => summary.code)));
     const now = Date.now();
+    let summaries = engine.listRoomSummaries();
+    if (await applyPendingCandyManiaSettingsIfDue(now, summaries)) {
+      summaries = engine.listRoomSummaries();
+    }
+    cleanupSchedulerState(new Set(summaries.map((summary) => summary.code)));
 
     for (const summary of summaries) {
       try {
@@ -696,14 +1172,12 @@ async function runSchedulerTick(): Promise<void> {
   }
 }
 
-if (autoRoundStartEnabled || autoDrawEnabled) {
-  const scheduler = setInterval(() => {
-    runSchedulerTick().catch((error) => {
-      console.error("[scheduler] uventet feil", error);
-    });
-  }, schedulerTickMs);
-  scheduler.unref();
-}
+const scheduler = setInterval(() => {
+  runSchedulerTick().catch((error) => {
+    console.error("[scheduler] uventet feil", error);
+  });
+}, schedulerTickMs);
+scheduler.unref();
 
 function formatDateKeyLocal(reference: Date): string {
   const year = reference.getFullYear();
@@ -902,10 +1376,20 @@ app.put("/api/admin/games/:slug", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "GAME_CATALOG_WRITE");
     const slug = mustBeNonEmptyString(req.params.slug, "slug");
+    const normalizedSlug = slug.trim().toLowerCase();
     const rawSettings =
       req.body?.settings && typeof req.body.settings === "object" && !Array.isArray(req.body.settings)
         ? (req.body.settings as Record<string, unknown>)
         : undefined;
+    if (normalizedSlug === "candy" && rawSettings) {
+      const candySettingsPatch = parseCandyManiaSettingsPatch(rawSettings);
+      if (Object.keys(candySettingsPatch).length > 0 && hasAnyRunningCandyManiaRound()) {
+        throw new DomainError(
+          "CANDY_SETTINGS_LOCKED_DURING_RUNNING_GAME",
+          "Kan ikke endre Candy-innstillinger mens en runde kjører. Bruk Candy Mania-panelet med effectiveFrom."
+        );
+      }
+    }
     const updated = await platformService.updateGame(slug, {
       title: typeof req.body?.title === "string" ? req.body.title : undefined,
       description: typeof req.body?.description === "string" ? req.body.description : undefined,
@@ -914,6 +1398,16 @@ app.put("/api/admin/games/:slug", async (req, res) => {
       sortOrder: Number.isFinite(req.body?.sortOrder) ? Number(req.body.sortOrder) : undefined,
       settings: normalizeGameSettingsForUpdate(slug, rawSettings)
     });
+    if (normalizedSlug === "candy") {
+      const previous: CandyManiaSchedulerSettings = { ...runtimeCandyManiaSettings };
+      const patch = readCandyManiaSettingsFromRecord(updated.settings);
+      const next = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+      pendingCandyManiaSettingsUpdate = null;
+      Object.assign(runtimeCandyManiaSettings, next);
+      candyManiaSettingsEffectiveFromMs = Date.now();
+      syncSchedulerStateAfterCandySettingsChange(previous);
+      await persistCandyManiaSettingsToCatalog();
+    }
     apiSuccess(res, updated);
   } catch (error) {
     apiFailure(res, error);
@@ -1060,6 +1554,72 @@ app.put("/api/admin/halls/:hallId/game-config/:gameSlug", async (req, res) => {
   }
 });
 
+app.get("/api/admin/candy-mania/settings", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
+    apiSuccess(res, getCandyManiaAdminSettingsResponse());
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.put("/api/admin/candy-mania/settings", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+    const patch = parseCandyManiaSettingsPatch(req.body);
+    const effectiveFromMs = parseOptionalIsoTimestampMs(req.body?.effectiveFrom, "effectiveFrom");
+    const nowMs = Date.now();
+    const wantsFutureActivation = effectiveFromMs !== undefined && effectiveFromMs > nowMs;
+
+    if (wantsFutureActivation) {
+      const baseSettings = pendingCandyManiaSettingsUpdate?.settings ?? runtimeCandyManiaSettings;
+      const scheduledSettings = normalizeCandyManiaSchedulerSettings(baseSettings, patch);
+      pendingCandyManiaSettingsUpdate = {
+        effectiveFromMs,
+        settings: scheduledSettings
+      };
+      await persistCandyManiaSettingsToCatalog();
+      apiSuccess(res, getCandyManiaAdminSettingsResponse());
+      return;
+    }
+
+    const runningSummaries = engine.listRoomSummaries();
+    if (hasAnyRunningCandyManiaRound(runningSummaries)) {
+      throw new DomainError(
+        "CANDY_SETTINGS_LOCKED_DURING_RUNNING_GAME",
+        "Kan ikke endre Candy-innstillinger mens en runde kjører. Sett effectiveFrom i fremtiden."
+      );
+    }
+
+    const previous: CandyManiaSchedulerSettings = { ...runtimeCandyManiaSettings };
+    const previousEffectiveFromMs = candyManiaSettingsEffectiveFromMs;
+    const previousPending = pendingCandyManiaSettingsUpdate
+      ? { ...pendingCandyManiaSettingsUpdate, settings: { ...pendingCandyManiaSettingsUpdate.settings } }
+      : null;
+    const next = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+
+    pendingCandyManiaSettingsUpdate = null;
+    Object.assign(runtimeCandyManiaSettings, next);
+    candyManiaSettingsEffectiveFromMs = effectiveFromMs ?? nowMs;
+    syncSchedulerStateAfterCandySettingsChange(previous);
+
+    try {
+      await persistCandyManiaSettingsToCatalog();
+    } catch (error) {
+      Object.assign(runtimeCandyManiaSettings, previous);
+      candyManiaSettingsEffectiveFromMs = previousEffectiveFromMs;
+      pendingCandyManiaSettingsUpdate = previousPending;
+      syncSchedulerStateAfterCandySettingsChange(next);
+      throw error;
+    }
+
+    await emitManyRoomUpdates(engine.getAllRoomCodes());
+    apiSuccess(res, getCandyManiaAdminSettingsResponse());
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.get("/api/admin/rooms", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
@@ -1071,7 +1631,7 @@ app.get("/api/admin/rooms", async (req, res) => {
     }
     const detailed = rooms.map((room) => ({
       ...room,
-      snapshot: engine.getRoomSnapshot(room.code)
+      snapshot: buildRoomUpdatePayload(engine.getRoomSnapshot(room.code))
     }));
     apiSuccess(res, detailed);
   } catch (error) {
@@ -1083,7 +1643,7 @@ app.get("/api/admin/rooms/:roomCode", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
-    const snapshot = engine.getRoomSnapshot(roomCode);
+    const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
     apiSuccess(res, snapshot);
   } catch (error) {
     apiFailure(res, error);
@@ -1122,7 +1682,7 @@ app.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
-    const entryFee = parseOptionalNonNegativeNumber(req.body?.entryFee, "entryFee") ?? 0;
+    const entryFee = parseOptionalNonNegativeNumber(req.body?.entryFee, "entryFee") ?? getRoomConfiguredEntryFee(roomCode);
     const ticketsPerPlayer = parseOptionalTicketsPerPlayerInput(req.body?.ticketsPerPlayer);
     if (ticketsPerPlayer !== undefined) {
       const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
@@ -1133,7 +1693,8 @@ app.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
       roomCode,
       actorPlayerId: beforeStartSnapshot.hostPlayerId,
       entryFee,
-      ticketsPerPlayer
+      ticketsPerPlayer,
+      payoutPercent: runtimeCandyManiaSettings.payoutPercent
     });
     const snapshot = await emitRoomUpdate(roomCode);
     apiSuccess(res, {
@@ -1727,7 +2288,7 @@ app.get("/api/rooms", (_req, res) => {
 
 app.get("/api/rooms/:roomCode", (req, res) => {
   try {
-    const snapshot = engine.getRoomSnapshot(req.params.roomCode);
+    const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(req.params.roomCode));
     apiSuccess(res, snapshot);
   } catch (error) {
     apiFailure(res, error);
@@ -1922,6 +2483,30 @@ io.on("connection", (socket: Socket) => {
     }
   });
 
+  socket.on(
+    "room:configure",
+    async (
+      payload: ConfigureRoomPayload,
+      callback: (response: AckResponse<{ snapshot: RoomSnapshot; entryFee: number }>) => void
+    ) => {
+      try {
+        const { roomCode } = await requireAuthenticatedPlayerAction(payload);
+        engine.getRoomSnapshot(roomCode);
+
+        const requestedEntryFee = parseOptionalNonNegativeNumber(payload?.entryFee, "entryFee");
+        if (requestedEntryFee === undefined) {
+          throw new DomainError("INVALID_INPUT", "entryFee må oppgis.");
+        }
+
+        const entryFee = setRoomConfiguredEntryFee(roomCode, requestedEntryFee);
+        const updatedSnapshot = await emitRoomUpdate(roomCode);
+        ackSuccess(callback, { snapshot: updatedSnapshot, entryFee });
+      } catch (error) {
+        ackFailure(callback, error);
+      }
+    }
+  );
+
   socket.on("game:start", async (payload: StartGamePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
@@ -1934,8 +2519,9 @@ io.on("connection", (socket: Socket) => {
       await engine.startGame({
         roomCode,
         actorPlayerId: playerId,
-        entryFee: payload?.entryFee ?? 0,
-        ticketsPerPlayer
+        entryFee: payload?.entryFee ?? getRoomConfiguredEntryFee(roomCode),
+        ticketsPerPlayer,
+        payoutPercent: runtimeCandyManiaSettings.payoutPercent
       });
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { snapshot });
@@ -2031,7 +2617,7 @@ io.on("connection", (socket: Socket) => {
       const user = await getAuthenticatedSocketUser(payload);
       const roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
       assertUserCanAccessRoom(user, roomCode);
-      const snapshot = engine.getRoomSnapshot(roomCode);
+      const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
       ackSuccess(callback, { snapshot });
     } catch (error) {
       ackFailure(callback, error);
@@ -2052,19 +2638,25 @@ app.get("*", (_req, res) => {
 });
 
 const PORT = Number(process.env.PORT ?? 4000);
-server.listen(PORT, () => {
-  console.log(`Bingo backend kjører på http://localhost:${PORT}`);
-  console.log(
-    `[compliance] minRoundInterval=${bingoMinRoundIntervalMs}ms minPlayersToStart=${bingoMinPlayersToStart} dailyLoss=${bingoDailyLossLimit} monthlyLoss=${bingoMonthlyLossLimit} playSessionLimit=${bingoPlaySessionLimitMs}ms pauseDuration=${bingoPauseDurationMs}ms selfExclusionMin=${bingoSelfExclusionMinMs}ms`
-  );
-  console.log(
-    `[scheduler] autoStart=${autoRoundStartEnabled} interval=${autoRoundStartIntervalMs}ms minPlayers=${autoRoundMinPlayers} ticketsPerPlayer=${autoRoundTicketsPerPlayer} entryFee=${autoRoundEntryFee}`
-  );
-  console.log(
-    `[scheduler] autoDraw=${autoDrawEnabled} interval=${autoDrawIntervalMs}ms tick=${schedulerTickMs}ms`
-  );
-  console.log(
-    `[daily-report] enabled=${dailyReportJobEnabled} interval=${dailyReportJobIntervalMs}ms lastDate=${lastDailyReportDateKey || "-"}`
-  );
-  console.log(`[swedbank] configured=${swedbankPayService.isConfigured()}`);
-});
+hydrateCandyManiaSettingsFromCatalog()
+  .catch((error) => {
+    console.warn("[candy-mania] Oppstart med env/default settings pga last-feil.", error);
+  })
+  .finally(() => {
+    server.listen(PORT, () => {
+      console.log(`Bingo backend kjører på http://localhost:${PORT}`);
+      console.log(
+        `[compliance] minRoundInterval=${bingoMinRoundIntervalMs}ms minPlayersToStart=${bingoMinPlayersToStart} singlePlayerInProd=${allowSinglePlayerInProduction} dailyLoss=${bingoDailyLossLimit} monthlyLoss=${bingoMonthlyLossLimit} playSessionLimit=${bingoPlaySessionLimitMs}ms pauseDuration=${bingoPauseDurationMs}ms selfExclusionMin=${bingoSelfExclusionMinMs}ms`
+      );
+      console.log(
+        `[scheduler] autoStart=${runtimeCandyManiaSettings.autoRoundStartEnabled} autoAllowedInProd=${allowAutoplayInProduction} interval=${runtimeCandyManiaSettings.autoRoundStartIntervalMs}ms minPlayers=${runtimeCandyManiaSettings.autoRoundMinPlayers} ticketsPerPlayer=${runtimeCandyManiaSettings.autoRoundTicketsPerPlayer} entryFee=${runtimeCandyManiaSettings.autoRoundEntryFee} payoutPercent=${runtimeCandyManiaSettings.payoutPercent}`
+      );
+      console.log(
+        `[scheduler] autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} interval=${runtimeCandyManiaSettings.autoDrawIntervalMs}ms tick=${schedulerTickMs}ms`
+      );
+      console.log(
+        `[daily-report] enabled=${dailyReportJobEnabled} interval=${dailyReportJobIntervalMs}ms lastDate=${lastDailyReportDateKey || "-"}`
+      );
+      console.log(`[swedbank] configured=${swedbankPayService.isConfigured()}`);
+    });
+  });

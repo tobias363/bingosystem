@@ -561,6 +561,58 @@ button:hover {
   color: #155447;
 }
 
+.rtp-meter {
+  margin-top: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.rtp-meter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #365e55;
+}
+
+.rtp-meter-track {
+  margin-top: 8px;
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(56, 107, 96, 0.14);
+  overflow: hidden;
+}
+
+.rtp-meter-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1f9a6f 0%, #59b983 100%);
+  transition: width 180ms ease;
+}
+
+.rtp-meter-markers {
+  margin-top: 6px;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #5e8078;
+  font-family: var(--mono);
+}
+
+.rtp-meter.elevated .rtp-meter-fill {
+  background: linear-gradient(90deg, #d6951b 0%, #e7b036 100%);
+}
+
+.rtp-meter.high .rtp-meter-fill,
+.rtp-meter.limit .rtp-meter-fill {
+  background: linear-gradient(90deg, #d3485e 0%, #df5f52 100%);
+}
+
 .subsection-title {
   margin: 14px 0 8px;
   font-size: 14px;

@@ -54,6 +54,20 @@ const elements = {
   reloadConfigBtn: document.getElementById("reloadConfigBtn"),
   configStatus: document.getElementById("configStatus"),
 
+  candyAutoRoundStartEnabled: document.getElementById("candyAutoRoundStartEnabled"),
+  candyAutoRoundStartIntervalSeconds: document.getElementById("candyAutoRoundStartIntervalSeconds"),
+  candyAutoRoundMinPlayers: document.getElementById("candyAutoRoundMinPlayers"),
+  candyAutoRoundTicketsPerPlayer: document.getElementById("candyAutoRoundTicketsPerPlayer"),
+  candyAutoRoundEntryFee: document.getElementById("candyAutoRoundEntryFee"),
+  candyPayoutPercent: document.getElementById("candyPayoutPercent"),
+  candyEffectiveFrom: document.getElementById("candyEffectiveFrom"),
+  candyAutoDrawEnabled: document.getElementById("candyAutoDrawEnabled"),
+  candyAutoDrawIntervalSeconds: document.getElementById("candyAutoDrawIntervalSeconds"),
+  candySchedulerTickMs: document.getElementById("candySchedulerTickMs"),
+  candyLoadSettingsBtn: document.getElementById("candyLoadSettingsBtn"),
+  candySaveSettingsBtn: document.getElementById("candySaveSettingsBtn"),
+  candySettingsStatus: document.getElementById("candySettingsStatus"),
+
   complianceWalletId: document.getElementById("complianceWalletId"),
   complianceHallSelect: document.getElementById("complianceHallSelect"),
   complianceDailyLossLimit: document.getElementById("complianceDailyLossLimit"),
@@ -110,7 +124,8 @@ const state = {
   halls: [],
   terminals: [],
   rooms: [],
-  hallGameConfigs: []
+  hallGameConfigs: [],
+  candySettings: null
 };
 
 function setStatus(element, message, type) {
@@ -457,6 +472,202 @@ async function loadHallGameConfigs() {
   state.hallGameConfigs = Array.isArray(configs) ? configs : [];
   renderSelectedHallGameConfig();
   setStatus(elements.configStatus, `Lastet ${state.hallGameConfigs.length} konfig-linjer for valgt hall.`, "success");
+}
+
+function millisecondsToSecondsString(value, fallback = "") {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return fallback;
+  }
+  return String(Math.round(numeric / 10) / 100);
+}
+
+function isoToDatetimeLocalValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  const seconds = String(parsed.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+}
+
+function datetimeLocalToIso(value, fieldName) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`${fieldName} må være en gyldig dato/tid.`);
+  }
+  return parsed.toISOString();
+}
+
+function applyCandyManiaSettingsToForm(settings) {
+  if (!settings) {
+    return;
+  }
+
+  elements.candyAutoRoundStartEnabled.value = asBooleanString(Boolean(settings.autoRoundStartEnabled));
+  elements.candyAutoRoundStartIntervalSeconds.value = millisecondsToSecondsString(
+    settings.autoRoundStartIntervalMs,
+    ""
+  );
+  elements.candyAutoRoundMinPlayers.value = Number.isFinite(settings.autoRoundMinPlayers)
+    ? String(settings.autoRoundMinPlayers)
+    : "";
+  elements.candyAutoRoundTicketsPerPlayer.value = Number.isFinite(settings.autoRoundTicketsPerPlayer)
+    ? String(settings.autoRoundTicketsPerPlayer)
+    : "";
+  elements.candyAutoRoundEntryFee.value = Number.isFinite(settings.autoRoundEntryFee)
+    ? String(settings.autoRoundEntryFee)
+    : "";
+  elements.candyPayoutPercent.value = Number.isFinite(settings.payoutPercent)
+    ? String(settings.payoutPercent)
+    : "100";
+  elements.candyEffectiveFrom.value = isoToDatetimeLocalValue(settings.pendingUpdate?.effectiveFrom);
+  elements.candyAutoDrawEnabled.value = asBooleanString(Boolean(settings.autoDrawEnabled));
+  elements.candyAutoDrawIntervalSeconds.value = millisecondsToSecondsString(settings.autoDrawIntervalMs, "");
+  elements.candySchedulerTickMs.value = Number.isFinite(settings.schedulerTickMs)
+    ? String(settings.schedulerTickMs)
+    : "";
+}
+
+function formatCandyManiaSettings(settings) {
+  const constraints = settings?.constraints || {};
+  const locks = settings?.locks || {};
+  return [
+    `autoRoundStartEnabled: ${settings?.autoRoundStartEnabled ? "Ja" : "Nei"}`,
+    `autoRoundStartIntervalMs: ${settings?.autoRoundStartIntervalMs ?? "-"}`,
+    `autoRoundMinPlayers: ${settings?.autoRoundMinPlayers ?? "-"}`,
+    `autoRoundTicketsPerPlayer: ${settings?.autoRoundTicketsPerPlayer ?? "-"}`,
+    `autoRoundEntryFee: ${settings?.autoRoundEntryFee ?? "-"}`,
+    `payoutPercent: ${settings?.payoutPercent ?? "-"}`,
+    `effectiveFrom (aktiv): ${settings?.effectiveFrom ?? "-"}`,
+    `pendingUpdate: ${settings?.pendingUpdate?.effectiveFrom ?? "ingen"}`,
+    `autoDrawEnabled: ${settings?.autoDrawEnabled ? "Ja" : "Nei"}`,
+    `autoDrawIntervalMs: ${settings?.autoDrawIntervalMs ?? "-"}`,
+    `schedulerTickMs: ${settings?.schedulerTickMs ?? "-"}`,
+    `runtime: ${constraints.runtime || "-"}`,
+    `autoplayAllowed: ${constraints.autoplayAllowed ? "Ja" : "Nei"}`,
+    `minRoundIntervalMs: ${constraints.minRoundIntervalMs ?? "-"}`,
+    `minPlayersToStart: ${constraints.minPlayersToStart ?? "-"}`,
+    `runningRoundLockActive: ${locks.runningRoundLockActive ? "Ja" : "Nei"}`
+  ].join("\n");
+}
+
+function parseSecondsToMilliseconds(value, label) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    throw new Error(`${label} må fylles ut.`);
+  }
+  const parsedSeconds = Number(raw);
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) {
+    throw new Error(`${label} må være et tall større enn 0.`);
+  }
+  return Math.round(parsedSeconds * 1000);
+}
+
+function buildCandyManiaPayload() {
+  const constraints = state.candySettings?.constraints || {};
+  const minRoundIntervalMs = Number.isFinite(constraints.minRoundIntervalMs)
+    ? Number(constraints.minRoundIntervalMs)
+    : 30000;
+  const minPlayersToStart = Number.isFinite(constraints.minPlayersToStart)
+    ? Number(constraints.minPlayersToStart)
+    : 1;
+  const maxTicketsPerPlayer = Number.isFinite(constraints.maxTicketsPerPlayer)
+    ? Number(constraints.maxTicketsPerPlayer)
+    : 5;
+  const minPayoutPercent = Number.isFinite(constraints.minPayoutPercent)
+    ? Number(constraints.minPayoutPercent)
+    : 0;
+  const maxPayoutPercent = Number.isFinite(constraints.maxPayoutPercent)
+    ? Number(constraints.maxPayoutPercent)
+    : 100;
+
+  const autoRoundStartIntervalMs = parseSecondsToMilliseconds(
+    elements.candyAutoRoundStartIntervalSeconds.value,
+    "Trekning hvert (sekunder)"
+  );
+  if (autoRoundStartIntervalMs < minRoundIntervalMs) {
+    throw new Error(`Trekning hvert må være minst ${minRoundIntervalMs / 1000} sekunder.`);
+  }
+
+  const autoRoundMinPlayers = Number.parseInt(elements.candyAutoRoundMinPlayers.value || "", 10);
+  if (!Number.isInteger(autoRoundMinPlayers) || autoRoundMinPlayers < minPlayersToStart) {
+    throw new Error(`Min spillere må være et heltall >= ${minPlayersToStart}.`);
+  }
+
+  const autoRoundTicketsPerPlayer = Number.parseInt(elements.candyAutoRoundTicketsPerPlayer.value || "", 10);
+  if (
+    !Number.isInteger(autoRoundTicketsPerPlayer) ||
+    autoRoundTicketsPerPlayer < 1 ||
+    autoRoundTicketsPerPlayer > maxTicketsPerPlayer
+  ) {
+    throw new Error(`Bonger per spiller må være mellom 1 og ${maxTicketsPerPlayer}.`);
+  }
+
+  const autoRoundEntryFee = Number(elements.candyAutoRoundEntryFee.value || 0);
+  if (!Number.isFinite(autoRoundEntryFee) || autoRoundEntryFee < 0) {
+    throw new Error("Default innsats må være et tall som er 0 eller høyere.");
+  }
+
+  const payoutPercent = Number(elements.candyPayoutPercent.value || 0);
+  if (
+    !Number.isFinite(payoutPercent) ||
+    payoutPercent < minPayoutPercent ||
+    payoutPercent > maxPayoutPercent
+  ) {
+    throw new Error(`RTP/utbetaling må være mellom ${minPayoutPercent} og ${maxPayoutPercent}.`);
+  }
+
+  const autoDrawIntervalMs = parseSecondsToMilliseconds(
+    elements.candyAutoDrawIntervalSeconds.value,
+    "Trekk-intervall (sekunder)"
+  );
+
+  const effectiveFrom = datetimeLocalToIso(elements.candyEffectiveFrom.value, "Aktiver fra");
+
+  return {
+    autoRoundStartEnabled: elements.candyAutoRoundStartEnabled.value === "true",
+    autoRoundStartIntervalMs,
+    autoRoundMinPlayers,
+    autoRoundTicketsPerPlayer,
+    autoRoundEntryFee,
+    payoutPercent: Math.round(payoutPercent * 100) / 100,
+    autoDrawEnabled: elements.candyAutoDrawEnabled.value === "true",
+    autoDrawIntervalMs,
+    ...(effectiveFrom ? { effectiveFrom } : {})
+  };
+}
+
+async function loadCandyManiaSettings() {
+  const settings = await apiRequest("/api/admin/candy-mania/settings", { auth: true });
+  state.candySettings = settings;
+  applyCandyManiaSettingsToForm(settings);
+  setStatus(elements.candySettingsStatus, formatCandyManiaSettings(settings), "success");
+}
+
+async function handleSaveCandyManiaSettings() {
+  const payload = buildCandyManiaPayload();
+  const settings = await apiRequest("/api/admin/candy-mania/settings", {
+    method: "PUT",
+    auth: true,
+    body: payload
+  });
+  state.candySettings = settings;
+  applyCandyManiaSettingsToForm(settings);
+  setStatus(elements.candySettingsStatus, formatCandyManiaSettings(settings), "success");
 }
 
 function ensurePrizePolicyEffectiveFromDefault() {
@@ -836,6 +1047,26 @@ async function showSelectedRoomSnapshot() {
   }
   const snapshot = await apiRequest(`/api/admin/rooms/${encodeURIComponent(roomCode)}`, { auth: true });
   const game = snapshot?.currentGame;
+  const maxPayoutBudget = Number(game?.maxPayoutBudget);
+  const remainingPayoutBudget = Number(game?.remainingPayoutBudget);
+  const payoutPercent = Number(game?.payoutPercent);
+  const hasRtp =
+    Number.isFinite(maxPayoutBudget) &&
+    maxPayoutBudget >= 0 &&
+    Number.isFinite(remainingPayoutBudget) &&
+    Number.isFinite(payoutPercent);
+  const boundedRemaining = hasRtp ? Math.min(maxPayoutBudget, Math.max(0, remainingPayoutBudget)) : 0;
+  const usedPercent = hasRtp && maxPayoutBudget > 0 ? ((maxPayoutBudget - boundedRemaining) / maxPayoutBudget) * 100 : 0;
+  const rtpWarning =
+    hasRtp && game?.status === "RUNNING"
+      ? usedPercent >= 100 || boundedRemaining <= 0
+        ? "RTP-GRENSE NÅDD"
+        : usedPercent >= 90
+          ? "RTP > 90%"
+          : usedPercent >= 80
+            ? "RTP > 80%"
+            : ""
+      : "";
   setStatus(
     elements.roomStatus,
     [
@@ -844,9 +1075,13 @@ async function showSelectedRoomSnapshot() {
       `Host playerId: ${snapshot.hostPlayerId}`,
       `Spillere: ${Array.isArray(snapshot.players) ? snapshot.players.length : 0}`,
       `Status: ${game?.status || "NONE"}`,
-      `Trukket: ${game?.drawnNumbers?.length || 0}`
+      `Trukket: ${game?.drawnNumbers?.length || 0}`,
+      hasRtp
+        ? `RTP: ${Math.round(payoutPercent * 100) / 100}% | Brukt: ${Math.max(0, Math.min(100, Math.round(usedPercent * 100) / 100))}%`
+        : "RTP: -",
+      rtpWarning ? `Varsel: ${rtpWarning}` : "Varsel: Ingen"
     ].join("\n"),
-    "success"
+    rtpWarning === "RTP-GRENSE NÅDD" || rtpWarning === "RTP > 90%" ? "error" : "success"
   );
 }
 
@@ -1440,6 +1675,7 @@ async function handleLogout() {
     state.terminals = [];
     state.rooms = [];
     state.hallGameConfigs = [];
+    state.candySettings = null;
     setStoredToken("");
     showLogin();
     setStatus(elements.loginStatus, "Logget ut.", "success");
@@ -1447,6 +1683,7 @@ async function handleLogout() {
     setStatus(elements.hallStatus, "Ingen haller lastet.");
     setStatus(elements.terminalStatus, "Ingen terminaler lastet.");
     setStatus(elements.configStatus, "Ingen konfig lastet.");
+    setStatus(elements.candySettingsStatus, "Ingen Candy Mania-innstillinger lastet.");
     setStatus(elements.complianceStatus, "Ingen compliance-data hentet.");
     setStatus(elements.extraDrawDenialsStatus, "Ingen denial-data hentet.");
     setStatus(elements.prizePolicyStatus, "Ingen policy lastet.");
@@ -1462,6 +1699,7 @@ async function loadAllAdminData() {
   await loadHalls();
   ensurePrizePolicyEffectiveFromDefault();
   await loadHallGameConfigs();
+  await loadCandyManiaSettings();
   await loadTerminals();
   await loadRooms();
 }
@@ -1591,6 +1829,26 @@ async function bootstrap() {
       .catch((error) => {
         setStatus(elements.configStatus, error.message || "Kunne ikke oppdatere hall-konfig.", "error");
       });
+  });
+
+  elements.candyLoadSettingsBtn.addEventListener("click", () => {
+    loadCandyManiaSettings().catch((error) => {
+      setStatus(
+        elements.candySettingsStatus,
+        error.message || "Kunne ikke hente Candy Mania-innstillinger.",
+        "error"
+      );
+    });
+  });
+
+  elements.candySaveSettingsBtn.addEventListener("click", () => {
+    handleSaveCandyManiaSettings().catch((error) => {
+      setStatus(
+        elements.candySettingsStatus,
+        error.message || "Kunne ikke lagre Candy Mania-innstillinger.",
+        "error"
+      );
+    });
   });
 
   elements.loadComplianceBtn.addEventListener("click", () => {

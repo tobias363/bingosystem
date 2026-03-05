@@ -133,6 +133,9 @@ const els = {
   bingoClaimLineBtn: document.getElementById("bingoClaimLineBtn"),
   bingoClaimBingoBtn: document.getElementById("bingoClaimBingoBtn"),
   bingoStatus: document.getElementById("bingoStatus"),
+  bingoRtpMeter: document.getElementById("bingoRtpMeter"),
+  bingoRtpMeterLabel: document.getElementById("bingoRtpMeterLabel"),
+  bingoRtpMeterFill: document.getElementById("bingoRtpMeterFill"),
   bingoPlayers: document.getElementById("bingoPlayers"),
   bingoDrawnNumbers: document.getElementById("bingoDrawnNumbers"),
   bingoTickets: document.getElementById("bingoTickets"),
@@ -1378,6 +1381,83 @@ function renderBingoStatus(text, tone = "neutral") {
   setStatusBox(els.bingoStatus, text, tone);
 }
 
+function resolveRtpBudgetState(game) {
+  if (!game || typeof game !== "object") {
+    return null;
+  }
+
+  const payoutPercent = asFiniteNumber(game.payoutPercent);
+  const prizePool = asFiniteNumber(game.prizePool) ?? 0;
+  let maxPayoutBudget = asFiniteNumber(game.maxPayoutBudget);
+  let remainingPayoutBudget = asFiniteNumber(game.remainingPayoutBudget);
+
+  if (!Number.isFinite(maxPayoutBudget) && Number.isFinite(prizePool) && Number.isFinite(payoutPercent)) {
+    maxPayoutBudget = (prizePool * payoutPercent) / 100;
+  }
+  if (!Number.isFinite(maxPayoutBudget) || maxPayoutBudget < 0) {
+    return null;
+  }
+  if (!Number.isFinite(remainingPayoutBudget)) {
+    remainingPayoutBudget = maxPayoutBudget;
+  }
+
+  const boundedRemaining = Math.min(maxPayoutBudget, Math.max(0, remainingPayoutBudget));
+  const paidOut = Math.max(0, maxPayoutBudget - boundedRemaining);
+  const usagePercent = maxPayoutBudget > 0 ? (paidOut / maxPayoutBudget) * 100 : 100;
+
+  let level = "normal";
+  if (usagePercent >= 100 || boundedRemaining <= 0) {
+    level = "limit";
+  } else if (usagePercent >= 90) {
+    level = "high";
+  } else if (usagePercent >= 80) {
+    level = "elevated";
+  }
+
+  return {
+    payoutPercent: Number.isFinite(payoutPercent) ? payoutPercent : undefined,
+    maxPayoutBudget,
+    remainingPayoutBudget: boundedRemaining,
+    paidOut,
+    usagePercent,
+    level
+  };
+}
+
+function renderRtpMeter(rtp, gameStatus) {
+  if (!els.bingoRtpMeter || !els.bingoRtpMeterFill || !els.bingoRtpMeterLabel) {
+    return;
+  }
+
+  if (!rtp) {
+    els.bingoRtpMeter.classList.add("hidden");
+    els.bingoRtpMeter.classList.remove("elevated", "high", "limit");
+    els.bingoRtpMeterFill.style.width = "0%";
+    els.bingoRtpMeterLabel.textContent = "0%";
+    els.bingoRtpMeter.querySelector(".rtp-meter-track")?.setAttribute("aria-valuenow", "0");
+    return;
+  }
+
+  const usedPercent = Math.max(0, Math.min(100, Math.round(rtp.usagePercent * 100) / 100));
+  els.bingoRtpMeter.classList.remove("hidden");
+  els.bingoRtpMeter.classList.remove("elevated", "high", "limit");
+  if (gameStatus === "RUNNING" && rtp.level === "elevated") {
+    els.bingoRtpMeter.classList.add("elevated");
+  }
+  if (gameStatus === "RUNNING" && rtp.level === "high") {
+    els.bingoRtpMeter.classList.add("high");
+  }
+  if (gameStatus === "RUNNING" && rtp.level === "limit") {
+    els.bingoRtpMeter.classList.add("limit");
+  }
+
+  els.bingoRtpMeterFill.style.width = `${usedPercent}%`;
+  els.bingoRtpMeterLabel.textContent = `${usedPercent}% brukt`;
+  els.bingoRtpMeter
+    .querySelector(".rtp-meter-track")
+    ?.setAttribute("aria-valuenow", String(usedPercent));
+}
+
 function renderBingoHallSelect() {
   if (!els.bingoHallId) {
     return;
@@ -1533,6 +1613,7 @@ function renderBingoTickets() {
 function renderBingoState() {
   if (!state.snapshot) {
     renderBingoStatus("Ikke tilkoblet rom.");
+    renderRtpMeter(null);
     els.bingoPlayers.innerHTML = "";
     els.bingoDrawnNumbers.innerHTML = "";
     els.bingoTickets.innerHTML = "<p>Ingen aktive data.</p>";
@@ -1540,6 +1621,7 @@ function renderBingoState() {
   }
 
   const game = state.snapshot.currentGame;
+  const rtp = resolveRtpBudgetState(game);
   const lines = [
     `Rom: ${state.snapshot.code}`,
     `Hall: ${state.snapshot.hallId || state.selectedHallId || "-"}`,
@@ -1552,7 +1634,27 @@ function renderBingoState() {
     `Historikk (fullførte runder): ${state.snapshot.gameHistory?.length || 0}`
   ];
 
-  renderBingoStatus(lines.join("\n"));
+  if (rtp) {
+    lines.push(
+      `RTP: ${rtp.payoutPercent !== undefined ? `${Math.round(rtp.payoutPercent * 100) / 100}%` : "-"} | Budsjett: ${formatNok(
+        rtp.maxPayoutBudget
+      )} | Brukt: ${formatNok(rtp.paidOut)} | Gjenstår: ${formatNok(rtp.remainingPayoutBudget)}`
+    );
+    if (game?.status === "RUNNING" && rtp.level === "elevated") {
+      lines.push("ADVARSEL: RTP-budsjettet er over 80% brukt i denne runden.");
+    } else if (game?.status === "RUNNING" && rtp.level === "high") {
+      lines.push("ADVARSEL: RTP-budsjettet er over 90% brukt i denne runden.");
+    } else if (game?.status === "RUNNING" && rtp.level === "limit") {
+      lines.push("RTP-GRENSE NÅDD: Videre premieutbetaling i denne runden blir 0.");
+    }
+  }
+
+  const statusTone =
+    game?.status === "RUNNING" && rtp && (rtp.level === "high" || rtp.level === "limit")
+      ? "error"
+      : "neutral";
+  renderBingoStatus(lines.join("\n"), statusTone);
+  renderRtpMeter(rtp, game?.status);
   renderBingoPlayers();
   renderBingoDrawnNumbers();
   renderBingoTickets();

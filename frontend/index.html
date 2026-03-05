@@ -124,6 +124,21 @@
           <article class="card">
             <h2>Status</h2>
             <pre id="bingoStatus" class="status-box">Ikke tilkoblet rom.</pre>
+            <section id="bingoRtpMeter" class="rtp-meter hidden" aria-live="polite">
+              <div class="rtp-meter-header">
+                <span>RTP-bruk i runden</span>
+                <strong id="bingoRtpMeterLabel">0%</strong>
+              </div>
+              <div class="rtp-meter-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <div id="bingoRtpMeterFill" class="rtp-meter-fill"></div>
+              </div>
+              <div class="rtp-meter-markers">
+                <span>0%</span>
+                <span>80%</span>
+                <span>90%</span>
+                <span>100%</span>
+              </div>
+            </section>
           </article>
 
           <article class="card">

@@ -40,6 +40,7 @@ interface StartGameInput {
   actorPlayerId: string;
   entryFee?: number;
   ticketsPerPlayer?: number;
+  payoutPercent?: number;
 }
 
 interface DrawNextInput {
@@ -465,6 +466,11 @@ export class BingoEngine {
     if (!Number.isInteger(ticketsPerPlayer) || ticketsPerPlayer < 1 || ticketsPerPlayer > 5) {
       throw new DomainError("INVALID_TICKETS_PER_PLAYER", "ticketsPerPlayer må være et heltall mellom 1 og 5.");
     }
+    const payoutPercent = input.payoutPercent ?? 100;
+    if (!Number.isFinite(payoutPercent) || payoutPercent < 0 || payoutPercent > 100) {
+      throw new DomainError("INVALID_PAYOUT_PERCENT", "payoutPercent må være mellom 0 og 100.");
+    }
+    const normalizedPayoutPercent = Math.round(payoutPercent * 100) / 100;
 
     const players = [...room.players.values()];
     this.assertPlayersNotInAnotherRunningGame(room.code, players);
@@ -532,7 +538,8 @@ export class BingoEngine {
       marks.set(player.id, playerMarks);
     }
 
-    const prizePool = entryFee * players.length;
+    const prizePool = this.roundCurrency(entryFee * players.length);
+    const maxPayoutBudget = this.roundCurrency((prizePool * normalizedPayoutPercent) / 100);
     const game: GameState = {
       id: gameId,
       status: "RUNNING",
@@ -540,6 +547,9 @@ export class BingoEngine {
       ticketsPerPlayer,
       prizePool,
       remainingPrizePool: prizePool,
+      payoutPercent: normalizedPayoutPercent,
+      maxPayoutBudget,
+      remainingPayoutBudget: maxPayoutBudget,
       drawBag: makeShuffledBallBag(75),
       drawnNumbers: [],
       tickets,
@@ -673,13 +683,18 @@ export class BingoEngine {
 
     if (valid && input.type === "LINE") {
       game.lineWinnerId = player.id;
+      const rtpBudgetBefore = this.roundCurrency(Math.max(0, game.remainingPayoutBudget));
       const requestedPayout = Math.floor(game.prizePool * 0.3);
       const cappedLinePayout = this.applySinglePrizeCap({
         room,
         gameType: "DATABINGO",
         amount: requestedPayout
       });
-      const payout = Math.min(cappedLinePayout.cappedAmount, game.remainingPrizePool);
+      const requestedAfterPolicyAndPool = Math.min(cappedLinePayout.cappedAmount, game.remainingPrizePool);
+      const payout = Math.min(
+        requestedAfterPolicyAndPool,
+        game.remainingPayoutBudget
+      );
       if (payout > 0) {
         const transfer = await this.walletAdapter.transfer(
           houseAccountId,
@@ -688,7 +703,8 @@ export class BingoEngine {
           `Line prize ${room.code}`
         );
         player.balance += payout;
-        game.remainingPrizePool -= payout;
+        game.remainingPrizePool = this.roundCurrency(Math.max(0, game.remainingPrizePool - payout));
+        game.remainingPayoutBudget = this.roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
         this.recordLossEntry(player.walletId, room.hallId, {
           type: "PAYOUT",
           amount: payout,
@@ -723,21 +739,30 @@ export class BingoEngine {
           txIds: [transfer.fromTx.id, transfer.toTx.id]
         });
       }
+      const rtpBudgetAfter = this.roundCurrency(Math.max(0, game.remainingPayoutBudget));
       claim.payoutAmount = payout;
       claim.payoutPolicyVersion = cappedLinePayout.policy.id;
-      claim.payoutWasCapped = cappedLinePayout.wasCapped;
+      claim.payoutWasCapped = payout < requestedPayout;
+      claim.rtpBudgetBefore = rtpBudgetBefore;
+      claim.rtpBudgetAfter = rtpBudgetAfter;
+      claim.rtpCapped = payout < requestedAfterPolicyAndPool;
     }
 
     if (valid && input.type === "BINGO") {
       const endedAt = new Date();
       game.bingoWinnerId = player.id;
+      const rtpBudgetBefore = this.roundCurrency(Math.max(0, game.remainingPayoutBudget));
       const requestedPayout = game.remainingPrizePool;
       const cappedBingoPayout = this.applySinglePrizeCap({
         room,
         gameType: "DATABINGO",
         amount: requestedPayout
       });
-      const payout = Math.min(cappedBingoPayout.cappedAmount, game.remainingPrizePool);
+      const requestedAfterPolicyAndPool = Math.min(cappedBingoPayout.cappedAmount, game.remainingPrizePool);
+      const payout = Math.min(
+        requestedAfterPolicyAndPool,
+        game.remainingPayoutBudget
+      );
       if (payout > 0) {
         const transfer = await this.walletAdapter.transfer(
           houseAccountId,
@@ -780,14 +805,19 @@ export class BingoEngine {
           txIds: [transfer.fromTx.id, transfer.toTx.id]
         });
       }
-      game.remainingPrizePool = Math.max(0, game.remainingPrizePool - payout);
+      game.remainingPrizePool = this.roundCurrency(Math.max(0, game.remainingPrizePool - payout));
+      game.remainingPayoutBudget = this.roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
       game.status = "ENDED";
       game.endedAt = endedAt.toISOString();
       game.endedReason = "BINGO_CLAIMED";
       this.finishPlaySessionsForGame(room, game, endedAt.getTime());
+      const rtpBudgetAfter = this.roundCurrency(Math.max(0, game.remainingPayoutBudget));
       claim.payoutAmount = payout;
       claim.payoutPolicyVersion = cappedBingoPayout.policy.id;
-      claim.payoutWasCapped = cappedBingoPayout.wasCapped;
+      claim.payoutWasCapped = payout < requestedPayout;
+      claim.rtpBudgetBefore = rtpBudgetBefore;
+      claim.rtpBudgetAfter = rtpBudgetAfter;
+      claim.rtpCapped = payout < requestedAfterPolicyAndPool;
     }
 
     if (this.bingoAdapter.onClaimLogged) {
@@ -2566,6 +2596,9 @@ export class BingoEngine {
       ticketsPerPlayer: game.ticketsPerPlayer,
       prizePool: game.prizePool,
       remainingPrizePool: game.remainingPrizePool,
+      payoutPercent: game.payoutPercent,
+      maxPayoutBudget: game.maxPayoutBudget,
+      remainingPayoutBudget: game.remainingPayoutBudget,
       drawnNumbers: [...game.drawnNumbers],
       remainingNumbers: game.drawBag.length,
       lineWinnerId: game.lineWinnerId,

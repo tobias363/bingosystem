@@ -250,6 +250,7 @@
               <a href="#section-halls">Haller</a>
               <a href="#section-terminals">Terminaler</a>
               <a href="#section-hall-rules">Hall-spillregler</a>
+              <a href="#section-candy-mania">Candy Mania</a>
               <a href="#section-wallet-compliance">Wallet Compliance</a>
               <a href="#section-prize-policy">Prize Policy & Extra Prize</a>
               <a href="#section-room-control">Romkontroll</a>
@@ -418,6 +419,66 @@
             <button id="reloadConfigBtn" class="secondary">Oppdater fra backend</button>
           </div>
           <pre id="configStatus" class="status">Ingen konfig lastet.</pre>
+        </article>
+
+        <article id="section-candy-mania" class="card">
+          <h2>Candy Mania</h2>
+          <p class="muted">
+            Backend-styring for auto-trekning og realtime-runder. Endringer lagres i Candy settings og brukes uten redeploy.
+          </p>
+          <div class="grid">
+            <div class="field">
+              <label for="candyAutoRoundStartEnabled">Auto start runder</label>
+              <select id="candyAutoRoundStartEnabled">
+                <option value="true">Ja</option>
+                <option value="false">Nei</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="candyAutoRoundStartIntervalSeconds">Trekning hvert (sekunder)</label>
+              <input id="candyAutoRoundStartIntervalSeconds" type="number" min="30" step="1" />
+            </div>
+            <div class="field">
+              <label for="candyAutoRoundMinPlayers">Min spillere for auto-start</label>
+              <input id="candyAutoRoundMinPlayers" type="number" min="1" step="1" />
+            </div>
+            <div class="field">
+              <label for="candyAutoRoundTicketsPerPlayer">Bonger per spiller (auto)</label>
+              <input id="candyAutoRoundTicketsPerPlayer" type="number" min="1" max="5" step="1" />
+            </div>
+            <div class="field">
+              <label for="candyAutoRoundEntryFee">Default innsats per runde</label>
+              <input id="candyAutoRoundEntryFee" type="number" min="0" step="0.01" />
+            </div>
+            <div class="field">
+              <label for="candyPayoutPercent">RTP / utbetaling (%)</label>
+              <input id="candyPayoutPercent" type="number" min="0" max="100" step="0.01" />
+            </div>
+            <div class="field">
+              <label for="candyEffectiveFrom">Aktiver fra (valgfri)</label>
+              <input id="candyEffectiveFrom" type="datetime-local" step="1" />
+            </div>
+            <div class="field">
+              <label for="candyAutoDrawEnabled">Auto trekk i aktiv runde</label>
+              <select id="candyAutoDrawEnabled">
+                <option value="true">Ja</option>
+                <option value="false">Nei</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="candyAutoDrawIntervalSeconds">Trekk-intervall (sekunder)</label>
+              <input id="candyAutoDrawIntervalSeconds" type="number" min="0.25" step="0.05" />
+            </div>
+            <div class="field">
+              <label for="candySchedulerTickMs">Scheduler tick (ms, readonly)</label>
+              <input id="candySchedulerTickMs" type="number" readonly />
+            </div>
+          </div>
+          <div class="toolbar">
+            <button id="candyLoadSettingsBtn" class="secondary">Last fra backend</button>
+            <button id="candySaveSettingsBtn">Lagre Candy Mania</button>
+          </div>
+          <pre id="candySettingsStatus" class="status">Ingen Candy Mania-innstillinger lastet.</pre>
         </article>
 
         <article id="section-wallet-compliance" class="card">

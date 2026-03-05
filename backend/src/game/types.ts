@@ -23,6 +23,9 @@ export interface ClaimRecord {
   payoutAmount?: number;
   payoutPolicyVersion?: string;
   payoutWasCapped?: boolean;
+  rtpBudgetBefore?: number;
+  rtpBudgetAfter?: number;
+  rtpCapped?: boolean;
   createdAt: string;
 }
 
@@ -33,6 +36,9 @@ export interface GameState {
   ticketsPerPlayer: number;
   prizePool: number;
   remainingPrizePool: number;
+  payoutPercent: number;
+  maxPayoutBudget: number;
+  remainingPayoutBudget: number;
   drawBag: number[];
   drawnNumbers: number[];
   tickets: Map<string, Ticket[]>;
@@ -62,6 +68,9 @@ export interface GameSnapshot {
   ticketsPerPlayer: number;
   prizePool: number;
   remainingPrizePool: number;
+  payoutPercent: number;
+  maxPayoutBudget: number;
+  remainingPayoutBudget: number;
   drawnNumbers: number[];
   remainingNumbers: number;
   lineWinnerId?: string;

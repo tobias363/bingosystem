@@ -252,6 +252,121 @@ test("startGame accepts ticketsPerPlayer equal to 5", async () => {
   assert.equal(snapshot.currentGame?.ticketsPerPlayer, 5);
 });
 
+test("startGame rejects payoutPercent outside 0-100", async () => {
+  const { engine, roomCode, hostPlayerId } = await makeEngineWithRoom();
+  await assert.rejects(
+    async () => engine.startGame({ roomCode, actorPlayerId: hostPlayerId, payoutPercent: -1 }),
+    (error: unknown) => error instanceof DomainError && error.code === "INVALID_PAYOUT_PERCENT"
+  );
+  await assert.rejects(
+    async () => engine.startGame({ roomCode, actorPlayerId: hostPlayerId, payoutPercent: 101 }),
+    (error: unknown) => error instanceof DomainError && error.code === "INVALID_PAYOUT_PERCENT"
+  );
+});
+
+test("rtp payout budget caps total payouts across line and bingo claims", async () => {
+  const wallet = new InMemoryWalletAdapter();
+  const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
+    dailyLossLimit: 10000,
+    monthlyLossLimit: 10000
+  });
+
+  const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
+    hallId: "hall-1",
+    playerName: "Host",
+    walletId: "wallet-host"
+  });
+  await engine.joinRoom({
+    roomCode,
+    hallId: "hall-1",
+    playerName: "Guest",
+    walletId: "wallet-guest"
+  });
+
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    entryFee: 100,
+    ticketsPerPlayer: 1,
+    payoutPercent: 50
+  });
+
+  const lineNumbers = new Set([1, 2, 3, 4, 5]);
+  const bingoNumbers = new Set([
+    1, 2, 3, 4, 5, 16, 17, 18, 19, 20, 31, 32, 33, 34, 46, 47, 48, 49, 50, 61, 62, 63, 64, 65
+  ]);
+
+  let drawGuard = 0;
+  while (lineNumbers.size > 0 && drawGuard < 75) {
+    const number = await engine.drawNextNumber({
+      roomCode,
+      actorPlayerId: hostPlayerId
+    });
+    if (!bingoNumbers.has(number)) {
+      drawGuard += 1;
+      continue;
+    }
+    await engine.markNumber({
+      roomCode,
+      playerId: hostPlayerId,
+      number
+    });
+    lineNumbers.delete(number);
+    bingoNumbers.delete(number);
+    drawGuard += 1;
+  }
+  assert.equal(lineNumbers.size, 0);
+
+  const lineClaim = await engine.submitClaim({
+    roomCode,
+    playerId: hostPlayerId,
+    type: "LINE"
+  });
+  assert.equal(lineClaim.valid, true);
+  assert.equal(lineClaim.payoutAmount, 60);
+  assert.equal(lineClaim.payoutWasCapped, false);
+  assert.equal(lineClaim.rtpBudgetBefore, 100);
+  assert.equal(lineClaim.rtpBudgetAfter, 40);
+  assert.equal(lineClaim.rtpCapped, false);
+
+  while (bingoNumbers.size > 0 && drawGuard < 150) {
+    const number = await engine.drawNextNumber({
+      roomCode,
+      actorPlayerId: hostPlayerId
+    });
+    if (!bingoNumbers.has(number)) {
+      drawGuard += 1;
+      continue;
+    }
+    await engine.markNumber({
+      roomCode,
+      playerId: hostPlayerId,
+      number
+    });
+    bingoNumbers.delete(number);
+    drawGuard += 1;
+  }
+  assert.equal(bingoNumbers.size, 0);
+
+  const bingoClaim = await engine.submitClaim({
+    roomCode,
+    playerId: hostPlayerId,
+    type: "BINGO"
+  });
+  assert.equal(bingoClaim.valid, true);
+  assert.equal(bingoClaim.payoutAmount, 40);
+  assert.equal(bingoClaim.payoutWasCapped, true);
+  assert.equal(bingoClaim.rtpBudgetBefore, 40);
+  assert.equal(bingoClaim.rtpBudgetAfter, 0);
+  assert.equal(bingoClaim.rtpCapped, true);
+
+  const snapshot = engine.getRoomSnapshot(roomCode);
+  assert.equal(snapshot.currentGame?.payoutPercent, 50);
+  assert.equal(snapshot.currentGame?.maxPayoutBudget, 100);
+  assert.equal(snapshot.currentGame?.remainingPayoutBudget, 0);
+  assert.equal((lineClaim.payoutAmount ?? 0) + (bingoClaim.payoutAmount ?? 0), 100);
+});
+
 test("joinRoom rejects duplicate wallet in same room", async () => {
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), new InMemoryWalletAdapter());
   const { roomCode } = await engine.createRoom({
