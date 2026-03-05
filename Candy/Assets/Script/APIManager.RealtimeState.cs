@@ -185,23 +185,23 @@ public partial class APIManager
 
             for (int i = 0; i < card.selectionImg.Count; i++)
             {
-                card.selectionImg[i].SetActive(false);
+                SetActiveIfChanged(card.selectionImg[i], false);
             }
 
             for (int i = 0; i < card.missingPatternImg.Count; i++)
             {
-                card.missingPatternImg[i].SetActive(false);
+                SetActiveIfChanged(card.missingPatternImg[i], false);
             }
 
             for (int i = 0; i < card.matchPatternImg.Count; i++)
             {
-                card.matchPatternImg[i].SetActive(false);
+                SetActiveIfChanged(card.matchPatternImg[i], false);
             }
 
             int paylineCount = card.paylineObj != null ? card.paylineObj.Count : 0;
             for (int i = 0; i < paylineCount; i++)
             {
-                card.paylineObj[i].SetActive(false);
+                SetActiveIfChanged(card.paylineObj[i], false);
             }
 
             List<int> sourceTicket = null;
@@ -231,7 +231,10 @@ public partial class APIManager
             }
         }
 
-        Debug.Log($"[APIManager] Applied ticket page {currentTicketPage + 1}/{pageCount} ({ticketSets.Count} total ticket(s)) for player {activePlayerId}. Room {activeRoomCode}, game {activeGameId}");
+        if (logBootstrapEvents)
+        {
+            Debug.Log($"[APIManager] Applied ticket page {currentTicketPage + 1}/{pageCount} ({ticketSets.Count} total ticket(s)) for player {activePlayerId}. Room {activeRoomCode}, game {activeGameId}");
+        }
     }
 
     private void ApplyDrawnNumbers(JSONNode currentGame)
@@ -656,7 +659,7 @@ public partial class APIManager
         {
             if (card.matchPatternImg[i] != null)
             {
-                card.matchPatternImg[i].SetActive(false);
+                SetActiveIfChanged(card.matchPatternImg[i], false);
             }
         }
 
@@ -782,20 +785,21 @@ public partial class APIManager
     private IEnumerator BlinkRealtimeNearWinCell(int blinkKey, GameObject nearWinCell)
     {
         bool visible = false;
+        WaitForSeconds wait = new WaitForSeconds(realtimeNearWinBlinkInterval);
         while (realtimeNearWinBlinkCoroutines.ContainsKey(blinkKey))
         {
             visible = !visible;
             if (nearWinCell != null)
             {
-                nearWinCell.SetActive(visible);
+                SetActiveIfChanged(nearWinCell, visible);
             }
 
-            yield return new WaitForSeconds(realtimeNearWinBlinkInterval);
+            yield return wait;
         }
 
         if (nearWinCell != null)
         {
-            nearWinCell.SetActive(false);
+            SetActiveIfChanged(nearWinCell, false);
         }
     }
 
@@ -843,7 +847,7 @@ public partial class APIManager
                 GameObject missingCell = card.missingPatternImg[cellIndex];
                 if (missingCell != null)
                 {
-                    missingCell.SetActive(false);
+                    SetActiveIfChanged(missingCell, false);
                 }
             }
         }
@@ -877,7 +881,15 @@ public partial class APIManager
         GameObject missingCell = card.missingPatternImg[cellIndex];
         if (missingCell != null)
         {
-            missingCell.SetActive(active);
+            SetActiveIfChanged(missingCell, active);
+        }
+    }
+
+    private static void SetActiveIfChanged(GameObject target, bool active)
+    {
+        if (target != null && target.activeSelf != active)
+        {
+            target.SetActive(active);
         }
     }
 
@@ -963,15 +975,23 @@ public partial class APIManager
             return false;
         }
 
+        if (TryResolveBackendBonusTrigger(latestClaim.ClaimNode, out bool backendTriggered, out string backendSource))
+        {
+            triggerSource = backendSource;
+            return backendTriggered;
+        }
+
         if (string.Equals(latestClaim.ClaimType, "BONUS", StringComparison.OrdinalIgnoreCase))
         {
             triggerSource = "claim.type=BONUS";
+            LogBonusFallbackUsed("trigger", triggerSource, latestClaim.ClaimId);
             return true;
         }
 
         if (HasTruthyBonusFlag(latestClaim.ClaimNode))
         {
             triggerSource = "claim.bonusFlag";
+            LogBonusFallbackUsed("trigger", triggerSource, latestClaim.ClaimId);
             return true;
         }
 
@@ -990,8 +1010,36 @@ public partial class APIManager
             if (cardWin.Value == realtimeBonusPatternIndex)
             {
                 triggerSource = $"winningPatternIndex={realtimeBonusPatternIndex}";
+                LogBonusFallbackUsed("trigger", triggerSource, latestClaim.ClaimId);
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    private bool TryResolveBackendBonusTrigger(JSONNode claimNode, out bool bonusTriggered, out string source)
+    {
+        bonusTriggered = false;
+        source = string.Empty;
+        if (claimNode == null || claimNode.IsNull)
+        {
+            return false;
+        }
+
+        if (TryParseOptionalBool(claimNode["bonusTriggered"], out bool claimFlag))
+        {
+            bonusTriggered = claimFlag;
+            source = "claim.bonusTriggered";
+            return true;
+        }
+
+        JSONNode payload = claimNode["payload"];
+        if (TryParseOptionalBool(payload?["bonusTriggered"], out bool payloadFlag))
+        {
+            bonusTriggered = payloadFlag;
+            source = "claim.payload.bonusTriggered";
+            return true;
         }
 
         return false;
@@ -1004,16 +1052,14 @@ public partial class APIManager
             return false;
         }
 
-        if (IsTruthyNode(claimNode["bonusTriggered"]) ||
-            IsTruthyNode(claimNode["hasBonus"]) ||
+        if (IsTruthyNode(claimNode["hasBonus"]) ||
             IsTruthyNode(claimNode["isBonus"]))
         {
             return true;
         }
 
         JSONNode payload = claimNode["payload"];
-        return IsTruthyNode(payload?["bonusTriggered"]) ||
-               IsTruthyNode(payload?["hasBonus"]) ||
+        return IsTruthyNode(payload?["hasBonus"]) ||
                IsTruthyNode(payload?["isBonus"]);
     }
 
@@ -1046,40 +1092,76 @@ public partial class APIManager
         bonusAmount = 0;
         source = string.Empty;
 
-        if (TryResolveBonusAmountFromNode(latestClaim.ClaimNode, out bonusAmount, out source))
+        if (TryResolveBackendBonusAmount(latestClaim.ClaimNode, out bonusAmount, out source))
         {
             source = $"claim.{source}";
             return true;
         }
 
         JSONNode claimPayload = latestClaim.ClaimNode?["payload"];
+        if (TryResolveBackendBonusAmount(claimPayload, out bonusAmount, out source))
+        {
+            source = $"claim.payload.{source}";
+            return true;
+        }
+
+        if (TryResolveBonusAmountFromNode(latestClaim.ClaimNode, out bonusAmount, out source))
+        {
+            source = $"claim.{source}";
+            LogBonusFallbackUsed("amount", source, latestClaim.ClaimId);
+            return true;
+        }
+
         if (TryResolveBonusAmountFromNode(claimPayload, out bonusAmount, out source))
         {
             source = $"claim.payload.{source}";
+            LogBonusFallbackUsed("amount", source, latestClaim.ClaimId);
             return true;
         }
 
         if (TryResolveBonusAmountFromNode(currentGame, out bonusAmount, out source))
         {
             source = $"currentGame.{source}";
+            LogBonusFallbackUsed("amount", source, latestClaim.ClaimId);
             return true;
         }
 
         if (TryResolveBonusAmountFromPlayerMap(currentGame?["bonusByPlayer"], out bonusAmount))
         {
             source = $"currentGame.bonusByPlayer[{activePlayerId}]";
+            LogBonusFallbackUsed("amount", source, latestClaim.ClaimId);
             return true;
         }
 
         if (TryResolveBonusAmountFromPlayerMap(currentGame?["bonusAmounts"], out bonusAmount))
         {
             source = $"currentGame.bonusAmounts[{activePlayerId}]";
+            LogBonusFallbackUsed("amount", source, latestClaim.ClaimId);
             return true;
         }
 
         if (TryResolveBonusAmountFromPlayerMap(currentGame?["bonusAwards"], out bonusAmount))
         {
             source = $"currentGame.bonusAwards[{activePlayerId}]";
+            LogBonusFallbackUsed("amount", source, latestClaim.ClaimId);
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryResolveBackendBonusAmount(JSONNode node, out int bonusAmount, out string source)
+    {
+        bonusAmount = 0;
+        source = string.Empty;
+        if (node == null || node.IsNull)
+        {
+            return false;
+        }
+
+        if (TryParsePositiveAmount(node["bonusAmount"], out bonusAmount))
+        {
+            source = "bonusAmount";
             return true;
         }
 
@@ -1214,6 +1296,43 @@ public partial class APIManager
         }
 
         return false;
+    }
+
+    private bool TryParseOptionalBool(JSONNode node, out bool value)
+    {
+        value = false;
+        if (node == null || node.IsNull)
+        {
+            return false;
+        }
+
+        string raw = node.Value;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        if (bool.TryParse(raw, out bool boolValue))
+        {
+            value = boolValue;
+            return true;
+        }
+
+        if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intValue))
+        {
+            value = intValue != 0;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void LogBonusFallbackUsed(string scope, string source, string claimId)
+    {
+        string normalizedClaimId = string.IsNullOrWhiteSpace(claimId) ? "<unknown-claim>" : claimId;
+        Debug.LogWarning(
+            $"[APIManager] Realtime bonus-{scope} bruker fallback ({source}) i game {activeGameId}, claim {normalizedClaimId}. " +
+            "Backend-feltene claim.bonusTriggered/claim.bonusAmount mangler.");
     }
 
     private void ResetRealtimeBonusState(bool closeBonusPanel, string previousGameId = null)
