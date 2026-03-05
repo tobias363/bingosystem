@@ -222,6 +222,37 @@ async function createRoomWithTwoPlayers(input: {
   };
 }
 
+function prioritizeDrawBag(engine: BingoEngine, roomCode: string, prioritizedNumbers: number[]): void {
+  const anyEngine = engine as unknown as {
+    rooms?: Map<string, { currentGame?: { drawBag: number[]; drawnNumbers: number[] } }>;
+  };
+  const room = anyEngine.rooms?.get(roomCode);
+  const game = room?.currentGame;
+  if (!game || !Array.isArray(game.drawBag) || game.drawnNumbers.length !== 0) {
+    throw new Error("Kan ikke prioritere drawBag: mangler aktiv runde med tom drawnNumbers.");
+  }
+
+  const prioritizedUnique = new Set<number>();
+  const nextBag: number[] = [];
+  for (const value of prioritizedNumbers) {
+    if (!Number.isInteger(value) || prioritizedUnique.has(value)) {
+      continue;
+    }
+    prioritizedUnique.add(value);
+    if (game.drawBag.includes(value)) {
+      nextBag.push(value);
+    }
+  }
+
+  for (const value of game.drawBag) {
+    if (!prioritizedUnique.has(value)) {
+      nextBag.push(value);
+    }
+  }
+
+  game.drawBag = nextBag;
+}
+
 test("startGame rejects ticketsPerPlayer below 1", async () => {
   const { engine, roomCode, hostPlayerId } = await makeEngineWithRoom();
   await assert.rejects(
@@ -291,6 +322,13 @@ test("rtp payout budget caps total payouts across line and bingo claims", async 
     ticketsPerPlayer: 1,
     payoutPercent: 50
   });
+  prioritizeDrawBag(engine, roomCode, [
+    1, 2, 3, 4, 5,
+    16, 17, 18, 19, 20,
+    31, 32, 33, 34,
+    46, 47, 48, 49, 50,
+    61, 62, 63, 64, 65
+  ]);
 
   const lineNumbers = new Set([1, 2, 3, 4, 5]);
   const bingoNumbers = new Set([
@@ -394,6 +432,7 @@ test("line claim includes deterministic backend bonus contract fields in claim a
     entryFee: 100,
     ticketsPerPlayer: 1
   });
+  prioritizeDrawBag(engine, roomCode, [16, 17, 18, 19, 20]);
 
   const secondRow = new Set([16, 17, 18, 19, 20]);
   let drawGuard = 0;
