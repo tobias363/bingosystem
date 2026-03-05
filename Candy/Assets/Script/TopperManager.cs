@@ -32,6 +32,7 @@ public class TopperManager : MonoBehaviour
         EventManager.OnMissingPattern += ShowMissingPattern;
         CacheDefaultPrizeColors();
         CacheDefaultPrizeTexts();
+        RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: false);
     }
 
     private void OnDisable()
@@ -49,6 +50,7 @@ public class TopperManager : MonoBehaviour
     {
         ShowAllPatterns();
         PrepareMissingPatternVisuals();
+        RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: true);
         DisableAllMatchedPattern();
         DisableAllMissedPattern();
     }
@@ -361,6 +363,58 @@ public class TopperManager : MonoBehaviour
         }
     }
 
+    private void RefreshDefaultPrizeTextsFromRuntime(bool applyToPrizeLabels)
+    {
+        if (defaultPrizeTexts.Count < prizes.Count)
+        {
+            while (defaultPrizeTexts.Count < prizes.Count)
+            {
+                defaultPrizeTexts.Add(string.Empty);
+            }
+        }
+
+        for (int i = 0; i < prizes.Count; i++)
+        {
+            string resolvedText = string.Empty;
+            if (TryResolveRuntimePrizeText(i, out string runtimePrizeText))
+            {
+                resolvedText = runtimePrizeText;
+            }
+            else if (prizes[i] != null)
+            {
+                resolvedText = prizes[i].text;
+            }
+            else if (i >= 0 && i < defaultPrizeTexts.Count)
+            {
+                resolvedText = defaultPrizeTexts[i];
+            }
+
+            if (i >= 0 && i < defaultPrizeTexts.Count)
+            {
+                defaultPrizeTexts[i] = resolvedText;
+            }
+
+            if (applyToPrizeLabels && prizes[i] != null)
+            {
+                prizes[i].text = resolvedText;
+            }
+        }
+    }
+
+    private static bool TryResolveRuntimePrizeText(int patternIndex, out string runtimePrizeText)
+    {
+        runtimePrizeText = string.Empty;
+
+        List<int> currentWinPoints = GameManager.instance?.currentWinPoints;
+        if (currentWinPoints == null || patternIndex < 0 || patternIndex >= currentWinPoints.Count)
+        {
+            return false;
+        }
+
+        runtimePrizeText = Mathf.Max(0, currentWinPoints[patternIndex]).ToString();
+        return true;
+    }
+
     private Color GetDefaultPrizeColor(int index)
     {
         if (index >= 0 && index < defaultPrizeColors.Count)
@@ -373,6 +427,11 @@ public class TopperManager : MonoBehaviour
 
     private string GetDefaultPrizeText(int index)
     {
+        if (TryResolveRuntimePrizeText(index, out string runtimePrizeText))
+        {
+            return runtimePrizeText;
+        }
+
         if (index >= 0 && index < defaultPrizeTexts.Count)
         {
             return defaultPrizeTexts[index];
@@ -422,6 +481,8 @@ public class TopperManager : MonoBehaviour
     {
         StopAllCoroutines();
         missingPatternBlinkRoutines.Clear();
+        ShowAllPatterns();
+        RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: true);
         DisableAllMissedPattern();
         DisableAllMatchedPattern();
         for (int i = 0; i < prizes.Count; i++)
