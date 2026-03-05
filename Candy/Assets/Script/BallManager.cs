@@ -27,7 +27,7 @@ public class BallManager : MonoBehaviour
     [SerializeField]
     private List<int> ballIndexList = new List<int>();
     [SerializeField] private bool verboseDrawLogging = false;
-    [SerializeField] private bool overrideGlassAnimationSpeed = false;
+    [SerializeField] private bool overrideGlassAnimationSpeed = true;
     [SerializeField] [Range(0.1f, 1f)] private float glassAnimationSpeedMultiplier = 0.59f;
     private int[] extraBallPosArr = new int[5] { -140, -70, 140, 70, 0 };
     private List<GameObject> instantiatedExtraBall = new List<GameObject>();
