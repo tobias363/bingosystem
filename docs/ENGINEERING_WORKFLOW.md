@@ -39,7 +39,7 @@ git push -u origin codex/wallet-transfer-ui
 
 Recommended Render setup:
 
-- `staging` service deploys from PR branch or `develop` branch.
+- `staging` service deploys from `staging` branch.
 - `production` service deploys from `main` only.
 - GitHub Actions workflows:
   - `.github/workflows/deploy-staging.yml`
