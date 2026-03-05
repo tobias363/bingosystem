@@ -7,3 +7,5 @@ npm-debug.log*
 .DS_Store
 backend/data/
 CandyBuilds/
+Roma/
+Candy/mono_crash.*.json
