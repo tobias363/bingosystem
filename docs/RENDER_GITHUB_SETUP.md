@@ -40,7 +40,7 @@ Repo variables (`Settings` -> `Secrets and variables` -> `Actions` -> `Variables
 ## 4) Workflow trigger-regler
 
 - `Deploy Staging`:
-  - trigges automatisk etter grønn `CI` på PR (`workflow_run`)
+  - trigges automatisk ved `push` til `staging`
   - kan også kjøres manuelt (`workflow_dispatch`)
 - `Deploy Production`:
   - trigges automatisk etter grønn `CI` på `main`
@@ -58,6 +58,7 @@ Repo variables (`Settings` -> `Secrets and variables` -> `Actions` -> `Variables
 
 1. Lag en test-PR fra `codex/*`.
 2. Verifiser at `CI` blir grønn.
-3. Verifiser at `Deploy Staging` starter og passerer healthcheck.
-4. Merge PR til `main`.
-5. Verifiser at `Deploy Production` starter og passerer healthcheck.
+3. Merge PR til `main`.
+4. Cherry-pick eller merge samme endring til `staging`.
+5. Verifiser at `Deploy Staging` starter på push til `staging` og passerer healthcheck.
+6. Verifiser at `Deploy Production` starter etter grønn `CI` på `main` og passerer healthcheck.

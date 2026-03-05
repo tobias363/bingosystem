@@ -94,6 +94,7 @@ Kortversjon:
   - `compliance`
 - review-krav styres av branch-protection (`.github/scripts/apply-branch-protection.sh`)
 - squash-merge til `main`
+- push til `staging` for automatisk staging deploy
 - Render deploy styres av GitHub Actions:
   - `.github/workflows/deploy-staging.yml`
   - `.github/workflows/deploy-production.yml`
