@@ -76,3 +76,12 @@ Bruk browser network eller backend logs:
 - [ ] Bonus panel/bonus amount OK
 - [ ] Winning-sum OK
 - [ ] Ingen blokkende feil i logs
+
+## Rollback Confirmation
+Hvis deploy må rulles tilbake, bruk prosedyren i `docs/CANDY_RELEASE_ROLLOUT_PLAN.md` og bekreft minst:
+
+1. `GET /health` svarer med `ok:true`.
+2. `POST /api/games/candy/launch-token` svarer 200 + JSON.
+3. `POST /api/games/candy/launch-resolve`:
+- første kall: 200 + payload
+- andre kall med samme token: `INVALID_LAUNCH_TOKEN`.

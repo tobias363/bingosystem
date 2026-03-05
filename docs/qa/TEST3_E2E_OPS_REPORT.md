@@ -19,11 +19,26 @@
 - `curl /api/admin/games` med PLAYER-token
 - `npm --prefix backend run check`
 - `npm --prefix backend run build`
+- `./backend/node_modules/.bin/tsx --test --test-name-pattern "round ends automatically when max draws is reached|line claim includes deterministic backend bonus contract fields in claim and snapshot" backend/src/game/BingoEngine.test.ts`
+
+## Deterministiske verifikasjoner (krav 1 og 2)
+
+1. Runde stopper ved 30 trekk (`endedReason=MAX_DRAWS_REACHED`):
+- Status: `PASS`
+- Bevis:
+  - Test: `round ends automatically when max draws is reached`
+  - Resultat: `pass` i målrettet testkjøring.
+
+2. Claim/snapshot har `winningPatternIndex/patternIndex/bonusTriggered/bonusAmount`:
+- Status: `PASS`
+- Bevis:
+  - Test: `line claim includes deterministic backend bonus contract fields in claim and snapshot`
+  - Resultat: `pass` i målrettet testkjøring.
 
 ## E2E scenarier
 
 1. Happy path:
-- Status: `FAIL` (target mangler Candy launch-endepunkter)
+- Status: `FAIL` (target mangler Candy launch-endepunkter, dermed stopper flyten etter login)
 - Bevis:
   - `CANDY_API_BASE_URL=https://bingosystem-3.onrender.com CANDY_TEST_ACCESS_TOKEN=<token> bash scripts/qa/test3-e2e-smoke.sh`
   - Output: `launch-token expected HTTP 200, got 404` + `Cannot POST /api/games/candy/launch-token`
@@ -93,6 +108,7 @@ Oppdaterte seksjoner i `docs/CANDY_RELEASE_ROLLOUT_PLAN.md`:
 
 1. Ny preflight-gate: verifiser Candy launch-endepunkter med HTTP 200 før full smoke.
 2. Presisert rollback-eierskap (Render rollback + post-rollback health + launch smoke).
+3. Runbook oppdatert med egen rollback-bekreftelse og post-rollback sjekker.
 
 ## Konklusjon
 
