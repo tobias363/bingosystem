@@ -149,6 +149,26 @@ public class GameManager : MonoBehaviour
         }
         //themeMathEngine = new ThemeMathEngine(this);
     }
+
+    public void AddBonusPayoutToCurrentRound(int bonusAmount)
+    {
+        if (bonusAmount <= 0)
+        {
+            Debug.LogWarning($"[GameManager] Ignorerer bonus payout <= 0 ({bonusAmount}).");
+            return;
+        }
+
+        if (winList == null)
+        {
+            winList = new List<int>();
+        }
+
+        winList.Add(bonusAmount);
+        int totalWin = winList.Sum(x => Convert.ToInt32(x));
+        winAmt = totalWin;
+        winAmtText.text = totalWin.ToString();
+        SetTotalMoney(bonusAmount);
+    }
     
     void ShowWinAmt(int cardNo, int index)
     {

@@ -34,10 +34,22 @@ public class BonusControl : MonoBehaviour
     int currentSpins;
     int currentReward;
     int chocPlace = 0;
+    bool bonusPayoutApplied;
 
     
     private void OnEnable()
     {
+        ctr = 2;
+        stopMoving = false;
+        currentSpins = 0;
+        currentReward = 0;
+        chocPlace = 0;
+        winAmt = 0;
+        bonusPayoutApplied = false;
+        if (displayWin != null)
+        {
+            displayWin.text = "0";
+        }
         displayCredit.text = gameManager.displayTotalMoney.text;
         SetRewards();
     }
@@ -168,10 +180,22 @@ public class BonusControl : MonoBehaviour
         displayBox[chocPlace].transform.GetChild(0).gameObject.SetActive(true);
         displayWin.text = displayBox[chocPlace].text.ToString();
         Debug.Log("winAmt : " + winAmt);
-        winAmt += int.Parse(displayBox[chocPlace].text);
-        gameManager.SetTotalMoney(int.Parse(displayBox[chocPlace].text));
+        if (!int.TryParse(displayBox[chocPlace].text, out int awardedAmount))
+        {
+            Debug.LogError($"[BonusControl] Ugyldig bonusverdi i displayBox[{chocPlace}]: {displayBox[chocPlace].text}");
+            awardedAmount = 0;
+        }
+        winAmt += awardedAmount;
+        if (!bonusPayoutApplied && awardedAmount > 0)
+        {
+            bonusPayoutApplied = true;
+            gameManager.AddBonusPayoutToCurrentRound(awardedAmount);
+        }
+        else if (bonusPayoutApplied)
+        {
+            Debug.LogWarning("[BonusControl] Bonus payout var allerede registrert i denne runden. Hopper over duplikat.");
+        }
         displayCredit.text = gameManager.displayTotalMoney.text;
-        gameManager.winAmtText.text = winAmt.ToString() + " kr";
         Debug.Log("current reward : " + currentReward);
         Invoke(nameof(EndGame), 2);
         // if (currentReward != -1)
@@ -182,8 +206,16 @@ public class BonusControl : MonoBehaviour
 
     void SetRewards()
     {
-        bonusAmt = APIManager.instance.bonusAMT;
-        
+        if (APIManager.instance == null)
+        {
+            Debug.LogError("[BonusControl] APIManager.instance mangler. Kan ikke lese bonusAMT.");
+            bonusAmt = 0;
+        }
+        else
+        {
+            bonusAmt = APIManager.instance.bonusAMT;
+        }
+
         // winningMoney = 10000;
         // winningMoney = Random.Range(4, 100) * 100;
 
@@ -211,14 +243,22 @@ public class BonusControl : MonoBehaviour
        // Debug.Log(winPlace);
        // allpoints = new int[displayBox.Length];
 
-           for (int i = 0; i < allpoints.Length; i++)
+        bool foundExactBonus = false;
+        for (int i = 0; i < allpoints.Length; i++)
+        {
+            if (allpoints[i] == bonusAmt)
             {
-                if (allpoints[i] == bonusAmt)
-                {
-                    winPlace = i + 1;
-                    break; // Stops the loop once the bonusAmt is found
-                }
+                winPlace = i + 1;
+                foundExactBonus = true;
+                break; // Stops the loop once the bonusAmt is found
             }
+        }
+
+        if (!foundExactBonus)
+        {
+            Debug.LogWarning($"[BonusControl] Fant ikke bonusAmt={bonusAmt} i allpoints. Bruker fallback winPlace={winPlace}.");
+            winPlace = Mathf.Clamp(winPlace, 1, Mathf.Max(1, allpoints.Length));
+        }
         int[] removepoints = { 100, 150, 200, 250 };
         Debug.Log(allpoints.Length);
 
