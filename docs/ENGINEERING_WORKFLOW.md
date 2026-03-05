@@ -28,9 +28,11 @@ git push -u origin codex/wallet-transfer-ui
 1. Open PR from `codex/*` to `main`.
 2. Fill out `.github/pull_request_template.md`.
 3. CI must be green:
-   - `CI / backend`
-   - `Compliance Gate / compliance`
-4. At least 1 approval is required.
+   - `backend`
+   - `compliance`
+4. Approval policy is controlled in branch protection script:
+   - full-control mode: `REQUIRED_APPROVALS=0`
+   - stricter mode: `REQUIRED_APPROVALS=1` (or more)
 5. Use **Squash and merge**.
 
 ## 3) Deployment flow
@@ -39,6 +41,9 @@ Recommended Render setup:
 
 - `staging` service deploys from PR branch or `develop` branch.
 - `production` service deploys from `main` only.
+- GitHub Actions workflows:
+  - `.github/workflows/deploy-staging.yml`
+  - `.github/workflows/deploy-production.yml`
 
 Minimum production gate:
 
@@ -50,6 +55,10 @@ Minimum production gate:
    - wallet balance fetch
    - Swedbank top-up intent create
    - one game join/start flow
+
+Setup av Render-secrets/variables er dokumentert i:
+
+- `docs/RENDER_GITHUB_SETUP.md`
 
 ## 4) Release and rollback tracking
 

@@ -83,17 +83,20 @@ CI-gate er lagt i `.github/workflows/compliance-gate.yml` og krever grønn `test
 Standardisert arbeidsflyt er dokumentert i:
 
 - `docs/ENGINEERING_WORKFLOW.md`
+- `docs/RENDER_GITHUB_SETUP.md`
 
 Kortversjon:
 
 - arbeid i `codex/*` brancher
 - PR til `main` (ingen direkte push)
 - required checks:
-  - `CI / backend`
-  - `Compliance Gate / compliance`
-- minst 1 godkjenning før merge
+  - `backend`
+  - `compliance`
+- review-krav styres av branch-protection (`.github/scripts/apply-branch-protection.sh`)
 - squash-merge til `main`
-- Render deploy fra `main` til produksjon
+- Render deploy styres av GitHub Actions:
+  - `.github/workflows/deploy-staging.yml`
+  - `.github/workflows/deploy-production.yml`
 - produksjonsrelease tagges (`vYYYY.MM.DD.N`)
 
 Automatisk branch-protection kan settes via:
