@@ -718,16 +718,6 @@ public partial class APIManager
 
         if (state == TicketUiState.won)
         {
-            int cellCount = Mathf.Min(mask.Count, card.payLinePattern.Count);
-            for (int cellIndex = 0; cellIndex < cellCount && cellIndex < card.matchPatternImg.Count; cellIndex++)
-            {
-                if (mask[cellIndex] == 1 &&
-                    card.payLinePattern[cellIndex] == 1 &&
-                    card.matchPatternImg[cellIndex] != null)
-                {
-                    card.matchPatternImg[cellIndex].SetActive(true);
-                }
-            }
             return;
         }
 

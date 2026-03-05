@@ -902,7 +902,6 @@ public class NumberGenerator : MonoBehaviour
         EventManager.ShowMatchedPattern(patternIndex, true);
         for (int m = 0; m < selectedIndex.Count; m++)
         {
-            cardClasses[cardNo].matchPatternImg[selectedIndex[m]].SetActive(true);
             ballAnimSpeed = 0.11f;
             EventManager.ShowMissingPattern(patternIndex, selectedIndex[m], false);
         }
