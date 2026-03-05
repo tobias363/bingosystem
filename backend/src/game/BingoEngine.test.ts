@@ -268,7 +268,8 @@ test("rtp payout budget caps total payouts across line and bingo claims", async 
   const wallet = new InMemoryWalletAdapter();
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
     dailyLossLimit: 10000,
-    monthlyLossLimit: 10000
+    monthlyLossLimit: 10000,
+    maxDrawsPerRound: 75
   });
 
   const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
@@ -323,6 +324,10 @@ test("rtp payout budget caps total payouts across line and bingo claims", async 
     type: "LINE"
   });
   assert.equal(lineClaim.valid, true);
+  assert.equal(lineClaim.winningPatternIndex, 0);
+  assert.equal(lineClaim.patternIndex, 0);
+  assert.equal(lineClaim.bonusTriggered, false);
+  assert.equal(lineClaim.bonusAmount, undefined);
   assert.equal(lineClaim.payoutAmount, 60);
   assert.equal(lineClaim.payoutWasCapped, false);
   assert.equal(lineClaim.rtpBudgetBefore, 100);
@@ -365,6 +370,115 @@ test("rtp payout budget caps total payouts across line and bingo claims", async 
   assert.equal(snapshot.currentGame?.maxPayoutBudget, 100);
   assert.equal(snapshot.currentGame?.remainingPayoutBudget, 0);
   assert.equal((lineClaim.payoutAmount ?? 0) + (bingoClaim.payoutAmount ?? 0), 100);
+});
+
+test("line claim includes deterministic backend bonus contract fields in claim and snapshot", async () => {
+  const engine = new BingoEngine(new FixedTicketBingoAdapter(), new InMemoryWalletAdapter(), {
+    maxDrawsPerRound: 75
+  });
+  const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
+    hallId: "hall-1",
+    playerName: "Host",
+    walletId: "wallet-host"
+  });
+  await engine.joinRoom({
+    roomCode,
+    hallId: "hall-1",
+    playerName: "Guest",
+    walletId: "wallet-guest"
+  });
+
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    entryFee: 100,
+    ticketsPerPlayer: 1
+  });
+
+  const secondRow = new Set([16, 17, 18, 19, 20]);
+  let drawGuard = 0;
+  while (secondRow.size > 0 && drawGuard < 75) {
+    const number = await engine.drawNextNumber({
+      roomCode,
+      actorPlayerId: hostPlayerId
+    });
+    if (!secondRow.has(number)) {
+      drawGuard += 1;
+      continue;
+    }
+    await engine.markNumber({
+      roomCode,
+      playerId: hostPlayerId,
+      number
+    });
+    secondRow.delete(number);
+    drawGuard += 1;
+  }
+  assert.equal(secondRow.size, 0);
+
+  const claim = await engine.submitClaim({
+    roomCode,
+    playerId: hostPlayerId,
+    type: "LINE"
+  });
+  assert.equal(claim.valid, true);
+  assert.equal(claim.winningPatternIndex, 1);
+  assert.equal(claim.patternIndex, 1);
+  assert.equal(claim.bonusTriggered, true);
+  assert.equal(claim.bonusAmount, claim.payoutAmount);
+
+  const snapshot = engine.getRoomSnapshot(roomCode);
+  const claimFromSnapshot = snapshot.currentGame?.claims.find((entry) => entry.id === claim.id);
+  assert.ok(claimFromSnapshot);
+  assert.equal(claimFromSnapshot?.winningPatternIndex, 1);
+  assert.equal(claimFromSnapshot?.patternIndex, 1);
+  assert.equal(claimFromSnapshot?.bonusTriggered, true);
+  assert.equal(claimFromSnapshot?.bonusAmount, claim.payoutAmount);
+});
+
+test("round ends automatically when max draws is reached", async () => {
+  const limitedEngine = new BingoEngine(new FixedTicketBingoAdapter(), new InMemoryWalletAdapter(), {
+    maxDrawsPerRound: 3
+  });
+  const { roomCode: limitedRoomCode, playerId: limitedHostPlayerId } = await limitedEngine.createRoom({
+    hallId: "hall-1",
+    playerName: "Host",
+    walletId: "wallet-host"
+  });
+  await limitedEngine.joinRoom({
+    roomCode: limitedRoomCode,
+    hallId: "hall-1",
+    playerName: "Guest",
+    walletId: "wallet-guest"
+  });
+
+  await limitedEngine.startGame({
+    roomCode: limitedRoomCode,
+    actorPlayerId: limitedHostPlayerId,
+    ticketsPerPlayer: 1
+  });
+
+  await limitedEngine.drawNextNumber({ roomCode: limitedRoomCode, actorPlayerId: limitedHostPlayerId });
+  await limitedEngine.drawNextNumber({ roomCode: limitedRoomCode, actorPlayerId: limitedHostPlayerId });
+  const thirdDraw = await limitedEngine.drawNextNumber({
+    roomCode: limitedRoomCode,
+    actorPlayerId: limitedHostPlayerId
+  });
+  assert.ok(Number.isFinite(thirdDraw));
+
+  const snapshotAfterThirdDraw = limitedEngine.getRoomSnapshot(limitedRoomCode);
+  assert.equal(snapshotAfterThirdDraw.currentGame?.drawnNumbers.length, 3);
+  assert.equal(snapshotAfterThirdDraw.currentGame?.status, "ENDED");
+  assert.equal(snapshotAfterThirdDraw.currentGame?.endedReason, "MAX_DRAWS_REACHED");
+
+  await assert.rejects(
+    async () =>
+      limitedEngine.drawNextNumber({
+        roomCode: limitedRoomCode,
+        actorPlayerId: limitedHostPlayerId
+      }),
+    (error: unknown) => error instanceof DomainError && error.code === "GAME_NOT_RUNNING"
+  );
 });
 
 test("joinRoom rejects duplicate wallet in same room", async () => {
@@ -679,7 +793,8 @@ test("prize policy caps single databingo payouts and stores policy reference", a
   const wallet = new InMemoryWalletAdapter();
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
     dailyLossLimit: 20000,
-    monthlyLossLimit: 20000
+    monthlyLossLimit: 20000,
+    maxDrawsPerRound: 75
   });
   const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
     hallId: "hall-1",
@@ -812,7 +927,8 @@ test("payout audit trail includes immutable hash chain and payout metadata", asy
   const wallet = new InMemoryWalletAdapter();
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
     dailyLossLimit: 10000,
-    monthlyLossLimit: 10000
+    monthlyLossLimit: 10000,
+    maxDrawsPerRound: 75
   });
 
   const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
