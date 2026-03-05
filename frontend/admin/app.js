@@ -1,5 +1,51 @@
 const ADMIN_TOKEN_KEY = "bingo_admin_access_token";
 const CANDY_GAME_SLUG = "candy";
+
+// Chat3: RBAC block start
+const CHAT3_SECTION_ACCESS_RULES = {
+  "section-candy-mania": { permissions: ["GAME_CATALOG_READ", "ROOM_CONTROL_READ"], mode: "any" },
+  "section-games": { permissions: ["GAME_CATALOG_READ"], mode: "all" },
+  "section-halls": { permissions: ["HALL_READ"], mode: "all" },
+  "section-terminals": { permissions: ["TERMINAL_READ"], mode: "all" },
+  "section-hall-rules": { permissions: ["HALL_GAME_CONFIG_READ"], mode: "all" },
+  "section-wallet-compliance": { permissions: ["WALLET_COMPLIANCE_READ"], mode: "all" },
+  "section-prize-policy": { permissions: ["PRIZE_POLICY_READ"], mode: "all" },
+  "section-room-control": { permissions: ["ROOM_CONTROL_READ"], mode: "all" },
+  "section-settings-change-log": { permissions: ["GAME_SETTINGS_CHANGELOG_READ"], mode: "all" }
+};
+
+const CHAT3_ACTION_PERMISSION_RULES = {
+  saveBtn: "GAME_CATALOG_WRITE",
+  candySaveGameBtn: "GAME_CATALOG_WRITE",
+  createHallBtn: "HALL_WRITE",
+  saveHallBtn: "HALL_WRITE",
+  createTerminalBtn: "TERMINAL_WRITE",
+  saveTerminalBtn: "TERMINAL_WRITE",
+  saveConfigBtn: "HALL_GAME_CONFIG_WRITE",
+  candySaveSettingsBtn: "ROOM_CONTROL_WRITE",
+  candyQuickStartNowBtn: "ROOM_CONTROL_WRITE",
+  candyQuickCreateStartBtn: "ROOM_CONTROL_WRITE",
+  candyQuickStartExistingBtn: "ROOM_CONTROL_WRITE",
+  candyQuickDrawNextBtn: "ROOM_CONTROL_WRITE",
+  candyQuickEndRoomBtn: "ROOM_CONTROL_WRITE",
+  createRoomBtn: "ROOM_CONTROL_WRITE",
+  createAndStartRoomBtn: "ROOM_CONTROL_WRITE",
+  startRoomBtn: "ROOM_CONTROL_WRITE",
+  drawNextBtn: "ROOM_CONTROL_WRITE",
+  endRoomBtn: "ROOM_CONTROL_WRITE",
+  loadComplianceBtn: "WALLET_COMPLIANCE_READ",
+  saveLossLimitsBtn: "WALLET_COMPLIANCE_WRITE",
+  setTimedPauseBtn: "WALLET_COMPLIANCE_WRITE",
+  clearTimedPauseBtn: "WALLET_COMPLIANCE_WRITE",
+  setSelfExclusionBtn: "WALLET_COMPLIANCE_WRITE",
+  clearSelfExclusionBtn: "WALLET_COMPLIANCE_WRITE",
+  loadExtraDrawDenialsBtn: "EXTRA_DRAW_DENIALS_READ",
+  loadPrizePolicyBtn: "PRIZE_POLICY_READ",
+  savePrizePolicyBtn: "PRIZE_POLICY_WRITE",
+  awardExtraPrizeBtn: "EXTRA_PRIZE_AWARD",
+  settingsLogLoadBtn: "GAME_SETTINGS_CHANGELOG_READ"
+};
+// Chat3: RBAC block end
 const SECTION_HASH_PREFIX = "#section-";
 const DEFAULT_ADMIN_SECTION_ID = "section-game-settings";
 
@@ -148,7 +194,16 @@ const elements = {
   startRoomBtn: document.getElementById("startRoomBtn"),
   drawNextBtn: document.getElementById("drawNextBtn"),
   endRoomBtn: document.getElementById("endRoomBtn"),
-  roomStatus: document.getElementById("roomStatus")
+  roomStatus: document.getElementById("roomStatus"),
+  // Chat3: RBAC block start
+  settingsLogGameSlug: document.getElementById("settingsLogGameSlug"),
+  settingsLogLimit: document.getElementById("settingsLogLimit"),
+  settingsLogLoadBtn: document.getElementById("settingsLogLoadBtn"),
+  settingsLogStatus: document.getElementById("settingsLogStatus"),
+  policyRoleSummary: document.getElementById("policyRoleSummary"),
+  policySummaryList: document.getElementById("policySummaryList"),
+  policyStatus: document.getElementById("policyStatus")
+  // Chat3: RBAC block end
 };
 
 const state = {
@@ -169,7 +224,12 @@ const state = {
   settingsFieldErrors: {},
   settingsFieldInputs: new Map(),
   settingsDirty: false,
-  settingsSaveState: "Ikke lagret"
+  settingsSaveState: "Ikke lagret",
+  // Chat3: RBAC block start
+  adminPermissions: [],
+  adminPermissionMap: {},
+  adminPolicy: {}
+  // Chat3: RBAC block end
 };
 
 function setStatus(element, message, type) {
@@ -306,6 +366,7 @@ function showAdmin() {
   applyAdminSectionFromHash({ syncHash: true });
 }
 
+// Chat2: Settings UI block start (single-view routing + settings editor)
 function isPlainObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -1321,6 +1382,7 @@ async function handleSaveGameSettings() {
     updateSettingsSaveButtonState();
   }
 }
+// Chat2: Settings UI block end
 
 function getSelectedGame() {
   const slug = elements.gameSelect.value;
@@ -3083,6 +3145,7 @@ async function handleLogout() {
     state.rooms = [];
     state.hallGameConfigs = [];
     state.candySettings = null;
+    // Chat2: Settings UI block start (logout reset)
     state.activeSectionId = "";
     state.settingsCatalog = [];
     state.settingsCatalogBySlug = {};
@@ -3093,6 +3156,7 @@ async function handleLogout() {
     state.settingsFieldInputs = new Map();
     state.settingsDirty = false;
     state.settingsSaveState = "Ikke lagret";
+    // Chat2: Settings UI block end (logout reset)
     setStoredToken("");
     showLogin();
     setStatus(elements.loginStatus, "Logget ut.", "success");
@@ -3109,11 +3173,13 @@ async function handleLogout() {
     setStatus(elements.prizePolicyStatus, "Ingen policy lastet.");
     setStatus(elements.extraPrizeStatus, "Ingen extra prize sendt.");
     setStatus(elements.roomStatus, "Ingen rom valgt.");
+    // Chat2: Settings UI block start (logout UI reset)
     renderSettingsGameOptions();
     renderSettingsFields();
     syncSettingsAdvancedJson();
     setSettingsSaveState("Ikke lagret");
     updateSettingsDirtyIndicator();
+    // Chat2: Settings UI block end (logout UI reset)
     elements.adminIdentity.textContent = "";
     setLoading(elements.logoutBtn, false, "Logger ut...", "Logg ut");
   }
@@ -3121,10 +3187,12 @@ async function handleLogout() {
 
 async function loadAllAdminData() {
   await loadGames();
+  // Chat2: Settings UI block start (settings bootstrap load)
   await loadSettingsCatalog().catch((error) => {
     setSettingsSaveState("Feil");
     setStatus(elements.settingsStatus, error.message || "Kunne ikke laste spillinnstillinger.", "error");
   });
+  // Chat2: Settings UI block end (settings bootstrap load)
   await loadHalls();
   ensurePrizePolicyEffectiveFromDefault();
   await loadHallGameConfigs();
@@ -3134,6 +3202,7 @@ async function loadAllAdminData() {
 }
 
 async function bootstrap() {
+  // Chat2: Settings UI block start (settings + single-view wiring)
   setSettingsSaveState("Ikke lagret");
   updateSettingsDirtyIndicator();
   renderSettingsGameOptions();
@@ -3172,6 +3241,7 @@ async function bootstrap() {
   elements.settingsApplyJsonBtn.addEventListener("click", () => {
     handleSettingsApplyAdvancedJson();
   });
+  // Chat2: Settings UI block end (settings + single-view wiring)
 
   elements.loginBtn.addEventListener("click", () => {
     handleLogin().catch((error) => {
