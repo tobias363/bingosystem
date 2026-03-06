@@ -86,6 +86,10 @@ interface MarkPayload extends RoomActionPayload {
   number: number;
 }
 
+interface TicketRerollPayload extends RoomActionPayload {
+  ticketsPerPlayer?: number;
+}
+
 interface ClaimPayload extends RoomActionPayload {
   type: ClaimType;
 }
@@ -264,8 +268,10 @@ const requestedAutoDrawEnabled = parseBooleanEnv(process.env.AUTO_DRAW_ENABLED, 
 const allowAutoplayInProduction = parseBooleanEnv(process.env.BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION, true);
 const forceCandyAutoStart = true;
 const forceCandyAutoDraw = true;
-const enforceSingleCandyRoomPerHall = parseBooleanEnv(
-  process.env.CANDY_SINGLE_ACTIVE_ROOM_PER_HALL,
+const enforceSingleCandyGlobalRoom = parseBooleanEnv(
+  process.env.CANDY_SINGLE_ACTIVE_ROOM_GLOBAL ??
+    process.env.CANDY_SINGLE_ACTIVE_ROOM ??
+    process.env.CANDY_ENFORCE_SINGLE_ROOM,
   true
 );
 const autoplayAllowed = !isProductionRuntime || allowAutoplayInProduction;
@@ -1269,29 +1275,67 @@ function compareCandyRoomPriority(a: RoomSummary, b: RoomSummary): number {
   return a.code.localeCompare(b.code);
 }
 
-function selectCanonicalCandyRoomSummariesByHall(summaries: RoomSummary[]): RoomSummary[] {
-  if (!enforceSingleCandyRoomPerHall) {
+function selectCanonicalCandyRoomSummaries(summaries: RoomSummary[]): RoomSummary[] {
+  if (!enforceSingleCandyGlobalRoom) {
     return summaries;
   }
 
-  const canonicalByHall = new Map<string, RoomSummary>();
-  for (const summary of summaries) {
-    const existing = canonicalByHall.get(summary.hallId);
-    if (!existing || compareCandyRoomPriority(summary, existing) < 0) {
-      canonicalByHall.set(summary.hallId, summary);
-    }
-  }
-
-  return [...canonicalByHall.values()].sort((a, b) => a.code.localeCompare(b.code));
+  const canonicalRoom = getCanonicalCandyRoom(summaries);
+  return canonicalRoom ? [canonicalRoom] : [];
 }
 
-function getCanonicalCandyRoomForHall(hallId: string, summaries = engine.listRoomSummaries()): RoomSummary | null {
-  const hallSummaries = summaries.filter((summary) => summary.hallId === hallId);
-  if (hallSummaries.length === 0) {
+function getCanonicalCandyRoom(summaries = engine.listRoomSummaries()): RoomSummary | null {
+  if (!Array.isArray(summaries) || summaries.length === 0) {
     return null;
   }
-  hallSummaries.sort(compareCandyRoomPriority);
-  return hallSummaries[0];
+
+  const sorted = [...summaries].sort(compareCandyRoomPriority);
+  return sorted[0] ?? null;
+}
+
+function isCanonicalCandyRoom(roomCode: string, summaries = engine.listRoomSummaries()): boolean {
+  const canonicalRoom = getCanonicalCandyRoom(summaries);
+  if (!canonicalRoom) {
+    return false;
+  }
+  return canonicalRoom.code === roomCode.trim().toUpperCase();
+}
+
+function assertCanonicalCandyRoomForGameplay(roomCode: string): void {
+  if (!enforceSingleCandyGlobalRoom) {
+    return;
+  }
+
+  const normalizedRoomCode = roomCode.trim().toUpperCase();
+  const summaries = engine.listRoomSummaries();
+  const canonicalRoom = getCanonicalCandyRoom(summaries);
+  if (!canonicalRoom) {
+    return;
+  }
+
+  if (canonicalRoom.code !== normalizedRoomCode) {
+    throw new DomainError(
+      "ROOM_BLOCKED_NON_CANONICAL",
+      `Rom ${normalizedRoomCode} er låst for gameplay. Bruk canonical rom ${canonicalRoom.code}.`
+    );
+  }
+}
+
+function resolveCanonicalRoomCodeOrThrow(requestedRoomCode: string): string {
+  const normalizedRequestedRoomCode = requestedRoomCode.trim().toUpperCase();
+  if (!enforceSingleCandyGlobalRoom) {
+    return normalizedRequestedRoomCode;
+  }
+
+  const canonicalRoom = getCanonicalCandyRoom();
+  if (!canonicalRoom) {
+    throw new DomainError(
+      "SINGLE_ROOM_ONLY",
+      "Ingen canonical-rom er opprettet enda. Opprett ett rom først."
+    );
+  }
+
+  return canonicalRoom.code;
 }
 
 function findPlayerInRoomByWallet(snapshot: RoomSnapshot, walletId: string): RoomSnapshot["players"][number] | null {
@@ -1399,6 +1443,44 @@ function buildRoomUpdatePayload(
     ...snapshot,
     scheduler: buildRoomSchedulerState(snapshot, nowMs)
   };
+}
+
+function readTelemetryNumber(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readTelemetryString(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readTelemetryBoolean(record: Record<string, unknown>, key: string): boolean | null {
+  const value = record[key];
+  return typeof value === "boolean" ? value : null;
+}
+
+function extractSchedulerTelemetry(snapshot: RoomSnapshot | (RoomSnapshot & { scheduler?: unknown })): Record<string, unknown> {
+  const schedulerRaw = (snapshot as RoomSnapshot & { scheduler?: unknown }).scheduler;
+  if (!isRecordObject(schedulerRaw)) {
+    return {};
+  }
+
+  return {
+    enabled: readTelemetryBoolean(schedulerRaw, "enabled"),
+    nextStartAt: readTelemetryString(schedulerRaw, "nextStartAt"),
+    armedPlayerCount: readTelemetryNumber(schedulerRaw, "armedPlayerCount"),
+    minPlayers: readTelemetryNumber(schedulerRaw, "minPlayers")
+  };
+}
+
+function logCandyRealtimeEvent(event: string, fields: Record<string, unknown>): void {
+  const payload = {
+    event,
+    at: new Date().toISOString(),
+    ...fields
+  };
+  console.log(`[candy-observe] ${JSON.stringify(payload)}`);
 }
 
 async function withRoomSchedulerLock(roomCode: string, work: () => Promise<void>): Promise<void> {
@@ -1628,7 +1710,7 @@ async function runSchedulerTick(): Promise<void> {
     if (await applyPendingCandyManiaSettingsIfDue(now, summaries)) {
       summaries = engine.listRoomSummaries();
     }
-    const schedulerSummaries = selectCanonicalCandyRoomSummariesByHall(summaries);
+    const schedulerSummaries = selectCanonicalCandyRoomSummaries(summaries);
     cleanupSchedulerState(new Set(schedulerSummaries.map((summary) => summary.code)));
 
     for (const summary of schedulerSummaries) {
@@ -1863,14 +1945,29 @@ app.post("/api/games/candy/launch-token", async (req, res) => {
       walletId: user.walletId,
       apiBaseUrl
     });
+    const runtimeLaunchUrl = sanitizeCandyLaunchUrlForRuntime(launchSettings.launchUrl);
+
+    logCandyRealtimeEvent("launch_token_issued", {
+      userId: user.id,
+      hallId,
+      walletId: user.walletId,
+      launchTokenExpiresAt: issued.expiresAt,
+      apiBaseUrl,
+      launchUrl: runtimeLaunchUrl
+    });
 
     apiSuccess(res, {
       launchToken: issued.launchToken,
       issuedAt: issued.issuedAt,
       expiresAt: issued.expiresAt,
-      launchUrl: sanitizeCandyLaunchUrlForRuntime(launchSettings.launchUrl)
+      launchUrl: runtimeLaunchUrl
     });
   } catch (error) {
+    const publicError = toPublicError(error);
+    logCandyRealtimeEvent("launch_token_failed", {
+      code: publicError.code,
+      message: publicError.message
+    });
     apiFailure(res, error);
   }
 });
@@ -1886,8 +1983,19 @@ app.post("/api/games/candy/launch-resolve", async (req, res) => {
       );
     }
 
+    logCandyRealtimeEvent("launch_resolve_ok", {
+      hallId: resolved.hallId,
+      walletId: resolved.walletId,
+      apiBaseUrl: resolved.apiBaseUrl
+    });
+
     apiSuccess(res, resolved);
   } catch (error) {
+    const publicError = toPublicError(error);
+    logCandyRealtimeEvent("launch_resolve_failed", {
+      code: publicError.code,
+      message: publicError.message
+    });
     apiFailure(res, error);
   }
 });
@@ -2321,11 +2429,18 @@ app.get("/api/admin/rooms", async (req, res) => {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
     const includeSnapshots = parseBooleanQueryValue(req.query.includeSnapshots, false);
     const rooms = engine.listRoomSummaries();
+    const canonicalRoom = getCanonicalCandyRoom(rooms);
+    const withPolicyState = rooms.map((room) => ({
+      ...room,
+      isCanonical: canonicalRoom ? room.code === canonicalRoom.code : true,
+      isBlockedBySingleRoomPolicy:
+        enforceSingleCandyGlobalRoom && canonicalRoom ? room.code !== canonicalRoom.code : false
+    }));
     if (!includeSnapshots) {
-      apiSuccess(res, rooms);
+      apiSuccess(res, withPolicyState);
       return;
     }
-    const detailed = rooms.map((room) => ({
+    const detailed = withPolicyState.map((room) => ({
       ...room,
       snapshot: buildRoomUpdatePayload(engine.getRoomSnapshot(room.code))
     }));
@@ -2349,6 +2464,18 @@ app.get("/api/admin/rooms/:roomCode", async (req, res) => {
 app.post("/api/admin/rooms", async (req, res) => {
   try {
     const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+    const canonicalRoom = getCanonicalCandyRoom();
+    if (enforceSingleCandyGlobalRoom && canonicalRoom) {
+      const snapshot = await emitRoomUpdate(canonicalRoom.code);
+      apiSuccess(res, {
+        roomCode: canonicalRoom.code,
+        playerId: snapshot.hostPlayerId,
+        snapshot,
+        canonicalReused: true
+      });
+      return;
+    }
+
     const hallId = await requireActiveHallIdFromInput(req.body?.hallId);
     const requestedHostName =
       typeof req.body?.hostName === "string" && req.body.hostName.trim().length > 0
@@ -2378,6 +2505,7 @@ app.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    assertCanonicalCandyRoomForGameplay(roomCode);
     const entryFee = parseOptionalNonNegativeNumber(req.body?.entryFee, "entryFee") ?? getRoomConfiguredEntryFee(roomCode);
     const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
     const requestedTicketsPerPlayer = parseOptionalTicketsPerPlayerInput(req.body?.ticketsPerPlayer);
@@ -2413,10 +2541,67 @@ app.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
   }
 });
 
+app.post("/api/admin/rooms/:roomCode/bet-arm", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+    const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    assertCanonicalCandyRoomForGameplay(roomCode);
+    const playerId = mustBeNonEmptyString(req.body?.playerId, "playerId");
+    const shouldArm = req.body?.armed === undefined ? true : Boolean(req.body.armed);
+    engine.getRoomSnapshot(roomCode);
+    setPlayerBetArm(roomCode, playerId, shouldArm);
+    const snapshot = await emitRoomUpdate(roomCode);
+    apiSuccess(res, {
+      roomCode,
+      playerId,
+      armed: shouldArm,
+      armedPlayerIds: getArmedPlayerIdsForSnapshot(snapshot),
+      snapshot
+    });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.post("/api/admin/rooms/:roomCode/claim", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+    const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    assertCanonicalCandyRoomForGameplay(roomCode);
+    const playerId = mustBeNonEmptyString(req.body?.playerId, "playerId");
+    const claimTypeRaw = mustBeNonEmptyString(req.body?.type, "type").toUpperCase();
+    if (claimTypeRaw !== "LINE" && claimTypeRaw !== "BINGO") {
+      throw new DomainError("INVALID_INPUT", "Claim type må være LINE eller BINGO.");
+    }
+    const claimType: ClaimType = claimTypeRaw;
+    const roomSnapshot = engine.getRoomSnapshot(roomCode);
+    const hasPlayer = roomSnapshot.players.some((player) => player.id === playerId);
+    if (!hasPlayer) {
+      throw new DomainError("PLAYER_NOT_FOUND", `Fant ikke spiller ${playerId} i rom ${roomCode}.`);
+    }
+
+    const claim = await engine.submitClaim({
+      roomCode,
+      playerId,
+      type: claimType
+    });
+    const snapshot = await emitRoomUpdate(roomCode);
+    apiSuccess(res, {
+      roomCode,
+      playerId,
+      claim,
+      snapshot
+    });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.post("/api/admin/rooms/:roomCode/draw-next", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    assertCanonicalCandyRoomForGameplay(roomCode);
     const snapshot = engine.getRoomSnapshot(roomCode);
     const number = await engine.drawNextNumber({
       roomCode,
@@ -2437,6 +2622,7 @@ app.post("/api/admin/rooms/:roomCode/end", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    assertCanonicalCandyRoomForGameplay(roomCode);
     const beforeEndSnapshot = engine.getRoomSnapshot(roomCode);
     await engine.endGame({
       roomCode,
@@ -3016,7 +3202,14 @@ app.get("/health", async (_req, res) => {
 
 app.get("/api/rooms", (_req, res) => {
   try {
-    apiSuccess(res, engine.listRoomSummaries());
+    const rooms = engine.listRoomSummaries();
+    if (!enforceSingleCandyGlobalRoom) {
+      apiSuccess(res, rooms);
+      return;
+    }
+
+    const canonicalRoom = getCanonicalCandyRoom(rooms);
+    apiSuccess(res, canonicalRoom ? [canonicalRoom] : []);
   } catch (error) {
     apiFailure(res, error);
   }
@@ -3024,7 +3217,9 @@ app.get("/api/rooms", (_req, res) => {
 
 app.get("/api/rooms/:roomCode", (req, res) => {
   try {
-    const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(req.params.roomCode));
+    const requestedRoomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    const roomCode = resolveCanonicalRoomCodeOrThrow(requestedRoomCode);
+    const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
     apiSuccess(res, snapshot);
   } catch (error) {
     apiFailure(res, error);
@@ -3035,6 +3230,7 @@ app.post("/api/rooms/:roomCode/game/end", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    assertCanonicalCandyRoomForGameplay(roomCode);
     const actorPlayerId = mustBeNonEmptyString(req.body?.actorPlayerId, "actorPlayerId");
     assertUserCanActAsPlayer(user, roomCode, actorPlayerId);
     const reason = typeof req.body?.reason === "string" ? req.body.reason : undefined;
@@ -3050,6 +3246,7 @@ app.post("/api/rooms/:roomCode/game/extra-draw", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    assertCanonicalCandyRoomForGameplay(roomCode);
     const actorPlayerId = mustBeNonEmptyString(req.body?.actorPlayerId, "actorPlayerId");
     assertUserCanActAsPlayer(user, roomCode, actorPlayerId);
     engine.rejectExtraDrawPurchase({
@@ -3072,6 +3269,7 @@ app.post("/api/rooms/:roomCode/bet-arm", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    assertCanonicalCandyRoomForGameplay(roomCode);
     const actorPlayerId = mustBeNonEmptyString(req.body?.actorPlayerId, "actorPlayerId");
     assertUserCanActAsPlayer(user, roomCode, actorPlayerId);
     const shouldArm = req.body?.armed === undefined ? true : Boolean(req.body.armed);
@@ -3193,8 +3391,8 @@ io.on("connection", (socket: Socket) => {
   socket.on("room:create", async (payload: CreateRoomPayload, callback: (response: AckResponse<{ roomCode: string; playerId: string; snapshot: RoomSnapshot }>) => void) => {
     try {
       const identity = await resolveIdentityFromPayload(payload);
-      if (enforceSingleCandyRoomPerHall) {
-        const canonicalRoom = getCanonicalCandyRoomForHall(identity.hallId);
+      if (enforceSingleCandyGlobalRoom) {
+        const canonicalRoom = getCanonicalCandyRoom();
         if (canonicalRoom) {
           const canonicalSnapshot = engine.getRoomSnapshot(canonicalRoom.code);
           const existingPlayer = findPlayerInRoomByWallet(canonicalSnapshot, identity.walletId);
@@ -3205,7 +3403,7 @@ io.on("connection", (socket: Socket) => {
           } else {
             const joined = await engine.joinRoom({
               roomCode: canonicalRoom.code,
-              hallId: identity.hallId,
+              hallId: canonicalRoom.hallId,
               playerName: identity.playerName,
               walletId: identity.walletId,
               socketId: socket.id
@@ -3216,6 +3414,14 @@ io.on("connection", (socket: Socket) => {
           socket.join(canonicalRoom.code);
           const snapshot = await emitRoomUpdate(canonicalRoom.code);
           ackSuccess(callback, { roomCode: canonicalRoom.code, playerId, snapshot });
+          logCandyRealtimeEvent("room_create_ack", {
+            mode: "canonical-room-reuse",
+            roomCode: canonicalRoom.code,
+            playerId,
+            hallId: canonicalRoom.hallId,
+            walletId: identity.walletId,
+            ...extractSchedulerTelemetry(snapshot)
+          });
           return;
         }
       }
@@ -3229,23 +3435,54 @@ io.on("connection", (socket: Socket) => {
       socket.join(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { roomCode, playerId, snapshot });
+      logCandyRealtimeEvent("room_create_ack", {
+        mode: "new-room",
+        roomCode,
+        playerId,
+        hallId: identity.hallId,
+        walletId: identity.walletId,
+        ...extractSchedulerTelemetry(snapshot)
+      });
     } catch (error) {
+      const publicError = toPublicError(error);
+      logCandyRealtimeEvent("room_create_failed", {
+        code: publicError.code,
+        message: publicError.message
+      });
       ackFailure(callback, error);
     }
   });
 
   socket.on("room:join", async (payload: JoinRoomPayload, callback: (response: AckResponse<{ roomCode: string; playerId: string; snapshot: RoomSnapshot }>) => void) => {
     try {
-      const roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
       const identity = await resolveIdentityFromPayload(payload);
-      if (enforceSingleCandyRoomPerHall) {
-        const canonicalRoom = getCanonicalCandyRoomForHall(identity.hallId);
-        if (canonicalRoom && canonicalRoom.code !== roomCode) {
-          throw new DomainError(
-            "SINGLE_ROOM_ONLY",
-            `Kun ett Candy-rom er aktivt per hall. Bruk rom ${canonicalRoom.code}.`
-          );
+      const requestedRoomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
+
+      let roomCode = requestedRoomCode;
+      if (enforceSingleCandyGlobalRoom) {
+        const canonicalRoom = getCanonicalCandyRoom();
+        if (!canonicalRoom) {
+          const created = await engine.createRoom({
+            playerName: identity.playerName,
+            hallId: identity.hallId,
+            walletId: identity.walletId,
+            socketId: socket.id
+          });
+          roomCode = created.roomCode;
+          socket.join(roomCode);
+          const snapshot = await emitRoomUpdate(roomCode);
+          ackSuccess(callback, { roomCode, playerId: created.playerId, snapshot });
+          logCandyRealtimeEvent("room_join_ack", {
+            mode: "canonical-room-created-on-join",
+            roomCode,
+            playerId: created.playerId,
+            hallId: identity.hallId,
+            walletId: identity.walletId,
+            ...extractSchedulerTelemetry(snapshot)
+          });
+          return;
         }
+        roomCode = canonicalRoom.code;
       }
 
       const roomSnapshot = engine.getRoomSnapshot(roomCode);
@@ -3255,12 +3492,20 @@ io.on("connection", (socket: Socket) => {
         socket.join(roomCode);
         const snapshot = await emitRoomUpdate(roomCode);
         ackSuccess(callback, { roomCode, playerId: existingPlayer.id, snapshot });
+        logCandyRealtimeEvent("room_join_ack", {
+          mode: "existing-player-reconnect",
+          roomCode,
+          playerId: existingPlayer.id,
+          hallId: identity.hallId,
+          walletId: identity.walletId,
+          ...extractSchedulerTelemetry(snapshot)
+        });
         return;
       }
 
       const { playerId } = await engine.joinRoom({
         roomCode,
-        hallId: identity.hallId,
+        hallId: roomSnapshot.hallId,
         playerName: identity.playerName,
         walletId: identity.walletId,
         socketId: socket.id
@@ -3268,7 +3513,20 @@ io.on("connection", (socket: Socket) => {
       socket.join(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { roomCode, playerId, snapshot });
+      logCandyRealtimeEvent("room_join_ack", {
+        mode: "join-room",
+        roomCode,
+        playerId,
+        hallId: roomSnapshot.hallId,
+        walletId: identity.walletId,
+        ...extractSchedulerTelemetry(snapshot)
+      });
     } catch (error) {
+      const publicError = toPublicError(error);
+      logCandyRealtimeEvent("room_join_failed", {
+        code: publicError.code,
+        message: publicError.message
+      });
       ackFailure(callback, error);
     }
   });
@@ -3276,11 +3534,22 @@ io.on("connection", (socket: Socket) => {
   socket.on("room:resume", async (payload: ResumeRoomPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      assertCanonicalCandyRoomForGameplay(roomCode);
       engine.attachPlayerSocket(roomCode, playerId, socket.id);
       socket.join(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { snapshot });
+      logCandyRealtimeEvent("room_resume_ack", {
+        roomCode,
+        playerId,
+        ...extractSchedulerTelemetry(snapshot)
+      });
     } catch (error) {
+      const publicError = toPublicError(error);
+      logCandyRealtimeEvent("room_resume_failed", {
+        code: publicError.code,
+        message: publicError.message
+      });
       ackFailure(callback, error);
     }
   });
@@ -3293,6 +3562,7 @@ io.on("connection", (socket: Socket) => {
     ) => {
       try {
         const { roomCode } = await requireAuthenticatedPlayerAction(payload);
+        assertCanonicalCandyRoomForGameplay(roomCode);
         engine.getRoomSnapshot(roomCode);
 
         const requestedEntryFee = parseOptionalNonNegativeNumber(payload?.entryFee, "entryFee");
@@ -3317,6 +3587,7 @@ io.on("connection", (socket: Socket) => {
     ) => {
       try {
         const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+        assertCanonicalCandyRoomForGameplay(roomCode);
         const shouldArm = payload?.armed === undefined ? true : Boolean(payload.armed);
         setPlayerBetArm(roomCode, playerId, shouldArm);
         const snapshot = await emitRoomUpdate(roomCode);
@@ -3331,6 +3602,7 @@ io.on("connection", (socket: Socket) => {
   socket.on("game:start", async (payload: StartGamePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      assertCanonicalCandyRoomForGameplay(roomCode);
       const requestedTicketsPerPlayer =
         payload?.ticketsPerPlayer === undefined || payload?.ticketsPerPlayer === null
           ? undefined
@@ -3368,6 +3640,7 @@ io.on("connection", (socket: Socket) => {
   socket.on("game:end", async (payload: EndGamePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      assertCanonicalCandyRoomForGameplay(roomCode);
       await engine.endGame({
         roomCode,
         actorPlayerId: playerId,
@@ -3383,6 +3656,7 @@ io.on("connection", (socket: Socket) => {
   socket.on("draw:next", async (payload: RoomActionPayload, callback: (response: AckResponse<{ number: number; snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      assertCanonicalCandyRoomForGameplay(roomCode);
       const number = await engine.drawNextNumber({ roomCode, actorPlayerId: playerId });
       io.to(roomCode).emit("draw:new", { number });
       const snapshot = await emitRoomUpdate(roomCode);
@@ -3395,6 +3669,7 @@ io.on("connection", (socket: Socket) => {
   socket.on("draw:extra:purchase", async (payload: ExtraDrawPayload, callback: (response: AckResponse<{ denied: true }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      assertCanonicalCandyRoomForGameplay(roomCode);
       engine.rejectExtraDrawPurchase({
         source: "SOCKET",
         roomCode,
@@ -3414,6 +3689,7 @@ io.on("connection", (socket: Socket) => {
   socket.on("ticket:mark", async (payload: MarkPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      assertCanonicalCandyRoomForGameplay(roomCode);
       if (!Number.isFinite(payload?.number)) {
         throw new DomainError("INVALID_INPUT", "number mangler.");
       }
@@ -3429,9 +3705,47 @@ io.on("connection", (socket: Socket) => {
     }
   });
 
+  socket.on(
+    "ticket:reroll",
+    async (
+      payload: TicketRerollPayload,
+      callback: (response: AckResponse<{ snapshot: RoomSnapshot; ticketsPerPlayer: number; ticketCount: number }>) => void
+    ) => {
+      try {
+        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+        assertCanonicalCandyRoomForGameplay(roomCode);
+
+        const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
+        const requestedTicketsPerPlayer =
+          payload?.ticketsPerPlayer === undefined || payload?.ticketsPerPlayer === null
+            ? undefined
+            : parseTicketsPerPlayerInput(payload.ticketsPerPlayer);
+        const ticketsPerPlayer =
+          requestedTicketsPerPlayer ??
+          Math.min(hallGameConfig.maxTicketsPerPlayer, runtimeCandyManiaSettings.autoRoundTicketsPerPlayer);
+        assertTicketsPerPlayerWithinHallLimit(ticketsPerPlayer, hallGameConfig.maxTicketsPerPlayer);
+
+        const rerolledTickets = await engine.rerollTicketsForPlayer({
+          roomCode,
+          playerId,
+          ticketsPerPlayer
+        });
+        const snapshot = await emitRoomUpdate(roomCode);
+        ackSuccess(callback, {
+          snapshot,
+          ticketsPerPlayer,
+          ticketCount: rerolledTickets.length
+        });
+      } catch (error) {
+        ackFailure(callback, error);
+      }
+    }
+  );
+
   socket.on("claim:submit", async (payload: ClaimPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      assertCanonicalCandyRoomForGameplay(roomCode);
       if (payload?.type !== "LINE" && payload?.type !== "BINGO") {
         throw new DomainError("INVALID_INPUT", "type må være LINE eller BINGO.");
       }
@@ -3450,7 +3764,8 @@ io.on("connection", (socket: Socket) => {
   socket.on("room:state", async (payload: RoomStatePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const user = await getAuthenticatedSocketUser(payload);
-      const roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
+      const requestedRoomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
+      const roomCode = resolveCanonicalRoomCodeOrThrow(requestedRoomCode);
       assertUserCanAccessRoom(user, roomCode);
       const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
       ackSuccess(callback, { snapshot });
@@ -3491,7 +3806,7 @@ hydrateCandyManiaSettingsFromCatalog()
         `[rtp] rollingWindow=${bingoRtpRollingWindowSize} controllerGain=${bingoRtpControllerGain} nearMissBias=${bingoNearMissBiasEnabled} nearMissTargetRate=${bingoNearMissTargetRate}`
       );
       console.log(
-        `[scheduler] autoStart=${runtimeCandyManiaSettings.autoRoundStartEnabled} autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} forceAutoStart=${forceCandyAutoStart} forceAutoDraw=${forceCandyAutoDraw} autoAllowedInProd=${allowAutoplayInProduction} singleRoomPerHall=${enforceSingleCandyRoomPerHall} interval=${runtimeCandyManiaSettings.autoRoundStartIntervalMs}ms minPlayers=${runtimeCandyManiaSettings.autoRoundMinPlayers} ticketsPerPlayer=${runtimeCandyManiaSettings.autoRoundTicketsPerPlayer} entryFee=${runtimeCandyManiaSettings.autoRoundEntryFee} payoutPercent=${runtimeCandyManiaSettings.payoutPercent}`
+        `[scheduler] autoStart=${runtimeCandyManiaSettings.autoRoundStartEnabled} autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} forceAutoStart=${forceCandyAutoStart} forceAutoDraw=${forceCandyAutoDraw} autoAllowedInProd=${allowAutoplayInProduction} singleGlobalRoom=${enforceSingleCandyGlobalRoom} interval=${runtimeCandyManiaSettings.autoRoundStartIntervalMs}ms minPlayers=${runtimeCandyManiaSettings.autoRoundMinPlayers} ticketsPerPlayer=${runtimeCandyManiaSettings.autoRoundTicketsPerPlayer} entryFee=${runtimeCandyManiaSettings.autoRoundEntryFee} payoutPercent=${runtimeCandyManiaSettings.payoutPercent}`
       );
       console.log(
         `[scheduler] autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} interval=${runtimeCandyManiaSettings.autoDrawIntervalMs}ms tick=${schedulerTickMs}ms`

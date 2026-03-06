@@ -36,6 +36,26 @@ Forventet: HTTP `200` + JSON payload med `launchToken`.
 4. Trigger deploy på Render.
 5. Kjør smoke-test i prod umiddelbart.
 
+## Deterministisk Candy deploy (WebGL paritet)
+1. Kjør `.github/workflows/deploy-candygame.yml` på riktig environment (`staging`/`production`).
+2. Workflow bygger WebGL fra aktuell Bingo-commit og publiserer kun:
+- `index.html`
+- `Build/*`
+- `TemplateData/*`
+- `release.json`
+3. Workflow validerer:
+- `release.json.releaseCommit == github.sha[:8]` i build-output
+- live `release.json.releaseCommit` etter Render deploy
+4. Etter vellykket deploy synkes backend automatisk:
+- Candy game `launchUrl`
+- Candy game `apiBaseUrl`
+- Candy drift policy (`autoRoundStartEnabled=true`, `autoRoundStartIntervalMs=30000`, `autoRoundMinPlayers=1`, `autoDrawEnabled=true`)
+5. E2E gate må passere:
+- launch-token -> resolve
+- rundestart fra scheduler innen 45s
+- runde avsluttes med `endedReason=MAX_DRAWS_REACHED` etter 30 trekk
+- claim-kontrakt verifiseres for `winningPatternIndex/patternIndex/bonusTriggered/bonusAmount`
+
 ## Suggested Commands
 ```bash
 git checkout main
@@ -60,6 +80,12 @@ git push origin main
    - `GET /health`
    - `POST /api/games/candy/launch-token`
    - `POST /api/games/candy/launch-resolve`
+5. Verifiser fingerprint etter rollback:
+   - `GET https://<candygame-host>/release.json`
+   - bekreft at `releaseCommit` matcher rollback-målet
+6. Verifiser scheduler-policy fortsatt 30s etter rollback:
+   - `GET /api/admin/candy-mania/settings`
+   - forvent `autoRoundStartIntervalMs=30000`
 
 ## Post-release Validation
 1. `/health` returnerer `ok:true`.

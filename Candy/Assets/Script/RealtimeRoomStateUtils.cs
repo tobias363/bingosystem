@@ -10,7 +10,8 @@ public static class RealtimeRoomStateUtils
             return false;
         }
 
-        return string.Equals(ack.errorCode, "ROOM_NOT_FOUND", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(ack.errorCode, "ROOM_NOT_FOUND", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(ack.errorCode, "SINGLE_ROOM_ONLY", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsPlayerAlreadyInRunningGame(SocketAck ack)

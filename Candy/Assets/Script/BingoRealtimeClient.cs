@@ -275,6 +275,16 @@ public class BingoRealtimeClient : MonoBehaviour
         EmitWithAck("ticket:mark", payload, onAck);
     }
 
+    public void RerollTickets(string roomCode, string playerId, int ticketsPerPlayer, Action<SocketAck> onAck = null)
+    {
+        JSONObject payload = new();
+        payload["roomCode"] = (roomCode ?? string.Empty).Trim().ToUpperInvariant();
+        payload["playerId"] = playerId ?? string.Empty;
+        payload["ticketsPerPlayer"] = ticketsPerPlayer;
+        AppendAccessToken(payload);
+        EmitWithAck("ticket:reroll", payload, onAck);
+    }
+
     public void SubmitClaim(string roomCode, string playerId, string type, Action<SocketAck> onAck = null)
     {
         JSONObject payload = new();

@@ -61,6 +61,7 @@ export interface RoomState {
   hostPlayerId: string;
   players: Map<string, Player>;
   currentGame?: GameState;
+  preRoundTicketsByPlayer: Map<string, Ticket[]>;
   gameHistory: GameSnapshot[];
   createdAt: string;
 }
@@ -94,6 +95,7 @@ export interface RoomSnapshot {
   createdAt: string;
   players: Player[];
   currentGame?: GameSnapshot;
+  preRoundTickets?: Record<string, Ticket[]>;
   gameHistory: GameSnapshot[];
 }
 

@@ -46,6 +46,7 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private bool preserveTicketNumbersOnTransientSnapshotGaps = true;
     [SerializeField] private bool triggerAutoLoginWhenAuthMissing = true;
     [SerializeField] private bool logBootstrapEvents = false;
+    [SerializeField] private bool logRealtimeLifecycleEvents = true;
     [SerializeField] private bool playButtonStartsAndDrawsRealtime = true;
     [SerializeField] private bool realtimeScheduledRounds = true;
     [SerializeField] private bool drawImmediatelyAfterManualStart = true;
@@ -77,6 +78,11 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private bool enableLaunchTokenBootstrap = true;
     [SerializeField] private string launchResolveBaseUrl = "https://bingosystem-3.onrender.com";
     [SerializeField] private BallManager ballManager;
+    [Header("Realtime UI")]
+    [SerializeField] private TextMeshProUGUI realtimeRoomPlayerCountText;
+    [SerializeField] private string realtimeRoomPlayerCountPrefix = "Spillere i rommet:";
+    [SerializeField] private Vector2 realtimeRoomPlayerCountOffset = new Vector2(0f, -208f);
+    [SerializeField] [Min(140f)] private float realtimeRoomPlayerCountMinWidth = 220f;
     [SerializeField] private string roomCode = "";
     [SerializeField] private string hallId = "";
     [SerializeField] private string playerName = "Player";
@@ -112,6 +118,7 @@ public partial class APIManager : MonoBehaviour
     private float nextScheduledHeartbeatAt = -1f;
     private float nextInsufficientFundsWarningAt = -1f;
     private float nextDrawResyncAt = -1f;
+    private string lastSchedulerObservationKey = string.Empty;
     private Coroutine delayedOverlayResetCoroutine;
     private string delayedOverlayResetGameId = string.Empty;
     private string overlaysClearedForEndedGameId = string.Empty;
@@ -135,6 +142,7 @@ public partial class APIManager : MonoBehaviour
     private string drawMetricsGameId = string.Empty;
     private bool realtimeBetArmedForNextRound = false;
     private bool pendingRealtimeBetArmRequest = false;
+    private bool realtimeRerollRequestPending = false;
     private readonly HashSet<string> realtimeClaimAttemptKeys = new();
 
     public bool UseRealtimeBackend => useRealtimeBackend;
@@ -372,6 +380,45 @@ public partial class APIManager : MonoBehaviour
         Debug.Log("[APIManager] " + message);
     }
 
+    private void LogRealtimeLifecycleEvent(string eventName, string details)
+    {
+        if (!logRealtimeLifecycleEvents)
+        {
+            return;
+        }
+
+        string resolvedDetails = string.IsNullOrWhiteSpace(details) ? string.Empty : " " + details.Trim();
+        Debug.Log($"[candy-observe] {eventName}{resolvedDetails}");
+    }
+
+    private void LogSchedulerSnapshotIfChanged(string source)
+    {
+        if (!logRealtimeLifecycleEvents)
+        {
+            return;
+        }
+
+        string nextStartAt =
+            realtimeScheduler.NextScheduledRoundStartAtMs > 0
+                ? DateTimeOffset.FromUnixTimeMilliseconds(realtimeScheduler.NextScheduledRoundStartAtMs).ToString("o")
+                : "none";
+        string key =
+            $"{realtimeScheduler.SchedulerEnabled}|{realtimeScheduler.MinPlayers}|{realtimeScheduler.ArmedPlayerCount}|" +
+            $"{realtimeScheduler.PlayerCount}|{realtimeScheduler.CanStartNow}|{nextStartAt}|{realtimeScheduler.LatestGameStatus}";
+        if (string.Equals(lastSchedulerObservationKey, key, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        lastSchedulerObservationKey = key;
+        LogRealtimeLifecycleEvent(
+            "scheduler_snapshot",
+            $"source={source} enabled={realtimeScheduler.SchedulerEnabled} nextStartAt={nextStartAt} " +
+            $"armed={realtimeScheduler.ArmedPlayerCount} minPlayers={realtimeScheduler.MinPlayers} " +
+            $"playerCount={realtimeScheduler.PlayerCount} canStartNow={realtimeScheduler.CanStartNow} " +
+            $"status={realtimeScheduler.LatestGameStatus}");
+    }
+
     private void HandleRealtimeConnectionChanged(bool connected)
     {
         if (!connected)
@@ -470,14 +517,23 @@ public partial class APIManager : MonoBehaviour
             yield break;
         }
 
+        string launchUrlForLog = absoluteUrl;
+        if (Uri.TryCreate(absoluteUrl, UriKind.Absolute, out Uri launchUriForLog))
+        {
+            launchUrlForLog = launchUriForLog.GetLeftPart(UriPartial.Path);
+        }
+        LogRealtimeLifecycleEvent("launch_token_detected", $"sourceUrl={launchUrlForLog}");
+
         string resolveBaseUrl = ResolveLaunchApiBaseUrlFromAbsoluteUrl(absoluteUrl);
         if (string.IsNullOrWhiteSpace(resolveBaseUrl))
         {
             Debug.LogError("[APIManager] Fant ikke gyldig base URL for launch-resolve.");
+            LogRealtimeLifecycleEvent("launch_resolve_failed", "reason=invalid_base_url");
             yield break;
         }
 
         string endpoint = resolveBaseUrl + "/api/games/candy/launch-resolve";
+        LogRealtimeLifecycleEvent("launch_resolve_request", $"endpoint={endpoint}");
         JSONObject payload = new();
         payload["launchToken"] = launchToken;
 
@@ -492,6 +548,7 @@ public partial class APIManager : MonoBehaviour
         if (request.result != UnityWebRequest.Result.Success)
         {
             Debug.LogError("[APIManager] launch-resolve feilet: " + BuildTransportError(request));
+            LogRealtimeLifecycleEvent("launch_resolve_failed", $"reason=transport status={request.responseCode}");
             yield break;
         }
 
@@ -499,6 +556,7 @@ public partial class APIManager : MonoBehaviour
         if (root == null)
         {
             Debug.LogError("[APIManager] launch-resolve returnerte ugyldig JSON.");
+            LogRealtimeLifecycleEvent("launch_resolve_failed", "reason=invalid_json");
             yield break;
         }
 
@@ -508,6 +566,7 @@ public partial class APIManager : MonoBehaviour
             string code = FirstNonEmptyValue(root["error"]?["code"], "INVALID_LAUNCH_TOKEN");
             string message = FirstNonEmptyValue(root["error"]?["message"], "Ukjent launch-resolve-feil.");
             Debug.LogError($"[APIManager] launch-resolve avvist ({code}): {message}");
+            LogRealtimeLifecycleEvent("launch_resolve_failed", $"reason=api_error code={code}");
             yield break;
         }
 
@@ -515,6 +574,7 @@ public partial class APIManager : MonoBehaviour
         if (data == null || data.IsNull)
         {
             Debug.LogError("[APIManager] launch-resolve mangler data.");
+            LogRealtimeLifecycleEvent("launch_resolve_failed", "reason=missing_data");
             yield break;
         }
 
@@ -531,6 +591,9 @@ public partial class APIManager : MonoBehaviour
         ConfigureAccessToken(resolvedAccessToken);
         ConfigureHall(resolvedHallId);
         ConfigurePlayer(resolvedPlayerName, resolvedWalletId);
+        LogRealtimeLifecycleEvent(
+            "launch_resolve_ok",
+            $"hallId={resolvedHallId} walletId={resolvedWalletId} apiBaseUrl={resolvedApiBaseUrl}");
 
         if (logBootstrapEvents)
         {
@@ -781,6 +844,7 @@ public partial class APIManager : MonoBehaviour
     private void ApplySchedulerMetadata(JSONNode snapshot)
     {
         realtimeScheduler.ApplySchedulerSnapshot(snapshot);
+        LogSchedulerSnapshotIfChanged("room-update");
     }
 
     private void PositionRealtimeCountdownBelowBalls()
@@ -817,6 +881,65 @@ public partial class APIManager : MonoBehaviour
         PositionRealtimeCountdownBelowBalls();
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         generator.autoSpinRemainingPlayText.text = realtimeScheduler.BuildCountdownLabel(nowMs);
+        RefreshRealtimeRoomPlayerCountLabel();
+    }
+
+    private void EnsureRealtimeRoomPlayerCountLabel()
+    {
+        if (!useRealtimeBackend || realtimeRoomPlayerCountText != null)
+        {
+            return;
+        }
+
+        NumberGenerator generator = GameManager.instance?.numberGenerator;
+        if (generator == null || generator.autoSpinRemainingPlayText == null)
+        {
+            return;
+        }
+
+        RectTransform countdownRect = generator.autoSpinRemainingPlayText.rectTransform;
+        RectTransform parentRect = countdownRect != null ? countdownRect.parent as RectTransform : null;
+        if (parentRect == null)
+        {
+            return;
+        }
+
+        GameObject labelObject = new("RealtimeRoomPlayerCountText");
+        labelObject.transform.SetParent(parentRect, false);
+        RectTransform rect = labelObject.AddComponent<RectTransform>();
+        rect.anchorMin = countdownRect.anchorMin;
+        rect.anchorMax = countdownRect.anchorMax;
+        rect.pivot = countdownRect.pivot;
+        rect.anchoredPosition = countdownRect.anchoredPosition + realtimeRoomPlayerCountOffset;
+        rect.sizeDelta = new Vector2(
+            Mathf.Max(realtimeRoomPlayerCountMinWidth, countdownRect.rect.width),
+            Mathf.Max(30f, countdownRect.rect.height * 0.52f));
+
+        TextMeshProUGUI label = labelObject.AddComponent<TextMeshProUGUI>();
+        label.alignment = TextAlignmentOptions.Center;
+        label.enableAutoSizing = true;
+        label.fontSizeMin = 16f;
+        label.fontSizeMax = 30f;
+        label.fontSize = Mathf.Max(18f, generator.autoSpinRemainingPlayText.fontSize * 0.42f);
+        label.color = generator.autoSpinRemainingPlayText.color;
+        if (generator.autoSpinRemainingPlayText.font != null)
+        {
+            label.font = generator.autoSpinRemainingPlayText.font;
+        }
+
+        realtimeRoomPlayerCountText = label;
+    }
+
+    private void RefreshRealtimeRoomPlayerCountLabel()
+    {
+        EnsureRealtimeRoomPlayerCountLabel();
+        if (realtimeRoomPlayerCountText == null)
+        {
+            return;
+        }
+
+        int playerCount = Mathf.Max(0, realtimeScheduler.PlayerCount);
+        realtimeRoomPlayerCountText.text = $"{realtimeRoomPlayerCountPrefix} {playerCount}";
     }
 
     private void TickScheduledRoundStateRefresh()
@@ -1063,11 +1186,15 @@ public partial class APIManager : MonoBehaviour
         if (ack == null)
         {
             Debug.LogError("[APIManager] room ack is null.");
+            LogRealtimeLifecycleEvent("room_join_or_create_failed", "reason=ack_null");
             return;
         }
 
         if (!ack.ok)
         {
+            LogRealtimeLifecycleEvent(
+                "room_join_or_create_failed",
+                $"code={ack.errorCode} message={ack.errorMessage}");
             if (string.Equals(ack.errorCode, "HALL_NOT_FOUND", StringComparison.OrdinalIgnoreCase))
             {
                 Debug.LogWarning("[APIManager] hallId er ugyldig i backend. Nullstiller hallId og forsoker auto-login for oppfriskning.");
@@ -1101,6 +1228,7 @@ public partial class APIManager : MonoBehaviour
         if (data == null)
         {
             Debug.LogError("[APIManager] room ack missing data.");
+            LogRealtimeLifecycleEvent("room_join_or_create_failed", "reason=missing_data");
             return;
         }
 
@@ -1118,6 +1246,9 @@ public partial class APIManager : MonoBehaviour
             activePlayerId = ackPlayerId.Trim();
         }
 
+        LogRealtimeLifecycleEvent(
+            "room_join_or_create_ack",
+            $"roomCode={activeRoomCode} playerId={activePlayerId}");
         Debug.Log($"[APIManager] Connected to room {activeRoomCode} as player {activePlayerId}");
 
         if (realtimeScheduledRounds)

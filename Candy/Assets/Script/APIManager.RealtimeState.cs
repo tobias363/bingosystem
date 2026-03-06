@@ -53,6 +53,7 @@ public partial class APIManager
         if (currentGame == null || currentGame.IsNull)
         {
             realtimeScheduler.SetCurrentGameStatus("NONE");
+            bool appliedPreRoundTickets = TryApplyPreRoundTicketsFromSnapshot(snapshot);
             if (!string.IsNullOrWhiteSpace(activeGameId))
             {
                 ScheduleDelayedOverlayReset(activeGameId);
@@ -64,9 +65,13 @@ public partial class APIManager
             processedDrawCount = 0;
             renderedDrawCount = 0;
             realtimeBetArmedForNextRound = false;
+            realtimeRerollRequestPending = false;
             realtimeClaimAttemptKeys.Clear();
-            currentTicketPage = 0;
-            activeTicketSets.Clear();
+            if (!appliedPreRoundTickets)
+            {
+                currentTicketPage = 0;
+                activeTicketSets.Clear();
+            }
             overlaysClearedForEndedGameId = string.Empty;
             GameManager.instance?.SetRoundWinningTotalFromRealtime(0);
             ResetRealtimeDrawReplayState(clearMetrics: true);
@@ -126,7 +131,11 @@ public partial class APIManager
             LogRealtimeDrawMetrics(gameId, "game-ended");
         }
 
-        ApplyMyTicketToCards(currentGame);
+        bool hasPreRoundTickets = !isRunning && TryApplyPreRoundTicketsFromSnapshot(snapshot);
+        if (!hasPreRoundTickets)
+        {
+            ApplyMyTicketToCards(currentGame);
+        }
         bool skipCardMarking = string.Equals(overlaysClearedForEndedGameId, gameId, StringComparison.Ordinal);
         ApplyDrawnNumbers(currentGame, skipCardMarking);
         TryAutoSubmitClaimsFromRealtime(currentGame);
@@ -220,6 +229,43 @@ public partial class APIManager
         }
 
         roundedAmount = Mathf.RoundToInt(parsed);
+        return true;
+    }
+
+    private bool TryApplyPreRoundTicketsFromSnapshot(JSONNode snapshot)
+    {
+        if (snapshot == null || snapshot.IsNull || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            return false;
+        }
+
+        JSONNode preRoundTicketsNode = snapshot["preRoundTickets"];
+        if (preRoundTicketsNode == null || preRoundTicketsNode.IsNull)
+        {
+            return false;
+        }
+
+        JSONNode myPreRoundTicketsNode = preRoundTicketsNode[activePlayerId];
+        if (myPreRoundTicketsNode == null || myPreRoundTicketsNode.IsNull)
+        {
+            return false;
+        }
+
+        List<List<int>> ticketSets = RealtimeTicketSetUtils.ExtractTicketSets(myPreRoundTicketsNode);
+        if (ticketSets == null || ticketSets.Count == 0)
+        {
+            return false;
+        }
+
+        if (RealtimeTicketSetUtils.AreTicketSetsEqual(activeTicketSets, ticketSets))
+        {
+            return true;
+        }
+
+        currentTicketPage = 0;
+        activeTicketSets = RealtimeTicketSetUtils.CloneTicketSets(ticketSets);
+        cachedStableTicketSets = RealtimeTicketSetUtils.CloneTicketSets(ticketSets);
+        ApplyTicketSetsToCards(activeTicketSets, preserveExistingNumbers: false);
         return true;
     }
 
@@ -2117,12 +2163,18 @@ public partial class APIManager
         hasAppliedZeroEntryFeeFallbackForRoom = false;
         realtimeBetArmedForNextRound = false;
         pendingRealtimeBetArmRequest = false;
+        realtimeRerollRequestPending = false;
         realtimeClaimAttemptKeys.Clear();
         ResetRealtimeDrawReplayState(clearMetrics: true);
 
         if (clearDesiredRoomCode)
         {
             roomCode = string.Empty;
+        }
+
+        if (realtimeRoomPlayerCountText != null)
+        {
+            realtimeRoomPlayerCountText.text = $"{realtimeRoomPlayerCountPrefix} 0";
         }
     }
 

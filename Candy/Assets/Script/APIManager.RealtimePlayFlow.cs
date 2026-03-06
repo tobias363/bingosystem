@@ -4,6 +4,89 @@ using UnityEngine;
 
 public partial class APIManager
 {
+    public bool CanRequestRealtimeTicketReroll()
+    {
+        if (!useRealtimeBackend || realtimeClient == null || !realtimeClient.IsReady)
+        {
+            return false;
+        }
+
+        if (realtimeRerollRequestPending)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            return false;
+        }
+
+        return !realtimeScheduler.IsGameRunning;
+    }
+
+    public void RequestRealtimeTicketReroll()
+    {
+        if (!useRealtimeBackend)
+        {
+            return;
+        }
+
+        BindRealtimeClient();
+        if (!CanRequestRealtimeTicketReroll())
+        {
+            if (realtimeScheduler.IsGameRunning)
+            {
+                Debug.LogWarning("[APIManager] Kan ikke bytte bonger mens runden kjører.");
+            }
+            else if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
+            {
+                JoinOrCreateRoom();
+            }
+            return;
+        }
+
+        realtimeRerollRequestPending = true;
+        int ticketsPerPlayer = Mathf.Clamp(realtimeTicketsPerPlayer, 1, 5);
+        realtimeClient.RerollTickets(activeRoomCode, activePlayerId, ticketsPerPlayer, (ack) =>
+        {
+            realtimeRerollRequestPending = false;
+            if (ack == null)
+            {
+                Debug.LogError("[APIManager] ticket:reroll feilet uten ack.");
+                return;
+            }
+
+            if (!ack.ok)
+            {
+                if (RealtimeRoomStateUtils.IsRoomNotFound(ack))
+                {
+                    ResetActiveRoomState(clearDesiredRoomCode: true);
+                    JoinOrCreateRoom();
+                    return;
+                }
+
+                if (string.Equals(ack.errorCode, "ROUND_ALREADY_RUNNING", StringComparison.OrdinalIgnoreCase))
+                {
+                    RequestRealtimeState();
+                    return;
+                }
+
+                Debug.LogError($"[APIManager] ticket:reroll failed: {ack.errorCode} {ack.errorMessage}");
+                return;
+            }
+
+            JSONNode snapshot = ack.data?["snapshot"];
+            if (snapshot != null && !snapshot.IsNull)
+            {
+                HandleRealtimeRoomUpdate(snapshot);
+            }
+            else
+            {
+                RequestRealtimeState();
+            }
+        });
+    }
+
     public void PlayRealtimeRound()
     {
         if (!useRealtimeBackend)
@@ -378,6 +461,9 @@ public partial class APIManager
         if (ack == null || !ack.ok)
         {
             Debug.LogError($"[APIManager] room:resume failed: {ack?.errorCode} {ack?.errorMessage}");
+            LogRealtimeLifecycleEvent(
+                "room_resume_failed",
+                $"code={ack?.errorCode} message={ack?.errorMessage}");
             if (RealtimeRoomStateUtils.IsRoomNotFound(ack))
             {
                 ResetActiveRoomState(clearDesiredRoomCode: true);
@@ -393,6 +479,7 @@ public partial class APIManager
             return;
         }
 
+        LogRealtimeLifecycleEvent("room_resume_ack", $"roomCode={activeRoomCode} playerId={activePlayerId}");
         if (realtimeScheduledRounds)
         {
             SyncRealtimeEntryFeeWithCurrentBet();

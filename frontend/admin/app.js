@@ -200,6 +200,11 @@ const elements = {
   hostWalletId: document.getElementById("hostWalletId"),
   entryFee: document.getElementById("entryFee"),
   ticketsPerPlayer: document.getElementById("ticketsPerPlayer"),
+  activeRoomCode: document.getElementById("activeRoomCode"),
+  activeRoomHallId: document.getElementById("activeRoomHallId"),
+  activeRoomPlayers: document.getElementById("activeRoomPlayers"),
+  activeRoomGameStatus: document.getElementById("activeRoomGameStatus"),
+  roomLegacyWarning: document.getElementById("roomLegacyWarning"),
   createRoomBtn: document.getElementById("createRoomBtn"),
   createAndStartRoomBtn: document.getElementById("createAndStartRoomBtn"),
   refreshRoomsBtn: document.getElementById("refreshRoomsBtn"),
@@ -2437,19 +2442,71 @@ async function loadTerminals() {
 }
 
 function formatRoomSummary(room) {
-  return `${room.code} | hall=${room.hallId} | players=${room.playerCount} | status=${room.gameStatus}`;
+  const canonicalTag = room?.isCanonical ? " [AKTIVT]" : room?.isBlockedBySingleRoomPolicy ? " [LEGACY/BLOKKERT]" : "";
+  return `${room.code} | hall=${room.hallId} | players=${room.playerCount} | status=${room.gameStatus}${canonicalTag}`;
+}
+
+function getCanonicalRoomFromState() {
+  if (!Array.isArray(state.rooms) || state.rooms.length === 0) {
+    return null;
+  }
+
+  const canonical = state.rooms.find((room) => room?.isCanonical);
+  return canonical || state.rooms[0] || null;
+}
+
+function getBlockedLegacyRoomsFromState() {
+  if (!Array.isArray(state.rooms)) {
+    return [];
+  }
+  return state.rooms.filter((room) => room?.isBlockedBySingleRoomPolicy);
+}
+
+function renderActiveRoomSummaryPanel() {
+  const canonicalRoom = getCanonicalRoomFromState();
+  const blockedLegacyRooms = getBlockedLegacyRoomsFromState();
+
+  if (elements.activeRoomCode) {
+    elements.activeRoomCode.textContent = canonicalRoom?.code || "-";
+  }
+  if (elements.activeRoomHallId) {
+    elements.activeRoomHallId.textContent = canonicalRoom?.hallId || "-";
+  }
+  if (elements.activeRoomPlayers) {
+    elements.activeRoomPlayers.textContent = Number.isFinite(canonicalRoom?.playerCount)
+      ? String(canonicalRoom.playerCount)
+      : "0";
+  }
+  if (elements.activeRoomGameStatus) {
+    elements.activeRoomGameStatus.textContent = canonicalRoom?.gameStatus || "NONE";
+  }
+
+  if (!elements.roomLegacyWarning) {
+    return;
+  }
+
+  if (blockedLegacyRooms.length > 0) {
+    elements.roomLegacyWarning.classList.remove("hidden", "success");
+    elements.roomLegacyWarning.classList.add("error");
+    elements.roomLegacyWarning.textContent =
+      `${blockedLegacyRooms.length} legacy-rom er blokkert av single-room policy og fases ut automatisk.`;
+    return;
+  }
+
+  elements.roomLegacyWarning.classList.remove("error");
+  elements.roomLegacyWarning.classList.add("success");
+  elements.roomLegacyWarning.classList.remove("hidden");
+  elements.roomLegacyWarning.textContent = "Ingen legacy-rom blokkert av policy.";
 }
 
 function getCandyQuickFilteredRooms() {
-  const selectedHallId = (elements.candyQuickHallSelect.value || "").trim();
-  if (!selectedHallId) {
-    return Array.isArray(state.rooms) ? state.rooms : [];
-  }
-  return (Array.isArray(state.rooms) ? state.rooms : []).filter((room) => room.hallId === selectedHallId);
+  const canonicalRoom = getCanonicalRoomFromState();
+  return canonicalRoom ? [canonicalRoom] : [];
 }
 
 function renderCandyQuickRoomOptions(preferredRoomCode) {
-  const previous = preferredRoomCode || elements.candyQuickRoomSelect.value;
+  const canonicalRoom = getCanonicalRoomFromState();
+  const previous = preferredRoomCode || canonicalRoom?.code || elements.candyQuickRoomSelect.value;
   const filteredRooms = getCandyQuickFilteredRooms();
   setSelectOptions(
     elements.candyQuickRoomSelect,
@@ -2458,12 +2515,13 @@ function renderCandyQuickRoomOptions(preferredRoomCode) {
       label: formatRoomSummary(room)
     })),
     previous,
-    "Ingen rom i valgt hall"
+    "Ingen aktivt rom"
   );
 }
 
 function renderRoomOptions() {
-  const previous = elements.roomSelect.value;
+  const canonicalRoom = getCanonicalRoomFromState();
+  const previous = canonicalRoom?.code || elements.roomSelect.value;
   setSelectOptions(
     elements.roomSelect,
     state.rooms.map((room) => ({
@@ -2473,24 +2531,36 @@ function renderRoomOptions() {
     previous,
     "Ingen rom"
   );
-  renderCandyQuickRoomOptions();
+  const resolvedCanonical = getCanonicalRoomFromState();
+  if (resolvedCanonical && elements.roomSelect) {
+    elements.roomSelect.value = resolvedCanonical.code;
+  }
+  renderCandyQuickRoomOptions(resolvedCanonical?.code);
+  renderActiveRoomSummaryPanel();
 }
 
 async function loadRooms() {
   const rooms = await apiRequest("/api/admin/rooms", { auth: true });
   state.rooms = Array.isArray(rooms) ? rooms : [];
   renderRoomOptions();
-  if ((elements.roomSelect.value || "").trim()) {
+  const canonicalRoom = getCanonicalRoomFromState();
+  if (canonicalRoom) {
+    if (elements.roomSelect) {
+      elements.roomSelect.value = canonicalRoom.code;
+    }
+    if (elements.candyQuickRoomSelect) {
+      elements.candyQuickRoomSelect.value = canonicalRoom.code;
+    }
     await showSelectedRoomSnapshot();
   } else {
-    setStatus(elements.roomStatus, "Ingen rom valgt.");
+    setStatus(elements.roomStatus, "Ingen canonical rom funnet ennå.");
   }
 }
 
 async function showSelectedRoomSnapshot() {
-  const roomCode = (elements.roomSelect.value || "").trim().toUpperCase();
+  const roomCode = getSelectedRoomCode();
   if (!roomCode) {
-    setStatus(elements.roomStatus, "Ingen rom valgt.");
+    setStatus(elements.roomStatus, "Ingen aktivt rom valgt.");
     return;
   }
   const snapshot = await apiRequest(`/api/admin/rooms/${encodeURIComponent(roomCode)}`, { auth: true });
@@ -2531,12 +2601,29 @@ async function showSelectedRoomSnapshot() {
     ].join("\n"),
     rtpWarning === "RTP-GRENSE NÅDD" || rtpWarning === "RTP > 90%" ? "error" : "success"
   );
+
+  if (elements.activeRoomCode) {
+    elements.activeRoomCode.textContent = snapshot?.code || "-";
+  }
+  if (elements.activeRoomHallId) {
+    elements.activeRoomHallId.textContent = snapshot?.hallId || "-";
+  }
+  if (elements.activeRoomPlayers) {
+    elements.activeRoomPlayers.textContent = String(Array.isArray(snapshot?.players) ? snapshot.players.length : 0);
+  }
+  if (elements.activeRoomGameStatus) {
+    elements.activeRoomGameStatus.textContent = game?.status || "NONE";
+  }
 }
 
 function getSelectedRoomCode() {
-  const roomCode = (elements.roomSelect.value || "").trim().toUpperCase();
+  const canonicalRoom = getCanonicalRoomFromState();
+  const roomCode = (canonicalRoom?.code || elements.roomSelect.value || "").trim().toUpperCase();
   if (!roomCode) {
-    throw new Error("Velg rom først.");
+    throw new Error("Ingen aktivt canonical-rom er tilgjengelig.");
+  }
+  if (elements.roomSelect) {
+    elements.roomSelect.value = roomCode;
   }
   return roomCode;
 }
@@ -2599,6 +2686,11 @@ function getRoomStartPayload() {
 }
 
 function getCandyQuickSelectedHallId() {
+  const canonicalRoom = getCanonicalRoomFromState();
+  if (canonicalRoom?.hallId) {
+    return canonicalRoom.hallId;
+  }
+
   const hallId = (elements.candyQuickHallSelect.value || "").trim();
   if (!hallId) {
     throw new Error("Velg hall for Candy først.");
@@ -2607,9 +2699,13 @@ function getCandyQuickSelectedHallId() {
 }
 
 function getCandyQuickSelectedRoomCode() {
-  const roomCode = (elements.candyQuickRoomSelect.value || "").trim().toUpperCase();
+  const canonicalRoom = getCanonicalRoomFromState();
+  const roomCode = (canonicalRoom?.code || elements.candyQuickRoomSelect.value || "").trim().toUpperCase();
   if (!roomCode) {
-    throw new Error("Velg eksisterende Candy-rom først.");
+    throw new Error("Ingen aktivt Candy-rom funnet ennå.");
+  }
+  if (elements.candyQuickRoomSelect) {
+    elements.candyQuickRoomSelect.value = roomCode;
   }
   return roomCode;
 }

@@ -2262,7 +2262,7 @@ function requireBingoIdentity() {
 function requireSelectedHall() {
   const hallId = (state.selectedHallId || els.bingoHallId?.value || "").trim();
   if (!hallId) {
-    throw new Error("Velg hall før du oppretter eller joiner rom.");
+    throw new Error("Velg hall før du kobler til aktivt rom.");
   }
   state.selectedHallId = hallId;
 }
@@ -2300,11 +2300,7 @@ async function onBingoJoinRoom() {
   try {
     requireBingoIdentity();
     requireSelectedHall();
-    const roomCode = (els.bingoRoomCode.value || "").trim().toUpperCase();
-    if (!roomCode) {
-      throw new Error("Skriv inn romkode.");
-    }
-
+    const roomCode = (state.roomCode || els.bingoRoomCode.value || "AUTO").trim().toUpperCase();
     const response = await emitWithAck("room:join", {
       roomCode,
       ...buildRoomIdentityPayload()
@@ -2440,7 +2436,7 @@ socket.on("room:update", (snapshot) => {
 
 socket.on("connect", () => {
   if (state.selectedGameSlug === "bingo") {
-    renderBingoStatus("Tilkoblet server. Opprett eller join et rom.");
+    renderBingoStatus("Tilkoblet server. Koble til aktivt rom.");
   }
 });
 

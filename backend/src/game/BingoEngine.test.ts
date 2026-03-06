@@ -173,6 +173,27 @@ class FixedTicketBingoAdapter implements BingoSystemAdapter {
   }
 }
 
+class SequenceTicketBingoAdapter implements BingoSystemAdapter {
+  private nextSeed = 1;
+
+  async createTicket(_input: CreateTicketInput): Promise<Ticket> {
+    const start = this.nextSeed * 11;
+    this.nextSeed += 1;
+
+    const numbers = Array.from({ length: 25 }, (_unused, index) => ((start + index) % 75) + 1);
+    numbers[12] = 0;
+    return {
+      grid: [
+        numbers.slice(0, 5),
+        numbers.slice(5, 10),
+        numbers.slice(10, 15),
+        numbers.slice(15, 20),
+        numbers.slice(20, 25)
+      ]
+    };
+  }
+}
+
 async function makeEngineWithRoom(): Promise<{
   engine: BingoEngine;
   roomCode: string;
@@ -399,6 +420,96 @@ test("startGame can include only bet-armed participants", async () => {
   assert.ok(guestPlayer);
   assert.equal(hostPlayer.balance, 900);
   assert.equal(guestPlayer.balance, 1000);
+});
+
+test("rerollTicketsForPlayer keeps pre-round tickets and startGame reuses them", async () => {
+  const engine = new BingoEngine(new SequenceTicketBingoAdapter(), new InMemoryWalletAdapter(), {
+    minPlayersToStart: 2
+  });
+  const { roomCode, hostPlayerId } = await createRoomWithTwoPlayers({
+    engine,
+    hallId: "hall-1",
+    hostName: "Host",
+    hostWalletId: "wallet-host",
+    guestName: "Guest",
+    guestWalletId: "wallet-guest"
+  });
+
+  const preroundTickets = await engine.rerollTicketsForPlayer({
+    roomCode,
+    playerId: hostPlayerId,
+    ticketsPerPlayer: 4
+  });
+  assert.equal(preroundTickets.length, 4);
+
+  const snapshotAfterReroll = engine.getRoomSnapshot(roomCode);
+  assert.equal(snapshotAfterReroll.preRoundTickets?.[hostPlayerId]?.length, 4);
+
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    ticketsPerPlayer: 4,
+    entryFee: 0
+  });
+
+  const runningSnapshot = engine.getRoomSnapshot(roomCode);
+  assert.ok(runningSnapshot.currentGame);
+  assert.equal(runningSnapshot.currentGame?.status, "RUNNING");
+  assert.deepEqual(runningSnapshot.currentGame?.tickets[hostPlayerId], preroundTickets);
+  assert.equal(runningSnapshot.preRoundTickets, undefined);
+});
+
+test("rerollTicketsForPlayer blocks reroll while round is running", async () => {
+  const engine = new BingoEngine(new FixedTicketBingoAdapter(), new InMemoryWalletAdapter(), {
+    minPlayersToStart: 2
+  });
+  const { roomCode, hostPlayerId } = await createRoomWithTwoPlayers({
+    engine,
+    hallId: "hall-1",
+    hostName: "Host",
+    hostWalletId: "wallet-host",
+    guestName: "Guest",
+    guestWalletId: "wallet-guest"
+  });
+
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    ticketsPerPlayer: 4,
+    entryFee: 0
+  });
+
+  await assert.rejects(
+    async () =>
+      engine.rerollTicketsForPlayer({
+        roomCode,
+        playerId: hostPlayerId,
+        ticketsPerPlayer: 4
+      }),
+    (error: unknown) => error instanceof DomainError && error.code === "ROUND_ALREADY_RUNNING"
+  );
+});
+
+test("rerollTicketsForPlayer validates ticketsPerPlayer range", async () => {
+  const { engine, roomCode, hostPlayerId } = await makeEngineWithRoom();
+  await assert.rejects(
+    async () =>
+      engine.rerollTicketsForPlayer({
+        roomCode,
+        playerId: hostPlayerId,
+        ticketsPerPlayer: 0
+      }),
+    (error: unknown) => error instanceof DomainError && error.code === "INVALID_TICKETS_PER_PLAYER"
+  );
+  await assert.rejects(
+    async () =>
+      engine.rerollTicketsForPlayer({
+        roomCode,
+        playerId: hostPlayerId,
+        ticketsPerPlayer: 6
+      }),
+    (error: unknown) => error instanceof DomainError && error.code === "INVALID_TICKETS_PER_PLAYER"
+  );
 });
 
 test("startGame rejects payoutPercent outside 0-100", async () => {

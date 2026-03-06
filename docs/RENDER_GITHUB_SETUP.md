@@ -62,3 +62,45 @@ Repo variables (`Settings` -> `Secrets and variables` -> `Actions` -> `Variables
 4. Cherry-pick eller merge samme endring til `staging`.
 5. Verifiser at `Deploy Staging` starter på push til `staging` og passerer healthcheck.
 6. Verifiser at `Deploy Production` starter etter grønn `CI` på `main` og passerer healthcheck.
+
+## 7) Candy WebGL paritet-pipeline
+
+Workflow: `.github/workflows/deploy-candygame.yml`
+
+Denne workflowen bygger WebGL fra samme Bingo-commit, publiserer til `candygame-repo`,
+trigger Render deploy, validerer live `release.json`, synker backend `launchUrl/apiBaseUrl`,
+og låser Candy scheduler-policy til 30 sekunder.
+
+### Påkrevde secrets/vars
+
+Sett disse per environment (`staging`/`production`) i GitHub Environments:
+
+- `CANDYGAME_REPO_PUSH_TOKEN`
+- `CANDYGAME_REPO_CLONE_URL`
+- `RENDER_CANDYGAME_DEPLOY_HOOK_URL`
+- `CANDY_ADMIN_EMAIL`
+- `CANDY_ADMIN_PASSWORD`
+- `CANDY_BACKEND_BASE_URL`
+
+I tillegg for Unity CI-build:
+
+- `UNITY_LICENSE`
+- `UNITY_EMAIL`
+- `UNITY_PASSWORD`
+
+Valgfritt (anbefalt):
+
+- `RENDER_CANDYGAME_HEALTHCHECK_URL`
+- `RENDER_CANDYGAME_RELEASE_JSON_URL`
+- `CANDYGAME_PUBLIC_URL`
+- `CANDY_TEST_ACCESS_TOKEN` eller `CANDY_TEST_EMAIL` + `CANDY_TEST_PASSWORD`
+
+### Harde deploy-gates
+
+Workflowen feiler hvis:
+
+1. WebGL artifact mangler `index.html`, `Build/`, `TemplateData/`, `release.json`.
+2. `release.json.releaseCommit` ikke matcher forventet commit (`github.sha[:8]`).
+3. Live `https://.../release.json` etter deploy ikke matcher forventet `releaseCommit`.
+4. Backend write av launch/scheduler feiler, eller `autoRoundStartIntervalMs != 30000` etter write.
+5. E2E smoke finner stall (`Venter på neste runde` >45s uten progresjon) eller manglende 30-draw avslutning.
