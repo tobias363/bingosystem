@@ -51,6 +51,7 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private bool playButtonStartsAndDrawsRealtime = true;
     [SerializeField] private bool realtimeScheduledRounds = true;
     [SerializeField] private bool drawImmediatelyAfterManualStart = true;
+    [SerializeField] private bool allowEditorLocalFallbackWhenRealtimeUnavailable = true;
     [SerializeField] private bool scheduledModeManualStartFallback = false;
     [SerializeField] [Min(0.5f)] private float scheduledRoomStateHeartbeatSeconds = 2f;
     [SerializeField] private bool syncRealtimeEntryFeeWithBetSelector = true;
@@ -147,6 +148,7 @@ public partial class APIManager : MonoBehaviour
     private bool pendingRealtimeBetArmRequest = false;
     private bool realtimeRerollRequestPending = false;
     private readonly HashSet<string> realtimeClaimAttemptKeys = new();
+    private bool hasTriggeredEditorLocalFallback = false;
 
     public bool UseRealtimeBackend => useRealtimeBackend;
     public string ActiveRoomCode => activeRoomCode;
@@ -177,6 +179,7 @@ public partial class APIManager : MonoBehaviour
 
     void OnEnable()
     {
+        hasTriggeredEditorLocalFallback = false;
         if (useRealtimeBackend)
         {
             BindRealtimeClient();
@@ -1429,6 +1432,7 @@ public partial class APIManager : MonoBehaviour
         BindRealtimeClient();
         if (realtimeClient == null)
         {
+            TryRunEditorLocalRoundFallback("realtimeClient mangler");
             return;
         }
 
@@ -1438,12 +1442,14 @@ public partial class APIManager : MonoBehaviour
             if (CandyLaunchBootstrap.HasLaunchContextInUrl)
             {
                 Debug.LogError("[APIManager] Launch-resolve returnerte ikke accessToken. Kan ikke hente room:state.");
+                TryRunEditorLocalRoundFallback("launch-resolve mangler accessToken");
                 return;
             }
 
             if (!TryStartAutoLogin("accessToken mangler. Login kreves for realtime gameplay."))
             {
                 Debug.LogError("[APIManager] accessToken mangler. Login kreves for realtime gameplay.");
+                TryRunEditorLocalRoundFallback("accessToken mangler og auto-login utilgjengelig");
             }
             return;
         }
@@ -1482,6 +1488,7 @@ public partial class APIManager : MonoBehaviour
                     return;
                 }
                 Debug.LogError($"[APIManager] room:state failed: {ack?.errorCode} {ack?.errorMessage}");
+                TryRunEditorLocalRoundFallback($"room:state feilet ({ack?.errorCode})");
                 return;
             }
 
@@ -1491,6 +1498,41 @@ public partial class APIManager : MonoBehaviour
                 HandleRealtimeRoomUpdate(snapshot);
             }
         });
+    }
+
+    private bool TryRunEditorLocalRoundFallback(string reason)
+    {
+#if UNITY_EDITOR
+        if (!allowEditorLocalFallbackWhenRealtimeUnavailable || hasTriggeredEditorLocalFallback)
+        {
+            return false;
+        }
+
+        if (!Application.isPlaying)
+        {
+            return false;
+        }
+
+        NumberGenerator generator = GameManager.instance != null ? GameManager.instance.numberGenerator : null;
+        if (generator == null)
+        {
+            return false;
+        }
+
+        if (generator.generatedNO != null && generator.generatedNO.Count > 0)
+        {
+            return false;
+        }
+
+        hasTriggeredEditorLocalFallback = true;
+        Debug.LogWarning(
+            $"[APIManager] Realtime utilgjengelig i editor ({reason}). " +
+            "Starter lokal fallback-runde via NumberGenerator.PlaceBallAsPerFetch().");
+        generator.PlaceBallAsPerFetch();
+        return true;
+#else
+        return false;
+#endif
     }
 
     private static string NormalizeRealtimeBackendBaseUrl(string rawBaseUrl)
