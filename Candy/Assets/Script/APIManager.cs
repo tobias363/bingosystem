@@ -80,6 +80,7 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] [Min(0.05f)] private float realtimeDrawReplayNormalIntervalSeconds = 0.28f;
     [SerializeField] [Min(1)] private int realtimeDrawBacklogCatchupThreshold = 4;
     [SerializeField] private bool logRealtimeDrawMetrics = true;
+    [SerializeField] private bool logRealtimeDrawTrace = true;
     [SerializeField] [Min(1)] private int realtimeBonusPatternPositionFromRight = 2;
     [SerializeField] private string launchResolveBaseUrl = "https://bingosystem-3.onrender.com";
     [SerializeField] private BallManager ballManager;
@@ -159,6 +160,7 @@ public partial class APIManager : MonoBehaviour
     private bool hasLoggedMissingRealtimeNumberGenerator = false;
     private float nextRuntimeDiagnosticsLogAt = 0f;
     private string lastRuntimeDiagnosticsSnapshot = string.Empty;
+    private string lastPatternConfigurationIssue = string.Empty;
 
     public bool UseRealtimeBackend => useRealtimeBackend;
     public string ActiveRoomCode => activeRoomCode;
@@ -352,6 +354,57 @@ public partial class APIManager : MonoBehaviour
         {
             login.SetExternalStatus(message);
         }
+    }
+
+    private void PublishRuntimeStatus(string message, bool asError = false)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        if (asError)
+        {
+            Debug.LogError("[APIManager] " + message);
+        }
+        else
+        {
+            Debug.LogWarning("[APIManager] " + message);
+        }
+
+        BingoAutoLogin login = autoLogin != null ? autoLogin : FindObjectOfType<BingoAutoLogin>();
+        if (login != null)
+        {
+            login.SetExternalStatus(message);
+        }
+    }
+
+    private bool ValidatePatternConfigurationForRealtime()
+    {
+        NumberGenerator generator = ResolveNumberGenerator();
+        if (generator == null)
+        {
+            return true;
+        }
+
+        if (generator.ValidateRealtimePatternConfiguration(out string errorMessage))
+        {
+            lastPatternConfigurationIssue = string.Empty;
+            return true;
+        }
+
+        if (!string.Equals(lastPatternConfigurationIssue, errorMessage, StringComparison.Ordinal))
+        {
+            lastPatternConfigurationIssue = errorMessage;
+            PublishRuntimeStatus(errorMessage, asError: true);
+        }
+
+        return false;
+    }
+
+    public bool ShouldLogRealtimeDrawTrace()
+    {
+        return logRealtimeDrawTrace;
     }
 
     private BallManager ResolveBallManager()

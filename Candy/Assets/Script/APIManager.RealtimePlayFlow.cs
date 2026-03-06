@@ -322,6 +322,11 @@ public partial class APIManager
             return;
         }
 
+        if (!ValidatePatternConfigurationForRealtime())
+        {
+            return;
+        }
+
         int ticketsPerPlayer = Mathf.Clamp(realtimeTicketsPerPlayer, 1, 5);
         int entryFee = Mathf.Max(0, realtimeEntryFee);
 

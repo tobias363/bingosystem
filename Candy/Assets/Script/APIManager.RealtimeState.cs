@@ -253,6 +253,7 @@ public partial class APIManager
 
         int pageStartIndex = currentTicketPage * cardSlots;
         TMP_FontAsset numberFallbackFont = RealtimeTextStyleUtils.ResolveFallbackFont();
+        int populatedCards = 0;
 
         for (int cardIndex = 0; cardIndex < generator.cardClasses.Length; cardIndex++)
         {
@@ -304,6 +305,10 @@ public partial class APIManager
             }
 
             bool shouldPopulate = sourceTicket != null;
+            if (shouldPopulate)
+            {
+                populatedCards++;
+            }
             for (int cellIndex = 0; cellIndex < 15; cellIndex++)
             {
                 int value = shouldPopulate ? sourceTicket[cellIndex] : 0;
@@ -317,6 +322,14 @@ public partial class APIManager
                         numberFallbackFont);
                 }
             }
+        }
+
+        int expectedCardsWithTickets = Mathf.Min(cardSlots, Mathf.Max(1, realtimeTicketsPerPlayer));
+        if (populatedCards < expectedCardsWithTickets)
+        {
+            PublishRuntimeStatus(
+                $"Manglende bonger i snapshot. Fikk {populatedCards}/{expectedCardsWithTickets} aktive bonger i rom {activeRoomCode}.",
+                asError: true);
         }
 
         if (logBootstrapEvents)
@@ -335,6 +348,7 @@ public partial class APIManager
 
         NumberGenerator generator = ResolveNumberGenerator();
         bool canMarkCards = generator != null && generator.cardClasses != null;
+        bool shouldTrace = ShouldLogRealtimeDrawTrace();
 
         int previousProcessedDrawCount = Mathf.Max(0, processedDrawCount);
         for (int drawIndex = 0; drawIndex < drawnNumbers.Count; drawIndex++)
@@ -352,6 +366,14 @@ public partial class APIManager
 
             ShowRealtimeDrawBall(drawIndex, drawnNumber);
 
+            if (shouldTrace)
+            {
+                int markedCells = canMarkCards ? CountMarkedCells(generator) : 0;
+                Debug.Log(
+                    $"[candy-draw] game={activeGameId} drawIndex={drawIndex + 1} number={drawnNumber} " +
+                    $"drawnCount={drawnNumbers.Count} markedCells={markedCells} canMark={canMarkCards}");
+            }
+
             if (autoMarkDrawnNumbers &&
                 RealtimeTicketSetUtils.TicketContainsInAnyTicketSet(activeTicketSets, drawnNumber) &&
                 !string.IsNullOrWhiteSpace(activeRoomCode) &&
@@ -364,6 +386,34 @@ public partial class APIManager
         }
 
         processedDrawCount = drawnNumbers.Count;
+    }
+
+    private int CountMarkedCells(NumberGenerator generator)
+    {
+        if (generator == null || generator.cardClasses == null)
+        {
+            return 0;
+        }
+
+        int total = 0;
+        for (int cardIndex = 0; cardIndex < generator.cardClasses.Length; cardIndex++)
+        {
+            CardClass card = generator.cardClasses[cardIndex];
+            if (card == null || card.payLinePattern == null)
+            {
+                continue;
+            }
+
+            for (int cellIndex = 0; cellIndex < card.payLinePattern.Count; cellIndex++)
+            {
+                if (card.payLinePattern[cellIndex] == 1)
+                {
+                    total++;
+                }
+            }
+        }
+
+        return total;
     }
 
     private void RefreshRealtimeWinningPatternVisuals(JSONNode currentGame)

@@ -201,6 +201,14 @@ public class NumberGenerator : MonoBehaviour
 
     private void StartGame()
     {
+        if (APIManager.instance != null && APIManager.instance.UseRealtimeBackend)
+        {
+            if (!ValidateRealtimePatternConfiguration(out string patternError))
+            {
+                Debug.LogError("[NumberGenerator] " + patternError);
+                return;
+            }
+        }
 
         //totalSelectedPatterns.Clear();
         foreach (var wrapper in mainSelectedIndexes)
@@ -1281,12 +1289,6 @@ public class NumberGenerator : MonoBehaviour
                 return;
             }
 
-            if (totalSelectedPatterns.Count == 0)
-            {
-                // Legacy Theme2 mangler ofte NumberManager-binding; behold en enkel default pattern.
-                totalSelectedPatterns.Add(1);
-            }
-
             if (!hasLoggedMissingNumberManager)
             {
                 if (NumberManager.instance == null)
@@ -1313,6 +1315,35 @@ public class NumberGenerator : MonoBehaviour
                 hasLoggedMissingNumberManager = true;
             }
         }
+    }
+
+    public bool ValidateRealtimePatternConfiguration(out string errorMessage)
+    {
+        errorMessage = string.Empty;
+        if (totalSelectedPatterns == null || totalSelectedPatterns.Count == 0)
+        {
+            errorMessage = "Mangler aktivt mønster for realtime-runden. Sett totalSelectedPatterns/currentPatternIndex før start.";
+            return false;
+        }
+
+        if (patternList == null || patternList.Count == 0)
+        {
+            errorMessage = "patternList er tom. Kan ikke starte realtime-runde uten mønsterdefinisjoner.";
+            return false;
+        }
+
+        for (int i = 0; i < totalSelectedPatterns.Count; i++)
+        {
+            int patternIndex = totalSelectedPatterns[i];
+            if (patternIndex < 0 || patternIndex >= patternList.Count)
+            {
+                errorMessage =
+                    $"Ugyldig patternIndex {patternIndex} i totalSelectedPatterns (patternList.Count={patternList.Count}).";
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void ResolveOptionalSceneReferences()

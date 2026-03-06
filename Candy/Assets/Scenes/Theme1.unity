@@ -128823,6 +128823,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ec0ad0a511f4ab34a977236b6bd77f64, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  increaseGameSpeedInTesting: 0
+  testingSpeedMultiplier: 3.5
   extraBallTotal: 0
   numberGenerator: {fileID: 1969467072}
   displayTotalMoney: {fileID: 2069766441}
@@ -135953,7 +135955,9 @@ Transform:
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
-  m_Children: []
+  m_Children:
+  - {fileID: 2099000002}
+  - {fileID: 2099000012}
   m_Father: {fileID: 0}
   m_RootOrder: 8
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -135970,25 +135974,65 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   useRealtimeBackend: 1
-  realtimeClient: {fileID: 0}
-  autoLogin: {fileID: 0}
+  realtimeClient: {fileID: 2099000003}
+  autoLogin: {fileID: 2099000013}
   joinOrCreateOnStart: 1
   autoCreateRoomWhenRoomCodeIsEmpty: 1
   autoMarkDrawnNumbers: 1
   duplicateTicketAcrossAllCards: 1
   enableTicketPaging: 1
+  preserveTicketNumbersOnTransientSnapshotGaps: 1
   triggerAutoLoginWhenAuthMissing: 1
-  logBootstrapEvents: 0
+  logBootstrapEvents: 1
+  logRealtimeLifecycleEvents: 1
   playButtonStartsAndDrawsRealtime: 1
+  realtimeScheduledRounds: 1
   drawImmediatelyAfterManualStart: 1
+  allowEditorLocalFallbackWhenRealtimeUnavailable: 0
+  allowEditorRuntimeAutoCreateRealtimeClient: 0
+  allowEditorRuntimeAutoCreateAutoLogin: 0
+  enableEditorLocalRoundFallback: 0
+  strictRuntimeDependencyValidation: 1
+  scheduledModeManualStartFallback: 0
+  scheduledRoomStateHeartbeatSeconds: 2
+  syncRealtimeEntryFeeWithBetSelector: 1
+  fallbackToZeroEntryFeeOnInsufficientFunds: 0
+  disableEntryFeeSyncAfterInsufficientFundsFallback: 0
+  insufficientFundsRetryDelaySeconds: 6
+  centerRealtimeCountdownUnderBalls: 1
+  realtimeCountdownOffset: {x: 0, y: -155}
+  realtimeCountdownWidthMultiplier: 1.3
+  realtimeCountdownMinParentWidthRatio: 0.3
+  realtimeCountdownMinWidth: 240
+  realtimeCountdownEdgePadding: 32
+  realtimeNearWinBlinkInterval: 0.25
+  realtimeBonusPatternIndex: 1
   realtimeTicketsPerPlayer: 4
   realtimeEntryFee: 0
-  ballManager: {fileID: 0}
+  realtimeClientMaxDrawsPerRound: 30
+  realtimeDefaultBonusAmount: 150
+  realtimeRoundOverlayResetDelaySeconds: 10
+  realtimeDrawResyncIntervalSeconds: 0.75
+  realtimeDrawReplayMinIntervalSeconds: 0.06
+  realtimeDrawReplayNormalIntervalSeconds: 0.28
+  realtimeDrawBacklogCatchupThreshold: 4
+  logRealtimeDrawMetrics: 1
+  logRealtimeDrawTrace: 1
+  realtimeBonusPatternPositionFromRight: 2
+  launchResolveBaseUrl: https://bingosystem-3.onrender.com
+  ballManager: {fileID: 516605982}
+  logRuntimeDiagnostics: 1
+  runtimeDiagnosticsLogIntervalSeconds: 8
+  realtimeRoomPlayerCountText: {fileID: 0}
+  realtimeRoomPlayerCountPrefix: 'Spillere i rommet:'
+  realtimeRoomPlayerCountOffset: {x: 0, y: -208}
+  realtimeRoomPlayerCountMinWidth: 220
   roomCode: 
   hallId: 
   playerName: Player
   walletId: 
   accessToken: 
+  realtimeBackendBaseUrl: https://bingosystem-3.onrender.com
   legacyStartCallEnabled: 1
   bonusAMT: 0
 --- !u!1 &2065543997
@@ -151761,3 +151805,116 @@ MonoBehaviour:
   m_FillOrigin: 0
   m_UseSpriteMesh: 0
   m_PixelsPerUnitMultiplier: 1
+--- !u!1 &2099000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2099000002}
+  - component: {fileID: 2099000003}
+  m_Layer: 0
+  m_Name: BingoRealtimeClient
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2099000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2099000001}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2062549614}
+  m_RootOrder: 0
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2099000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2099000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4e790da076324de79ac089efc2d98a38, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  backendBaseUrl: https://bingosystem-3.onrender.com
+  autoConnectOnStart: 0
+  autoReconnect: 1
+  reconnectDelaySeconds: 2
+  verboseLogging: 1
+  accessToken: 
+--- !u!1 &2099000011
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2099000012}
+  - component: {fileID: 2099000013}
+  m_Layer: 0
+  m_Name: BingoAutoLogin
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &2099000012
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2099000011}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 2062549614}
+  m_RootOrder: 1
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &2099000013
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2099000011}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 740d4853272d4ba18520a53ffa91c212, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  apiManager: {fileID: 2062549615}
+  realtimeControls: {fileID: 0}
+  emailInput: {fileID: 0}
+  passwordInput: {fileID: 0}
+  hallIdInput: {fileID: 0}
+  accessTokenInput: {fileID: 0}
+  loginButton: {fileID: 0}
+  statusText: {fileID: 0}
+  backendBaseUrl: https://bingosystem-3.onrender.com
+  email: demo@bingo.local
+  password: Demo12345!
+  displayName: Demo Player
+  autoRegisterIfMissing: 1
+  autoKycVerify: 1
+  kycBirthDate: 1990-01-01
+  kycNationalId: 
+  autoLoginOnStart: 0
+  autoConnectAndJoin: 1
+  preferExistingHallIdInput: 1
