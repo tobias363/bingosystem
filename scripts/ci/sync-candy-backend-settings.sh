@@ -33,6 +33,8 @@ fi
 BASE_URL="${BACKEND_BASE_URL%/}"
 launch_url="${CANDYGAME_PUBLIC_URL%/}"
 api_base_url="${CANDY_API_BASE_URL%/}"
+COOKIE_JAR="$(mktemp)"
+trap 'rm -f "${COOKIE_JAR}"' EXIT
 
 api_request() {
   local method="$1"
@@ -41,7 +43,7 @@ api_request() {
   local auth_header="${4:-}"
 
   local -a curl_args
-  curl_args=(-sS -w $'\n%{http_code}' -X "$method" "${BASE_URL}${endpoint}" -H "Content-Type: application/json")
+  curl_args=(-sS --retry 3 --retry-all-errors --connect-timeout 10 -w $'\n%{http_code}' -X "$method" "${BASE_URL}${endpoint}" -H "Content-Type: application/json" --cookie "${COOKIE_JAR}" --cookie-jar "${COOKIE_JAR}")
   if [[ -n "${auth_header}" ]]; then
     curl_args+=(-H "${auth_header}")
   fi
@@ -80,14 +82,29 @@ assert_http_ok() {
 echo "[candy-backend-sync] Logging in admin user"
 login_payload="$(jq -n --arg email "${ADMIN_EMAIL}" --arg password "${ADMIN_PASSWORD}" '{email:$email,password:$password}')"
 api_request "POST" "/api/admin/auth/login" "${login_payload}"
-assert_http_ok "admin login" "200"
-admin_token="$(jq -r '.data.accessToken // empty' <<<"${HTTP_BODY}")"
-if [[ -z "${admin_token}" ]]; then
-  echo "[candy-backend-sync] Login response missing accessToken." >&2
+if [[ "${HTTP_CODE}" != "200" ]]; then
+  echo "[candy-backend-sync] admin login expected HTTP 200, got ${HTTP_CODE}" >&2
+  echo "[candy-backend-sync] Response body: ${HTTP_BODY}" >&2
   exit 1
 fi
 
-auth_header="Authorization: Bearer ${admin_token}"
+auth_header=""
+admin_token=""
+if jq -e . >/dev/null 2>&1 <<<"${HTTP_BODY}"; then
+  login_ok="$(jq -r '.ok // false' <<<"${HTTP_BODY}")"
+  if [[ "${login_ok}" == "true" ]]; then
+    admin_token="$(jq -r '.data.accessToken // empty' <<<"${HTTP_BODY}")"
+  fi
+fi
+
+if [[ -n "${admin_token}" ]]; then
+  auth_header="Authorization: Bearer ${admin_token}"
+  echo "[candy-backend-sync] Using bearer token auth."
+else
+  echo "[candy-backend-sync] Login returned no usable token, trying cookie-session auth."
+  api_request "GET" "/api/admin/candy-mania/settings" "" ""
+  assert_http_ok "cookie session validation" "200"
+fi
 
 echo "[candy-backend-sync] Updating candy launch settings"
 launch_patch_payload="$(jq -n --arg launchUrl "${launch_url}" --arg apiBaseUrl "${api_base_url}" '{settings:{launchUrl:$launchUrl,apiBaseUrl:$apiBaseUrl}}')"
