@@ -106,7 +106,7 @@ public static class RealtimeTextStyleUtils
         }
 
         TMP_FontAsset resolvedFont = preferredFont != null ? preferredFont : ResolveFallbackFont();
-        if (resolvedFont != null && !ReferenceEquals(target.font, resolvedFont))
+        if (target.font == null && resolvedFont != null)
         {
             target.font = resolvedFont;
             if (resolvedFont.material != null)
@@ -136,7 +136,7 @@ public static class RealtimeTextStyleUtils
         }
 
         TMP_FontAsset resolvedFallback = fallbackFont != null ? fallbackFont : ResolveFallbackFont();
-        if (resolvedFallback != null && !ReferenceEquals(target.font, resolvedFallback))
+        if (target.font == null && resolvedFallback != null)
         {
             target.font = resolvedFallback;
             if (resolvedFallback.material != null)
