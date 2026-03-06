@@ -1,9 +1,6 @@
 name: Deploy Staging
 
 on:
-  push:
-    branches:
-      - staging
   workflow_dispatch:
 
 concurrency:
@@ -14,7 +11,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: staging
-    if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'staging' }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
 
     steps:
       - name: Trigger Render staging deploy hook

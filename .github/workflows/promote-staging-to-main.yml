@@ -1,9 +1,6 @@
 name: Promote Staging To Main
 
 on:
-  push:
-    branches:
-      - staging
   workflow_dispatch:
 
 permissions:
