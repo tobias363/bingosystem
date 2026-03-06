@@ -150,6 +150,7 @@ public partial class APIManager : MonoBehaviour
     private bool realtimeRerollRequestPending = false;
     private readonly HashSet<string> realtimeClaimAttemptKeys = new();
     private bool hasTriggeredEditorLocalFallback = false;
+    private bool hasLoggedMissingRealtimeNumberGenerator = false;
 
     public bool UseRealtimeBackend => useRealtimeBackend;
     public string ActiveRoomCode => activeRoomCode;
@@ -295,7 +296,43 @@ public partial class APIManager : MonoBehaviour
         }
 
         ballManager = FindObjectOfType<BallManager>();
+        if (ballManager != null)
+        {
+            return ballManager;
+        }
+
+        BallManager[] allManagers = FindObjectsOfType<BallManager>(true);
+        if (allManagers != null && allManagers.Length > 0)
+        {
+            ballManager = allManagers[0];
+        }
+
         return ballManager;
+    }
+
+    private NumberGenerator ResolveNumberGenerator()
+    {
+        NumberGenerator generatorFromManager = GameManager.instance != null ? GameManager.instance.numberGenerator : null;
+        if (generatorFromManager != null)
+        {
+            hasLoggedMissingRealtimeNumberGenerator = false;
+            return generatorFromManager;
+        }
+
+        NumberGenerator fallbackGenerator = FindObjectOfType<NumberGenerator>();
+        if (fallbackGenerator != null)
+        {
+            hasLoggedMissingRealtimeNumberGenerator = false;
+            return fallbackGenerator;
+        }
+
+        if (!hasLoggedMissingRealtimeNumberGenerator)
+        {
+            Debug.LogWarning("[APIManager] Fant ikke NumberGenerator i Theme1. Tegner baller videre, men hopper over kort-markering til referansen er tilgjengelig.");
+            hasLoggedMissingRealtimeNumberGenerator = true;
+        }
+
+        return null;
     }
 
     private void ResetRealtimeRoundVisuals()
@@ -1019,7 +1056,7 @@ public partial class APIManager : MonoBehaviour
         }
 
         realtimeCountdownPresenter.PositionUnderBalls(
-            GameManager.instance?.numberGenerator,
+            ResolveNumberGenerator(),
             ResolveBallManager(),
             realtimeCountdownOffset,
             realtimeCountdownWidthMultiplier,
@@ -1030,7 +1067,7 @@ public partial class APIManager : MonoBehaviour
 
     private void RefreshRealtimeCountdownLabel(bool forceRefresh = false)
     {
-        NumberGenerator generator = GameManager.instance?.numberGenerator;
+        NumberGenerator generator = ResolveNumberGenerator();
         if (generator == null || generator.autoSpinRemainingPlayText == null)
         {
             return;
@@ -1055,7 +1092,7 @@ public partial class APIManager : MonoBehaviour
             return;
         }
 
-        NumberGenerator generator = GameManager.instance?.numberGenerator;
+        NumberGenerator generator = ResolveNumberGenerator();
         if (generator == null || generator.autoSpinRemainingPlayText == null)
         {
             return;

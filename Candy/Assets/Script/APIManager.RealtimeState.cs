@@ -68,7 +68,7 @@ public partial class APIManager
                 ResetRealtimeRoundVisuals();
             }
 
-            NumberGenerator endedRoundGenerator = GameManager.instance?.numberGenerator;
+            NumberGenerator endedRoundGenerator = ResolveNumberGenerator();
             if (endedRoundGenerator != null)
             {
                 endedRoundGenerator.ClearPaylineVisuals();
@@ -102,7 +102,7 @@ public partial class APIManager
             currentTicketPage = 0;
             activeTicketSets.Clear();
             ResetRealtimeRoundVisuals();
-            NumberGenerator nextRoundGenerator = GameManager.instance?.numberGenerator;
+            NumberGenerator nextRoundGenerator = ResolveNumberGenerator();
             if (nextRoundGenerator != null)
             {
                 nextRoundGenerator.ClearPaylineVisuals();
@@ -159,7 +159,7 @@ public partial class APIManager
             return;
         }
 
-        NumberGenerator generator = GameManager.instance?.numberGenerator;
+        NumberGenerator generator = ResolveNumberGenerator();
         if (generator == null || generator.cardClasses == null)
         {
             return;
@@ -261,17 +261,17 @@ public partial class APIManager
             return;
         }
 
-        NumberGenerator generator = GameManager.instance?.numberGenerator;
-        if (generator == null || generator.cardClasses == null)
-        {
-            return;
-        }
+        NumberGenerator generator = ResolveNumberGenerator();
+        bool canMarkCards = generator != null && generator.cardClasses != null;
 
         int previousProcessedDrawCount = Mathf.Max(0, processedDrawCount);
         for (int drawIndex = 0; drawIndex < drawnNumbers.Count; drawIndex++)
         {
             int drawnNumber = drawnNumbers[drawIndex].AsInt;
-            RealtimeTicketSetUtils.MarkDrawnNumberOnCards(generator, drawnNumber);
+            if (canMarkCards)
+            {
+                RealtimeTicketSetUtils.MarkDrawnNumberOnCards(generator, drawnNumber);
+            }
 
             if (drawIndex < previousProcessedDrawCount)
             {
@@ -296,7 +296,7 @@ public partial class APIManager
 
     private void RefreshRealtimeWinningPatternVisuals(JSONNode currentGame)
     {
-        NumberGenerator generator = GameManager.instance?.numberGenerator;
+        NumberGenerator generator = ResolveNumberGenerator();
         if (generator == null || generator.cardClasses == null || generator.patternList == null)
         {
             StopRealtimeNearWinBlinking();
@@ -923,7 +923,7 @@ public partial class APIManager
 
     private void StopRealtimeNearWinBlinking()
     {
-        CardClass[] cards = GameManager.instance?.numberGenerator?.cardClasses;
+        CardClass[] cards = ResolveNumberGenerator()?.cardClasses;
         foreach (KeyValuePair<int, RealtimeNearWinState> entry in realtimeNearWinStates)
         {
             RealtimeNearWinState state = entry.Value;
@@ -969,7 +969,7 @@ public partial class APIManager
             return;
         }
 
-        NumberGenerator generator = GameManager.instance?.numberGenerator;
+        NumberGenerator generator = ResolveNumberGenerator();
         if (generator == null)
         {
             Debug.LogError($"[APIManager] Realtime bonus-trigger ({triggerSource}) funnet, men NumberGenerator mangler.");
@@ -1366,7 +1366,7 @@ public partial class APIManager
         realtimeBonusTriggeredClaimId = string.Empty;
         realtimeBonusMissingDataLogKey = string.Empty;
 
-        NumberGenerator generator = GameManager.instance?.numberGenerator;
+        NumberGenerator generator = ResolveNumberGenerator();
         if (generator == null)
         {
             return;
@@ -1377,7 +1377,7 @@ public partial class APIManager
 
     private int GetCardSlotsCount()
     {
-        NumberGenerator generator = GameManager.instance?.numberGenerator;
+        NumberGenerator generator = ResolveNumberGenerator();
         if (generator != null && generator.cardClasses != null && generator.cardClasses.Length > 0)
         {
             return generator.cardClasses.Length;

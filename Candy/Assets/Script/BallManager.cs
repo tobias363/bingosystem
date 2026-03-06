@@ -451,8 +451,13 @@ public class BallManager : MonoBehaviour
             RealtimeTextStyleUtils.ApplyBallNumber(tmp, drawnNumber.ToString(), numberFallbackFont);
         }
 
-        Transform ballTransform = slotIndex < cachedBallTransforms.Count ? cachedBallTransforms[slotIndex] : ballObject.transform;
-        if (slotIndex < realtimeBallLayoutPositions.Count)
+        Transform ballTransform = slotIndex < cachedBallTransforms.Count ? cachedBallTransforms[slotIndex] : null;
+        if (ballTransform == null)
+        {
+            ballTransform = ballObject.transform;
+        }
+
+        if (ballTransform != null && slotIndex < realtimeBallLayoutPositions.Count)
         {
             ballTransform.localPosition = realtimeBallLayoutPositions[slotIndex];
         }
