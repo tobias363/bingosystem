@@ -178,6 +178,8 @@ public class BallManager : MonoBehaviour
 
     void CacheBallComponentRefs()
     {
+        TryAutoResolveBallsFromHierarchy();
+
         cachedBallTransforms.Clear();
         cachedBallImages.Clear();
         cachedBallTexts.Clear();
@@ -201,6 +203,104 @@ public class BallManager : MonoBehaviour
             }
 
             cachedBallTexts.Add(label);
+        }
+    }
+
+    private void TryAutoResolveBallsFromHierarchy()
+    {
+        if (balls != null && balls.Count > 0)
+        {
+            return;
+        }
+
+        if (ballMachine == null)
+        {
+            return;
+        }
+
+        Image[] images = ballMachine.GetComponentsInChildren<Image>(true);
+        if (images == null || images.Length == 0)
+        {
+            return;
+        }
+
+        SortedDictionary<int, GameObject> numberedBalls = new SortedDictionary<int, GameObject>();
+        List<GameObject> fallbackBalls = new List<GameObject>();
+        HashSet<int> seenInstanceIds = new HashSet<int>();
+
+        for (int i = 0; i < images.Length; i++)
+        {
+            Image image = images[i];
+            if (image == null)
+            {
+                continue;
+            }
+
+            GameObject candidate = image.gameObject;
+            if (candidate == null)
+            {
+                continue;
+            }
+
+            if (bigBallImg != null && candidate == bigBallImg.gameObject)
+            {
+                continue;
+            }
+
+            if (extraBalls != null && extraBalls.Contains(candidate))
+            {
+                continue;
+            }
+
+            if (candidate.transform.childCount == 0)
+            {
+                continue;
+            }
+
+            if (candidate.GetComponentInChildren<TextMeshProUGUI>(true) == null)
+            {
+                continue;
+            }
+
+            int instanceId = candidate.GetInstanceID();
+            if (!seenInstanceIds.Add(instanceId))
+            {
+                continue;
+            }
+
+            if (int.TryParse(candidate.name, out int parsedOrder))
+            {
+                if (!numberedBalls.ContainsKey(parsedOrder))
+                {
+                    numberedBalls.Add(parsedOrder, candidate);
+                }
+            }
+            else
+            {
+                fallbackBalls.Add(candidate);
+            }
+        }
+
+        List<GameObject> resolved = new List<GameObject>(numberedBalls.Count + fallbackBalls.Count);
+        foreach (KeyValuePair<int, GameObject> pair in numberedBalls)
+        {
+            resolved.Add(pair.Value);
+        }
+
+        for (int i = 0; i < fallbackBalls.Count; i++)
+        {
+            resolved.Add(fallbackBalls[i]);
+        }
+
+        if (resolved.Count == 0)
+        {
+            return;
+        }
+
+        balls = resolved;
+        if (verboseDrawLogging)
+        {
+            Debug.Log($"[BallManager] Auto-resolved {balls.Count} ball object(s) from scene hierarchy.");
         }
     }
 
@@ -289,10 +389,8 @@ public class BallManager : MonoBehaviour
 
     public void ShowRealtimeDrawBall(int drawIndex, int drawnNumber)
     {
-        if (balls == null || drawIndex < 0 || drawIndex >= balls.Count)
-        {
-            return;
-        }
+        TryAutoResolveBallsFromHierarchy();
+        CacheBallComponentRefs();
 
         TMP_FontAsset numberFallbackFont = RealtimeTextStyleUtils.ResolveFallbackFont();
         CacheRealtimeBallLayoutPositions();
@@ -316,7 +414,22 @@ public class BallManager : MonoBehaviour
             }
         }
 
-        GameObject ballObject = balls[drawIndex];
+        if (balls == null || balls.Count == 0)
+        {
+            return;
+        }
+
+        int slotIndex = drawIndex;
+        if (slotIndex < 0)
+        {
+            slotIndex = 0;
+        }
+        else if (slotIndex >= balls.Count)
+        {
+            slotIndex %= balls.Count;
+        }
+
+        GameObject ballObject = balls[slotIndex];
         if (ballObject == null)
         {
             return;
@@ -325,23 +438,23 @@ public class BallManager : MonoBehaviour
         int spriteIndex = (ballSprite != null && ballSprite.Count > 0) ? Random.Range(0, ballSprite.Count) : -1;
         if (spriteIndex >= 0)
         {
-            Image img = drawIndex < cachedBallImages.Count ? cachedBallImages[drawIndex] : ballObject.GetComponent<Image>();
+            Image img = slotIndex < cachedBallImages.Count ? cachedBallImages[slotIndex] : ballObject.GetComponent<Image>();
             if (img != null)
             {
                 img.sprite = ballSprite[spriteIndex];
             }
         }
 
-        TextMeshProUGUI tmp = drawIndex < cachedBallTexts.Count ? cachedBallTexts[drawIndex] : null;
+        TextMeshProUGUI tmp = slotIndex < cachedBallTexts.Count ? cachedBallTexts[slotIndex] : null;
         if (tmp != null)
         {
             RealtimeTextStyleUtils.ApplyBallNumber(tmp, drawnNumber.ToString(), numberFallbackFont);
         }
 
-        Transform ballTransform = drawIndex < cachedBallTransforms.Count ? cachedBallTransforms[drawIndex] : ballObject.transform;
-        if (drawIndex < realtimeBallLayoutPositions.Count)
+        Transform ballTransform = slotIndex < cachedBallTransforms.Count ? cachedBallTransforms[slotIndex] : ballObject.transform;
+        if (slotIndex < realtimeBallLayoutPositions.Count)
         {
-            ballTransform.localPosition = realtimeBallLayoutPositions[drawIndex];
+            ballTransform.localPosition = realtimeBallLayoutPositions[slotIndex];
         }
 
         SetActiveIfChanged(ballObject, true);
@@ -352,6 +465,8 @@ public class BallManager : MonoBehaviour
         //Debug.Log(_ballIndexList.Count);
         ballIndexList = _ballIndexList;
         //debug.Log()
+        TryAutoResolveBallsFromHierarchy();
+        CacheBallComponentRefs();
         SetActiveIfChanged(ballOutMachineAnimParent, false);
 
         AddRandomBallSprites();
