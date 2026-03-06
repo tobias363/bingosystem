@@ -4,104 +4,211 @@ on:
   push:
     branches:
       - staging
+      - main
   workflow_dispatch:
     inputs:
+      target_environment:
+        description: Deploy target environment
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
       expected_release_version:
-        description: Optional expected releaseVersion from release.json
+        description: Optional expected releaseVersion override
         required: false
         type: string
       expected_release_commit:
-        description: Optional expected releaseCommit from release.json
+        description: Optional expected releaseCommit override
         required: false
         type: string
 
 concurrency:
-  group: deploy-candygame
+  group: deploy-candygame-${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: staging
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'staging' || github.ref_name == 'main' }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'staging') }}
+    permissions:
+      contents: read
 
     steps:
-      - name: Trigger Render candygame deploy hook
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
         env:
-          CANDYGAME_DEPLOY_HOOK_URL: ${{ secrets.RENDER_CANDYGAME_DEPLOY_HOOK_URL || secrets.RENDER_CANDYGAME_DEPLOY_HOOK_UR || secrets.RENDER_KEY }}
+          INPUT_EXPECTED_RELEASE_VERSION: ${{ inputs.expected_release_version }}
+          INPUT_EXPECTED_RELEASE_COMMIT: ${{ inputs.expected_release_commit }}
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA:0:8}"
+          release_version="$(date -u +"%Y%m%d-%H%M%S")-${short_sha}"
+          expected_release_commit="${short_sha}"
+          if [[ -n "${INPUT_EXPECTED_RELEASE_COMMIT}" ]]; then
+            expected_release_commit="$(printf '%s' "${INPUT_EXPECTED_RELEASE_COMMIT}" | tr '[:upper:]' '[:lower:]')"
+            expected_release_commit="${expected_release_commit:0:8}"
+          fi
+
+          expected_release_version="${release_version}"
+          if [[ -n "${INPUT_EXPECTED_RELEASE_VERSION}" ]]; then
+            expected_release_version="${INPUT_EXPECTED_RELEASE_VERSION}"
+          fi
+
+          target_env="staging"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            target_env="${{ inputs.target_environment }}"
+          elif [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            target_env="production"
+          fi
+
+          build_dir="${GITHUB_WORKSPACE}/.tmp/candygame-webgl/${release_version}"
+          smoke_artifact_dir="${GITHUB_WORKSPACE}/.tmp/candy-smoke-artifacts"
+
+          mkdir -p "${build_dir}" "${smoke_artifact_dir}"
+
+          {
+            echo "short_sha=${short_sha}"
+            echo "release_version=${release_version}"
+            echo "expected_release_commit=${expected_release_commit}"
+            echo "expected_release_version=${expected_release_version}"
+            echo "target_env=${target_env}"
+            echo "build_dir=${build_dir}"
+            echo "smoke_artifact_dir=${smoke_artifact_dir}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Validate required secrets and vars
+        env:
+          CANDYGAME_REPO_PUSH_TOKEN: ${{ secrets.CANDYGAME_REPO_PUSH_TOKEN }}
+          CANDYGAME_REPO_CLONE_URL: ${{ secrets.CANDYGAME_REPO_CLONE_URL || vars.CANDYGAME_REPO_CLONE_URL }}
+          RENDER_CANDYGAME_DEPLOY_HOOK_URL: ${{ secrets.RENDER_CANDYGAME_DEPLOY_HOOK_URL }}
+          CANDY_ADMIN_EMAIL: ${{ secrets.CANDY_ADMIN_EMAIL }}
+          CANDY_ADMIN_PASSWORD: ${{ secrets.CANDY_ADMIN_PASSWORD }}
+          CANDY_BACKEND_BASE_URL: ${{ secrets.CANDY_BACKEND_BASE_URL || vars.CANDY_BACKEND_BASE_URL }}
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          missing=0
+          for key in \
+            CANDYGAME_REPO_PUSH_TOKEN \
+            CANDYGAME_REPO_CLONE_URL \
+            RENDER_CANDYGAME_DEPLOY_HOOK_URL \
+            CANDY_ADMIN_EMAIL \
+            CANDY_ADMIN_PASSWORD \
+            CANDY_BACKEND_BASE_URL \
+            UNITY_LICENSE \
+            UNITY_EMAIL \
+            UNITY_PASSWORD
+          do
+            if [[ -z "${!key:-}" ]]; then
+              echo "[deploy-candygame] Missing required secret/var: ${key}" >&2
+              missing=1
+            fi
+          done
+
+          if [[ "${missing}" != "0" ]]; then
+            exit 1
+          fi
+
+      - name: Ensure scripts executable
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ci/*.sh
+          chmod +x scripts/qa/test3-e2e-smoke.sh
+
+      - name: Build Candy WebGL from commit
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: Candy
+          targetPlatform: WebGL
+          buildMethod: WebGLBuild.BuildWebGLFromCommandLine
+          customParameters: -customBuildPath "${{ steps.meta.outputs.build_dir }}" -releaseVersion "${{ steps.meta.outputs.release_version }}" -releaseCommit "${{ steps.meta.outputs.expected_release_commit }}"
+
+      - name: Verify WebGL build contract
+        id: verify_build
+        env:
+          CANDY_BUILD_DIR: ${{ steps.meta.outputs.build_dir }}
+          EXPECTED_RELEASE_COMMIT: ${{ steps.meta.outputs.expected_release_commit }}
+          EXPECTED_RELEASE_VERSION: ${{ steps.meta.outputs.expected_release_version }}
+        run: |
+          set -euo pipefail
+          scripts/ci/verify-webgl-release.sh
+
+      - name: Publish build to candygame-repo
+        id: publish
+        env:
+          CANDY_BUILD_DIR: ${{ steps.meta.outputs.build_dir }}
+          EXPECTED_RELEASE_COMMIT: ${{ steps.verify_build.outputs.release_commit }}
+          CANDYGAME_REPO_PUSH_TOKEN: ${{ secrets.CANDYGAME_REPO_PUSH_TOKEN }}
+          CANDYGAME_REPO_CLONE_URL: ${{ secrets.CANDYGAME_REPO_CLONE_URL || vars.CANDYGAME_REPO_CLONE_URL }}
+          CANDYGAME_REPO_BRANCH: ${{ vars.CANDYGAME_REPO_BRANCH || 'main' }}
+          CANDYGAME_GIT_USER_NAME: ${{ vars.CANDYGAME_GIT_USER_NAME || 'candygame-bot' }}
+          CANDYGAME_GIT_USER_EMAIL: ${{ vars.CANDYGAME_GIT_USER_EMAIL || 'candygame-bot@users.noreply.github.com' }}
+        run: |
+          set -euo pipefail
+          scripts/ci/publish-candygame-repo.sh
+
+      - name: Trigger Render deploy + verify live fingerprint
+        id: render_verify
+        env:
+          RENDER_CANDYGAME_DEPLOY_HOOK_URL: ${{ secrets.RENDER_CANDYGAME_DEPLOY_HOOK_URL }}
           CANDYGAME_HEALTHCHECK_URL: ${{ secrets.RENDER_CANDYGAME_HEALTHCHECK_URL || vars.RENDER_CANDYGAME_HEALTHCHECK_URL || 'https://candygame-9q3h.onrender.com/' }}
           CANDYGAME_RELEASE_JSON_URL: ${{ vars.RENDER_CANDYGAME_RELEASE_JSON_URL || 'https://candygame-9q3h.onrender.com/release.json' }}
           CANDYGAME_DEPLOY_WAIT_TIMEOUT_SECONDS: ${{ vars.RENDER_CANDYGAME_WAIT_TIMEOUT_SECONDS || '900' }}
           CANDYGAME_DEPLOY_POLL_INTERVAL_SECONDS: ${{ vars.RENDER_CANDYGAME_POLL_INTERVAL_SECONDS || '10' }}
-          CANDYGAME_DEPLOY_CURL_RETRIES: ${{ vars.RENDER_CANDYGAME_CURL_RETRIES || '3' }}
-          EXPECTED_RELEASE_VERSION: ${{ inputs.expected_release_version }}
-          EXPECTED_RELEASE_COMMIT: ${{ inputs.expected_release_commit }}
-          GITHUB_HEAD_SHA: ${{ github.sha }}
+          EXPECTED_RELEASE_COMMIT: ${{ steps.publish.outputs.release_commit }}
+          EXPECTED_RELEASE_VERSION: ${{ steps.publish.outputs.release_version }}
         run: |
           set -euo pipefail
+          scripts/ci/trigger-render-and-verify.sh
 
-          if [[ -z "${CANDYGAME_DEPLOY_HOOK_URL}" ]]; then
-            echo "Mangler hook secret. Sett RENDER_CANDYGAME_DEPLOY_HOOK_URL eller RENDER_KEY." >&2
-            exit 1
-          fi
+      - name: Sync backend launch + 30s scheduler policy
+        id: backend_sync
+        env:
+          CANDY_BACKEND_BASE_URL: ${{ secrets.CANDY_BACKEND_BASE_URL || vars.CANDY_BACKEND_BASE_URL }}
+          CANDY_ADMIN_EMAIL: ${{ secrets.CANDY_ADMIN_EMAIL }}
+          CANDY_ADMIN_PASSWORD: ${{ secrets.CANDY_ADMIN_PASSWORD }}
+          CANDYGAME_PUBLIC_URL: ${{ vars.CANDYGAME_PUBLIC_URL || 'https://candygame-9q3h.onrender.com' }}
+          CANDY_API_BASE_URL: ${{ secrets.CANDY_BACKEND_BASE_URL || vars.CANDY_BACKEND_BASE_URL }}
+        run: |
+          set -euo pipefail
+          scripts/ci/sync-candy-backend-settings.sh
 
-          echo "Trigger candygame deploy hook ..."
-          curl -fsS \
-            --retry "${CANDYGAME_DEPLOY_CURL_RETRIES}" \
-            --retry-all-errors \
-            --connect-timeout 10 \
-            -X POST \
-            "${CANDYGAME_DEPLOY_HOOK_URL}" >/dev/null
+      - name: Run E2E smoke gate (launch + scheduler + 30 draws + claims)
+        env:
+          CANDY_API_BASE_URL: ${{ secrets.CANDY_BACKEND_BASE_URL || vars.CANDY_BACKEND_BASE_URL }}
+          CANDY_TEST_ACCESS_TOKEN: ${{ secrets.CANDY_TEST_ACCESS_TOKEN }}
+          CANDY_TEST_EMAIL: ${{ secrets.CANDY_TEST_EMAIL }}
+          CANDY_TEST_PASSWORD: ${{ secrets.CANDY_TEST_PASSWORD }}
+          CANDY_ADMIN_EMAIL: ${{ secrets.CANDY_ADMIN_EMAIL }}
+          CANDY_ADMIN_PASSWORD: ${{ secrets.CANDY_ADMIN_PASSWORD }}
+          CANDY_SMOKE_ARTIFACT_DIR: ${{ steps.meta.outputs.smoke_artifact_dir }}
+          CANDY_STALL_TIMEOUT_SECONDS: ${{ vars.CANDY_STALL_TIMEOUT_SECONDS || '45' }}
+          CANDY_RUN_TIMEOUT_SECONDS: ${{ vars.CANDY_RUN_TIMEOUT_SECONDS || '120' }}
+          CANDY_SMOKE_MAX_ROUND_ATTEMPTS: ${{ vars.CANDY_SMOKE_MAX_ROUND_ATTEMPTS || '5' }}
+        run: |
+          set -euo pipefail
+          scripts/qa/test3-e2e-smoke.sh
 
-          echo "Venter på healthcheck: ${CANDYGAME_HEALTHCHECK_URL}"
-          start_ts="$(date +%s)"
-
-          while true; do
-            if curl -fsS "${CANDYGAME_HEALTHCHECK_URL}" >/dev/null; then
-              echo "Candygame healthcheck OK."
-              break
-            fi
-
-            now_ts="$(date +%s)"
-            elapsed="$((now_ts - start_ts))"
-            if (( elapsed >= CANDYGAME_DEPLOY_WAIT_TIMEOUT_SECONDS )); then
-              echo "Timeout etter ${CANDYGAME_DEPLOY_WAIT_TIMEOUT_SECONDS}s uten grønn candygame healthcheck." >&2
-              exit 1
-            fi
-
-            sleep "${CANDYGAME_DEPLOY_POLL_INTERVAL_SECONDS}"
-          done
-
-          echo "Leser release fingerprint: ${CANDYGAME_RELEASE_JSON_URL}"
-          release_json="$(curl -fsS "${CANDYGAME_RELEASE_JSON_URL}")"
-          release_version="$(printf '%s' "${release_json}" | jq -r '.releaseVersion // empty')"
-          release_commit="$(printf '%s' "${release_json}" | jq -r '.releaseCommit // empty')"
-
-          if [[ -z "${release_version}" ]]; then
-            echo "Fant ikke releaseVersion i release.json." >&2
-            exit 1
-          fi
-
-          echo "releaseVersion=${release_version}"
-          echo "releaseCommit=${release_commit}"
-
-          if [[ -n "${EXPECTED_RELEASE_VERSION}" && "${release_version}" != "${EXPECTED_RELEASE_VERSION}" ]]; then
-            echo "releaseVersion matcher ikke expected_release_version (${EXPECTED_RELEASE_VERSION})." >&2
-            exit 1
-          fi
-
-          resolved_expected_commit="${EXPECTED_RELEASE_COMMIT}"
-          if [[ -z "${resolved_expected_commit}" && -n "${GITHUB_HEAD_SHA}" ]]; then
-            resolved_expected_commit="${GITHUB_HEAD_SHA:0:8}"
-          fi
-
-          if [[ -z "${release_commit}" ]]; then
-            echo "Fant ikke releaseCommit i release.json." >&2
-            exit 1
-          fi
-
-          if [[ -n "${resolved_expected_commit}" ]]; then
-            if [[ "${release_commit}" != "${resolved_expected_commit}" && "${release_commit}" != "${GITHUB_HEAD_SHA}" ]]; then
-              echo "releaseCommit matcher ikke forventet commit (${resolved_expected_commit} / ${GITHUB_HEAD_SHA})." >&2
-              exit 1
-            fi
-          fi
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candy-e2e-smoke-${{ steps.meta.outputs.target_env }}-${{ steps.meta.outputs.release_version }}
+          path: ${{ steps.meta.outputs.smoke_artifact_dir }}
+          if-no-files-found: warn

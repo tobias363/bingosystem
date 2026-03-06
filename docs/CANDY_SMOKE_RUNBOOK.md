@@ -53,6 +53,10 @@ Bruk browser network eller backend logs:
 1. `room:state` snapshot skal vise `currentGame.drawnNumbers` med maks 30.
 2. Avsluttet runde skal ha `endedReason = MAX_DRAWS_REACHED` (ved cap-avslutning).
 3. Claims for spilleren skal ha `valid=true` ved gyldige gevinster.
+4. Scheduler-snapshot skal vise:
+- `scheduler.enabled=true`
+- `scheduler.nextStartAt` satt og oppdatert
+- `scheduler.armedPlayerCount` / `scheduler.minPlayers` i tråd med innsatsstatus
 
 ## Failure Triage
 1. `Spill nå` gjør ingenting:
@@ -76,3 +80,22 @@ Bruk browser network eller backend logs:
 - [ ] Bonus panel/bonus amount OK
 - [ ] Winning-sum OK
 - [ ] Ingen blokkende feil i logs
+
+## CI smoke (anbefalt)
+
+Kjor script:
+
+```bash
+CANDY_API_BASE_URL=\"https://<backend>\" \\
+CANDY_ADMIN_EMAIL=\"<admin-email>\" \\
+CANDY_ADMIN_PASSWORD=\"<admin-password>\" \\
+CANDY_TEST_ACCESS_TOKEN=\"<player-token>\" \\
+scripts/qa/test3-e2e-smoke.sh
+```
+
+Scriptet feiler hardt hvis:
+
+1. launch-token/resolve ikke fungerer.
+2. status blir stående i `Venter på neste runde` i >45s uten progresjon.
+3. runde ikke avsluttes med `MAX_DRAWS_REACHED` etter 30 trekk.
+4. claim-kontrakt ikke viser mønster/bonusfelt når de skal være til stede.

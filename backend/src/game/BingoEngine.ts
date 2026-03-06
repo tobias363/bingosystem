@@ -51,6 +51,12 @@ interface StartGameInput {
   participantPlayerIds?: string[];
 }
 
+interface RerollTicketsInput {
+  roomCode: string;
+  playerId: string;
+  ticketsPerPlayer: number;
+}
+
 interface DrawNextInput {
   roomCode: string;
   actorPlayerId: string;
@@ -487,6 +493,7 @@ export class BingoEngine {
       hostPlayerId: playerId,
       createdAt: new Date().toISOString(),
       players: new Map([[playerId, player]]),
+      preRoundTicketsByPlayer: new Map<string, Ticket[]>(),
       gameHistory: []
     };
 
@@ -519,6 +526,40 @@ export class BingoEngine {
     });
 
     return { roomCode, playerId };
+  }
+
+  async rerollTicketsForPlayer(input: RerollTicketsInput): Promise<Ticket[]> {
+    const room = this.requireRoom(input.roomCode);
+    const player = this.requirePlayer(room, input.playerId);
+    this.assertWalletAllowedForGameplay(player.walletId, Date.now());
+    this.archiveIfEnded(room);
+    if (room.currentGame?.status === "RUNNING") {
+      throw new DomainError("ROUND_ALREADY_RUNNING", "Kan ikke bytte bonger mens runden pågår.");
+    }
+
+    const ticketsPerPlayer = input.ticketsPerPlayer;
+    if (!Number.isInteger(ticketsPerPlayer) || ticketsPerPlayer < 1 || ticketsPerPlayer > 5) {
+      throw new DomainError(
+        "INVALID_TICKETS_PER_PLAYER",
+        "ticketsPerPlayer må være et heltall mellom 1 og 5."
+      );
+    }
+
+    const pseudoGameId = `preround-${randomUUID()}`;
+    const tickets: Ticket[] = [];
+    for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
+      const ticket = await this.bingoAdapter.createTicket({
+        roomCode: room.code,
+        gameId: pseudoGameId,
+        player,
+        ticketIndex,
+        ticketsPerPlayer
+      });
+      tickets.push(this.cloneTicket(ticket));
+    }
+
+    room.preRoundTicketsByPlayer.set(player.id, tickets);
+    return tickets.map((ticket) => this.cloneTicket(ticket));
   }
 
   async startGame(input: StartGameInput): Promise<void> {
@@ -625,22 +666,34 @@ export class BingoEngine {
     for (const player of players) {
       const playerTickets: Ticket[] = [];
       const playerMarks: Set<number>[] = [];
+      const preRoundTickets = room.preRoundTicketsByPlayer.get(player.id);
+      const canReusePreRoundTickets =
+        Array.isArray(preRoundTickets) &&
+        preRoundTickets.length === ticketsPerPlayer;
 
-      for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
-        const ticket = await this.bingoAdapter.createTicket({
-          roomCode: room.code,
-          gameId,
-          player,
-          ticketIndex,
-          ticketsPerPlayer
-        });
-        playerTickets.push(ticket);
-        playerMarks.push(new Set<number>());
+      if (canReusePreRoundTickets) {
+        for (const ticket of preRoundTickets) {
+          playerTickets.push(this.cloneTicket(ticket));
+          playerMarks.push(new Set<number>());
+        }
+      } else {
+        for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
+          const ticket = await this.bingoAdapter.createTicket({
+            roomCode: room.code,
+            gameId,
+            player,
+            ticketIndex,
+            ticketsPerPlayer
+          });
+          playerTickets.push(ticket);
+          playerMarks.push(new Set<number>());
+        }
       }
 
       tickets.set(player.id, playerTickets);
       marks.set(player.id, playerMarks);
     }
+    room.preRoundTicketsByPlayer.clear();
 
     const prizePool = this.roundCurrency(entryFee * players.length);
     const maxPayoutBudget = this.roundCurrency((prizePool * normalizedPayoutPercent) / 100);
@@ -3046,6 +3099,16 @@ export class BingoEngine {
   }
 
   private serializeRoom(room: RoomState): RoomSnapshot {
+    const preRoundTickets =
+      room.preRoundTicketsByPlayer.size > 0
+        ? Object.fromEntries(
+            [...room.preRoundTicketsByPlayer.entries()].map(([playerId, tickets]) => [
+              playerId,
+              tickets.map((ticket) => this.cloneTicket(ticket))
+            ])
+          )
+        : undefined;
+
     return {
       code: room.code,
       hallId: room.hallId,
@@ -3053,6 +3116,7 @@ export class BingoEngine {
       createdAt: room.createdAt,
       players: [...room.players.values()],
       currentGame: room.currentGame ? this.serializeGame(room.currentGame) : undefined,
+      preRoundTickets,
       gameHistory: room.gameHistory.map((game) => ({ ...game }))
     };
   }
@@ -3093,6 +3157,12 @@ export class BingoEngine {
       startedAt: game.startedAt,
       endedAt: game.endedAt,
       endedReason: game.endedReason
+    };
+  }
+
+  private cloneTicket(ticket: Ticket): Ticket {
+    return {
+      grid: ticket.grid.map((row) => [...row])
     };
   }
 }

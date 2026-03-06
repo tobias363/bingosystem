@@ -9,6 +9,7 @@ public class UIManager : MonoBehaviour
     
     public Button betUp;
     public Button betDown;
+    public Button rerollTicketBtn;
 
     public Button settingsBtn;
     public GameObject settingsPanel;
@@ -20,6 +21,8 @@ public class UIManager : MonoBehaviour
     public List<Sprite> optionDeSelection;
 
     public int autoSpinCount = 5;
+
+    private const string RealtimeRerollButtonLabel = "↻";
 
     private bool IsRealtimeMode()
     {
@@ -136,6 +139,8 @@ public class UIManager : MonoBehaviour
         ApplyPlayButtonLabel();
         ApplyAutoPlayButtonLabel();
         ResetAutoSpinHighlights();
+        EnsureRealtimeRerollButton();
+        RefreshRealtimeRerollButtonState();
 
         if (IsRealtimeMode())
         {
@@ -150,6 +155,145 @@ public class UIManager : MonoBehaviour
     private void OnDisable()
     {
         EventManager.OnAutoSpinOver -= ActiveAllButtons;
+        if (rerollTicketBtn != null)
+        {
+            rerollTicketBtn.onClick.RemoveListener(OnRealtimeRerollClicked);
+        }
+    }
+
+    private void Update()
+    {
+        RefreshRealtimeRerollButtonState();
+    }
+
+    private void EnsureRealtimeRerollButton()
+    {
+        if (!IsRealtimeMode())
+        {
+            if (rerollTicketBtn != null)
+            {
+                rerollTicketBtn.gameObject.SetActive(false);
+            }
+            return;
+        }
+
+        if (rerollTicketBtn == null && playBtn != null)
+        {
+            Transform parent = playBtn.transform.parent;
+            if (parent != null)
+            {
+                GameObject buttonObject = new("RealtimeRerollTicketButton");
+                buttonObject.transform.SetParent(parent, false);
+                RectTransform rect = buttonObject.AddComponent<RectTransform>();
+                Image image = buttonObject.AddComponent<Image>();
+                Button button = buttonObject.AddComponent<Button>();
+
+                RectTransform playRect = playBtn.GetComponent<RectTransform>();
+                RectTransform betDownRect = betDown != null ? betDown.GetComponent<RectTransform>() : null;
+                RectTransform templateRect = playRect;
+                rect.anchorMin = templateRect.anchorMin;
+                rect.anchorMax = templateRect.anchorMax;
+                rect.pivot = templateRect.pivot;
+                rect.sizeDelta = templateRect.sizeDelta;
+                float horizontalSpacing = 16f;
+                if (betDownRect != null)
+                {
+                    rect.anchoredPosition = betDownRect.anchoredPosition + new Vector2(-(betDownRect.sizeDelta.x + horizontalSpacing), 0f);
+                }
+                else
+                {
+                    rect.anchoredPosition = playRect.anchoredPosition + new Vector2(-(playRect.sizeDelta.x + horizontalSpacing), 0f);
+                }
+
+                Image templateImage = (betDown != null ? betDown.GetComponent<Image>() : null) ??
+                                      playBtn.GetComponent<Image>();
+                if (templateImage != null)
+                {
+                    image.sprite = templateImage.sprite;
+                    image.type = templateImage.type;
+                    image.pixelsPerUnitMultiplier = templateImage.pixelsPerUnitMultiplier;
+                    image.color = templateImage.color;
+                    image.material = templateImage.material;
+                }
+
+                Button templateButton = betDown != null ? betDown : playBtn;
+                if (templateButton != null)
+                {
+                    button.colors = templateButton.colors;
+                    button.transition = templateButton.transition;
+                    button.spriteState = templateButton.spriteState;
+                }
+
+                GameObject labelObject = new("Label");
+                labelObject.transform.SetParent(buttonObject.transform, false);
+                RectTransform labelRect = labelObject.AddComponent<RectTransform>();
+                labelRect.anchorMin = Vector2.zero;
+                labelRect.anchorMax = Vector2.one;
+                labelRect.offsetMin = Vector2.zero;
+                labelRect.offsetMax = Vector2.zero;
+
+                TextMeshProUGUI label = labelObject.AddComponent<TextMeshProUGUI>();
+                label.alignment = TextAlignmentOptions.Center;
+                label.text = RealtimeRerollButtonLabel;
+                label.enableAutoSizing = true;
+                label.fontSizeMin = 18f;
+                label.fontSizeMax = 42f;
+                label.fontSize = 30f;
+                label.color = Color.white;
+
+                TMP_Text templateLabel = (betDown != null ? betDown.GetComponentInChildren<TMP_Text>(true) : null) ??
+                                         playBtn.GetComponentInChildren<TMP_Text>(true);
+                if (templateLabel != null)
+                {
+                    label.font = templateLabel.font;
+                    label.color = templateLabel.color;
+                }
+
+                int playIndex = playBtn.transform.GetSiblingIndex();
+                buttonObject.transform.SetSiblingIndex(Mathf.Max(0, playIndex - 1));
+
+                rerollTicketBtn = button;
+            }
+        }
+
+        if (rerollTicketBtn != null)
+        {
+            rerollTicketBtn.gameObject.SetActive(true);
+            rerollTicketBtn.onClick.RemoveListener(OnRealtimeRerollClicked);
+            rerollTicketBtn.onClick.AddListener(OnRealtimeRerollClicked);
+        }
+    }
+
+    private void RefreshRealtimeRerollButtonState()
+    {
+        if (rerollTicketBtn == null)
+        {
+            return;
+        }
+
+        bool shouldShow = IsRealtimeMode();
+        if (rerollTicketBtn.gameObject.activeSelf != shouldShow)
+        {
+            rerollTicketBtn.gameObject.SetActive(shouldShow);
+        }
+
+        if (!shouldShow)
+        {
+            return;
+        }
+
+        rerollTicketBtn.interactable = APIManager.instance != null && APIManager.instance.CanRequestRealtimeTicketReroll();
+    }
+
+    private void OnRealtimeRerollClicked()
+    {
+        if (!IsRealtimeMode())
+        {
+            return;
+        }
+
+        APIManager.instance?.RequestRealtimeTicketReroll();
+        RefreshRealtimeRerollButtonState();
     }
 
     public void Play()
@@ -347,6 +491,11 @@ public class UIManager : MonoBehaviour
         if (betDown != null)
         {
             betDown.interactable = isOver;
+        }
+
+        if (rerollTicketBtn != null && !IsRealtimeMode())
+        {
+            rerollTicketBtn.interactable = isOver;
         }
     }
     

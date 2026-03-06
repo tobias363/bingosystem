@@ -91,7 +91,7 @@
         <section id="bingoView" class="game-view hidden">
           <article class="card">
             <h2>Bingo Bord</h2>
-            <p class="subtle">Join et rom, motta trekk live, marker tall og send claim.</p>
+            <p class="subtle">Klienten kobler automatisk til aktivt multiplayer-rom for spillet.</p>
             <div class="form-grid">
               <label>
                 Hall
@@ -101,13 +101,13 @@
                 Spillernavn i rom (valgfritt)
                 <input id="bingoPlayerAlias" placeholder="Bruker profilnavn hvis tomt" />
               </label>
-              <label>
+              <label class="hidden">
                 Romkode
                 <input id="bingoRoomCode" placeholder="Romkode" />
               </label>
               <div class="button-stack">
-                <button id="bingoCreateRoomBtn" class="btn-secondary">Opprett rom</button>
-                <button id="bingoJoinRoomBtn" class="btn-primary">Join rom</button>
+                <button id="bingoCreateRoomBtn" class="btn-secondary hidden">Opprett rom</button>
+                <button id="bingoJoinRoomBtn" class="btn-primary">Koble til aktivt rom</button>
               </div>
             </div>
 
