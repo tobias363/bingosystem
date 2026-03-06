@@ -135993,7 +135993,7 @@ MonoBehaviour:
   allowEditorRuntimeAutoCreateAutoLogin: 0
   enableEditorLocalRoundFallback: 0
   strictRuntimeDependencyValidation: 1
-  scheduledModeManualStartFallback: 0
+  scheduledModeManualStartFallback: 1
   scheduledRoomStateHeartbeatSeconds: 2
   syncRealtimeEntryFeeWithBetSelector: 1
   fallbackToZeroEntryFeeOnInsufficientFunds: 0
@@ -151911,10 +151911,11 @@ MonoBehaviour:
   email: demo@bingo.local
   password: Demo12345!
   displayName: Demo Player
+  fallbackHallId: hall-default
   autoRegisterIfMissing: 1
   autoKycVerify: 1
   kycBirthDate: 1990-01-01
   kycNationalId: 
-  autoLoginOnStart: 0
+  autoLoginOnStart: 1
   autoConnectAndJoin: 1
   preferExistingHallIdInput: 1

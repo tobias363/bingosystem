@@ -82,8 +82,12 @@ public partial class APIManager
             activeGameId = string.Empty;
             processedDrawCount = 0;
             currentTicketPage = 0;
-            activeTicketSets.Clear();
-            realtimeTicketFallbackLogKey = string.Empty;
+            bool appliedPreRoundTickets = TryApplyPreRoundTicketsFromSnapshot(snapshot);
+            if (!appliedPreRoundTickets)
+            {
+                activeTicketSets.Clear();
+                realtimeTicketFallbackLogKey = string.Empty;
+            }
             RefreshRealtimeCountdownLabel(forceRefresh: true);
             return;
         }
@@ -170,6 +174,61 @@ public partial class APIManager
 
         activeTicketSets = RealtimeTicketSetUtils.CloneTicketSets(ticketSets);
         ApplyTicketSetsToCards(activeTicketSets);
+    }
+
+    private bool TryApplyPreRoundTicketsFromSnapshot(JSONNode snapshot)
+    {
+        if (snapshot == null || snapshot.IsNull)
+        {
+            return false;
+        }
+
+        JSONNode preRoundTickets = snapshot["preRoundTickets"];
+        if (preRoundTickets == null || preRoundTickets.IsNull)
+        {
+            return false;
+        }
+
+        string ticketSourcePlayerId = activePlayerId;
+        JSONNode myTicketsNode = null;
+        if (!string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            myTicketsNode = preRoundTickets[activePlayerId];
+        }
+
+        bool usedFallbackTicketSource = false;
+        if (myTicketsNode == null || myTicketsNode.IsNull)
+        {
+            usedFallbackTicketSource = TryResolveFallbackTicketSource(
+                preRoundTickets,
+                out myTicketsNode,
+                out ticketSourcePlayerId);
+        }
+
+        if (myTicketsNode == null || myTicketsNode.IsNull)
+        {
+            return false;
+        }
+
+        List<List<int>> ticketSets = RealtimeTicketSetUtils.ExtractTicketSets(myTicketsNode);
+        if (ticketSets.Count == 0)
+        {
+            return false;
+        }
+
+        if (RealtimeTicketSetUtils.AreTicketSetsEqual(activeTicketSets, ticketSets))
+        {
+            return true;
+        }
+
+        if (usedFallbackTicketSource)
+        {
+            LogTicketSourceFallbackOnce(ticketSourcePlayerId, ticketSets.Count);
+        }
+
+        activeTicketSets = RealtimeTicketSetUtils.CloneTicketSets(ticketSets);
+        ApplyTicketSetsToCards(activeTicketSets);
+        return true;
     }
 
     private bool TryResolveFallbackTicketSource(

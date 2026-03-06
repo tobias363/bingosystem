@@ -28,6 +28,7 @@ public class BingoAutoLogin : MonoBehaviour
     [SerializeField] private string email = "demo@bingo.local";
     [SerializeField] private string password = "Demo12345!";
     [SerializeField] private string displayName = "Demo Player";
+    [SerializeField] private string fallbackHallId = "hall-default";
 
     [Header("Dev Bootstrap")]
     [SerializeField] private bool autoRegisterIfMissing = true;
@@ -153,16 +154,18 @@ public class BingoAutoLogin : MonoBehaviour
         {
             SetStatus("Fant ikke bruker. Oppretter testbruker...");
             string registerErrorMessage = string.Empty;
+            string registerErrorCode = string.Empty;
             yield return RequestRegisterSession(
                 normalizedBaseUrl,
                 loginEmail,
                 loginPassword,
                 displayName,
-                (success, message, fetchedToken, _errorCode) =>
+                (success, message, fetchedToken, errorCode) =>
                 {
                     if (!success)
                     {
                         registerErrorMessage = message;
+                        registerErrorCode = errorCode;
                         token = string.Empty;
                         return;
                     }
@@ -170,6 +173,44 @@ public class BingoAutoLogin : MonoBehaviour
                     token = fetchedToken;
                 }
             );
+
+            if (string.IsNullOrWhiteSpace(token) &&
+                string.Equals(registerErrorCode, "EMAIL_EXISTS", System.StringComparison.OrdinalIgnoreCase))
+            {
+                string fallbackEmail = BuildEphemeralEmail(loginEmail);
+                SetStatus($"Demo-bruker finnes allerede. Oppretter midlertidig testbruker: {fallbackEmail}");
+                string secondRegisterError = string.Empty;
+                yield return RequestRegisterSession(
+                    normalizedBaseUrl,
+                    fallbackEmail,
+                    loginPassword,
+                    displayName,
+                    (success, message, fetchedToken, _errorCode) =>
+                    {
+                        if (!success)
+                        {
+                            secondRegisterError = message;
+                            token = string.Empty;
+                            return;
+                        }
+
+                        token = fetchedToken;
+                    }
+                );
+
+                if (!string.IsNullOrWhiteSpace(token))
+                {
+                    loginEmail = fallbackEmail;
+                    if (emailInput != null)
+                    {
+                        emailInput.text = fallbackEmail;
+                    }
+                }
+                else if (!string.IsNullOrWhiteSpace(secondRegisterError))
+                {
+                    registerErrorMessage = secondRegisterError;
+                }
+            }
 
             if (string.IsNullOrWhiteSpace(token) && !string.IsNullOrWhiteSpace(registerErrorMessage))
             {
@@ -244,6 +285,12 @@ public class BingoAutoLogin : MonoBehaviour
 
         if (string.IsNullOrWhiteSpace(configuredHallId))
         {
+            configuredHallId = (fallbackHallId ?? string.Empty).Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(configuredHallId))
+        {
+            SetStatus("Ingen hall funnet for bruker. Sett fallbackHallId i BingoAutoLogin.");
             isBusy = false;
             yield break;
         }
@@ -481,6 +528,11 @@ public class BingoAutoLogin : MonoBehaviour
             yield break;
         }
 
+        if (!halls.IsArray && halls["items"] != null && halls["items"].IsArray)
+        {
+            halls = halls["items"];
+        }
+
         string hallId = string.Empty;
         if (halls.IsArray && halls.Count > 0)
         {
@@ -498,6 +550,20 @@ public class BingoAutoLogin : MonoBehaviour
         }
 
         onComplete?.Invoke(true, string.Empty, hallId);
+    }
+
+    private static string BuildEphemeralEmail(string originalEmail)
+    {
+        string normalized = (originalEmail ?? string.Empty).Trim().ToLowerInvariant();
+        int atIndex = normalized.IndexOf('@');
+        string localPart = atIndex > 0 ? normalized.Substring(0, atIndex) : "demo";
+        string domain = atIndex > 0 && atIndex + 1 < normalized.Length
+            ? normalized.Substring(atIndex + 1)
+            : "bingo.local";
+
+        string safeLocal = localPart.Replace("+", "-").Replace(" ", "-");
+        string suffix = System.DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+        return $"{safeLocal}-tmp-{suffix}@{domain}";
     }
 
     private void ResolveReferences()
