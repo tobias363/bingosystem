@@ -48,28 +48,37 @@ while true; do
 done
 
 echo "[candygame-render] Verifying live release fingerprint: ${RELEASE_JSON_URL}"
-release_json="$(curl -fsS "${RELEASE_JSON_URL}")"
-live_release_version="$(printf '%s' "${release_json}" | jq -r '.releaseVersion // empty')"
-live_release_commit="$(printf '%s' "${release_json}" | jq -r '.releaseCommit // empty')"
+while true; do
+  release_json="$(curl -fsS "${RELEASE_JSON_URL}")"
+  live_release_version="$(printf '%s' "${release_json}" | jq -r '.releaseVersion // empty')"
+  live_release_commit="$(printf '%s' "${release_json}" | jq -r '.releaseCommit // empty')"
 
-if [[ -z "${live_release_version}" ]]; then
-  echo "[candygame-render] Live release.json missing releaseVersion." >&2
-  exit 1
-fi
-if [[ -z "${live_release_commit}" ]]; then
-  echo "[candygame-render] Live release.json missing releaseCommit." >&2
-  exit 1
-fi
+  if [[ -z "${live_release_version}" || -z "${live_release_commit}" ]]; then
+    echo "[candygame-render] release.json missing releaseVersion/releaseCommit, waiting..."
+  else
+    live_release_commit="$(printf '%s' "${live_release_commit}" | tr '[:upper:]' '[:lower:]')"
+    live_release_commit="${live_release_commit:0:8}"
 
-if [[ "${live_release_commit}" != "${expected_release_commit}" ]]; then
-  echo "[candygame-render] releaseCommit mismatch. expected=${expected_release_commit} actual=${live_release_commit}" >&2
-  exit 1
-fi
+    if [[ "${live_release_commit}" == "${expected_release_commit}" ]]; then
+      if [[ -n "${EXPECTED_RELEASE_VERSION}" && "${live_release_version}" != "${EXPECTED_RELEASE_VERSION}" ]]; then
+        echo "[candygame-render] releaseVersion mismatch. expected=${EXPECTED_RELEASE_VERSION} actual=${live_release_version}" >&2
+        exit 1
+      fi
+      break
+    fi
 
-if [[ -n "${EXPECTED_RELEASE_VERSION}" && "${live_release_version}" != "${EXPECTED_RELEASE_VERSION}" ]]; then
-  echo "[candygame-render] releaseVersion mismatch. expected=${EXPECTED_RELEASE_VERSION} actual=${live_release_version}" >&2
-  exit 1
-fi
+    echo "[candygame-render] releaseCommit not updated yet. expected=${expected_release_commit} actual=${live_release_commit}"
+  fi
+
+  now_ts="$(date +%s)"
+  elapsed="$((now_ts - start_ts))"
+  if (( elapsed >= WAIT_TIMEOUT_SECONDS )); then
+    echo "[candygame-render] Timeout after ${WAIT_TIMEOUT_SECONDS}s waiting for release.json to match expected commit." >&2
+    exit 1
+  fi
+
+  sleep "${POLL_INTERVAL_SECONDS}"
+done
 
 echo "[candygame-render] releaseVersion=${live_release_version}"
 echo "[candygame-render] releaseCommit=${live_release_commit}"
