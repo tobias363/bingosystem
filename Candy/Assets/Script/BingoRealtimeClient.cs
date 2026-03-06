@@ -20,6 +20,7 @@ public class SocketAck
 public class BingoRealtimeClient : MonoBehaviour
 {
     public static BingoRealtimeClient instance;
+    private const string DefaultBackendBaseUrl = "https://bingosystem-3.onrender.com";
 
     [Header("Backend")]
     [SerializeField] private string backendBaseUrl = "https://bingosystem-3.onrender.com";
@@ -64,6 +65,7 @@ public class BingoRealtimeClient : MonoBehaviour
         }
 
         instance = this;
+        backendBaseUrl = NormalizeBackendBaseUrl(backendBaseUrl);
     }
 
     private void Start()
@@ -120,6 +122,7 @@ public class BingoRealtimeClient : MonoBehaviour
             _socket = new ClientWebSocket();
             _socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
 
+            backendBaseUrl = NormalizeBackendBaseUrl(backendBaseUrl);
             Uri socketUri = BuildSocketIoUri(backendBaseUrl);
             if (verboseLogging)
             {
@@ -156,7 +159,7 @@ public class BingoRealtimeClient : MonoBehaviour
 
     public void ConfigureBackendBaseUrl(string baseUrl)
     {
-        string normalized = NormalizeBaseUrl(baseUrl);
+        string normalized = NormalizeBackendBaseUrl(baseUrl);
         if (string.IsNullOrWhiteSpace(normalized))
         {
             return;
@@ -169,6 +172,11 @@ public class BingoRealtimeClient : MonoBehaviour
         {
             Debug.Log($"[BingoRealtime] Backend base URL satt til {backendBaseUrl}");
         }
+    }
+
+    public void SetBackendBaseUrl(string baseUrl)
+    {
+        backendBaseUrl = NormalizeBackendBaseUrl(baseUrl);
     }
 
     public void CreateRoom(string hallId, string playerName, string walletId, Action<SocketAck> onAck = null)
@@ -750,7 +758,7 @@ public class BingoRealtimeClient : MonoBehaviour
 
     private static Uri BuildSocketIoUri(string baseUrl)
     {
-        string normalized = NormalizeBaseUrl(baseUrl);
+        string normalized = NormalizeBackendBaseUrl(baseUrl);
 
         Uri baseUri = new(normalized);
         string scheme = baseUri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase) ||
@@ -764,12 +772,13 @@ public class BingoRealtimeClient : MonoBehaviour
         return new Uri($"{scheme}://{authority}{socketPath}");
     }
 
-    private static string NormalizeBaseUrl(string baseUrl)
+    private static string NormalizeBackendBaseUrl(string baseUrl)
     {
         string normalized = (baseUrl ?? string.Empty).Trim();
+
         if (normalized.Length == 0)
         {
-            normalized = "https://bingosystem-3.onrender.com";
+            normalized = DefaultBackendBaseUrl;
         }
 
         if (!normalized.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
