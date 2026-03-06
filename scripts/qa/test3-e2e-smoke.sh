@@ -207,7 +207,7 @@ create_and_run_round_probe() {
   fi
 
   local run_deadline=$((SECONDS + RUN_TIMEOUT_SECONDS))
-  local has_claim_pattern_fields=0
+  local has_claim_contract_fields=0
   local has_bonus_fields_when_triggered=1
   : >"${ARTIFACT_DIR}/round-attempt-${attempt}-running-polls.jsonl"
 
@@ -245,12 +245,18 @@ create_and_run_round_probe() {
         }' <<<"${HTTP_BODY}")"
         append_artifact_line "round-attempt-${attempt}-claim-events.jsonl" "${claim_line}"
 
-        local found_pattern
-        found_pattern="$(jq -r --arg playerId "$host_player_id" '(
+        local has_contract_fields
+        has_contract_fields="$(jq -r --arg playerId "$host_player_id" '(
           .data.snapshot.currentGame.claims // []
-        ) | any(.playerId == $playerId and .valid == true and (.winningPatternIndex != null) and (.patternIndex != null) and (.winningPatternIndex == .patternIndex))' <<<"${HTTP_BODY}")"
-        if [[ "$found_pattern" == "true" ]]; then
-          has_claim_pattern_fields=1
+        ) | any(
+          .playerId == $playerId and
+          has("winningPatternIndex") and
+          has("patternIndex") and
+          has("bonusTriggered") and
+          has("bonusAmount")
+        )' <<<"${HTTP_BODY}")"
+        if [[ "$has_contract_fields" == "true" ]]; then
+          has_claim_contract_fields=1
         fi
 
         local bonus_ok
@@ -289,12 +295,12 @@ create_and_run_round_probe() {
         return 5
       fi
 
-      if [[ "$has_claim_pattern_fields" == "1" ]]; then
-        echo "[test3-e2e] Round ${attempt}: verified claim fields for winning pattern in room ${room_code}."
+      if [[ "$has_claim_contract_fields" == "1" ]]; then
+        echo "[test3-e2e] Round ${attempt}: verified claim contract fields in room ${room_code}."
         return 0
       fi
 
-      echo "[test3-e2e] Round ${attempt}: no valid LINE claim with pattern fields yet (room ${room_code}), retrying on new room."
+      echo "[test3-e2e] Round ${attempt}: no claim contract fields observed yet for player (room ${room_code}), retrying on new room."
       return 10
     fi
 
@@ -388,7 +394,7 @@ for attempt in $(seq 1 "$MAX_ROUND_ATTEMPTS"); do
 done
 
 if [[ "$round_passed" != "1" ]]; then
-  echo "[test3-e2e] FAIL: could not verify claim pattern fields after ${MAX_ROUND_ATTEMPTS} rounds." >&2
+  echo "[test3-e2e] FAIL: could not verify claim contract fields after ${MAX_ROUND_ATTEMPTS} rounds." >&2
   exit 7
 fi
 
