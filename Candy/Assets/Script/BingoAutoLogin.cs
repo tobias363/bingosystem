@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Text;
 using TMPro;
@@ -8,7 +9,9 @@ using SimpleJSON;
 
 public class BingoAutoLogin : MonoBehaviour
 {
-    private const string DefaultBackendBaseUrl = "https://bingosystem-3.onrender.com";
+    private const string DefaultBackendBaseUrl = "https://bingosystem-staging.onrender.com";
+    private const string ProductionBackendBaseUrl = "https://bingosystem-3.onrender.com";
+    private const bool AllowDirectProductionBackend = false;
 
     [SerializeField] private APIManager apiManager;
     [SerializeField] private BingoRealtimeControls realtimeControls;
@@ -22,13 +25,14 @@ public class BingoAutoLogin : MonoBehaviour
     [SerializeField] private TextMeshProUGUI statusText;
 
     [Header("Backend")]
-    [SerializeField] private string backendBaseUrl = "https://bingosystem-3.onrender.com";
+    [SerializeField] private string backendBaseUrl = DefaultBackendBaseUrl;
 
     [Header("Credential Fallback (used when inputs are empty)")]
     [SerializeField] private string email = "demo@bingo.local";
     [SerializeField] private string password = "Demo12345!";
     [SerializeField] private string displayName = "Demo Player";
     [SerializeField] private string fallbackHallId = "hall-default";
+    [SerializeField] private bool useEphemeralFallbackEmailByDefault = true;
 
     [Header("Dev Bootstrap")]
     [SerializeField] private bool autoRegisterIfMissing = true;
@@ -42,6 +46,7 @@ public class BingoAutoLogin : MonoBehaviour
     [SerializeField] private bool preferExistingHallIdInput = true;
 
     private bool isBusy;
+    private string ephemeralFallbackEmail = string.Empty;
 
     public string BackendBaseUrl => NormalizeBaseUrl(backendBaseUrl);
 
@@ -117,10 +122,7 @@ public class BingoAutoLogin : MonoBehaviour
         ResolveReferences();
         SetStatus("Logger inn...");
 
-        string loginEmail = FirstNonEmpty(
-            emailInput != null ? emailInput.text : string.Empty,
-            email
-        );
+        string loginEmail = ResolveLoginEmailForAttempt();
         string loginPassword = FirstNonEmpty(
             passwordInput != null ? passwordInput.text : string.Empty,
             password
@@ -566,6 +568,36 @@ public class BingoAutoLogin : MonoBehaviour
         return $"{safeLocal}-tmp-{suffix}@{domain}";
     }
 
+    private string ResolveLoginEmailForAttempt()
+    {
+        string inputEmail = emailInput != null ? (emailInput.text ?? string.Empty).Trim() : string.Empty;
+        string fallbackEmail = (email ?? string.Empty).Trim();
+        string resolvedEmail = FirstNonEmpty(inputEmail, fallbackEmail);
+        if (!useEphemeralFallbackEmailByDefault)
+        {
+            return resolvedEmail;
+        }
+
+        bool usingFallbackEmail = string.IsNullOrWhiteSpace(inputEmail) ||
+            string.Equals(inputEmail, fallbackEmail, System.StringComparison.OrdinalIgnoreCase);
+        if (!usingFallbackEmail)
+        {
+            return resolvedEmail;
+        }
+
+        if (string.IsNullOrWhiteSpace(ephemeralFallbackEmail))
+        {
+            ephemeralFallbackEmail = BuildEphemeralEmail(fallbackEmail);
+        }
+
+        if (emailInput != null)
+        {
+            emailInput.text = ephemeralFallbackEmail;
+        }
+
+        return ephemeralFallbackEmail;
+    }
+
     private void ResolveReferences()
     {
         if (apiManager == null)
@@ -666,7 +698,19 @@ public class BingoAutoLogin : MonoBehaviour
             normalized = "https://" + normalized;
         }
 
-        return normalized.TrimEnd('/');
+        normalized = normalized.TrimEnd('/');
+
+        if (!AllowDirectProductionBackend &&
+            Uri.TryCreate(normalized, UriKind.Absolute, out Uri parsed) &&
+            Uri.TryCreate(ProductionBackendBaseUrl, UriKind.Absolute, out Uri prodParsed) &&
+            string.Equals(parsed.Host, prodParsed.Host, System.StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.LogWarning(
+                $"[BingoAutoLogin] Blokkerer direkte backend mot prod ({prodParsed.Host}). Bruker staging i stedet.");
+            return DefaultBackendBaseUrl;
+        }
+
+        return normalized;
     }
 
     private static string FirstNonEmpty(params string[] values)

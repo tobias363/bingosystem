@@ -33,7 +33,9 @@ public partial class APIManager : MonoBehaviour
     public static APIManager instance;
 
     private const string BASE_URL = "https://bingoapi.codehabbit.com/";
-    private const string DEFAULT_REALTIME_BACKEND_BASE_URL = "https://bingosystem-3.onrender.com";
+    private const string DEFAULT_REALTIME_BACKEND_BASE_URL = "https://bingosystem-staging.onrender.com";
+    private const string PRODUCTION_REALTIME_BACKEND_BASE_URL = "https://bingosystem-3.onrender.com";
+    private const bool ALLOW_DIRECT_PRODUCTION_BACKEND = false;
 
     [Header("Realtime Multiplayer (Skeleton backend)")]
     [SerializeField] private bool useRealtimeBackend = true;
@@ -51,9 +53,12 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private bool playButtonStartsAndDrawsRealtime = true;
     [SerializeField] private bool realtimeScheduledRounds = true;
     [SerializeField] private bool drawImmediatelyAfterManualStart = true;
+    [SerializeField] [Min(0.25f)] private float betArmAckTimeoutSeconds = 1.5f;
+    [SerializeField] private bool enableHttpBetArmFallback = true;
+    [SerializeField] [Min(0.25f)] private float betArmHttpFallbackCooldownSeconds = 1.25f;
     [SerializeField] private bool allowEditorLocalFallbackWhenRealtimeUnavailable = false;
-    [SerializeField] private bool allowEditorRuntimeAutoCreateRealtimeClient = false;
-    [SerializeField] private bool allowEditorRuntimeAutoCreateAutoLogin = false;
+    [SerializeField] private bool allowEditorRuntimeAutoCreateRealtimeClient = true;
+    [SerializeField] private bool allowEditorRuntimeAutoCreateAutoLogin = true;
     [SerializeField] private bool enableEditorLocalRoundFallback = false;
     [SerializeField] private bool strictRuntimeDependencyValidation = true;
     [SerializeField] private bool scheduledModeManualStartFallback = false;
@@ -82,7 +87,7 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private bool logRealtimeDrawMetrics = true;
     [SerializeField] private bool logRealtimeDrawTrace = true;
     [SerializeField] [Min(1)] private int realtimeBonusPatternPositionFromRight = 2;
-    [SerializeField] private string launchResolveBaseUrl = "https://bingosystem-3.onrender.com";
+    [SerializeField] private string launchResolveBaseUrl = DEFAULT_REALTIME_BACKEND_BASE_URL;
     [SerializeField] private BallManager ballManager;
     [Header("Runtime diagnostics")]
     [SerializeField] private bool logRuntimeDiagnostics = true;
@@ -154,6 +159,11 @@ public partial class APIManager : MonoBehaviour
     private string drawMetricsGameId = string.Empty;
     private bool realtimeBetArmedForNextRound = false;
     private bool pendingRealtimeBetArmRequest = false;
+    private bool treatBetArmAsUnsupported = false;
+    private bool realtimeBetArmAwaitingAck = false;
+    private float realtimeBetArmRequestedAt = -1f;
+    private bool realtimeBetArmHttpFallbackInFlight = false;
+    private float nextRealtimeBetArmHttpFallbackAt = -1f;
     private bool realtimeRerollRequestPending = false;
     private readonly HashSet<string> realtimeClaimAttemptKeys = new();
     private bool hasTriggeredEditorLocalFallback = false;
@@ -184,8 +194,6 @@ public partial class APIManager : MonoBehaviour
         // V4 policy: aldri fall tilbake til gratis buy-in ved INSUFFICIENT_FUNDS.
         fallbackToZeroEntryFeeOnInsufficientFunds = false;
         disableEntryFeeSyncAfterInsufficientFundsFallback = false;
-        // V4 policy: server-scheduler er autoritativ for rundestart i realtime.
-        scheduledModeManualStartFallback = false;
         realtimeBackendBaseUrl = NormalizeRealtimeBackendBaseUrl(realtimeBackendBaseUrl);
         launchResolveBaseUrl = NormalizeRealtimeBackendBaseUrl(launchResolveBaseUrl);
 #if UNITY_EDITOR
@@ -266,6 +274,7 @@ public partial class APIManager : MonoBehaviour
 
         TickDrawRenderResync();
         TryRunDeferredJoinOrCreateAfterLaunchResolve();
+        TickRealtimeBetArmTimeout();
         TickRuntimeDiagnostics();
 
         if (!realtimeScheduledRounds)
@@ -995,7 +1004,7 @@ public partial class APIManager : MonoBehaviour
             return string.Empty;
         }
 
-        return candidate.TrimEnd('/');
+        return ApplyBackendRoutingPolicy(candidate.TrimEnd('/'));
     }
 
     private static string FirstNonEmptyValue(params string[] values)
@@ -1073,6 +1082,9 @@ public partial class APIManager : MonoBehaviour
     private void ApplySchedulerMetadata(JSONNode snapshot)
     {
         realtimeScheduler.ApplySchedulerSnapshot(snapshot);
+        realtimeBetArmedForNextRound =
+            !string.IsNullOrWhiteSpace(activePlayerId) &&
+            realtimeScheduler.ArmedPlayerIds.Contains(activePlayerId);
         LogSchedulerSnapshotIfChanged("room-update");
     }
 
@@ -1657,7 +1669,39 @@ public partial class APIManager : MonoBehaviour
             normalized = "https://" + normalized;
         }
 
-        return normalized.TrimEnd('/');
+        return ApplyBackendRoutingPolicy(normalized.TrimEnd('/'));
+    }
+
+    private static string ApplyBackendRoutingPolicy(string normalizedUrl)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedUrl))
+        {
+            return DEFAULT_REALTIME_BACKEND_BASE_URL;
+        }
+
+        if (ALLOW_DIRECT_PRODUCTION_BACKEND)
+        {
+            return normalizedUrl;
+        }
+
+        if (!Uri.TryCreate(normalizedUrl, UriKind.Absolute, out Uri parsed))
+        {
+            return DEFAULT_REALTIME_BACKEND_BASE_URL;
+        }
+
+        if (!Uri.TryCreate(PRODUCTION_REALTIME_BACKEND_BASE_URL, UriKind.Absolute, out Uri productionParsed))
+        {
+            return normalizedUrl;
+        }
+
+        if (string.Equals(parsed.Host, productionParsed.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            Debug.LogWarning(
+                $"[APIManager] Blokkerer direkte backend mot prod ({productionParsed.Host}). Bruker staging i stedet.");
+            return DEFAULT_REALTIME_BACKEND_BASE_URL;
+        }
+
+        return normalizedUrl;
     }
 
     private void HandleRecoverExistingRoomStateAck(SocketAck ack)

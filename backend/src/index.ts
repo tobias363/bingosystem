@@ -259,6 +259,8 @@ const bingoRtpControllerGain = Math.min(
 );
 const bingoNearMissBiasEnabled = parseBooleanEnv(process.env.BINGO_NEAR_MISS_BIAS_ENABLED, true);
 const bingoNearMissTargetRate = parseRatioEnv(process.env.BINGO_NEAR_MISS_TARGET_RATE, 0.3);
+const candyProductionApiBaseHost = "bingosystem-3.onrender.com";
+const allowProductionCandyApiBaseUrl = parseBooleanEnv(process.env.CANDY_ALLOW_PRODUCTION_API_BASE_URL, false);
 
 const isProductionRuntime = (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
 const minPlayersFloor = 1;
@@ -522,6 +524,29 @@ function parseOptionalAbsoluteHttpUrl(
   return normalizeAbsoluteHttpUrl(value, fieldName, errorCode);
 }
 
+function enforceCandyApiBasePolicy(value: string | undefined, fieldName: string): void {
+  if (!value) {
+    return;
+  }
+  if (allowProductionCandyApiBaseUrl) {
+    return;
+  }
+  try {
+    const parsed = new URL(value);
+    if (parsed.host.toLowerCase() === candyProductionApiBaseHost) {
+      throw new DomainError(
+        "CANDY_PRODUCTION_API_BASE_BLOCKED",
+        `${fieldName} kan ikke peke direkte til production (${candyProductionApiBaseHost}) uten CANDY_ALLOW_PRODUCTION_API_BASE_URL=true.`
+      );
+    }
+  } catch (error) {
+    if (error instanceof DomainError) {
+      throw error;
+    }
+    throw new DomainError("INVALID_CANDY_API_BASE_URL", `${fieldName} er ikke en gyldig URL.`);
+  }
+}
+
 function sanitizeCandyLaunchUrlForRuntime(launchUrl: string): string {
   try {
     const parsed = new URL(launchUrl);
@@ -546,6 +571,7 @@ function readCandyLaunchSettings(
     "apiBaseUrl",
     "INVALID_CANDY_API_BASE_URL"
   );
+  enforceCandyApiBasePolicy(apiBaseUrl, "apiBaseUrl");
 
   if (options.requireLaunchUrl && !launchUrl) {
     throw new DomainError(
@@ -1938,6 +1964,7 @@ app.post("/api/games/candy/launch-token", async (req, res) => {
     }
     const hallId = await resolveCandyLaunchHallId(req.body?.hallId);
     const apiBaseUrl = launchSettings.apiBaseUrl || deriveRequestApiBaseUrl(req);
+    enforceCandyApiBasePolicy(apiBaseUrl, "apiBaseUrl");
     const issued = candyLaunchTokenStore.issue({
       accessToken,
       hallId,
@@ -3804,6 +3831,9 @@ hydrateCandyManiaSettingsFromCatalog()
       );
       console.log(
         `[rtp] rollingWindow=${bingoRtpRollingWindowSize} controllerGain=${bingoRtpControllerGain} nearMissBias=${bingoNearMissBiasEnabled} nearMissTargetRate=${bingoNearMissTargetRate}`
+      );
+      console.log(
+        `[candy-launch] allowProductionApiBase=${allowProductionCandyApiBaseUrl} blockedProductionHost=${candyProductionApiBaseHost}`
       );
       console.log(
         `[scheduler] autoStart=${runtimeCandyManiaSettings.autoRoundStartEnabled} autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} forceAutoStart=${forceCandyAutoStart} forceAutoDraw=${forceCandyAutoDraw} autoAllowedInProd=${allowAutoplayInProduction} singleGlobalRoom=${enforceSingleCandyGlobalRoom} interval=${runtimeCandyManiaSettings.autoRoundStartIntervalMs}ms minPlayers=${runtimeCandyManiaSettings.autoRoundMinPlayers} ticketsPerPlayer=${runtimeCandyManiaSettings.autoRoundTicketsPerPlayer} entryFee=${runtimeCandyManiaSettings.autoRoundEntryFee} payoutPercent=${runtimeCandyManiaSettings.payoutPercent}`

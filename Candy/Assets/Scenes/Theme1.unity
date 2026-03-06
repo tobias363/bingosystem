@@ -135989,8 +135989,8 @@ MonoBehaviour:
   realtimeScheduledRounds: 1
   drawImmediatelyAfterManualStart: 1
   allowEditorLocalFallbackWhenRealtimeUnavailable: 0
-  allowEditorRuntimeAutoCreateRealtimeClient: 0
-  allowEditorRuntimeAutoCreateAutoLogin: 0
+  allowEditorRuntimeAutoCreateRealtimeClient: 1
+  allowEditorRuntimeAutoCreateAutoLogin: 1
   enableEditorLocalRoundFallback: 0
   strictRuntimeDependencyValidation: 1
   scheduledModeManualStartFallback: 1
@@ -136019,7 +136019,7 @@ MonoBehaviour:
   logRealtimeDrawMetrics: 1
   logRealtimeDrawTrace: 1
   realtimeBonusPatternPositionFromRight: 2
-  launchResolveBaseUrl: https://bingosystem-3.onrender.com
+  launchResolveBaseUrl: https://bingosystem-staging.onrender.com
   ballManager: {fileID: 516605982}
   logRuntimeDiagnostics: 1
   runtimeDiagnosticsLogIntervalSeconds: 8
@@ -136032,7 +136032,7 @@ MonoBehaviour:
   playerName: Player
   walletId: 
   accessToken: 
-  realtimeBackendBaseUrl: https://bingosystem-3.onrender.com
+  realtimeBackendBaseUrl: https://bingosystem-staging.onrender.com
   legacyStartCallEnabled: 1
   bonusAMT: 0
 --- !u!1 &2065543997
@@ -151849,7 +151849,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4e790da076324de79ac089efc2d98a38, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  backendBaseUrl: https://bingosystem-3.onrender.com
+  backendBaseUrl: https://bingosystem-staging.onrender.com
   autoConnectOnStart: 0
   autoReconnect: 1
   reconnectDelaySeconds: 2
@@ -151907,11 +151907,12 @@ MonoBehaviour:
   accessTokenInput: {fileID: 0}
   loginButton: {fileID: 0}
   statusText: {fileID: 0}
-  backendBaseUrl: https://bingosystem-3.onrender.com
+  backendBaseUrl: https://bingosystem-staging.onrender.com
   email: demo@bingo.local
   password: Demo12345!
   displayName: Demo Player
   fallbackHallId: hall-default
+  useEphemeralFallbackEmailByDefault: 1
   autoRegisterIfMissing: 1
   autoKycVerify: 1
   kycBirthDate: 1990-01-01
