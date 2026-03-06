@@ -196,11 +196,9 @@ public class BallManager : MonoBehaviour
             cachedBallTransforms.Add(transformRef);
             cachedBallImages.Add(ball != null ? ball.GetComponent<Image>() : null);
 
-            TextMeshProUGUI label = null;
-            if (transformRef != null && transformRef.childCount > 0)
-            {
-                label = transformRef.GetChild(0).GetComponent<TextMeshProUGUI>();
-            }
+            TextMeshProUGUI label = transformRef != null
+                ? transformRef.GetComponentInChildren<TextMeshProUGUI>(true)
+                : null;
 
             cachedBallTexts.Add(label);
         }
@@ -326,11 +324,9 @@ public class BallManager : MonoBehaviour
         }
 
         Transform tr = obj.transform;
-        TextMeshProUGUI text = null;
-        if (tr != null && tr.childCount > 0)
-        {
-            text = tr.GetChild(0).GetComponent<TextMeshProUGUI>();
-        }
+        TextMeshProUGUI text = tr != null
+            ? tr.GetComponentInChildren<TextMeshProUGUI>(true)
+            : null;
 
         cachedExtraBallTexts[obj] = text;
     }
@@ -347,7 +343,7 @@ public class BallManager : MonoBehaviour
             return null;
         }
 
-        cachedBigBallText = bigBallImg.transform.GetChild(0).GetComponent<TextMeshProUGUI>();
+        cachedBigBallText = bigBallImg.GetComponentInChildren<TextMeshProUGUI>(true);
         return cachedBigBallText;
     }
 

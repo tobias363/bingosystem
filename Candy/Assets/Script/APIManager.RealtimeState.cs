@@ -85,8 +85,15 @@ public partial class APIManager
             bool appliedPreRoundTickets = TryApplyPreRoundTicketsFromSnapshot(snapshot);
             if (!appliedPreRoundTickets)
             {
-                activeTicketSets.Clear();
-                realtimeTicketFallbackLogKey = string.Empty;
+                if (preserveTicketNumbersOnTransientSnapshotGaps && activeTicketSets != null && activeTicketSets.Count > 0)
+                {
+                    ApplyTicketSetsToCards(activeTicketSets);
+                }
+                else
+                {
+                    activeTicketSets.Clear();
+                    realtimeTicketFallbackLogKey = string.Empty;
+                }
             }
             RefreshRealtimeCountdownLabel(forceRefresh: true);
             return;
@@ -322,6 +329,8 @@ public partial class APIManager
                 continue;
             }
 
+            EnsureRealtimeCardBindings(card);
+
             card.numb.Clear();
             card.selectedPayLineCanBe.Clear();
             card.paylineindex.Clear();
@@ -397,6 +406,81 @@ public partial class APIManager
         }
     }
 
+    private static void EnsureRealtimeCardBindings(CardClass card)
+    {
+        if (card == null)
+        {
+            return;
+        }
+
+        if (card.payLinePattern == null)
+        {
+            card.payLinePattern = new List<byte>(15);
+        }
+
+        while (card.payLinePattern.Count < 15)
+        {
+            card.payLinePattern.Add(0);
+        }
+
+        if (card.num_text == null)
+        {
+            card.num_text = new List<TextMeshProUGUI>(15);
+        }
+
+        bool needsNumberRebind = card.num_text.Count < 15;
+        if (!needsNumberRebind)
+        {
+            for (int i = 0; i < 15; i++)
+            {
+                if (card.num_text[i] == null)
+                {
+                    needsNumberRebind = true;
+                    break;
+                }
+            }
+        }
+
+        if (!needsNumberRebind)
+        {
+            return;
+        }
+
+        while (card.num_text.Count < 15)
+        {
+            card.num_text.Add(null);
+        }
+
+        int selectionCount = card.selectionImg != null ? card.selectionImg.Count : 0;
+        int cellCount = Mathf.Min(15, selectionCount);
+        for (int cellIndex = 0; cellIndex < cellCount; cellIndex++)
+        {
+            if (card.num_text[cellIndex] != null)
+            {
+                continue;
+            }
+
+            GameObject selectionCell = card.selectionImg[cellIndex];
+            if (selectionCell == null)
+            {
+                continue;
+            }
+
+            Transform probe = selectionCell.transform.parent;
+            TextMeshProUGUI resolved = null;
+            if (probe != null)
+            {
+                resolved = probe.GetComponentInChildren<TextMeshProUGUI>(true);
+                if (resolved == null && probe.parent != null)
+                {
+                    resolved = probe.parent.GetComponentInChildren<TextMeshProUGUI>(true);
+                }
+            }
+
+            card.num_text[cellIndex] = resolved;
+        }
+    }
+
     private void ApplyDrawnNumbers(JSONNode currentGame)
     {
         JSONNode drawnNumbers = currentGame["drawnNumbers"];
@@ -431,6 +515,9 @@ public partial class APIManager
                 Debug.Log(
                     $"[candy-draw] game={activeGameId} drawIndex={drawIndex + 1} number={drawnNumber} " +
                     $"drawnCount={drawnNumbers.Count} markedCells={markedCells} canMark={canMarkCards}");
+                Debug.Log(
+                    $"[draw] draw_rendered game={activeGameId} idx={drawIndex + 1} " +
+                    $"number={drawnNumber} markedCells={markedCells} canMark={canMarkCards}");
             }
 
             if (autoMarkDrawnNumbers &&
