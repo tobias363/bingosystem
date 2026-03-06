@@ -110,6 +110,9 @@ public partial class APIManager
         BindRealtimeClient();
         if (realtimeClient == null)
         {
+            ReportMissingRuntimeDependency(
+                "BingoRealtimeClient",
+                "Kan ikke starte runde uten realtime-klient.");
             return;
         }
 
@@ -147,6 +150,9 @@ public partial class APIManager
         BindRealtimeClient();
         if (realtimeClient == null)
         {
+            ReportMissingRuntimeDependency(
+                "BingoRealtimeClient",
+                "Kan ikke armere bet uten realtime-klient.");
             return;
         }
 
