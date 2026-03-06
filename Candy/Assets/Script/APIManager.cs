@@ -131,6 +131,7 @@ public partial class APIManager : MonoBehaviour
     private readonly RealtimeRoomConfigurator realtimeRoomConfigurator = new();
     private readonly Dictionary<int, Coroutine> realtimeNearWinBlinkCoroutines = new();
     private readonly Dictionary<int, RealtimeNearWinMeta> realtimeNearWinMetaByKey = new();
+    private readonly Dictionary<int, RealtimeNearWinState> realtimeNearWinStates = new();
     private string realtimeBonusTriggeredGameId = string.Empty;
     private string realtimeBonusTriggeredClaimId = string.Empty;
     private string realtimeBonusMissingDataLogKey = string.Empty;
@@ -316,7 +317,38 @@ public partial class APIManager : MonoBehaviour
             return false;
         }
 
-        return resolved.ShowRealtimeDrawBall(drawIndex, drawnNumber);
+        resolved.ShowRealtimeDrawBall(drawIndex, drawnNumber);
+        return true;
+    }
+
+    // Compatibility shim for branches that do not use draw replay queues.
+    private void TickDrawRenderResync()
+    {
+    }
+
+    // Compatibility shim for branches that render draws directly in room updates.
+    private void ResetRealtimeDrawReplayState(bool clearMetrics)
+    {
+        if (realtimeDrawReplayCoroutine != null)
+        {
+            StopCoroutine(realtimeDrawReplayCoroutine);
+            realtimeDrawReplayCoroutine = null;
+        }
+
+        pendingRealtimeDrawQueue.Clear();
+        pendingRealtimeDrawKeys.Clear();
+
+        if (!clearMetrics)
+        {
+            return;
+        }
+
+        drawMetricEnqueued = 0;
+        drawMetricRendered = 0;
+        drawMetricFallbackRendered = 0;
+        drawMetricSkipped = 0;
+        drawMetricsGameId = string.Empty;
+        lastRealtimeDrawRenderAt = -1f;
     }
 
     private int ResolveRealtimeDrawCountCap()
