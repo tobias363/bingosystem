@@ -1,11 +1,6 @@
 name: Deploy Production
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
   workflow_dispatch:
 
 concurrency:
@@ -16,19 +11,14 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main') }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
 
     steps:
       - name: Show deploy metadata
         run: |
           echo "event=${{ github.event_name }}"
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            echo "head_branch=${{ github.event.workflow_run.head_branch }}"
-            echo "head_sha=${{ github.event.workflow_run.head_sha }}"
-          else
-            echo "head_branch=${{ github.ref_name }}"
-            echo "head_sha=${{ github.sha }}"
-          fi
+          echo "head_branch=${{ github.ref_name }}"
+          echo "head_sha=${{ github.sha }}"
 
       - name: Trigger Render production deploy hook
         env:
