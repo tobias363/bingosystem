@@ -1,6 +1,10 @@
 name: Deploy Candygame (Self-hosted Build)
 
 on:
+  push:
+    branches:
+      - staging
+      - main
   workflow_dispatch:
     inputs:
       target_environment:
