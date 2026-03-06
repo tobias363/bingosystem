@@ -31,6 +31,8 @@ public partial class APIManager
         }
     }
 
+    private string realtimeTicketFallbackLogKey = string.Empty;
+
     private void HandleRealtimeRoomUpdate(JSONNode snapshot)
     {
         if (snapshot == null || snapshot.IsNull)
@@ -81,6 +83,7 @@ public partial class APIManager
             processedDrawCount = 0;
             currentTicketPage = 0;
             activeTicketSets.Clear();
+            realtimeTicketFallbackLogKey = string.Empty;
             RefreshRealtimeCountdownLabel(forceRefresh: true);
             return;
         }
@@ -101,6 +104,7 @@ public partial class APIManager
             processedDrawCount = 0;
             currentTicketPage = 0;
             activeTicketSets.Clear();
+            realtimeTicketFallbackLogKey = string.Empty;
             ResetRealtimeRoundVisuals();
             NumberGenerator nextRoundGenerator = ResolveNumberGenerator();
             if (nextRoundGenerator != null)
@@ -120,18 +124,29 @@ public partial class APIManager
 
     private void ApplyMyTicketToCards(JSONNode currentGame)
     {
-        if (string.IsNullOrWhiteSpace(activePlayerId))
-        {
-            return;
-        }
-
         JSONNode tickets = currentGame["tickets"];
         if (tickets == null || tickets.IsNull)
         {
             return;
         }
 
-        JSONNode myTicketsNode = tickets[activePlayerId];
+        string ticketSourcePlayerId = activePlayerId;
+        JSONNode myTicketsNode = null;
+
+        if (!string.IsNullOrWhiteSpace(activePlayerId))
+        {
+            myTicketsNode = tickets[activePlayerId];
+        }
+
+        bool usedFallbackTicketSource = false;
+        if (myTicketsNode == null || myTicketsNode.IsNull)
+        {
+            usedFallbackTicketSource = TryResolveFallbackTicketSource(
+                tickets,
+                out myTicketsNode,
+                out ticketSourcePlayerId);
+        }
+
         if (myTicketsNode == null || myTicketsNode.IsNull)
         {
             return;
@@ -148,8 +163,65 @@ public partial class APIManager
             return;
         }
 
+        if (usedFallbackTicketSource)
+        {
+            LogTicketSourceFallbackOnce(ticketSourcePlayerId, ticketSets.Count);
+        }
+
         activeTicketSets = RealtimeTicketSetUtils.CloneTicketSets(ticketSets);
         ApplyTicketSetsToCards(activeTicketSets);
+    }
+
+    private bool TryResolveFallbackTicketSource(
+        JSONNode ticketsNode,
+        out JSONNode fallbackTicketNode,
+        out string fallbackPlayerId)
+    {
+        fallbackTicketNode = null;
+        fallbackPlayerId = string.Empty;
+
+        if (ticketsNode == null || ticketsNode.IsNull)
+        {
+            return false;
+        }
+
+        foreach (KeyValuePair<string, JSONNode> entry in ticketsNode.Linq)
+        {
+            JSONNode candidateNode = entry.Value;
+            if (candidateNode == null || candidateNode.IsNull)
+            {
+                continue;
+            }
+
+            List<List<int>> candidateTicketSets = RealtimeTicketSetUtils.ExtractTicketSets(candidateNode);
+            if (candidateTicketSets.Count == 0)
+            {
+                continue;
+            }
+
+            fallbackPlayerId = string.IsNullOrWhiteSpace(entry.Key) ? "<unknown-player>" : entry.Key;
+            fallbackTicketNode = candidateNode;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void LogTicketSourceFallbackOnce(string sourcePlayerId, int ticketCount)
+    {
+        string gameKey = string.IsNullOrWhiteSpace(activeGameId) ? "<no-game>" : activeGameId;
+        string sourceKey = string.IsNullOrWhiteSpace(sourcePlayerId) ? "<unknown-player>" : sourcePlayerId.Trim();
+        string logKey = $"{gameKey}:{sourceKey}:{ticketCount}";
+        if (string.Equals(realtimeTicketFallbackLogKey, logKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        realtimeTicketFallbackLogKey = logKey;
+        string requestedPlayer = string.IsNullOrWhiteSpace(activePlayerId) ? "<empty>" : activePlayerId;
+        Debug.LogWarning(
+            $"[APIManager] Ticket fallback aktiv i realtime (Theme1): activePlayerId={requestedPlayer}, " +
+            $"bruker tickets fra playerId={sourceKey} (ticketCount={ticketCount}) for visning.");
     }
 
     private void ApplyTicketSetsToCards(List<List<int>> ticketSets)
@@ -1399,6 +1471,7 @@ public partial class APIManager
         processedDrawCount = 0;
         currentTicketPage = 0;
         activeTicketSets.Clear();
+        realtimeTicketFallbackLogKey = string.Empty;
         StopRealtimeNearWinBlinking();
         ResetRealtimeBonusState(closeBonusPanel: true);
         nextScheduledRoomStateRefreshAt = -1f;

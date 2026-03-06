@@ -5,7 +5,7 @@ using UnityEngine;
 public static class RealtimeTextStyleUtils
 {
     private static readonly Color DefaultCardNumberColor = new Color32(184, 51, 99, 255);
-    private static readonly Color DefaultBallNumberColor = Color.black;
+    private static readonly Color DefaultBallNumberColor = Color.white;
     private const string PreferredFontKeyword = "Fredoka";
     private static TMP_FontAsset cachedPreferredFontAsset;
 
@@ -87,11 +87,19 @@ public static class RealtimeTextStyleUtils
     public static void ApplyCardNumber(TextMeshProUGUI target, string value, TMP_FontAsset fallbackFont = null)
     {
         Apply(target, value, DefaultCardNumberColor, fallbackFont);
+        if (target != null)
+        {
+            target.fontStyle = FontStyles.Bold;
+        }
     }
 
     public static void ApplyBallNumber(TextMeshProUGUI target, string value, TMP_FontAsset fallbackFont = null)
     {
         Apply(target, value, DefaultBallNumberColor, fallbackFont);
+        if (target != null)
+        {
+            target.fontStyle = FontStyles.Bold;
+        }
     }
 
     public static void ApplyReadableTypography(

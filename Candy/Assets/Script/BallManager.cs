@@ -395,6 +395,7 @@ public class BallManager : MonoBehaviour
         TMP_FontAsset numberFallbackFont = RealtimeTextStyleUtils.ResolveFallbackFont();
         CacheRealtimeBallLayoutPositions();
 
+        SetActiveIfChanged(ballOutMachineAnimParent, true);
         SetActiveIfChanged(ballMachine, true);
         SetActiveIfChanged(extraBallMachine, false);
 
@@ -472,7 +473,8 @@ public class BallManager : MonoBehaviour
         //debug.Log()
         TryAutoResolveBallsFromHierarchy();
         CacheBallComponentRefs();
-        SetActiveIfChanged(ballOutMachineAnimParent, false);
+        bool realtimeMode = APIManager.instance != null && APIManager.instance.UseRealtimeBackend;
+        SetActiveIfChanged(ballOutMachineAnimParent, realtimeMode);
 
         AddRandomBallSprites();
         if (ballAnimationRoutine != null)
@@ -842,6 +844,8 @@ public class BallManager : MonoBehaviour
         {
             SetActiveIfChanged(ballMachine, false);
         }
+
+        SetActiveIfChanged(ballOutMachineAnimParent, true);
     }
 
 
