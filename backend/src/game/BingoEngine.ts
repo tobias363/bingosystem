@@ -529,13 +529,38 @@ export class BingoEngine {
     return { roomCode, playerId };
   }
 
+  async ensurePreRoundTicketsForPlayer(input: RerollTicketsInput): Promise<Ticket[]> {
+    const room = this.requireRoom(input.roomCode);
+    const player = this.requirePlayer(room, input.playerId);
+    this.assertWalletAllowedForGameplay(player.walletId, Date.now());
+    this.archiveIfEnded(room);
+
+    const ticketsPerPlayer = input.ticketsPerPlayer;
+    if (!Number.isInteger(ticketsPerPlayer) || ticketsPerPlayer < 1 || ticketsPerPlayer > 5) {
+      throw new DomainError(
+        "INVALID_TICKETS_PER_PLAYER",
+        "ticketsPerPlayer må være et heltall mellom 1 og 5."
+      );
+    }
+
+    const existingTickets = room.preRoundTicketsByPlayer.get(player.id);
+    if (Array.isArray(existingTickets) && existingTickets.length === ticketsPerPlayer) {
+      return existingTickets.map((ticket) => this.cloneTicket(ticket));
+    }
+
+    return this.rerollTicketsForPlayer(input);
+  }
+
   async rerollTicketsForPlayer(input: RerollTicketsInput): Promise<Ticket[]> {
     const room = this.requireRoom(input.roomCode);
     const player = this.requirePlayer(room, input.playerId);
     this.assertWalletAllowedForGameplay(player.walletId, Date.now());
     this.archiveIfEnded(room);
     if (room.currentGame?.status === "RUNNING") {
-      throw new DomainError("ROUND_ALREADY_RUNNING", "Kan ikke bytte bonger mens runden pågår.");
+      throw new DomainError(
+        "BET_LOCKED_DURING_RUNNING_GAME",
+        "Kan ikke bytte tall etter at innsatsen er låst for neste runde mens trekningen pågår."
+      );
     }
 
     const ticketsPerPlayer = input.ticketsPerPlayer;

@@ -225,13 +225,13 @@ async function createRoomWithTwoPlayers(input: {
   hostWalletId: string;
   guestName: string;
   guestWalletId: string;
-}): Promise<{ roomCode: string; hostPlayerId: string }> {
+}): Promise<{ roomCode: string; hostPlayerId: string; guestPlayerId: string }> {
   const { roomCode, playerId } = await input.engine.createRoom({
     hallId: input.hallId,
     playerName: input.hostName,
     walletId: input.hostWalletId
   });
-  await input.engine.joinRoom({
+  const guestJoin = await input.engine.joinRoom({
     roomCode,
     hallId: input.hallId,
     playerName: input.guestName,
@@ -239,7 +239,8 @@ async function createRoomWithTwoPlayers(input: {
   });
   return {
     roomCode,
-    hostPlayerId: playerId
+    hostPlayerId: playerId,
+    guestPlayerId: guestJoin.playerId
   };
 }
 
@@ -522,10 +523,53 @@ test("rerollTicketsForPlayer blocks reroll while round is running", async () => 
         playerId: hostPlayerId,
         ticketsPerPlayer: 4
       }),
-    (error: unknown) => error instanceof DomainError && error.code === "ROUND_ALREADY_RUNNING"
+    (error: unknown) =>
+      error instanceof DomainError && error.code === "BET_LOCKED_DURING_RUNNING_GAME"
   );
 });
 
+test("rerollTicketsForPlayer blocks preround reroll for observers while another player's round is running", async () => {
+  const engine = new BingoEngine(new SequenceTicketBingoAdapter(), new InMemoryWalletAdapter(), {
+    minPlayersToStart: 2
+  });
+  const { roomCode, hostPlayerId, guestPlayerId } = await createRoomWithTwoPlayers({
+    engine,
+    hallId: "hall-1",
+    hostName: "Host",
+    hostWalletId: "wallet-host",
+    guestName: "Guest",
+    guestWalletId: "wallet-guest"
+  });
+
+  const guestPreround = await engine.ensurePreRoundTicketsForPlayer({
+    roomCode,
+    playerId: guestPlayerId,
+    ticketsPerPlayer: 4
+  });
+
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    ticketsPerPlayer: 4,
+    entryFee: 0,
+    participantPlayerIds: [hostPlayerId],
+    allowEmptyRound: true
+  });
+
+  await assert.rejects(
+    async () =>
+      engine.rerollTicketsForPlayer({
+        roomCode,
+        playerId: guestPlayerId,
+        ticketsPerPlayer: 4
+      }),
+    (error: unknown) =>
+      error instanceof DomainError && error.code === "BET_LOCKED_DURING_RUNNING_GAME"
+  );
+
+  const snapshot = engine.getRoomSnapshot(roomCode);
+  assert.deepEqual(snapshot.preRoundTickets?.[guestPlayerId], guestPreround);
+});
 test("rerollTicketsForPlayer validates ticketsPerPlayer range", async () => {
   const { engine, roomCode, hostPlayerId } = await makeEngineWithRoom();
   await assert.rejects(

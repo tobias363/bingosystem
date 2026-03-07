@@ -10,7 +10,7 @@ import { LocalBingoSystemAdapter } from "./adapters/LocalBingoSystemAdapter.js";
 import { LocalKycAdapter } from "./adapters/LocalKycAdapter.js";
 import { assertTicketsPerPlayerWithinHallLimit } from "./game/compliance.js";
 import { BingoEngine, DomainError, toPublicError } from "./game/BingoEngine.js";
-import type { ClaimType, RoomSnapshot, RoomSummary } from "./game/types.js";
+import type { ClaimType, RoomSnapshot, RoomSummary, Ticket } from "./game/types.js";
 import { CandyLaunchTokenStore } from "./launch/CandyLaunchTokenStore.js";
 import {
   ADMIN_ACCESS_POLICY,
@@ -1199,9 +1199,11 @@ function apiFailure(res: express.Response, error: unknown): void {
   res.status(400).json({ ok: false, error: publicError });
 }
 
-async function emitRoomUpdate(roomCode: string): Promise<RoomSnapshot> {
-  const snapshot = engine.getRoomSnapshot(roomCode);
-  const payload = buildRoomUpdatePayload(snapshot);
+async function emitRoomUpdate(
+  roomCode: string,
+  playerId?: string
+): Promise<RoomSnapshot & { scheduler: Record<string, unknown> }> {
+  const payload = await buildRoomUpdatePayloadForPlayer(roomCode, playerId);
   io.to(roomCode).emit("room:update", payload);
   return payload;
 }
@@ -1426,6 +1428,58 @@ function resolveAdaptivePayoutPercent(hallId: string): number {
   return engine.resolvePayoutPercentForNextRound(runtimeCandyManiaSettings.payoutPercent, hallId);
 }
 
+async function resolveDefaultTicketsPerPlayerForRoom(roomCode: string): Promise<number> {
+  const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
+  return Math.min(hallGameConfig.maxTicketsPerPlayer, runtimeCandyManiaSettings.autoRoundTicketsPerPlayer);
+}
+
+function cloneTicketSet(tickets: Ticket[]): Ticket[] {
+  return tickets.map((ticket) => ({
+    ...ticket,
+    grid: ticket.grid.map((row) => [...row])
+  }));
+}
+
+function withPlayerVisiblePreRoundTickets<T extends RoomSnapshot>(
+  snapshot: T,
+  playerId?: string,
+  visibleTickets?: Ticket[]
+): T {
+  if (!playerId || !Array.isArray(visibleTickets) || visibleTickets.length === 0) {
+    return snapshot;
+  }
+
+  const existingTickets = snapshot.preRoundTickets?.[playerId];
+  if (Array.isArray(existingTickets) && existingTickets.length > 0) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    preRoundTickets: {
+      ...(snapshot.preRoundTickets ?? {}),
+      [playerId]: cloneTicketSet(visibleTickets)
+    }
+  };
+}
+
+async function ensurePlayerHasVisiblePreRoundTickets(roomCode: string, playerId: string): Promise<Ticket[]> {
+  const ticketsPerPlayer = await resolveDefaultTicketsPerPlayerForRoom(roomCode);
+  return await engine.ensurePreRoundTicketsForPlayer({
+    roomCode,
+    playerId,
+    ticketsPerPlayer
+  });
+}
+
+async function buildRoomUpdatePayloadForPlayer(
+  roomCode: string,
+  playerId?: string
+): Promise<RoomSnapshot & { scheduler: Record<string, unknown> }> {
+  const visibleTickets = playerId ? await ensurePlayerHasVisiblePreRoundTickets(roomCode, playerId) : undefined;
+  const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
+  return withPlayerVisiblePreRoundTickets(snapshot, playerId, visibleTickets);
+}
 function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<string, unknown> {
   const nextStartAtMs = runtimeCandyManiaSettings.autoRoundStartEnabled
     ? normalizeRoomNextAutoStartAt(snapshot.code, nowMs)
@@ -3264,7 +3318,7 @@ app.post("/api/rooms/:roomCode/game/end", async (req, res) => {
     assertUserCanActAsPlayer(user, roomCode, actorPlayerId);
     const reason = typeof req.body?.reason === "string" ? req.body.reason : undefined;
     await engine.endGame({ roomCode, actorPlayerId, reason });
-    const snapshot = await emitRoomUpdate(roomCode);
+    const snapshot = await emitRoomUpdate(roomCode, actorPlayerId);
     apiSuccess(res, snapshot);
   } catch (error) {
     apiFailure(res, error);
@@ -3303,7 +3357,7 @@ app.post("/api/rooms/:roomCode/bet-arm", async (req, res) => {
     assertUserCanActAsPlayer(user, roomCode, actorPlayerId);
     const shouldArm = req.body?.armed === undefined ? true : Boolean(req.body.armed);
     setPlayerBetArm(roomCode, actorPlayerId, shouldArm);
-    const snapshot = await emitRoomUpdate(roomCode);
+    const snapshot = await emitRoomUpdate(roomCode, actorPlayerId);
     apiSuccess(res, {
       armed: shouldArm,
       armedPlayerIds: getArmedPlayerIdsForSnapshot(snapshot),
@@ -3441,7 +3495,7 @@ io.on("connection", (socket: Socket) => {
           }
 
           socket.join(canonicalRoom.code);
-          const snapshot = await emitRoomUpdate(canonicalRoom.code);
+          const snapshot = await emitRoomUpdate(canonicalRoom.code, playerId);
           ackSuccess(callback, { roomCode: canonicalRoom.code, playerId, snapshot });
           logCandyRealtimeEvent("room_create_ack", {
             mode: "canonical-room-reuse",
@@ -3462,7 +3516,7 @@ io.on("connection", (socket: Socket) => {
         socketId: socket.id
       });
       socket.join(roomCode);
-      const snapshot = await emitRoomUpdate(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { roomCode, playerId, snapshot });
       logCandyRealtimeEvent("room_create_ack", {
         mode: "new-room",
@@ -3499,7 +3553,7 @@ io.on("connection", (socket: Socket) => {
           });
           roomCode = created.roomCode;
           socket.join(roomCode);
-          const snapshot = await emitRoomUpdate(roomCode);
+          const snapshot = await emitRoomUpdate(roomCode, created.playerId);
           ackSuccess(callback, { roomCode, playerId: created.playerId, snapshot });
           logCandyRealtimeEvent("room_join_ack", {
             mode: "canonical-room-created-on-join",
@@ -3519,7 +3573,7 @@ io.on("connection", (socket: Socket) => {
       if (existingPlayer) {
         engine.attachPlayerSocket(roomCode, existingPlayer.id, socket.id);
         socket.join(roomCode);
-        const snapshot = await emitRoomUpdate(roomCode);
+        const snapshot = await emitRoomUpdate(roomCode, existingPlayer.id);
         ackSuccess(callback, { roomCode, playerId: existingPlayer.id, snapshot });
         logCandyRealtimeEvent("room_join_ack", {
           mode: "existing-player-reconnect",
@@ -3540,7 +3594,7 @@ io.on("connection", (socket: Socket) => {
         socketId: socket.id
       });
       socket.join(roomCode);
-      const snapshot = await emitRoomUpdate(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { roomCode, playerId, snapshot });
       logCandyRealtimeEvent("room_join_ack", {
         mode: "join-room",
@@ -3566,7 +3620,7 @@ io.on("connection", (socket: Socket) => {
       assertCanonicalCandyRoomForGameplay(roomCode);
       engine.attachPlayerSocket(roomCode, playerId, socket.id);
       socket.join(roomCode);
-      const snapshot = await emitRoomUpdate(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { snapshot });
       logCandyRealtimeEvent("room_resume_ack", {
         roomCode,
@@ -3590,7 +3644,7 @@ io.on("connection", (socket: Socket) => {
       callback: (response: AckResponse<{ snapshot: RoomSnapshot; entryFee: number }>) => void
     ) => {
       try {
-        const { roomCode } = await requireAuthenticatedPlayerAction(payload);
+        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
         assertCanonicalCandyRoomForGameplay(roomCode);
         engine.getRoomSnapshot(roomCode);
 
@@ -3600,7 +3654,7 @@ io.on("connection", (socket: Socket) => {
         }
 
         const entryFee = setRoomConfiguredEntryFee(roomCode, requestedEntryFee);
-        const updatedSnapshot = await emitRoomUpdate(roomCode);
+        const updatedSnapshot = await emitRoomUpdate(roomCode, playerId);
         ackSuccess(callback, { snapshot: updatedSnapshot, entryFee });
       } catch (error) {
         ackFailure(callback, error);
@@ -3619,7 +3673,7 @@ io.on("connection", (socket: Socket) => {
         assertCanonicalCandyRoomForGameplay(roomCode);
         const shouldArm = payload?.armed === undefined ? true : Boolean(payload.armed);
         setPlayerBetArm(roomCode, playerId, shouldArm);
-        const snapshot = await emitRoomUpdate(roomCode);
+        const snapshot = await emitRoomUpdate(roomCode, playerId);
         const armedPlayerIds = getArmedPlayerIdsForSnapshot(snapshot);
         ackSuccess(callback, { snapshot, armed: shouldArm, armedPlayerIds });
       } catch (error) {
@@ -3660,7 +3714,7 @@ io.on("connection", (socket: Socket) => {
         allowEmptyRound: true
       });
       clearArmedPlayers(roomCode);
-      const snapshot = await emitRoomUpdate(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { snapshot });
     } catch (error) {
       ackFailure(callback, error);
@@ -3676,7 +3730,7 @@ io.on("connection", (socket: Socket) => {
         actorPlayerId: playerId,
         reason: payload?.reason
       });
-      const snapshot = await emitRoomUpdate(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { snapshot });
     } catch (error) {
       ackFailure(callback, error);
@@ -3689,7 +3743,7 @@ io.on("connection", (socket: Socket) => {
       assertCanonicalCandyRoomForGameplay(roomCode);
       const number = await engine.drawNextNumber({ roomCode, actorPlayerId: playerId });
       io.to(roomCode).emit("draw:new", { number });
-      const snapshot = await emitRoomUpdate(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { number, snapshot });
     } catch (error) {
       ackFailure(callback, error);
@@ -3728,7 +3782,7 @@ io.on("connection", (socket: Socket) => {
         playerId,
         number: Number(payload.number)
       });
-      const snapshot = await emitRoomUpdate(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { snapshot });
     } catch (error) {
       ackFailure(callback, error);
@@ -3760,7 +3814,7 @@ io.on("connection", (socket: Socket) => {
           playerId,
           ticketsPerPlayer
         });
-        const snapshot = await emitRoomUpdate(roomCode);
+        const snapshot = await emitRoomUpdate(roomCode, playerId);
         ackSuccess(callback, {
           snapshot,
           ticketsPerPlayer,
@@ -3784,7 +3838,7 @@ io.on("connection", (socket: Socket) => {
         playerId,
         type: payload.type
       });
-      const snapshot = await emitRoomUpdate(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { snapshot });
     } catch (error) {
       ackFailure(callback, error);
@@ -3797,7 +3851,11 @@ io.on("connection", (socket: Socket) => {
       const requestedRoomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
       const roomCode = resolveCanonicalRoomCodeOrThrow(requestedRoomCode);
       assertUserCanAccessRoom(user, roomCode);
-      const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
+      const roomSnapshot = engine.getRoomSnapshot(roomCode);
+      const existingPlayer = findPlayerInRoomByWallet(roomSnapshot, user.walletId);
+      const snapshot = existingPlayer
+        ? await buildRoomUpdatePayloadForPlayer(roomCode, existingPlayer.id)
+        : buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
       ackSuccess(callback, { snapshot });
     } catch (error) {
       ackFailure(callback, error);
