@@ -21,6 +21,7 @@ public class GameManager : MonoBehaviour
     [Header("Testing Speed")]
     [SerializeField] private bool increaseGameSpeedInTesting = true;
     [SerializeField] [Range(1f, 5f)] private float testingSpeedMultiplier = 3.5f;
+    [SerializeField] private bool hidePerCardWinLabels = true;
 
     public int extraBallTotal;
     public NumberGenerator numberGenerator;
@@ -78,6 +79,7 @@ public class GameManager : MonoBehaviour
         SetCreditBalance(DefaultStartingCredit);
         ApplyBetLevel(betlevel);
         ResetRoundTracking(clearDisplayedWinnings: true);
+        SetPerCardWinLabelVisibility(!hidePerCardWinLabels);
     }
 
     private void OnDestroy()
@@ -130,7 +132,11 @@ public class GameManager : MonoBehaviour
         {
             if (CardBets[i] != null)
             {
-                CardBets[i].text = "= " + (currentBet / BetStep).ToString();
+                CardBets[i].enableAutoSizing = true;
+                CardBets[i].fontSizeMin = 18;
+                CardBets[i].fontSizeMax = 36;
+                CardBets[i].alignment = TextAlignmentOptions.Center;
+                CardBets[i].text = FormatCardStakeLabel();
             }
         }
 
@@ -358,6 +364,31 @@ public class GameManager : MonoBehaviour
         }
 
         displayCardWinPoints[cardNo].text = $"WIN - {cardWin[cardNo]}";
+    }
+
+    private string FormatCardStakeLabel()
+    {
+        int cardCount = Mathf.Max(1, CardBets != null && CardBets.Count > 0 ? CardBets.Count : DefaultCardCount);
+        int perCardStake = Mathf.Max(0, currentBet / cardCount);
+        return $"Innsats - {perCardStake} kr";
+    }
+
+    private void SetPerCardWinLabelVisibility(bool visible)
+    {
+        if (displayCardWinPoints == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < displayCardWinPoints.Count; i++)
+        {
+            if (displayCardWinPoints[i] == null)
+            {
+                continue;
+            }
+
+            displayCardWinPoints[i].gameObject.SetActive(visible);
+        }
     }
 
     private void ApplyTestingSpeedIfEnabled()
