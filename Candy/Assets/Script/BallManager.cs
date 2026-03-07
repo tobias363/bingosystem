@@ -5,6 +5,7 @@ using DG.Tweening;
 using TMPro;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
+using System.Text;
 
 public class BallManager : MonoBehaviour
 {
@@ -34,6 +35,7 @@ public class BallManager : MonoBehaviour
     private const float BigBallNumberYOffset = 4f;
     private const float BigBallNumberFontMin = 40f;
     private const float BigBallNumberFontMax = 62f;
+    private const string NumberedBallSpriteResourcesPath = "CandyBallSprites";
 
     public NumberGenerator numberGenerator;
     public List<GameObject> balls;
@@ -64,6 +66,7 @@ public class BallManager : MonoBehaviour
     private readonly List<TextMeshProUGUI> cachedBallTexts = new List<TextMeshProUGUI>();
     private readonly Dictionary<GameObject, TextMeshProUGUI> cachedExtraBallTexts = new Dictionary<GameObject, TextMeshProUGUI>();
     private readonly Dictionary<GameObject, Coroutine> extraBallMoveRoutines = new Dictionary<GameObject, Coroutine>();
+    private readonly Dictionary<int, Sprite> numberedBallSprites = new Dictionary<int, Sprite>();
     private Coroutine ballAnimationRoutine;
     private Coroutine extraBallBatchRoutine;
     private TextMeshProUGUI cachedBigBallText;
@@ -71,6 +74,7 @@ public class BallManager : MonoBehaviour
     private readonly Dictionary<string, GameObject> cachedOverlayObjects = new Dictionary<string, GameObject>();
     private float appliedGlassAnimatorSpeed = -1f;
     private CandyBallViewBindingSet explicitViewBindings;
+    private bool numberedBallSpritesLoaded;
 
     private void OnEnable()
     {
@@ -88,6 +92,7 @@ public class BallManager : MonoBehaviour
         CacheExtraBallTextRefs();
         cachedBigBallText = ResolveBigBallText();
         CacheGlassAnimator();
+        EnsureNumberedBallSpritesLoaded();
         ApplyGlassAnimationSpeed(force: true);
 
         SetActiveIfChanged(ballOutMachineAnimParent, true);
@@ -105,6 +110,7 @@ public class BallManager : MonoBehaviour
     {
         HideGameplayOverlays();
         // Ensure speed sync after all Awake calls and scene activation.
+        EnsureNumberedBallSpritesLoaded();
         ApplyGlassAnimationSpeed(force: true);
     }
 
@@ -199,6 +205,143 @@ public class BallManager : MonoBehaviour
                 numberText.overflowMode = TextOverflowModes.Overflow;
             }
         }
+    }
+
+    private void EnsureNumberedBallSpritesLoaded()
+    {
+        if (numberedBallSpritesLoaded)
+        {
+            return;
+        }
+
+        numberedBallSpritesLoaded = true;
+        numberedBallSprites.Clear();
+
+        Sprite[] sprites = Resources.LoadAll<Sprite>(NumberedBallSpriteResourcesPath);
+        if (sprites == null || sprites.Length == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < sprites.Length; i++)
+        {
+            Sprite sprite = sprites[i];
+            if (sprite == null)
+            {
+                continue;
+            }
+
+            if (!TryExtractBallNumber(sprite.name, out int ballNumber))
+            {
+                continue;
+            }
+
+            if (!numberedBallSprites.ContainsKey(ballNumber))
+            {
+                numberedBallSprites.Add(ballNumber, sprite);
+            }
+        }
+    }
+
+    private static bool TryExtractBallNumber(string spriteName, out int ballNumber)
+    {
+        ballNumber = 0;
+        if (string.IsNullOrWhiteSpace(spriteName))
+        {
+            return false;
+        }
+
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < spriteName.Length; i++)
+        {
+            char current = spriteName[i];
+            if (char.IsDigit(current))
+            {
+                builder.Append(current);
+                continue;
+            }
+
+            if (builder.Length > 0)
+            {
+                break;
+            }
+        }
+
+        if (builder.Length == 0)
+        {
+            return false;
+        }
+
+        return int.TryParse(builder.ToString(), out ballNumber);
+    }
+
+    private bool TryGetNumberedBallSprite(int ballNumber, out Sprite sprite)
+    {
+        EnsureNumberedBallSpritesLoaded();
+        return numberedBallSprites.TryGetValue(ballNumber, out sprite) && sprite != null;
+    }
+
+    private static Sprite ResolveFallbackBallSprite(List<Sprite> sprites, int ballNumber)
+    {
+        if (sprites == null || sprites.Count == 0)
+        {
+            return null;
+        }
+
+        int index = Mathf.Abs(ballNumber - 1) % sprites.Count;
+        return sprites[index];
+    }
+
+    private static void SetBallNumberVisibility(TextMeshProUGUI target, bool visible)
+    {
+        if (target == null || target.gameObject == null)
+        {
+            return;
+        }
+
+        if (target.gameObject.activeSelf != visible)
+        {
+            target.gameObject.SetActive(visible);
+        }
+    }
+
+    private void ApplyBallVisual(
+        Image targetImage,
+        TextMeshProUGUI targetText,
+        int ballNumber,
+        TMP_FontAsset numberFallbackFont,
+        List<Sprite> fallbackSpriteSet = null,
+        Sprite fallbackSprite = null)
+    {
+        if (TryGetNumberedBallSprite(ballNumber, out Sprite numberedSprite))
+        {
+            if (targetImage != null)
+            {
+                targetImage.sprite = numberedSprite;
+                targetImage.preserveAspect = true;
+            }
+
+            if (targetText != null)
+            {
+                targetText.text = string.Empty;
+            }
+
+            SetBallNumberVisibility(targetText, false);
+            return;
+        }
+
+        Sprite resolvedFallbackSprite = fallbackSprite != null
+            ? fallbackSprite
+            : ResolveFallbackBallSprite(fallbackSpriteSet, ballNumber);
+
+        if (targetImage != null && resolvedFallbackSprite != null)
+        {
+            targetImage.sprite = resolvedFallbackSprite;
+            targetImage.preserveAspect = true;
+        }
+
+        SetBallNumberVisibility(targetText, true);
+        RealtimeTextStyleUtils.ApplyBallNumber(targetText, ballNumber.ToString(), numberFallbackFont);
     }
 
     private static Vector2 GetBallSlotAnchoredPosition(int slotIndex)
@@ -716,18 +859,9 @@ public class BallManager : MonoBehaviour
         if (bigBallImg != null)
         {
             SetActiveIfChanged(bigBallImg.gameObject, true);
-            int bigSpriteIndex = (bigBallSprite != null && bigBallSprite.Count > 0) ? Random.Range(0, bigBallSprite.Count) : -1;
-            if (bigSpriteIndex >= 0)
-            {
-                bigBallImg.sprite = bigBallSprite[bigSpriteIndex];
-            }
-
             TextMeshProUGUI bigBallText = ResolveBigBallText();
-            if (bigBallText != null)
-            {
-                RealtimeTextStyleUtils.ApplyBallNumber(bigBallText, drawnNumber.ToString(), numberFallbackFont);
-            }
-            else
+            ApplyBallVisual(bigBallImg, bigBallText, drawnNumber, numberFallbackFont, bigBallSprite);
+            if (bigBallText == null)
             {
                 APIManager.instance?.ReportRealtimeRenderMismatch("draw received but no big ball text target", asError: true);
             }
@@ -756,26 +890,12 @@ public class BallManager : MonoBehaviour
 
         SetActiveIfChanged(ballObject, true);
 
-        int spriteIndex = (ballSprite != null && ballSprite.Count > 0) ? Random.Range(0, ballSprite.Count) : -1;
-        if (spriteIndex >= 0)
-        {
-            Image img = slotIndex < cachedBallImages.Count ? cachedBallImages[slotIndex] : ballObject.GetComponent<Image>();
-            if (img != null)
-            {
-                img.sprite = ballSprite[spriteIndex];
-            }
-        }
-
+        Image img = slotIndex < cachedBallImages.Count ? cachedBallImages[slotIndex] : ballObject.GetComponent<Image>();
         TextMeshProUGUI tmp = slotIndex < cachedBallTexts.Count ? cachedBallTexts[slotIndex] : null;
         TextMeshProUGUI bigBallLabel = ResolveBigBallText();
+        ApplyBallVisual(img, tmp, drawnNumber, numberFallbackFont, ballSprite);
         if (tmp != null)
         {
-            if (!tmp.gameObject.activeSelf)
-            {
-                tmp.gameObject.SetActive(true);
-            }
-
-            RealtimeTextStyleUtils.ApplyBallNumber(tmp, drawnNumber.ToString(), numberFallbackFont);
             APIManager.instance?.RegisterRealtimeBallRendered(
                 drawnNumber,
                 slotIndex,
@@ -888,16 +1008,20 @@ public class BallManager : MonoBehaviour
         int count = Mathf.Min(balls.Count, ballIndexList.Count);
         for(int i = 0; i < count; i++)
         {
-            int ballSpriteIndex = Random.Range(0, ballSprite.Count);
-            bigBallSpriteSequence.Add(bigBallSprite[ballSpriteIndex]);
-
             TextMeshProUGUI numberText = i < cachedBallTexts.Count ? cachedBallTexts[i] : null;
-            RealtimeTextStyleUtils.ApplyBallNumber(numberText, ballIndexList[i].ToString(), numberFallbackFont);
-
             Image img = i < cachedBallImages.Count ? cachedBallImages[i] : null;
-            if (img != null)
+            int ballNumber = ballIndexList[i];
+            ApplyBallVisual(img, numberText, ballNumber, numberFallbackFont, ballSprite);
+
+            Sprite bigSprite = null;
+            if (!TryGetNumberedBallSprite(ballNumber, out bigSprite))
             {
-                img.sprite = ballSprite[ballSpriteIndex];
+                bigSprite = ResolveFallbackBallSprite(bigBallSprite, ballNumber);
+            }
+
+            if (bigSprite != null)
+            {
+                bigBallSpriteSequence.Add(bigSprite);
             }
         }
     }
@@ -918,8 +1042,13 @@ public class BallManager : MonoBehaviour
         int count = Mathf.Min(balls.Count, ballIndexList.Count);
         for (int i = 0; i < count; i++)
         {
-            bigBallImg.sprite = bigBallSpriteSequence[i];
-            RealtimeTextStyleUtils.ApplyBallNumber(bigBallText, ballIndexList[i].ToString(), numberFallbackFont);
+            ApplyBallVisual(
+                bigBallImg,
+                bigBallText,
+                ballIndexList[i],
+                numberFallbackFont,
+                bigBallSprite,
+                i < bigBallSpriteSequence.Count ? bigBallSpriteSequence[i] : null);
 
 
             Transform ballTransform = i < cachedBallTransforms.Count ? cachedBallTransforms[i] : balls[i].transform;
@@ -948,7 +1077,6 @@ public class BallManager : MonoBehaviour
         TMP_FontAsset numberFallbackFont = RealtimeTextStyleUtils.ResolveFallbackFont();
         if(showExtraBall){
             //Debug.Log("StartExtrBallAnim");
-            bigBallImg.sprite = extraBallSprite;
             TextMeshProUGUI bigBallText = ResolveBigBallText();
             if (bigBallText != null)
             {
@@ -956,17 +1084,19 @@ public class BallManager : MonoBehaviour
             }
             for (int i = 0; i < ballIndexList.Count-30; i++)
             {
-                RealtimeTextStyleUtils.ApplyBallNumber(bigBallText, ballIndexList[30 + i].ToString(), numberFallbackFont);
+                int ballNumber = ballIndexList[30 + i];
+                ApplyBallVisual(bigBallImg, bigBallText, ballNumber, numberFallbackFont, null, extraBallSprite);
                 if (bigBallText != null)
                 {
                     bigBallText.color = Color.white;
                 }
                 if (!extraBalls[i].activeInHierarchy)
                 {
+                    Image extraBallImage = extraBalls[i] != null ? extraBalls[i].GetComponent<Image>() : null;
                     TextMeshProUGUI extraBallText = cachedExtraBallTexts.TryGetValue(extraBalls[i], out TextMeshProUGUI cachedText)
                         ? cachedText
                         : null;
-                    RealtimeTextStyleUtils.ApplyBallNumber(extraBallText, ballIndexList[30 + i].ToString(), numberFallbackFont); //NumberGenerator.generatedNO[30+i]
+                    ApplyBallVisual(extraBallImage, extraBallText, ballNumber, numberFallbackFont, null, extraBallSprite);
                     //extraBalls[i].transform.GetChild(0).GetComponent<TextMeshProUGUI>().text = ballIndexList[ballIndexList.Count-1].ToString(); //NumberGenerator.generatedNO[30+i]
 
                     extraBalls[i].transform.localPosition = new Vector2(0, 100);
@@ -990,6 +1120,7 @@ public class BallManager : MonoBehaviour
         TextMeshProUGUI resetBigBallText = ResolveBigBallText();
         if (resetBigBallText != null)
         {
+            SetBallNumberVisibility(resetBigBallText, true);
             resetBigBallText.color = Color.black;
         }
         numberGenerator?.NotifyLegacyFreeExtraBallsCompleted();
@@ -1005,8 +1136,11 @@ public class BallManager : MonoBehaviour
             if (instantiatedExtraBall.Count == 0 || instantiatedExtraBall.Count-1 < index)
             {
                 GameObject g = Instantiate(ballPrefab, extraBallParent);
-                g.GetComponent<Image>().sprite = ballSprite[Random.Range(0, ballSprite.Count)];
                 CacheExtraBallText(g);
+                Image extraBallImage = g.GetComponent<Image>();
+                TextMeshProUGUI extraBallText = cachedExtraBallTexts.TryGetValue(g, out TextMeshProUGUI cachedText) ? cachedText : null;
+                int ballNumber = ballIndexList != null && ballIndexList.Count > 0 ? ballIndexList[ballIndexList.Count - 1] : 0;
+                ApplyBallVisual(extraBallImage, extraBallText, ballNumber, RealtimeTextStyleUtils.ResolveFallbackFont(), ballSprite);
                 StartExtraBallMoveRoutine(g, index);
                 instantiatedExtraBall.Add(g);
             }
@@ -1062,7 +1196,9 @@ public class BallManager : MonoBehaviour
         TMP_FontAsset numberFallbackFont = RealtimeTextStyleUtils.ResolveFallbackFont();
         CacheExtraBallText(g);
         TextMeshProUGUI extraBallText = cachedExtraBallTexts.TryGetValue(g, out TextMeshProUGUI cachedText) ? cachedText : null;
-        RealtimeTextStyleUtils.ApplyBallNumber(extraBallText, ballIndexList[ballIndexList.Count - 1].ToString(), numberFallbackFont);
+        Image extraBallImage = g != null ? g.GetComponent<Image>() : null;
+        int ballNumber = ballIndexList[ballIndexList.Count - 1];
+        ApplyBallVisual(extraBallImage, extraBallText, ballNumber, numberFallbackFont, ballSprite);
         g.transform.localPosition = new Vector2(0, 150);
         SetActiveIfChanged(g, true);
 
