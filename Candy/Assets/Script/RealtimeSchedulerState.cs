@@ -15,6 +15,7 @@ public sealed class RealtimeSchedulerState
     public int ArmedPlayerCount { get; private set; }
     public HashSet<string> ArmedPlayerIds { get; } = new();
     public int DrawCapacity { get; private set; } = 30;
+    public bool LiveRoundsIndependentOfBet { get; private set; }
     public bool IsGameRunning =>
         string.Equals(LatestGameStatus, "RUNNING", StringComparison.OrdinalIgnoreCase);
 
@@ -29,6 +30,7 @@ public sealed class RealtimeSchedulerState
         ArmedPlayerCount = 0;
         ArmedPlayerIds.Clear();
         DrawCapacity = 30;
+        LiveRoundsIndependentOfBet = false;
     }
 
     public void ApplySchedulerSnapshot(JSONNode snapshot)
@@ -41,6 +43,7 @@ public sealed class RealtimeSchedulerState
         ArmedPlayerCount = 0;
         ArmedPlayerIds.Clear();
         DrawCapacity = 30;
+        LiveRoundsIndependentOfBet = false;
 
         if (snapshot == null || snapshot.IsNull)
         {
@@ -60,6 +63,7 @@ public sealed class RealtimeSchedulerState
         }
 
         SchedulerEnabled = scheduler["enabled"].AsBool;
+        LiveRoundsIndependentOfBet = scheduler["liveRoundsIndependentOfBet"].AsBool;
         CanStartNow = scheduler["canStartNow"].AsBool;
         MinPlayers = Math.Max(1, scheduler["minPlayers"].AsInt);
         PlayerCount = Math.Max(PlayerCount, scheduler["playerCount"].AsInt);
@@ -114,7 +118,7 @@ public sealed class RealtimeSchedulerState
         int minutes = remainingSeconds / 60;
         int seconds = remainingSeconds % 60;
 
-        if (PlayerCount < MinPlayers)
+        if (!LiveRoundsIndependentOfBet && PlayerCount < MinPlayers)
         {
             return $"Venter på spillere {PlayerCount}/{MinPlayers}\n{minutes:00}:{seconds:00}";
         }

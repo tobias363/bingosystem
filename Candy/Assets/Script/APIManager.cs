@@ -201,6 +201,11 @@ public partial class APIManager : MonoBehaviour
     public string ActivePlayerId => activePlayerId;
     public string ActiveHallId => hallId;
     public int CurrentTicketPage => currentTicketPage;
+    public bool IsRealtimeRoundRunning => useRealtimeBackend && realtimeScheduler.IsGameRunning;
+    public bool IsRealtimeRerollWindowOpen =>
+        useRealtimeBackend &&
+        !realtimeScheduler.IsGameRunning &&
+        !string.Equals(realtimeScheduler.LatestGameStatus, "ENDED", StringComparison.OrdinalIgnoreCase);
 
     public int TicketPageCount
     {
@@ -210,6 +215,32 @@ public partial class APIManager : MonoBehaviour
             int totalTickets = Mathf.Max(1, activeTicketSets != null ? activeTicketSets.Count : 0);
             return Mathf.Max(1, Mathf.CeilToInt((float)totalTickets / cardSlots));
         }
+    }
+
+    public int GetRealtimeVisibleCardCount()
+    {
+        if (!useRealtimeBackend)
+        {
+            return 0;
+        }
+
+        return Mathf.Clamp(Mathf.Max(1, realtimeTicketsPerPlayer), 1, Mathf.Max(1, GetCardSlotsCount()));
+    }
+
+    public int GetRealtimeTicketIndexForVisibleCard(int visibleCardIndex)
+    {
+        if (visibleCardIndex < 0)
+        {
+            return -1;
+        }
+
+        int visibleCardCount = GetRealtimeVisibleCardCount();
+        if (visibleCardIndex >= visibleCardCount)
+        {
+            return -1;
+        }
+
+        return currentTicketPage * Mathf.Max(1, GetCardSlotsCount()) + visibleCardIndex;
     }
 
     void Awake()

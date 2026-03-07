@@ -24,10 +24,39 @@ public partial class APIManager
             return false;
         }
 
-        return !realtimeScheduler.IsGameRunning;
+        return
+            !realtimeScheduler.IsGameRunning &&
+            !string.Equals(realtimeScheduler.LatestGameStatus, "ENDED", StringComparison.OrdinalIgnoreCase);
     }
 
     public void RequestRealtimeTicketReroll()
+    {
+        RequestRealtimeTicketRerollInternal(null);
+    }
+
+    public bool CanRequestRealtimeTicketRerollForVisibleCard(int visibleCardIndex)
+    {
+        if (!CanRequestRealtimeTicketReroll())
+        {
+            return false;
+        }
+
+        return GetRealtimeTicketIndexForVisibleCard(visibleCardIndex) >= 0;
+    }
+
+    public void RequestRealtimeTicketRerollForVisibleCard(int visibleCardIndex)
+    {
+        int ticketIndex = GetRealtimeTicketIndexForVisibleCard(visibleCardIndex);
+        if (ticketIndex < 0)
+        {
+            Debug.LogWarning($"[APIManager] Ugyldig visibleCardIndex for reroll: {visibleCardIndex}");
+            return;
+        }
+
+        RequestRealtimeTicketRerollInternal(ticketIndex);
+    }
+
+    private void RequestRealtimeTicketRerollInternal(int? ticketIndex)
     {
         if (!useRealtimeBackend)
         {
@@ -50,7 +79,7 @@ public partial class APIManager
 
         realtimeRerollRequestPending = true;
         int ticketsPerPlayer = Mathf.Clamp(realtimeTicketsPerPlayer, 1, 5);
-        realtimeClient.RerollTickets(activeRoomCode, activePlayerId, ticketsPerPlayer, (ack) =>
+        realtimeClient.RerollTickets(activeRoomCode, activePlayerId, ticketsPerPlayer, ticketIndex, (ack) =>
         {
             realtimeRerollRequestPending = false;
             if (ack == null)

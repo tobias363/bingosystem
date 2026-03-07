@@ -88,6 +88,7 @@ interface MarkPayload extends RoomActionPayload {
 
 interface TicketRerollPayload extends RoomActionPayload {
   ticketsPerPlayer?: number;
+  ticketIndex?: number;
 }
 
 interface ClaimPayload extends RoomActionPayload {
@@ -305,6 +306,7 @@ const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
 let candyManiaSettingsEffectiveFromMs = Date.now();
 let pendingCandyManiaSettingsUpdate: PendingCandyManiaSettingsUpdate | null = null;
 const schedulerTickMs = parsePositiveIntEnv(process.env.AUTO_ROUND_SCHEDULER_TICK_MS, 250);
+const candyEndedRoundCleanupDelayMs = 5000;
 const dailyReportJobEnabled = parseBooleanEnv(process.env.DAILY_REPORT_JOB_ENABLED, true);
 const dailyReportJobIntervalMs = Math.max(
   60_000,
@@ -1437,13 +1439,13 @@ function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<
   const armedPlayerCount = armedPlayerIds.length;
   const canStartNow =
     runtimeCandyManiaSettings.autoRoundStartEnabled &&
-    snapshot.currentGame?.status !== "RUNNING" &&
-    snapshot.players.length >= runtimeCandyManiaSettings.autoRoundMinPlayers &&
+    snapshot.currentGame == null &&
     millisUntilNextStart !== null &&
     millisUntilNextStart <= Math.max(1000, schedulerTickMs * 2);
 
   return {
     enabled: runtimeCandyManiaSettings.autoRoundStartEnabled,
+    liveRoundsIndependentOfBet: true,
     intervalMs: runtimeCandyManiaSettings.autoRoundStartIntervalMs,
     minPlayers: runtimeCandyManiaSettings.autoRoundMinPlayers,
     playerCount: snapshot.players.length,
@@ -1613,6 +1615,50 @@ async function applyPendingCandyManiaSettingsIfDue(
   return true;
 }
 
+function isEndedRoundCleanupWindowActive(snapshot: RoomSnapshot, nowMs: number): boolean {
+  const endedAtRaw = snapshot.currentGame?.endedAt;
+  if (snapshot.currentGame?.status !== "ENDED" || typeof endedAtRaw !== "string" || !endedAtRaw.trim()) {
+    return false;
+  }
+
+  const endedAtMs = Date.parse(endedAtRaw);
+  if (!Number.isFinite(endedAtMs)) {
+    return false;
+  }
+
+  return nowMs < endedAtMs + candyEndedRoundCleanupDelayMs;
+}
+
+async function processEndedRoundCleanup(
+  summary: ReturnType<typeof engine.listRoomSummaries>[number],
+  now: number
+): Promise<boolean> {
+  if (summary.gameStatus !== "ENDED") {
+    return false;
+  }
+
+  const roomCode = summary.code;
+  let handled = false;
+
+  await withRoomSchedulerLock(roomCode, async () => {
+    const latestSnapshot = engine.getRoomSnapshot(roomCode);
+    if (latestSnapshot.currentGame?.status !== "ENDED") {
+      return;
+    }
+
+    handled = true;
+    if (isEndedRoundCleanupWindowActive(latestSnapshot, now)) {
+      return;
+    }
+
+    if (engine.archiveEndedGameIfReady(roomCode, now, candyEndedRoundCleanupDelayMs)) {
+      await emitRoomUpdate(roomCode);
+    }
+  });
+
+  return handled;
+}
+
 async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummaries>[number], now: number): Promise<void> {
   const roomCode = summary.code;
   if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
@@ -1629,28 +1675,17 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
     return;
   }
 
-  if (summary.playerCount < runtimeCandyManiaSettings.autoRoundMinPlayers) {
-    if (scheduledStartAt <= now) {
-      setNextRoundForRoom(roomCode, now);
-    }
-    return;
-  }
-
   if (now < scheduledStartAt) {
     return;
   }
 
   await withRoomSchedulerLock(roomCode, async () => {
     const latestSnapshot = engine.getRoomSnapshot(roomCode);
-    if (latestSnapshot.currentGame?.status === "RUNNING") {
+    if (latestSnapshot.currentGame != null) {
       setNextRoundForRoom(roomCode, Date.now());
       return;
     }
     const armedPlayerIds = getArmedPlayerIdsForSnapshot(latestSnapshot);
-    if (latestSnapshot.players.length < runtimeCandyManiaSettings.autoRoundMinPlayers) {
-      setNextRoundForRoom(roomCode, Date.now());
-      return;
-    }
 
     try {
       const adaptivePayoutPercent = resolveAdaptivePayoutPercent(summary.hallId);
@@ -1668,7 +1703,8 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
         error instanceof DomainError &&
         (error.code === "PLAYER_ALREADY_IN_RUNNING_GAME" ||
           error.code === "ROUND_START_TOO_SOON" ||
-          error.code === "NOT_ENOUGH_PLAYERS")
+          error.code === "NOT_ENOUGH_PLAYERS" ||
+          error.code === "ROUND_CLEANUP_PENDING")
       ) {
         setNextRoundForRoom(roomCode, Date.now());
         return;
@@ -1742,6 +1778,10 @@ async function runSchedulerTick(): Promise<void> {
 
     for (const summary of schedulerSummaries) {
       try {
+        const cleanupHandled = await processEndedRoundCleanup(summary, now);
+        if (cleanupHandled) {
+          continue;
+        }
         await processAutoStart(summary, now);
         await processAutoDraw(summary, now);
       } catch (error) {
@@ -2543,12 +2583,6 @@ app.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
     assertTicketsPerPlayerWithinHallLimit(ticketsPerPlayer, hallGameConfig.maxTicketsPerPlayer);
     const beforeStartSnapshot = engine.getRoomSnapshot(roomCode);
     const armedPlayerIds = getArmedPlayerIdsForSnapshot(beforeStartSnapshot);
-    if (beforeStartSnapshot.players.length < runtimeCandyManiaSettings.autoRoundMinPlayers) {
-      throw new DomainError(
-        "NOT_ENOUGH_PLAYERS",
-        `For faa spillere i rommet (${beforeStartSnapshot.players.length}/${runtimeCandyManiaSettings.autoRoundMinPlayers}).`
-      );
-    }
     const adaptivePayoutPercent = resolveAdaptivePayoutPercent(beforeStartSnapshot.hallId);
     await engine.startGame({
       roomCode,
@@ -3643,12 +3677,6 @@ io.on("connection", (socket: Socket) => {
       assertTicketsPerPlayerWithinHallLimit(ticketsPerPlayer, hallGameConfig.maxTicketsPerPlayer);
       const roomSnapshotForPayout = engine.getRoomSnapshot(roomCode);
       const armedPlayerIds = getArmedPlayerIdsForSnapshot(roomSnapshotForPayout);
-      if (roomSnapshotForPayout.players.length < runtimeCandyManiaSettings.autoRoundMinPlayers) {
-        throw new DomainError(
-          "NOT_ENOUGH_PLAYERS",
-          `For faa spillere i rommet (${roomSnapshotForPayout.players.length}/${runtimeCandyManiaSettings.autoRoundMinPlayers}).`
-        );
-      }
       const adaptivePayoutPercent = resolveAdaptivePayoutPercent(roomSnapshotForPayout.hallId);
       await engine.startGame({
         roomCode,
@@ -3739,7 +3767,12 @@ io.on("connection", (socket: Socket) => {
     "ticket:reroll",
     async (
       payload: TicketRerollPayload,
-      callback: (response: AckResponse<{ snapshot: RoomSnapshot; ticketsPerPlayer: number; ticketCount: number }>) => void
+      callback: (response: AckResponse<{
+        snapshot: RoomSnapshot;
+        ticketsPerPlayer: number;
+        ticketCount: number;
+        rerolledTicketIndexes: number[];
+      }>) => void
     ) => {
       try {
         const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
@@ -3755,16 +3788,21 @@ io.on("connection", (socket: Socket) => {
           Math.min(hallGameConfig.maxTicketsPerPlayer, runtimeCandyManiaSettings.autoRoundTicketsPerPlayer);
         assertTicketsPerPlayerWithinHallLimit(ticketsPerPlayer, hallGameConfig.maxTicketsPerPlayer);
 
-        const rerolledTickets = await engine.rerollTicketsForPlayer({
+        const rerollResult = await engine.rerollTicketsForPlayer({
           roomCode,
           playerId,
-          ticketsPerPlayer
+          ticketsPerPlayer,
+          ticketIndex:
+            payload?.ticketIndex === undefined || payload?.ticketIndex === null
+              ? undefined
+              : Math.trunc(Number(payload.ticketIndex))
         });
         const snapshot = await emitRoomUpdate(roomCode);
         ackSuccess(callback, {
           snapshot,
           ticketsPerPlayer,
-          ticketCount: rerolledTickets.length
+          ticketCount: rerollResult.tickets.length,
+          rerolledTicketIndexes: rerollResult.rerolledTicketIndexes
         });
       } catch (error) {
         ackFailure(callback, error);

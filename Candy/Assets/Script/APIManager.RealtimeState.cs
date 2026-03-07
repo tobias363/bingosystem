@@ -64,6 +64,11 @@ public partial class APIManager
         JSONNode currentGame = snapshot["currentGame"];
         if (currentGame == null || currentGame.IsNull)
         {
+            string previousGameId = activeGameId;
+            bool endedCleanupCompleted =
+                !string.IsNullOrWhiteSpace(previousGameId) &&
+                string.Equals(delayedOverlayResetGameId, previousGameId, StringComparison.Ordinal);
+
             realtimeScheduler.SetCurrentGameStatus("NONE");
             if (!string.IsNullOrWhiteSpace(activeGameId))
             {
@@ -83,7 +88,24 @@ public partial class APIManager
             processedDrawCount = 0;
             currentTicketPage = 0;
             bool appliedPreRoundTickets = TryApplyPreRoundTicketsFromSnapshot(snapshot);
-            if (!appliedPreRoundTickets)
+            if (appliedPreRoundTickets)
+            {
+                delayedOverlayResetGameId = string.Empty;
+                if (!string.IsNullOrWhiteSpace(previousGameId))
+                {
+                    overlaysClearedForEndedGameId = previousGameId;
+                }
+            }
+            else if (endedCleanupCompleted)
+            {
+                ClearRealtimeTicketCards();
+                activeTicketSets.Clear();
+                cachedStableTicketSets.Clear();
+                realtimeTicketFallbackLogKey = string.Empty;
+                delayedOverlayResetGameId = string.Empty;
+                overlaysClearedForEndedGameId = previousGameId;
+            }
+            else
             {
                 if (preserveTicketNumbersOnTransientSnapshotGaps && activeTicketSets != null && activeTicketSets.Count > 0)
                 {
@@ -127,6 +149,15 @@ public partial class APIManager
             ResetRealtimeBonusState(closeBonusPanel: true, previousGameId: previousGameId);
         }
 
+        if (string.Equals(realtimeScheduler.LatestGameStatus, "ENDED", StringComparison.OrdinalIgnoreCase))
+        {
+            delayedOverlayResetGameId = gameId;
+        }
+        else if (string.Equals(delayedOverlayResetGameId, gameId, StringComparison.Ordinal))
+        {
+            delayedOverlayResetGameId = string.Empty;
+        }
+
         ApplyMyTicketToCards(currentGame);
         ApplyDrawnNumbers(currentGame);
         RefreshRealtimeWinningPatternVisuals(currentGame);
@@ -150,7 +181,7 @@ public partial class APIManager
         }
 
         bool usedFallbackTicketSource = false;
-        if (myTicketsNode == null || myTicketsNode.IsNull)
+        if ((myTicketsNode == null || myTicketsNode.IsNull) && string.IsNullOrWhiteSpace(activePlayerId))
         {
             usedFallbackTicketSource = TryResolveFallbackTicketSource(
                 tickets,
@@ -160,12 +191,20 @@ public partial class APIManager
 
         if (myTicketsNode == null || myTicketsNode.IsNull)
         {
+            ClearRealtimeTicketCards();
+            activeTicketSets.Clear();
+            cachedStableTicketSets.Clear();
+            realtimeTicketFallbackLogKey = string.Empty;
             return;
         }
 
         List<List<int>> ticketSets = RealtimeTicketSetUtils.ExtractTicketSets(myTicketsNode);
         if (ticketSets.Count == 0)
         {
+            ClearRealtimeTicketCards();
+            activeTicketSets.Clear();
+            cachedStableTicketSets.Clear();
+            realtimeTicketFallbackLogKey = string.Empty;
             return;
         }
 
@@ -204,7 +243,7 @@ public partial class APIManager
         }
 
         bool usedFallbackTicketSource = false;
-        if (myTicketsNode == null || myTicketsNode.IsNull)
+        if ((myTicketsNode == null || myTicketsNode.IsNull) && string.IsNullOrWhiteSpace(activePlayerId))
         {
             usedFallbackTicketSource = TryResolveFallbackTicketSource(
                 preRoundTickets,
@@ -236,6 +275,90 @@ public partial class APIManager
         activeTicketSets = RealtimeTicketSetUtils.CloneTicketSets(ticketSets);
         ApplyTicketSetsToCards(activeTicketSets);
         return true;
+    }
+
+    private void ClearRealtimeTicketCards()
+    {
+        NumberGenerator generator = ResolveNumberGenerator();
+        if (generator == null || generator.cardClasses == null)
+        {
+            return;
+        }
+
+        generator.ApplyExplicitRealtimeCardViewBindingsFromComponent();
+        TMP_FontAsset numberFallbackFont = RealtimeTextStyleUtils.ResolveFallbackFont();
+        for (int cardIndex = 0; cardIndex < generator.cardClasses.Length; cardIndex++)
+        {
+            CardClass card = generator.cardClasses[cardIndex];
+            if (card == null)
+            {
+                continue;
+            }
+
+            EnsureRealtimeCardBindings(card);
+            card.numb.Clear();
+            card.selectedPayLineCanBe.Clear();
+            card.paylineindex.Clear();
+
+            for (int i = 0; i < card.payLinePattern.Count; i++)
+            {
+                card.payLinePattern[i] = 0;
+            }
+
+            for (int i = 0; i < 15; i++)
+            {
+                card.numb.Add(0);
+                if (i < card.num_text.Count)
+                {
+                    RealtimeTextStyleUtils.ApplyCardNumber(card.num_text[i], string.Empty, numberFallbackFont);
+                }
+            }
+
+            for (int i = 0; i < card.selectionImg.Count; i++)
+            {
+                SetActiveIfChanged(card.selectionImg[i], false);
+            }
+            for (int i = 0; i < card.missingPatternImg.Count; i++)
+            {
+                SetActiveIfChanged(card.missingPatternImg[i], false);
+            }
+            for (int i = 0; i < card.matchPatternImg.Count; i++)
+            {
+                SetActiveIfChanged(card.matchPatternImg[i], false);
+            }
+            if (card.paylineObj != null)
+            {
+                for (int i = 0; i < card.paylineObj.Count; i++)
+                {
+                    SetActiveIfChanged(card.paylineObj[i], false);
+                }
+            }
+
+            if (card.win != null)
+            {
+                RealtimeTextStyleUtils.ApplyHudText(card.win, "WIN - 0");
+            }
+        }
+
+        GameManager gameManager = GameManager.instance;
+        if (gameManager != null)
+        {
+            if (gameManager.winAmtText != null)
+            {
+                RealtimeTextStyleUtils.ApplyHudText(gameManager.winAmtText, "0");
+            }
+
+            if (gameManager.displayCardWinPoints != null)
+            {
+                for (int i = 0; i < gameManager.displayCardWinPoints.Count; i++)
+                {
+                    if (gameManager.displayCardWinPoints[i] != null)
+                    {
+                        RealtimeTextStyleUtils.ApplyHudText(gameManager.displayCardWinPoints[i], "WIN - 0");
+                    }
+                }
+            }
+        }
     }
 
     private bool TryResolveFallbackTicketSource(
@@ -1686,7 +1809,10 @@ public partial class APIManager
         processedDrawCount = 0;
         currentTicketPage = 0;
         activeTicketSets.Clear();
+        cachedStableTicketSets.Clear();
         realtimeTicketFallbackLogKey = string.Empty;
+        delayedOverlayResetGameId = string.Empty;
+        overlaysClearedForEndedGameId = string.Empty;
         StopRealtimeNearWinBlinking();
         ResetRealtimeBonusState(closeBonusPanel: true);
         nextScheduledRoomStateRefreshAt = -1f;
