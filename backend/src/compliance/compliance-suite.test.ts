@@ -239,7 +239,11 @@ test("compliance: enforces 30s interval between databingo rounds", async () => {
     });
   });
 
-  await withFakeNow(5_000, async () => {
+  await withFakeNow(8_000, async () => {
+    const endedSnapshot = engine.getRoomSnapshot(room.roomCode);
+    const endedAtMs = Date.parse(endedSnapshot.currentGame?.endedAt ?? "");
+    const cleanupNowMs = Number.isFinite(endedAtMs) ? endedAtMs + 5_000 : Date.now() + 5_000;
+    engine.archiveEndedGameIfReady(room.roomCode, cleanupNowMs, 5_000);
     await assert.rejects(
       async () =>
         engine.startGame({

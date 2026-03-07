@@ -1,17 +1,45 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using UnityEngine;
 using TMPro;
+using UnityEngine;
 using UnityEngine.UI;
+
 public class TopperManager : MonoBehaviour
 {
+    private readonly struct ActiveNearWinState
+    {
+        public readonly int PatternIndex;
+        public readonly int HeaderSlotIndex;
+        public readonly int ColIndex;
+        public readonly int CardNo;
+        public readonly int MissingNumber;
+        public readonly int PayoutAmount;
+
+        public ActiveNearWinState(
+            int patternIndex,
+            int headerSlotIndex,
+            int colIndex,
+            int cardNo,
+            int missingNumber,
+            int payoutAmount)
+        {
+            PatternIndex = patternIndex;
+            HeaderSlotIndex = headerSlotIndex;
+            ColIndex = colIndex;
+            CardNo = cardNo;
+            MissingNumber = missingNumber;
+            PayoutAmount = payoutAmount;
+        }
+    }
+
     public List<GameObject> patterns;
     public List<GameObject> matchedPatterns;
     public List<GameObject> missedPattern;
     public List<TextMeshProUGUI> prizes;
 
     [Header("Missing Pattern Blink")]
+    [SerializeField] private Color missingPatternBaseColor = new Color(1f, 0.56f, 0.12f, 0.92f);
     [SerializeField] private Color missingPatternBlinkColor = new Color(1f, 0.87f, 0.22f, 1f);
     [SerializeField] private Color missingPrizeBlinkColor = new Color(1f, 0.92f, 0.3f, 1f);
     [SerializeField] private float missingPatternBlinkInterval = 0.2f;
@@ -22,13 +50,19 @@ public class TopperManager : MonoBehaviour
     [SerializeField] [Min(1)] private int bonusPatternPositionFromRight = 2;
     [SerializeField] private string bonusPatternLabel = "BONUS";
 
-    private readonly Dictionary<(int patternIndex, int colIndex, int cardNo), Coroutine> missingPatternBlinkRoutines =
-        new Dictionary<(int patternIndex, int colIndex, int cardNo), Coroutine>();
+    private readonly Dictionary<(int patternIndex, int colIndex, int cardNo), ActiveNearWinState> activeNearWins =
+        new Dictionary<(int patternIndex, int colIndex, int cardNo), ActiveNearWinState>();
+    private readonly HashSet<int> activeMatchedPatternIndexes = new HashSet<int>();
     private readonly Dictionary<GameObject, TextMeshProUGUI> missingCellLabelCache =
         new Dictionary<GameObject, TextMeshProUGUI>();
     private readonly List<Color> defaultPrizeColors = new List<Color>();
     private readonly List<string> defaultPrizeTexts = new List<string>();
+
+    private Coroutine missingBlinkCoroutine;
+    private Coroutine initialPrizeRefreshCoroutine;
+    private bool missingBlinkVisible;
     private Sprite solidHighlightSprite;
+    private TMP_FontAsset prizeFontOverride;
 
     private void OnEnable()
     {
@@ -39,6 +73,7 @@ public class TopperManager : MonoBehaviour
         CacheDefaultPrizeTexts();
         RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: false);
         ApplyPrizeTypography();
+        RestartInitialPrizeRefresh();
     }
 
     private void OnDisable()
@@ -47,8 +82,10 @@ public class TopperManager : MonoBehaviour
         EventManager.OnMatchedPattern -= ShowMatchedPattern;
         EventManager.OnMissingPattern -= ShowMissingPattern;
 
-        StopAllCoroutines();
-        missingPatternBlinkRoutines.Clear();
+        StopBlinkRoutine();
+        StopInitialPrizeRefresh();
+        activeNearWins.Clear();
+        activeMatchedPatternIndexes.Clear();
         missingCellLabelCache.Clear();
         NumberGenerator.isPrizeMissedByOneCard = false;
     }
@@ -59,8 +96,37 @@ public class TopperManager : MonoBehaviour
         PrepareMissingPatternVisuals();
         RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: true);
         ApplyPrizeTypography();
-        DisableAllMatchedPattern();
-        DisableAllMissedPattern();
+        Reset();
+        RestartInitialPrizeRefresh();
+    }
+
+    private void RestartInitialPrizeRefresh()
+    {
+        StopInitialPrizeRefresh();
+        initialPrizeRefreshCoroutine = StartCoroutine(RefreshPrizeTextsAfterBootstrap());
+    }
+
+    private void StopInitialPrizeRefresh()
+    {
+        if (initialPrizeRefreshCoroutine == null)
+        {
+            return;
+        }
+
+        StopCoroutine(initialPrizeRefreshCoroutine);
+        initialPrizeRefreshCoroutine = null;
+    }
+
+    private IEnumerator RefreshPrizeTextsAfterBootstrap()
+    {
+        for (int pass = 0; pass < 6; pass++)
+        {
+            yield return null;
+            RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: true);
+            ApplyPrizeTypography();
+        }
+
+        initialPrizeRefreshCoroutine = null;
     }
 
     private void ShowAllPatterns()
@@ -70,6 +136,7 @@ public class TopperManager : MonoBehaviour
             ShowPattern(i, true);
         }
     }
+
     private void ShowPattern(int index, bool active)
     {
         if (index < 0 || index >= patterns.Count)
@@ -80,14 +147,6 @@ public class TopperManager : MonoBehaviour
         SetActiveIfChanged(patterns[index], active);
     }
 
-
-    private void DisableAllMatchedPattern()
-    {
-        for (int i = 0; i < matchedPatterns.Count; i++)
-        {
-            SetActiveIfChanged(matchedPatterns[i], false);
-        }
-    }
     private void ShowMatchedPattern(int index, bool active)
     {
         if (index < 0 || index >= matchedPatterns.Count)
@@ -95,159 +154,323 @@ public class TopperManager : MonoBehaviour
             return;
         }
 
-        SetActiveIfChanged(matchedPatterns[index], active);
-        index = GetPatternIndex(index);
-        if (index >= 0 && index < prizes.Count && prizes[index] != null)
-        {
-            prizes[index].color = active ? Color.green : GetDefaultPrizeColor(index);
-        }
-    }
-
-
-    private void DisableAllMissedPattern()
-    {
-        for (int patternIndex = 0; patternIndex < missedPattern.Count; patternIndex++)
-        {
-            foreach (Transform t in missedPattern[patternIndex].transform)
-            {
-                SetActiveIfChanged(t.gameObject, false);
-            }
-
-            if (patternIndex < prizes.Count)
-            {
-                prizes[patternIndex].color = GetDefaultPrizeColor(patternIndex);
-                prizes[patternIndex].text = GetDefaultPrizeText(patternIndex);
-            }
-        }
-    }
-
-
-    private void ShowMissingPattern(int patternIndex, int colIndex, bool active, int missingNumber, int cardNo)
-    {
-        patternIndex = GetPatternIndex(patternIndex);
-
-        if (!TryGetMissingCell(patternIndex, colIndex, out GameObject headerMissingCell))
-        {
-            return;
-        }
-
-        GameObject cardMissingCell = ResolveCardMissingCell(cardNo, colIndex);
-        var key = (patternIndex, colIndex, cardNo);
-
         if (active)
         {
-            StartMissingPatternBlink(key, headerMissingCell, cardMissingCell, missingNumber);
+            activeMatchedPatternIndexes.Add(index);
         }
         else
         {
-            StopMissingPatternBlink(key, headerMissingCell, cardMissingCell);
+            activeMatchedPatternIndexes.Remove(index);
+        }
+
+        RefreshVisualState();
+    }
+
+    private void ShowMissingPattern(int patternIndex, int colIndex, bool active, int missingNumber, int cardNo)
+    {
+        int headerSlotIndex = GetPatternIndex(patternIndex);
+        var key = (patternIndex, colIndex, cardNo);
+
+        if (!active)
+        {
+            activeNearWins.Remove(key);
+            RefreshVisualState();
+            return;
+        }
+
+        int payoutAmount = ResolvePatternPayoutAmount(patternIndex);
+        activeNearWins[key] = new ActiveNearWinState(
+            patternIndex,
+            headerSlotIndex,
+            colIndex,
+            cardNo,
+            missingNumber,
+            payoutAmount);
+
+        RefreshVisualState();
+    }
+
+    private void RefreshVisualState()
+    {
+        ApplyMatchedPatternVisibility();
+
+        if (activeNearWins.Count > 0)
+        {
+            if (missingBlinkCoroutine == null)
+            {
+                missingBlinkVisible = true;
+                missingBlinkCoroutine = StartCoroutine(BlinkMissingPatterns());
+            }
+        }
+        else
+        {
+            StopBlinkRoutine();
+        }
+
+        ApplyNearWinVisuals();
+        NumberGenerator.isPrizeMissedByOneCard = activeNearWins.Count > 0;
+    }
+
+    private IEnumerator BlinkMissingPatterns()
+    {
+        WaitForSeconds wait = new WaitForSeconds(missingPatternBlinkInterval);
+
+        while (activeNearWins.Count > 0)
+        {
+            yield return wait;
+            missingBlinkVisible = !missingBlinkVisible;
+            ApplyNearWinVisuals();
+        }
+
+        missingBlinkCoroutine = null;
+        missingBlinkVisible = false;
+        ApplyNearWinVisuals();
+    }
+
+    private void StopBlinkRoutine()
+    {
+        if (missingBlinkCoroutine != null)
+        {
+            StopCoroutine(missingBlinkCoroutine);
+            missingBlinkCoroutine = null;
+        }
+
+        missingBlinkVisible = false;
+    }
+
+    private void ApplyMatchedPatternVisibility()
+    {
+        for (int i = 0; i < matchedPatterns.Count; i++)
+        {
+            SetActiveIfChanged(matchedPatterns[i], activeMatchedPatternIndexes.Contains(i));
         }
     }
 
-    private void StartMissingPatternBlink(
-        (int patternIndex, int colIndex, int cardNo) key,
-        GameObject headerMissingCell,
-        GameObject cardMissingCell,
-        int missingNumber)
+    private void ApplyNearWinVisuals()
     {
-        UpdatePatternMissingNumberLabel(key.patternIndex, missingNumber);
-        UpdateCardMissingNumberLabel(cardMissingCell, missingNumber);
+        Dictionary<int, ActiveNearWinState> headerNearWinsBySlot = BuildHeaderNearWinsBySlot();
+        Dictionary<(int cardNo, int colIndex), ActiveNearWinState> cardNearWinsByCell = BuildCardNearWinsByCell();
+        bool hasNearWinVisuals = activeNearWins.Count > 0;
+        Color activeNearWinColor = ResolveMissingPatternPulseColor();
 
-        if (missingPatternBlinkRoutines.ContainsKey(key))
+        HideAllHeaderMissingPatternVisuals();
+        HideAllCardMissingPatternVisuals();
+
+        if (hasNearWinVisuals)
+        {
+            foreach (KeyValuePair<int, ActiveNearWinState> entry in headerNearWinsBySlot)
+            {
+                if (TryGetMissingCell(entry.Value.HeaderSlotIndex, entry.Value.ColIndex, out GameObject headerMissingCell))
+                {
+                    ConfigureHeaderMissingCell(headerMissingCell, activeNearWinColor);
+                    SetActiveIfChanged(headerMissingCell, true);
+                }
+            }
+
+            foreach (KeyValuePair<(int cardNo, int colIndex), ActiveNearWinState> entry in cardNearWinsByCell)
+            {
+                GameObject cardMissingCell = ResolveCardMissingCell(entry.Value.CardNo, entry.Value.ColIndex);
+                if (cardMissingCell == null)
+                {
+                    continue;
+                }
+
+                ConfigureCardMissingCell(cardMissingCell, entry.Value, activeNearWinColor);
+                SetActiveIfChanged(cardMissingCell, true);
+            }
+        }
+
+        ApplyPrizePresentation(headerNearWinsBySlot, hasNearWinVisuals && missingBlinkVisible);
+    }
+
+    private Dictionary<int, ActiveNearWinState> BuildHeaderNearWinsBySlot()
+    {
+        Dictionary<int, ActiveNearWinState> headerNearWinsBySlot = new Dictionary<int, ActiveNearWinState>();
+        foreach (ActiveNearWinState state in activeNearWins.Values)
+        {
+            if (state.HeaderSlotIndex < 0 || state.HeaderSlotIndex >= missedPattern.Count)
+            {
+                continue;
+            }
+
+            if (HasMatchedPatternInSlot(state.HeaderSlotIndex))
+            {
+                continue;
+            }
+
+            if (!headerNearWinsBySlot.TryGetValue(state.HeaderSlotIndex, out ActiveNearWinState currentState) ||
+                IsBetterNearWinCandidate(state, currentState))
+            {
+                headerNearWinsBySlot[state.HeaderSlotIndex] = state;
+            }
+        }
+
+        return headerNearWinsBySlot;
+    }
+
+    private Dictionary<(int cardNo, int colIndex), ActiveNearWinState> BuildCardNearWinsByCell()
+    {
+        Dictionary<(int cardNo, int colIndex), ActiveNearWinState> cardNearWinsByCell =
+            new Dictionary<(int cardNo, int colIndex), ActiveNearWinState>();
+
+        foreach (ActiveNearWinState state in activeNearWins.Values)
+        {
+            if (state.CardNo < 0 || activeMatchedPatternIndexes.Contains(state.PatternIndex))
+            {
+                continue;
+            }
+
+            var key = (state.CardNo, state.ColIndex);
+            if (!cardNearWinsByCell.TryGetValue(key, out ActiveNearWinState currentState) ||
+                IsBetterNearWinCandidate(state, currentState))
+            {
+                cardNearWinsByCell[key] = state;
+            }
+        }
+
+        return cardNearWinsByCell;
+    }
+
+    private bool IsBetterNearWinCandidate(ActiveNearWinState candidate, ActiveNearWinState current)
+    {
+        if (candidate.PayoutAmount != current.PayoutAmount)
+        {
+            return candidate.PayoutAmount > current.PayoutAmount;
+        }
+
+        if (candidate.PatternIndex != current.PatternIndex)
+        {
+            return candidate.PatternIndex < current.PatternIndex;
+        }
+
+        if (candidate.CardNo != current.CardNo)
+        {
+            return candidate.CardNo < current.CardNo;
+        }
+
+        return candidate.ColIndex < current.ColIndex;
+    }
+
+    private bool HasMatchedPatternInSlot(int slotIndex)
+    {
+        foreach (int matchedPatternIndex in activeMatchedPatternIndexes)
+        {
+            if (GetPatternIndex(matchedPatternIndex) == slotIndex)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void HideAllHeaderMissingPatternVisuals()
+    {
+        for (int patternIndex = 0; patternIndex < missedPattern.Count; patternIndex++)
+        {
+            GameObject patternObject = missedPattern[patternIndex];
+            if (patternObject == null)
+            {
+                continue;
+            }
+
+            foreach (Transform child in patternObject.transform)
+            {
+                SetActiveIfChanged(child.gameObject, false);
+            }
+        }
+    }
+
+    private void HideAllCardMissingPatternVisuals()
+    {
+        CardClass[] cards = GameManager.instance?.numberGenerator?.cardClasses;
+        if (cards == null)
         {
             return;
         }
 
-        if (headerMissingCell != null)
+        for (int cardIndex = 0; cardIndex < cards.Length; cardIndex++)
         {
-            SetActiveIfChanged(headerMissingCell, false);
-        }
+            CardClass card = cards[cardIndex];
+            if (card == null || card.missingPatternImg == null)
+            {
+                continue;
+            }
 
-        if (cardMissingCell != null)
-        {
-            SetActiveIfChanged(cardMissingCell, false);
-        }
+            for (int cellIndex = 0; cellIndex < card.missingPatternImg.Count; cellIndex++)
+            {
+                GameObject missingCell = card.missingPatternImg[cellIndex];
+                if (missingCell == null)
+                {
+                    continue;
+                }
 
-        Coroutine blinkRoutine = StartCoroutine(BlinkMissingPattern(key, headerMissingCell, cardMissingCell));
-        missingPatternBlinkRoutines.Add(key, blinkRoutine);
-        NumberGenerator.isPrizeMissedByOneCard = true;
+                SetActiveIfChanged(missingCell, false);
+                Image missingCellImage = missingCell.GetComponent<Image>();
+                if (missingCellImage != null)
+                {
+                    missingCellImage.color = missingPatternBaseColor;
+                }
+
+                TextMeshProUGUI label = ResolveMissingCellLabel(missingCell);
+                if (label != null)
+                {
+                    label.text = string.Empty;
+                }
+            }
+        }
     }
 
-    private void StopMissingPatternBlink(
-        (int patternIndex, int colIndex, int cardNo) key,
-        GameObject headerMissingCell,
-        GameObject cardMissingCell)
+    private Color ResolveMissingPatternPulseColor()
     {
-        if (missingPatternBlinkRoutines.TryGetValue(key, out Coroutine blinkRoutine))
+        if (!missingBlinkVisible)
         {
-            if (blinkRoutine != null)
-            {
-                StopCoroutine(blinkRoutine);
-            }
-
-            missingPatternBlinkRoutines.Remove(key);
+            return missingPatternBaseColor;
         }
 
-        if (headerMissingCell != null)
-        {
-            SetActiveIfChanged(headerMissingCell, false);
-        }
-
-        if (cardMissingCell != null)
-        {
-            SetActiveIfChanged(cardMissingCell, false);
-            UpdateCardMissingNumberLabel(cardMissingCell, 0);
-        }
-
-        if (key.patternIndex < prizes.Count && !HasActiveBlinkForPattern(key.patternIndex))
-        {
-            prizes[key.patternIndex].color = GetDefaultPrizeColor(key.patternIndex);
-            prizes[key.patternIndex].text = GetDefaultPrizeText(key.patternIndex);
-        }
-
-        NumberGenerator.isPrizeMissedByOneCard = missingPatternBlinkRoutines.Count > 0;
+        return missingPatternBlinkColor;
     }
 
-    private IEnumerator BlinkMissingPattern(
-        (int patternIndex, int colIndex, int cardNo) key,
-        GameObject headerMissingCell,
-        GameObject cardMissingCell)
+    private void ConfigureHeaderMissingCell(GameObject headerMissingCell, Color color)
     {
-        bool isVisible = false;
-        WaitForSeconds wait = new WaitForSeconds(missingPatternBlinkInterval);
-
-        while (missingPatternBlinkRoutines.ContainsKey(key))
+        if (headerMissingCell == null)
         {
-            isVisible = !isVisible;
-
-            if (headerMissingCell != null)
-            {
-                SetActiveIfChanged(headerMissingCell, isVisible);
-            }
-
-            if (cardMissingCell != null)
-            {
-                SetActiveIfChanged(cardMissingCell, isVisible);
-            }
-
-            if (key.patternIndex < prizes.Count)
-            {
-                prizes[key.patternIndex].color = isVisible
-                    ? missingPrizeBlinkColor
-                    : GetDefaultPrizeColor(key.patternIndex);
-            }
-
-            yield return wait;
+            return;
         }
 
-        if (headerMissingCell != null)
+        Image cellImage = headerMissingCell.GetComponent<Image>();
+        if (cellImage != null)
         {
-            SetActiveIfChanged(headerMissingCell, false);
+            cellImage.color = color;
         }
+    }
 
-        if (cardMissingCell != null)
+    private void ApplyPrizePresentation(
+        Dictionary<int, ActiveNearWinState> headerNearWinsBySlot,
+        bool showNearWinVisuals)
+    {
+        for (int slotIndex = 0; slotIndex < prizes.Count; slotIndex++)
         {
-            SetActiveIfChanged(cardMissingCell, false);
+            TextMeshProUGUI prizeLabel = prizes[slotIndex];
+            if (prizeLabel == null)
+            {
+                continue;
+            }
+
+            prizeLabel.text = GetDefaultPrizeText(slotIndex);
+
+            if (showNearWinVisuals && headerNearWinsBySlot.ContainsKey(slotIndex))
+            {
+                prizeLabel.color = missingPrizeBlinkColor;
+            }
+            else if (HasMatchedPatternInSlot(slotIndex))
+            {
+                prizeLabel.color = Color.green;
+            }
+            else
+            {
+                prizeLabel.color = GetDefaultPrizeColor(slotIndex);
+            }
         }
     }
 
@@ -255,7 +478,7 @@ public class TopperManager : MonoBehaviour
     {
         missingCell = null;
 
-        if (patternIndex < 0 || patternIndex >= missedPattern.Count)
+        if (patternIndex < 0 || patternIndex >= missedPattern.Count || missedPattern[patternIndex] == null)
         {
             return false;
         }
@@ -268,19 +491,6 @@ public class TopperManager : MonoBehaviour
 
         missingCell = patternTransform.GetChild(colIndex).gameObject;
         return true;
-    }
-
-    private bool HasActiveBlinkForPattern(int patternIndex)
-    {
-        foreach (var key in missingPatternBlinkRoutines.Keys)
-        {
-            if (key.patternIndex == patternIndex)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private GameObject ResolveCardMissingCell(int cardNo, int colIndex)
@@ -305,20 +515,42 @@ public class TopperManager : MonoBehaviour
         return card.missingPatternImg[colIndex];
     }
 
-    private void UpdateCardMissingNumberLabel(GameObject cardMissingCell, int missingNumber)
+    private void ConfigureCardMissingCell(GameObject cardMissingCell, ActiveNearWinState state, Color color)
     {
         if (cardMissingCell == null)
         {
             return;
         }
 
-        TextMeshProUGUI label = ResolveMissingCellLabel(cardMissingCell);
-        if (label == null)
+        Image cellImage = cardMissingCell.GetComponent<Image>();
+        if (cellImage != null)
         {
-            return;
+            cellImage.color = color;
         }
 
-        label.text = missingNumber > 0 ? missingNumber.ToString() : string.Empty;
+        TextMeshProUGUI label = ResolveMissingCellLabel(cardMissingCell);
+        if (label != null)
+        {
+            label.text = ResolveCardBadgeText(state);
+        }
+    }
+
+    private string ResolveCardBadgeText(ActiveNearWinState state)
+    {
+        if (state.PayoutAmount > 0)
+        {
+            return state.PayoutAmount.ToString();
+        }
+
+        if (showMissingNumberInPrizeLabel && state.MissingNumber > 0)
+        {
+            return state.MissingNumber.ToString();
+        }
+
+        int slotIndex = GetPatternIndex(state.PatternIndex);
+        return slotIndex >= 0 && slotIndex < prizes.Count && prizes[slotIndex] != null
+            ? prizes[slotIndex].text
+            : string.Empty;
     }
 
     private TextMeshProUGUI ResolveMissingCellLabel(GameObject missingCell)
@@ -345,7 +577,13 @@ public class TopperManager : MonoBehaviour
 
         for (int patternIndex = 0; patternIndex < missedPattern.Count; patternIndex++)
         {
-            foreach (Transform cell in missedPattern[patternIndex].transform)
+            GameObject patternObject = missedPattern[patternIndex];
+            if (patternObject == null)
+            {
+                continue;
+            }
+
+            foreach (Transform cell in patternObject.transform)
             {
                 Image cellImage = cell.GetComponent<Image>();
                 if (cellImage == null)
@@ -383,7 +621,7 @@ public class TopperManager : MonoBehaviour
 
         for (int i = 0; i < prizes.Count; i++)
         {
-            defaultPrizeColors.Add(prizes[i].color);
+            defaultPrizeColors.Add(prizes[i] != null ? prizes[i].color : Color.white);
         }
     }
 
@@ -425,19 +663,6 @@ public class TopperManager : MonoBehaviour
 
             if (i >= 0 && i < defaultPrizeTexts.Count)
             {
-                if (showBonusLabelUnderConfiguredPattern && i == ResolveBonusPatternIndexFromRight())
-                {
-                    string trimmedBonusLabel = string.IsNullOrWhiteSpace(bonusPatternLabel) ? "BONUS" : bonusPatternLabel.Trim();
-                    if (!string.IsNullOrWhiteSpace(resolvedText))
-                    {
-                        resolvedText = $"{resolvedText}\n{trimmedBonusLabel}";
-                    }
-                    else
-                    {
-                        resolvedText = trimmedBonusLabel;
-                    }
-                }
-
                 defaultPrizeTexts[i] = resolvedText;
             }
 
@@ -452,14 +677,31 @@ public class TopperManager : MonoBehaviour
     {
         runtimePrizeText = string.Empty;
 
-        List<int> currentWinPoints = GameManager.instance?.currentWinPoints;
-        if (currentWinPoints == null || patternIndex < 0 || patternIndex >= currentWinPoints.Count)
+        GameManager gameManager = GameManager.instance;
+        if (gameManager == null || !gameManager.TryGetFormattedPayoutLabel(patternIndex, out runtimePrizeText))
         {
             return false;
         }
 
-        runtimePrizeText = Mathf.Max(0, currentWinPoints[patternIndex]).ToString();
-        return true;
+        return !string.IsNullOrWhiteSpace(runtimePrizeText);
+    }
+
+    private int ResolvePatternPayoutAmount(int rawPatternIndex)
+    {
+        int payoutIndex = GetPatternIndex(rawPatternIndex);
+        GameManager gameManager = GameManager.instance;
+        if (gameManager != null && payoutIndex >= 0)
+        {
+            return gameManager.GetPayoutForPatternSlot(payoutIndex);
+        }
+
+        if (payoutIndex >= 0 && payoutIndex < prizes.Count && prizes[payoutIndex] != null &&
+            TryExtractFirstInteger(GetDefaultPrizeText(payoutIndex), out int fallbackPayout))
+        {
+            return fallbackPayout;
+        }
+
+        return 0;
     }
 
     private Color GetDefaultPrizeColor(int index)
@@ -476,14 +718,6 @@ public class TopperManager : MonoBehaviour
     {
         if (TryResolveRuntimePrizeText(index, out string runtimePrizeText))
         {
-            if (showBonusLabelUnderConfiguredPattern && index == ResolveBonusPatternIndexFromRight())
-            {
-                string trimmedBonusLabel = string.IsNullOrWhiteSpace(bonusPatternLabel) ? "BONUS" : bonusPatternLabel.Trim();
-                return string.IsNullOrWhiteSpace(runtimePrizeText)
-                    ? trimmedBonusLabel
-                    : $"{runtimePrizeText}\n{trimmedBonusLabel}";
-            }
-
             return runtimePrizeText;
         }
 
@@ -509,7 +743,6 @@ public class TopperManager : MonoBehaviour
 
     private void ApplyPrizeTypography()
     {
-        TMP_FontAsset preferredFont = RealtimeTextStyleUtils.ResolvePreferredGameFont();
         for (int i = 0; i < prizes.Count; i++)
         {
             if (prizes[i] == null)
@@ -517,61 +750,107 @@ public class TopperManager : MonoBehaviour
                 continue;
             }
 
-            RealtimeTextStyleUtils.ApplyReadableTypography(prizes[i], preferredFont, minFontSize: 16f, maxFontSize: 40f);
+            prizes[i].enableWordWrapping = false;
+            prizes[i].enableAutoSizing = true;
+            prizes[i].fontSizeMin = 12f;
+            prizes[i].fontSizeMax = 24f;
+            prizes[i].fontSize = 18f;
+            prizes[i].alignment = TextAlignmentOptions.Center;
+            prizes[i].overflowMode = TextOverflowModes.Overflow;
+            RealtimeTextStyleUtils.ApplyGameplayTextPresentation(
+                prizes[i],
+                CandyTypographyRole.Label,
+                GameplayTextSurface.TopperValue);
         }
     }
-
-    private void UpdatePatternMissingNumberLabel(int patternIndex, int missingNumber)
-    {
-        if (!showMissingNumberInPrizeLabel || missingNumber <= 0)
-        {
-            return;
-        }
-
-        if (patternIndex < 0 || patternIndex >= prizes.Count || prizes[patternIndex] == null)
-        {
-            return;
-        }
-
-        string baseLabel = GetDefaultPrizeText(patternIndex);
-        string prefix = string.IsNullOrWhiteSpace(missingNumberLabelPrefix)
-            ? "Mangler"
-            : missingNumberLabelPrefix.Trim();
-        prizes[patternIndex].text = $"{baseLabel} ({prefix} {missingNumber})";
-    }
-
 
     public int GetPatternIndex(int index)
     {
-        if (index >= 5 && index <= 7) //For 2L
-        {
-            index = 5;
-        }
-        else if (index > 7 && index < 13)
-        {
-            index = index - 2;
-        }
-        else if (index >= 13) //For 1L
-        {
-            index = missedPattern.Count - 1;
-        }
-        return index;
+        return GameManager.ResolvePayoutSlotIndex(index, Mathf.Max(0, prizes.Count));
     }
 
     private void Reset()
     {
-        StopAllCoroutines();
-        missingPatternBlinkRoutines.Clear();
+        StopBlinkRoutine();
+        activeNearWins.Clear();
+        activeMatchedPatternIndexes.Clear();
         ShowAllPatterns();
         RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: true);
-        DisableAllMissedPattern();
-        DisableAllMatchedPattern();
+        HideAllHeaderMissingPatternVisuals();
+        HideAllCardMissingPatternVisuals();
+        ApplyMatchedPatternVisibility();
+
         for (int i = 0; i < prizes.Count; i++)
         {
+            if (prizes[i] == null)
+            {
+                continue;
+            }
+
             prizes[i].color = GetDefaultPrizeColor(i);
             prizes[i].text = GetDefaultPrizeText(i);
         }
+
         NumberGenerator.isPrizeMissedByOneCard = false;
+    }
+
+    private static bool TryExtractFirstInteger(string rawText, out int value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(rawText))
+        {
+            return false;
+        }
+
+        int start = -1;
+        int end = -1;
+        for (int i = 0; i < rawText.Length; i++)
+        {
+            if (!char.IsDigit(rawText[i]))
+            {
+                if (start >= 0)
+                {
+                    end = i;
+                    break;
+                }
+
+                continue;
+            }
+
+            if (start < 0)
+            {
+                start = i;
+            }
+        }
+
+        if (start < 0)
+        {
+            return false;
+        }
+
+        if (end < 0)
+        {
+            end = rawText.Length;
+        }
+
+        string digits = rawText.Substring(start, end - start);
+        return int.TryParse(digits, out value);
+    }
+
+    private TMP_FontAsset ResolvePrizeFontOverride()
+    {
+        if (prizeFontOverride != null)
+        {
+            return prizeFontOverride;
+        }
+
+        prizeFontOverride = CandyTypographySystem.GetFont(CandyTypographyRole.Label);
+        if (prizeFontOverride == null)
+        {
+            prizeFontOverride = RealtimeTextStyleUtils.ResolveStableFallbackFont();
+        }
+
+        return prizeFontOverride;
     }
 
     private static void SetActiveIfChanged(GameObject target, bool active)
@@ -581,5 +860,4 @@ public class TopperManager : MonoBehaviour
             target.SetActive(active);
         }
     }
-
 }

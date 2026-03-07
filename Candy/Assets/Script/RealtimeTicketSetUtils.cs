@@ -77,6 +77,17 @@ public static class RealtimeTicketSetUtils
         return values;
     }
 
+    public static List<int> ExtractCandyTicketNumbersFromGrid(JSONNode gridNode)
+    {
+        List<int> flattened = FlattenTicketGrid(gridNode);
+        if (flattened.Count == 15)
+        {
+            return flattened;
+        }
+
+        return flattened;
+    }
+
     public static List<int> NormalizeTicketNumbers(List<int> source)
     {
         List<int> numbers = source == null ? new List<int>() : new List<int>(source);
@@ -174,7 +185,7 @@ public static class RealtimeTicketSetUtils
 
             if (LooksLikeGridArray(myTicketsNode))
             {
-                List<int> flatGrid = NormalizeTicketNumbers(FlattenTicketGrid(myTicketsNode));
+                List<int> flatGrid = NormalizeTicketNumbers(ExtractCandyTicketNumbersFromGrid(myTicketsNode));
                 if (flatGrid.Count > 0)
                 {
                     ticketSets.Add(flatGrid);
@@ -217,7 +228,7 @@ public static class RealtimeTicketSetUtils
 
             if (LooksLikeGridArray(ticketNode))
             {
-                return FlattenTicketGrid(ticketNode);
+                return ExtractCandyTicketNumbersFromGrid(ticketNode);
             }
 
             for (int i = 0; i < ticketNode.Count; i++)
@@ -230,12 +241,6 @@ public static class RealtimeTicketSetUtils
             }
 
             return new List<int>();
-        }
-
-        List<int> byGrid = FlattenTicketGrid(ticketNode["grid"]);
-        if (byGrid.Count > 0)
-        {
-            return byGrid;
         }
 
         JSONNode numbersNode = ticketNode["numbers"];
@@ -256,6 +261,12 @@ public static class RealtimeTicketSetUtils
             {
                 return byValues;
             }
+        }
+
+        List<int> byGrid = ExtractCandyTicketNumbersFromGrid(ticketNode["grid"]);
+        if (byGrid.Count > 0)
+        {
+            return byGrid;
         }
 
         JSONNode nestedTicketNode = ticketNode["ticket"];

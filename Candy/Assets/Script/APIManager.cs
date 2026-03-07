@@ -9,6 +9,13 @@ using TMPro;
 
 public partial class APIManager : MonoBehaviour
 {
+    private enum Theme1RealtimeViewMode
+    {
+        LegacyOnly = 0,
+        DualRunCompare = 1,
+        DedicatedOnly = 2
+    }
+
     private enum TicketUiState
     {
         normal = 0,
@@ -88,6 +95,11 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private bool logRealtimeDrawMetrics = true;
     [SerializeField] private bool logRealtimeDrawTrace = true;
     [SerializeField] [Min(1)] private int realtimeBonusPatternPositionFromRight = 2;
+    [SerializeField] private Theme1RealtimeViewMode theme1RealtimeViewMode = Theme1RealtimeViewMode.DualRunCompare;
+    [SerializeField] private Theme1GameplayViewRoot theme1GameplayViewRoot;
+    [SerializeField] private NumberGenerator theme1NumberGenerator;
+    [SerializeField] private GameManager theme1GameManager;
+    [SerializeField] private TopperManager theme1TopperManager;
     [SerializeField] private string launchResolveBaseUrl = DEFAULT_REALTIME_BACKEND_BASE_URL;
     [SerializeField] private BallManager ballManager;
     [Header("Runtime diagnostics")]
@@ -143,6 +155,7 @@ public partial class APIManager : MonoBehaviour
     private readonly RealtimeSchedulerState realtimeScheduler = new();
     private readonly RealtimeCountdownPresenter realtimeCountdownPresenter = new();
     private readonly RealtimeRoomConfigurator realtimeRoomConfigurator = new();
+    private readonly HashSet<int> realtimeMatchedPatternIndexes = new();
     private readonly Dictionary<int, Coroutine> realtimeNearWinBlinkCoroutines = new();
     private readonly Dictionary<int, RealtimeNearWinMeta> realtimeNearWinMetaByKey = new();
     private readonly Dictionary<int, RealtimeNearWinState> realtimeNearWinStates = new();
@@ -160,16 +173,20 @@ public partial class APIManager : MonoBehaviour
     private int drawMetricSkipped = 0;
     private string drawMetricsGameId = string.Empty;
     private bool realtimeBetArmedForNextRound = false;
+    private bool desiredRealtimeBetArmedForNextRound = false;
+    private bool realtimePlayerParticipatingInCurrentRound = false;
     private bool pendingRealtimeBetArmRequest = false;
     private bool treatBetArmAsUnsupported = false;
     private bool realtimeBetArmAwaitingAck = false;
     private float realtimeBetArmRequestedAt = -1f;
     private bool realtimeBetArmHttpFallbackInFlight = false;
     private float nextRealtimeBetArmHttpFallbackAt = -1f;
+    private int realtimeBetArmMutationVersion = 0;
     private bool realtimeRerollRequestPending = false;
     private readonly HashSet<string> realtimeClaimAttemptKeys = new();
     private bool hasTriggeredEditorLocalFallback = false;
     private bool hasLoggedMissingRealtimeNumberGenerator = false;
+    private float nextMissingRealtimeTicketsResyncAt = -1f;
     private float nextRuntimeDiagnosticsLogAt = 0f;
     private string lastRuntimeDiagnosticsSnapshot = string.Empty;
     private string lastPatternConfigurationIssue = string.Empty;
@@ -191,8 +208,13 @@ public partial class APIManager : MonoBehaviour
     private string lastRenderedCountdownHealth = string.Empty;
     private string lastRenderedPlayerCountHealth = string.Empty;
     private string lastRealtimeRenderMismatch = string.Empty;
+    private readonly Theme1RealtimeStateAdapter theme1RealtimeStateAdapter = new();
+    private readonly Theme1LocalStateAdapter theme1LocalStateAdapter = new();
+    private readonly Theme1DisplayPresenter theme1DisplayPresenter = new();
     private bool hasLoggedFirstRealtimeCardRender = false;
     private bool hasLoggedFirstRealtimeBallRender = false;
+    private bool hasRenderedTheme1IdleState;
+    private Action pendingRealtimePreRoundEditContinuation;
     private TextMeshProUGUI realtimeDebugOverlayText;
     private Image realtimeDebugOverlayBackground;
 
@@ -201,6 +223,24 @@ public partial class APIManager : MonoBehaviour
     public string ActivePlayerId => activePlayerId;
     public string ActiveHallId => hallId;
     public int CurrentTicketPage => currentTicketPage;
+    public bool IsRealtimeRoundRunning => IsRealtimeDrawRunning;
+    public bool IsRealtimeDrawRunning => useRealtimeBackend && realtimeScheduler.IsGameRunning;
+    public bool IsActivePlayerParticipatingInRealtimeRound => useRealtimeBackend && realtimePlayerParticipatingInCurrentRound;
+    public bool IsRealtimePlayerArmedForNextRound => useRealtimeBackend && realtimeBetArmedForNextRound;
+    public bool UseDedicatedTheme1RealtimeView => useRealtimeBackend && theme1RealtimeViewMode != Theme1RealtimeViewMode.LegacyOnly;
+    public bool HasRealtimeVisibleTickets =>
+        useRealtimeBackend &&
+        ((activeTicketSets != null && activeTicketSets.Count > 0) ||
+         (cachedStableTicketSets != null && cachedStableTicketSets.Count > 0));
+    public bool CanEditRealtimePreRoundSelection => useRealtimeBackend && !IsRealtimeDrawRunning;
+    public bool CanParticipateInNextRealtimeRound =>
+        useRealtimeBackend &&
+        !IsRealtimeDrawRunning &&
+        realtimeEntryFee > 0;
+    public bool IsRealtimeBetLocked => IsRealtimeDrawRunning;
+    public bool IsRealtimeRerollWindowOpen =>
+        HasRealtimeVisibleTickets &&
+        CanEditRealtimePreRoundSelection;
 
     public int TicketPageCount
     {
@@ -212,6 +252,32 @@ public partial class APIManager : MonoBehaviour
         }
     }
 
+    public int GetRealtimeVisibleCardCount()
+    {
+        if (!useRealtimeBackend)
+        {
+            return 0;
+        }
+
+        return Mathf.Clamp(Mathf.Max(1, realtimeTicketsPerPlayer), 1, Mathf.Max(1, GetCardSlotsCount()));
+    }
+
+    public int GetRealtimeTicketIndexForVisibleCard(int visibleCardIndex)
+    {
+        if (visibleCardIndex < 0)
+        {
+            return -1;
+        }
+
+        int visibleCardCount = GetRealtimeVisibleCardCount();
+        if (visibleCardIndex >= visibleCardCount)
+        {
+            return -1;
+        }
+
+        return currentTicketPage * Mathf.Max(1, GetCardSlotsCount()) + visibleCardIndex;
+    }
+
     void Awake()
     {
         instance = this;
@@ -220,6 +286,10 @@ public partial class APIManager : MonoBehaviour
         disableEntryFeeSyncAfterInsufficientFundsFallback = false;
         realtimeBackendBaseUrl = NormalizeRealtimeBackendBaseUrl(realtimeBackendBaseUrl);
         launchResolveBaseUrl = NormalizeRealtimeBackendBaseUrl(launchResolveBaseUrl);
+        if (theme1GameplayViewRoot == null)
+        {
+            theme1GameplayViewRoot = GetComponent<Theme1GameplayViewRoot>();
+        }
 #if UNITY_EDITOR
         if (!enableEditorLocalRoundFallback)
         {
@@ -255,6 +325,7 @@ public partial class APIManager : MonoBehaviour
 
     void Start()
     {
+        TryRenderTheme1IdleDisplayState();
         if (useRealtimeBackend)
         {
             ApplyExplicitRealtimeHudBindingsFromComponent();
@@ -294,11 +365,18 @@ public partial class APIManager : MonoBehaviour
     {
         if (!useRealtimeBackend)
         {
+            TryRenderTheme1LocalDisplayState();
             return;
+        }
+
+        if (!hasRenderedTheme1IdleState)
+        {
+            TryRenderTheme1IdleDisplayState();
         }
 
         TickDrawRenderResync();
         TryRunDeferredJoinOrCreateAfterLaunchResolve();
+        TrySendPendingRealtimeBetArm();
         TickRealtimeBetArmTimeout();
         TickRuntimeDiagnostics();
         RefreshRealtimeDebugOverlay();
@@ -376,7 +454,11 @@ public partial class APIManager : MonoBehaviour
             return;
         }
 
-        if (!hudBindings.TryApplyTo(ResolveNumberGenerator(), this, out string error))
+        if (!hudBindings.TryApplyTo(
+                ResolveNumberGenerator(),
+                this,
+                ResolveGameManager(),
+                out string error))
         {
             PublishRuntimeStatus("HUD bindings er ugyldige i Theme1. " + error, asError: true);
         }
@@ -573,36 +655,44 @@ public partial class APIManager : MonoBehaviour
             return ballManager;
         }
 
-        ballManager = FindObjectOfType<BallManager>();
-        if (ballManager != null)
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
         {
-            return ballManager;
+            ballManager = FindObjectOfType<BallManager>(true);
         }
-
-        BallManager[] allManagers = FindObjectsOfType<BallManager>(true);
-        if (allManagers != null && allManagers.Length > 0)
-        {
-            ballManager = allManagers[0];
-        }
-
+#endif
         return ballManager;
     }
 
     private NumberGenerator ResolveNumberGenerator()
     {
-        NumberGenerator generatorFromManager = GameManager.instance != null ? GameManager.instance.numberGenerator : null;
+        if (theme1NumberGenerator != null)
+        {
+            hasLoggedMissingRealtimeNumberGenerator = false;
+            return theme1NumberGenerator;
+        }
+
+        GameManager resolvedGameManager = ResolveGameManager();
+        NumberGenerator generatorFromManager = resolvedGameManager != null ? resolvedGameManager.numberGenerator : null;
         if (generatorFromManager != null)
         {
+            theme1NumberGenerator = generatorFromManager;
             hasLoggedMissingRealtimeNumberGenerator = false;
             return generatorFromManager;
         }
 
-        NumberGenerator fallbackGenerator = FindObjectOfType<NumberGenerator>();
-        if (fallbackGenerator != null)
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
         {
-            hasLoggedMissingRealtimeNumberGenerator = false;
-            return fallbackGenerator;
+            NumberGenerator fallbackGenerator = FindObjectOfType<NumberGenerator>(true);
+            if (fallbackGenerator != null)
+            {
+                theme1NumberGenerator = fallbackGenerator;
+                hasLoggedMissingRealtimeNumberGenerator = false;
+                return fallbackGenerator;
+            }
         }
+#endif
 
         if (!hasLoggedMissingRealtimeNumberGenerator)
         {
@@ -611,6 +701,44 @@ public partial class APIManager : MonoBehaviour
         }
 
         return null;
+    }
+
+    private GameManager ResolveGameManager()
+    {
+        if (theme1GameManager != null)
+        {
+            return theme1GameManager;
+        }
+
+        if (GameManager.instance != null)
+        {
+            theme1GameManager = GameManager.instance;
+            return theme1GameManager;
+        }
+
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+        {
+            theme1GameManager = FindObjectOfType<GameManager>(true);
+        }
+#endif
+        return theme1GameManager;
+    }
+
+    private TopperManager ResolveTopperManager()
+    {
+        if (theme1TopperManager != null)
+        {
+            return theme1TopperManager;
+        }
+
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+        {
+            theme1TopperManager = FindObjectOfType<TopperManager>(true);
+        }
+#endif
+        return theme1TopperManager;
     }
 
     private void ResetRealtimeRoundVisuals()
@@ -1348,10 +1476,18 @@ public partial class APIManager : MonoBehaviour
 
     public void SetRealtimeEntryFeeFromGameUI(int entryFee)
     {
+        int previousEntryFee = realtimeEntryFee;
         realtimeEntryFee = Mathf.Max(0, entryFee);
         if (realtimeEntryFee > 0)
         {
             hasAppliedZeroEntryFeeFallbackForRoom = false;
+        }
+
+        if (useRealtimeBackend && previousEntryFee != realtimeEntryFee)
+        {
+            InvalidateRealtimeBetCommitForPreRoundEdit(
+                "entry_fee_changed",
+                "Tall eller innsats ble endret. Trykk Plasser innsats på nytt for å bli med i neste runde.");
         }
 
         if (!useRealtimeBackend || !realtimeScheduledRounds)
@@ -1391,15 +1527,21 @@ public partial class APIManager : MonoBehaviour
             activeRoomCode,
             activePlayerId,
             realtimeEntryFee,
-            HandleRealtimeRoomUpdate);
+            HandleRealtimeRoomUpdate,
+            RequestRealtimeState);
     }
 
     private void ApplySchedulerMetadata(JSONNode snapshot)
     {
         realtimeScheduler.ApplySchedulerSnapshot(snapshot);
-        realtimeBetArmedForNextRound =
+        bool armedForNextRound =
             !string.IsNullOrWhiteSpace(activePlayerId) &&
             realtimeScheduler.ArmedPlayerIds.Contains(activePlayerId);
+        realtimeBetArmedForNextRound = armedForNextRound;
+        if (!realtimeBetArmAwaitingAck && !pendingRealtimeBetArmRequest)
+        {
+            desiredRealtimeBetArmedForNextRound = armedForNextRound;
+        }
         LogSchedulerSnapshotIfChanged("room-update");
     }
 
@@ -1517,14 +1659,14 @@ public partial class APIManager : MonoBehaviour
         TextMeshProUGUI label = labelObject.AddComponent<TextMeshProUGUI>();
         label.alignment = TextAlignmentOptions.Center;
         label.raycastTarget = false;
-        label.font = countdownText.font;
-        label.fontSharedMaterial = countdownText.fontSharedMaterial != null
-            ? countdownText.fontSharedMaterial
-            : countdownText.font != null ? countdownText.font.material : null;
         label.fontSize = Mathf.Max(18f, countdownText.fontSize * 0.42f);
         label.color = countdownText.color;
         label.enableWordWrapping = false;
         label.text = $"{realtimeRoomPlayerCountPrefix} 0";
+        RealtimeTextStyleUtils.ApplyHudText(
+            label,
+            $"{realtimeRoomPlayerCountPrefix} 0",
+            preferredColor: countdownText.color);
 
         ReportRealtimeRenderMismatch("HUD roomPlayerCountText manglet i Theme1. Opprettet midlertidig runtime-label.", asError: false);
         return label;

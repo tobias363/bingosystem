@@ -101,15 +101,23 @@ public static class TMPAutoRepair
     {
         SerializedObject serializedSettings = new SerializedObject(settings);
         SerializedProperty defaultFontProperty = serializedSettings.FindProperty("m_defaultFontAsset");
-        if (defaultFontProperty == null || defaultFontProperty.objectReferenceValue != null)
+        if (defaultFontProperty == null)
         {
             return false;
         }
 
-        string[] fontGuids = AssetDatabase.FindAssets("LiberationSans SDF t:TMP_FontAsset", new[]
+        string[] fontGuids = AssetDatabase.FindAssets("CandyFredokaRegularSDF t:TMP_FontAsset", new[]
         {
-            "Assets/TextMesh Pro/Resources/Fonts _ Materials"
+            "Assets/Resources/CandyTypography/TMP"
         });
+
+        if (fontGuids == null || fontGuids.Length == 0)
+        {
+            fontGuids = AssetDatabase.FindAssets("LiberationSans SDF t:TMP_FontAsset", new[]
+            {
+                "Assets/TextMesh Pro/Resources/Fonts _ Materials"
+            });
+        }
 
         if (fontGuids == null || fontGuids.Length == 0)
         {
@@ -119,6 +127,11 @@ public static class TMPAutoRepair
         string fontPath = AssetDatabase.GUIDToAssetPath(fontGuids[0]);
         TMP_FontAsset fontAsset = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>(fontPath);
         if (fontAsset == null)
+        {
+            return false;
+        }
+
+        if (defaultFontProperty.objectReferenceValue == fontAsset)
         {
             return false;
         }

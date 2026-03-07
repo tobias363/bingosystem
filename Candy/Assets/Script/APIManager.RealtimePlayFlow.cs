@@ -24,10 +24,47 @@ public partial class APIManager
             return false;
         }
 
-        return !realtimeScheduler.IsGameRunning;
+        if (!HasRealtimeVisibleTickets)
+        {
+            return false;
+        }
+
+        if (!CanEditRealtimePreRoundSelection)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     public void RequestRealtimeTicketReroll()
+    {
+        RequestRealtimeTicketRerollInternal(null);
+    }
+
+    public bool CanRequestRealtimeTicketRerollForVisibleCard(int visibleCardIndex)
+    {
+        if (!CanRequestRealtimeTicketReroll())
+        {
+            return false;
+        }
+
+        return GetRealtimeTicketIndexForVisibleCard(visibleCardIndex) >= 0;
+    }
+
+    public void RequestRealtimeTicketRerollForVisibleCard(int visibleCardIndex)
+    {
+        int ticketIndex = GetRealtimeTicketIndexForVisibleCard(visibleCardIndex);
+        if (ticketIndex < 0)
+        {
+            Debug.LogWarning($"[APIManager] Ugyldig visibleCardIndex for reroll: {visibleCardIndex}");
+            return;
+        }
+
+        RequestRealtimeTicketRerollInternal(ticketIndex);
+    }
+
+    private void RequestRealtimeTicketRerollInternal(int? ticketIndex)
     {
         if (!useRealtimeBackend)
         {
@@ -37,20 +74,32 @@ public partial class APIManager
         BindRealtimeClient();
         if (!CanRequestRealtimeTicketReroll())
         {
-            if (realtimeScheduler.IsGameRunning)
+            if (IsRealtimeDrawRunning)
             {
-                Debug.LogWarning("[APIManager] Kan ikke bytte bonger mens runden kjører.");
+                Debug.LogWarning("[APIManager] Kan ikke bytte bonger mens trekningen pågår.");
             }
             else if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
             {
                 JoinOrCreateRoom();
             }
+            else if (!HasRealtimeVisibleTickets)
+            {
+                RequestRealtimeState();
+            }
             return;
         }
 
+        InvalidateRealtimeBetCommitForPreRoundEdit(
+            "ticket_reroll",
+            "Tall eller innsats ble endret. Trykk Plasser innsats på nytt for å bli med i neste runde.",
+            () => RequestRealtimeTicketRerollInternalCore(ticketIndex));
+    }
+
+    private void RequestRealtimeTicketRerollInternalCore(int? ticketIndex)
+    {
         realtimeRerollRequestPending = true;
         int ticketsPerPlayer = Mathf.Clamp(realtimeTicketsPerPlayer, 1, 5);
-        realtimeClient.RerollTickets(activeRoomCode, activePlayerId, ticketsPerPlayer, (ack) =>
+        realtimeClient.RerollTickets(activeRoomCode, activePlayerId, ticketsPerPlayer, ticketIndex, (ack) =>
         {
             realtimeRerollRequestPending = false;
             if (ack == null)
@@ -90,6 +139,78 @@ public partial class APIManager
         });
     }
 
+    private void RunPendingRealtimePreRoundEditContinuation()
+    {
+        Action continuation = pendingRealtimePreRoundEditContinuation;
+        pendingRealtimePreRoundEditContinuation = null;
+        continuation?.Invoke();
+    }
+
+    private void QueueRealtimeBetArmState(bool armed, string reason, Action onSynced = null)
+    {
+        desiredRealtimeBetArmedForNextRound = armed;
+        realtimeBetArmMutationVersion += 1;
+        pendingRealtimeBetArmRequest = true;
+
+        if (onSynced != null)
+        {
+            pendingRealtimePreRoundEditContinuation += onSynced;
+        }
+
+        if (!armed)
+        {
+            realtimeBetArmedForNextRound = false;
+        }
+
+        LogRealtimeLifecycleEvent(
+            "bet_arm_intent_changed",
+            $"roomCode={activeRoomCode} playerId={activePlayerId} armed={armed} reason={reason}");
+
+        if (!realtimeBetArmAwaitingAck)
+        {
+            TrySendPendingRealtimeBetArm(reason);
+        }
+    }
+
+    private void InvalidateRealtimeBetCommitForPreRoundEdit(string reason, string userMessage = null, Action onSynced = null)
+    {
+        if (!useRealtimeBackend)
+        {
+            onSynced?.Invoke();
+            return;
+        }
+
+        if (!CanEditRealtimePreRoundSelection)
+        {
+            return;
+        }
+
+        bool hasCommittedOrPendingParticipation =
+            realtimeBetArmedForNextRound ||
+            pendingRealtimeBetArmRequest ||
+            realtimeBetArmAwaitingAck ||
+            desiredRealtimeBetArmedForNextRound;
+
+        if (onSynced != null)
+        {
+            pendingRealtimePreRoundEditContinuation += onSynced;
+        }
+
+        if (!hasCommittedOrPendingParticipation)
+        {
+            desiredRealtimeBetArmedForNextRound = false;
+            RunPendingRealtimePreRoundEditContinuation();
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(userMessage))
+        {
+            PublishRuntimeStatus(userMessage, asError: false);
+        }
+
+        QueueRealtimeBetArmState(false, reason);
+    }
+
     public void PlayRealtimeRound()
     {
         if (!useRealtimeBackend)
@@ -97,7 +218,7 @@ public partial class APIManager
             return;
         }
 
-        if (pendingRealtimeBetArmRequest && realtimeBetArmAwaitingAck)
+        if (realtimeBetArmAwaitingAck)
         {
             return;
         }
@@ -118,10 +239,9 @@ public partial class APIManager
         LogRealtimeLifecycleEvent(
             "play_realtime_round_requested",
             $"roomCode={activeRoomCode} playerId={activePlayerId} tokenPresent={!string.IsNullOrWhiteSpace(accessToken)}");
-        pendingRealtimeBetArmRequest = true;
         SyncRealtimeEntryFeeWithCurrentBet();
         PushRealtimeRoomConfiguration();
-        TrySendPendingRealtimeBetArm();
+        QueueRealtimeBetArmState(true, "play_realtime_round_requested");
     }
 
     public void StartRealtimeRoundNow()
@@ -164,7 +284,7 @@ public partial class APIManager
         StartRealtimeGameFromPlayButton();
     }
 
-    private void TrySendPendingRealtimeBetArm()
+    private void TrySendPendingRealtimeBetArm(string source = "pending_sync")
     {
         if (!pendingRealtimeBetArmRequest)
         {
@@ -205,13 +325,20 @@ public partial class APIManager
             return;
         }
 
-        if (realtimeBetArmedForNextRound)
+        bool requestedArmState = desiredRealtimeBetArmedForNextRound;
+        int requestVersion = realtimeBetArmMutationVersion;
+
+        if (requestedArmState == realtimeBetArmedForNextRound)
         {
             pendingRealtimeBetArmRequest = false;
+            if (!requestedArmState)
+            {
+                RunPendingRealtimePreRoundEditContinuation();
+            }
             return;
         }
 
-        if (treatBetArmAsUnsupported)
+        if (requestedArmState && treatBetArmAsUnsupported)
         {
             pendingRealtimeBetArmRequest = false;
             if (IsActivePlayerHost())
@@ -221,53 +348,84 @@ public partial class APIManager
             return;
         }
 
+        pendingRealtimeBetArmRequest = false;
+        SendRealtimeBetArmState(requestedArmState, requestVersion, source);
+    }
+
+    private void SendRealtimeBetArmState(bool armed, int requestVersion, string source)
+    {
         LogRealtimeLifecycleEvent(
             "bet_arm_request",
-            $"roomCode={activeRoomCode} playerId={activePlayerId} entryFee={realtimeEntryFee}");
+            $"roomCode={activeRoomCode} playerId={activePlayerId} armed={armed} entryFee={realtimeEntryFee} source={source}");
         realtimeBetArmAwaitingAck = true;
         realtimeBetArmRequestedAt = Time.unscaledTime;
-        realtimeClient.ArmBet(activeRoomCode, activePlayerId, true, (ack) =>
+        realtimeClient.ArmBet(activeRoomCode, activePlayerId, armed, (ack) =>
         {
-            realtimeBetArmAwaitingAck = false;
-            realtimeBetArmRequestedAt = -1f;
-            if (ack == null)
-            {
-                pendingRealtimeBetArmRequest = false;
-                Debug.LogError("[APIManager] bet:arm feilet uten ack.");
-                TryFallbackArmBetViaHttp("socket_ack_null");
-                return;
-            }
-
-            if (!ack.ok)
-            {
-                pendingRealtimeBetArmRequest = false;
-                if (RealtimeRoomStateUtils.IsRoomNotFound(ack))
-                {
-                    ResetActiveRoomState(clearDesiredRoomCode: true);
-                    JoinOrCreateRoom();
-                    return;
-                }
-
-                Debug.LogError($"[APIManager] bet:arm failed: {ack.errorCode} {ack.errorMessage}");
-                TryFallbackArmBetViaHttp($"socket_ack_error:{ack.errorCode}");
-                return;
-            }
-
-            pendingRealtimeBetArmRequest = false;
-            treatBetArmAsUnsupported = false;
-            realtimeBetArmedForNextRound = true;
-            LogRealtimeLifecycleEvent("bet_arm_ack_ok", $"roomCode={activeRoomCode} playerId={activePlayerId}");
-            JSONNode snapshot = ack.data?["snapshot"];
-            if (snapshot != null && !snapshot.IsNull)
-            {
-                HandleRealtimeRoomUpdate(snapshot);
-            }
+            HandleRealtimeBetArmResponse(ack, armed, requestVersion, $"socket:{source}");
         });
+    }
+
+    private void HandleRealtimeBetArmResponse(SocketAck ack, bool requestedArmState, int requestVersion, string source)
+    {
+        realtimeBetArmAwaitingAck = false;
+        realtimeBetArmRequestedAt = -1f;
+
+        if (ack == null)
+        {
+            Debug.LogError("[APIManager] bet:arm feilet uten ack.");
+            TryFallbackSetBetArmViaHttp("socket_ack_null", requestedArmState, requestVersion);
+            return;
+        }
+
+        if (!ack.ok)
+        {
+            if (RealtimeRoomStateUtils.IsRoomNotFound(ack))
+            {
+                ResetActiveRoomState(clearDesiredRoomCode: true);
+                JoinOrCreateRoom();
+                return;
+            }
+
+            Debug.LogError($"[APIManager] bet:arm failed: {ack.errorCode} {ack.errorMessage}");
+            TryFallbackSetBetArmViaHttp($"socket_ack_error:{ack.errorCode}", requestedArmState, requestVersion);
+            return;
+        }
+
+        pendingRealtimeBetArmRequest = false;
+        treatBetArmAsUnsupported = false;
+        JSONNode snapshot = ack.data?["snapshot"];
+        if (snapshot != null && !snapshot.IsNull)
+        {
+            HandleRealtimeRoomUpdate(snapshot);
+        }
+
+        bool isLatestMutation = requestVersion == realtimeBetArmMutationVersion;
+        if (isLatestMutation)
+        {
+            realtimeBetArmedForNextRound = requestedArmState;
+            desiredRealtimeBetArmedForNextRound = requestedArmState;
+            LogRealtimeLifecycleEvent(
+                "bet_arm_ack_ok",
+                $"roomCode={activeRoomCode} playerId={activePlayerId} armed={requestedArmState} source={source}");
+            if (!requestedArmState)
+            {
+                RunPendingRealtimePreRoundEditContinuation();
+            }
+            return;
+        }
+
+        if (!desiredRealtimeBetArmedForNextRound)
+        {
+            realtimeBetArmedForNextRound = false;
+        }
+
+        pendingRealtimeBetArmRequest = true;
+        TrySendPendingRealtimeBetArm("superseded_mutation");
     }
 
     private void TickRealtimeBetArmTimeout()
     {
-        if (!pendingRealtimeBetArmRequest || !realtimeBetArmAwaitingAck)
+        if (!realtimeBetArmAwaitingAck)
         {
             return;
         }
@@ -280,17 +438,16 @@ public partial class APIManager
 
         realtimeBetArmAwaitingAck = false;
         realtimeBetArmRequestedAt = -1f;
-        pendingRealtimeBetArmRequest = false;
         treatBetArmAsUnsupported = true;
         Debug.LogWarning("[APIManager] bet:arm ack-timeout. Faller tilbake til direkte game:start.");
-        TryFallbackArmBetViaHttp("socket_ack_timeout");
+        TryFallbackSetBetArmViaHttp("socket_ack_timeout", desiredRealtimeBetArmedForNextRound, realtimeBetArmMutationVersion);
 
         if (realtimeScheduler.IsGameRunning)
         {
             return;
         }
 
-        if (IsActivePlayerHost())
+        if (desiredRealtimeBetArmedForNextRound && IsActivePlayerHost())
         {
             StartRealtimeGameFromPlayButton();
             return;
@@ -299,7 +456,7 @@ public partial class APIManager
         RequestRealtimeState();
     }
 
-    private void TryFallbackArmBetViaHttp(string reason)
+    private void TryFallbackSetBetArmViaHttp(string reason, bool armed, int requestVersion)
     {
         if (!enableHttpBetArmFallback)
         {
@@ -320,19 +477,21 @@ public partial class APIManager
 
         if (realtimeBetArmHttpFallbackInFlight)
         {
+            pendingRealtimeBetArmRequest = true;
             return;
         }
 
         if (Time.unscaledTime < nextRealtimeBetArmHttpFallbackAt)
         {
+            pendingRealtimeBetArmRequest = true;
             return;
         }
 
         nextRealtimeBetArmHttpFallbackAt = Time.unscaledTime + Mathf.Max(0.25f, betArmHttpFallbackCooldownSeconds);
-        StartCoroutine(ArmBetViaHttpFallbackRoutine(reason));
+        StartCoroutine(SetBetArmViaHttpFallbackRoutine(reason, armed, requestVersion));
     }
 
-    private IEnumerator ArmBetViaHttpFallbackRoutine(string reason)
+    private IEnumerator SetBetArmViaHttpFallbackRoutine(string reason, bool armed, int requestVersion)
     {
         realtimeBetArmHttpFallbackInFlight = true;
 
@@ -358,7 +517,7 @@ public partial class APIManager
             JSONObject payload = new();
             payload["actorPlayerId"] = activePlayerId ?? string.Empty;
             payload["playerId"] = activePlayerId ?? string.Empty;
-            payload["armed"] = true;
+            payload["armed"] = armed;
 
             using (UnityWebRequest request = new UnityWebRequest(endpoint, UnityWebRequest.kHttpVerbPOST))
             {
@@ -427,18 +586,37 @@ public partial class APIManager
             yield break;
         }
 
-        pendingRealtimeBetArmRequest = false;
         realtimeBetArmAwaitingAck = false;
         realtimeBetArmRequestedAt = -1f;
-        realtimeBetArmedForNextRound = true;
-        Debug.Log($"[APIManager] HTTP bet-arm fallback ok via {usedEndpoint}");
+        Debug.Log($"[APIManager] HTTP bet-arm fallback ok via {usedEndpoint} armed={armed}");
 
         JSONNode snapshotNode = root["data"]?["snapshot"];
         if (snapshotNode != null && !snapshotNode.IsNull)
         {
             HandleRealtimeRoomUpdate(snapshotNode);
         }
+
+        if (requestVersion == realtimeBetArmMutationVersion)
+        {
+            realtimeBetArmedForNextRound = armed;
+            desiredRealtimeBetArmedForNextRound = armed;
+            if (!armed)
+            {
+                RunPendingRealtimePreRoundEditContinuation();
+            }
+        }
         else
+        {
+            if (!desiredRealtimeBetArmedForNextRound)
+            {
+                realtimeBetArmedForNextRound = false;
+            }
+
+            pendingRealtimeBetArmRequest = true;
+            TrySendPendingRealtimeBetArm("http_fallback_superseded_mutation");
+        }
+
+        if (snapshotNode == null || snapshotNode.IsNull)
         {
             RequestRealtimeState();
         }

@@ -22,6 +22,7 @@ interface SimulationResult {
   payoutPercentTargetAvg: number;
   nearMissRateAvg: number;
   rtpDeviation: number;
+  rtpFloorPass: boolean;
   rtpPass: boolean;
   nearMissPass: boolean;
 }
@@ -29,7 +30,7 @@ interface SimulationResult {
 function parseArgs(argv: string[]): SimulationOptions {
   const options: SimulationOptions = {
     rounds: 10_000,
-    targets: [60, 75, 90],
+    targets: [60, 75, 80, 90],
     hallId: "hall-rtp-sim",
     entryFee: 100,
     ticketsPerPlayer: 4,
@@ -250,6 +251,13 @@ async function runRound(input: {
       reason: "simulation-round-close"
     });
   }
+
+  const finalizedSnapshot = input.engine.getRoomSnapshot(input.roomCode);
+  if (finalizedSnapshot.currentGame?.status === "ENDED") {
+    const endedAtMs = Date.parse(finalizedSnapshot.currentGame.endedAt ?? "");
+    const cleanupNowMs = Number.isFinite(endedAtMs) ? endedAtMs + 5_000 : Date.now() + 5_000;
+    input.engine.archiveEndedGameIfReady(input.roomCode, cleanupNowMs, 5_000);
+  }
 }
 
 async function runTargetSimulation(options: SimulationOptions, target: number): Promise<SimulationResult> {
@@ -305,6 +313,7 @@ async function runTargetSimulation(options: SimulationOptions, target: number): 
   });
   const rtpDeviation = Math.abs(telemetry.payoutPercentActualAvg - target);
   const nearMissRate = telemetry.nearMissRateAvg;
+  const rtpFloorPass = telemetry.payoutPercentActualAvg >= target - 0.5;
   return {
     targetRtpPercent: target,
     rounds: options.rounds,
@@ -312,7 +321,8 @@ async function runTargetSimulation(options: SimulationOptions, target: number): 
     payoutPercentTargetAvg: telemetry.payoutPercentTargetAvg,
     nearMissRateAvg: nearMissRate,
     rtpDeviation,
-    rtpPass: rtpDeviation <= 1.0,
+    rtpFloorPass,
+    rtpPass: rtpDeviation <= 1.0 && rtpFloorPass,
     nearMissPass: nearMissRate >= 0.25 && nearMissRate <= 0.35
   };
 }
@@ -340,7 +350,8 @@ async function main(): Promise<void> {
       console.log(
         `[sim] target=${result.targetRtpPercent}% rounds=${result.rounds} ` +
           `actualRtp=${result.payoutPercentActualAvg}% deviation=${result.rtpDeviation} ` +
-          `nearMiss=${result.nearMissRateAvg} rtpPass=${result.rtpPass} nearMissPass=${result.nearMissPass}`
+          `nearMiss=${result.nearMissRateAvg} rtpFloorPass=${result.rtpFloorPass} ` +
+          `rtpPass=${result.rtpPass} nearMissPass=${result.nearMissPass}`
       );
     }
     console.log(`[sim] allGatesPass=${summary.allGatesPass}`);

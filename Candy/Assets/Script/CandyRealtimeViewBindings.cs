@@ -8,6 +8,8 @@ using UnityEngine.UI;
 public sealed class CandyCardViewBinding
 {
     [SerializeField] private string bindingName = string.Empty;
+    [SerializeField] private TextMeshProUGUI headerText;
+    [SerializeField] private TextMeshProUGUI betText;
     [SerializeField] private TextMeshProUGUI[] numberTexts = new TextMeshProUGUI[15];
     [SerializeField] private GameObject[] selectionOverlays = new GameObject[15];
     [SerializeField] private GameObject[] missingPatternOverlays = new GameObject[15];
@@ -16,6 +18,8 @@ public sealed class CandyCardViewBinding
     [SerializeField] private TextMeshProUGUI winningText;
 
     public string BindingName => string.IsNullOrWhiteSpace(bindingName) ? "Card" : bindingName.Trim();
+    public TextMeshProUGUI HeaderText => headerText;
+    public TextMeshProUGUI BetText => betText;
     public IReadOnlyList<TextMeshProUGUI> NumberTexts => numberTexts;
     public IReadOnlyList<GameObject> SelectionOverlays => selectionOverlays;
     public IReadOnlyList<GameObject> MissingPatternOverlays => missingPatternOverlays;
@@ -32,6 +36,16 @@ public sealed class CandyCardViewBinding
         matchedPatternOverlays = CopyGameObjectList(source != null ? source.matchPatternImg : null, 15);
         paylineObjects = CopyGameObjectList(source != null ? source.paylineObj : null, -1);
         winningText = ResolveWinningText(source);
+    }
+
+    public void SetDisplayTexts(TextMeshProUGUI header, TextMeshProUGUI bet, TextMeshProUGUI win)
+    {
+        headerText = header;
+        betText = bet;
+        if (win != null)
+        {
+            winningText = win;
+        }
     }
 
     public void ApplyTo(CardClass target)
@@ -75,7 +89,17 @@ public sealed class CandyCardViewBinding
     {
         string prefix = $"Card[{cardIndex}] {BindingName}";
         bool isValid = true;
-        isValid &= ValidateTextArray(numberTexts, 15, $"{prefix} numberTexts", requireActive: true, errors: errors);
+        if (!ValidateTextTarget(headerText, $"{prefix} headerText", requireActive: false, errors: errors))
+        {
+            isValid = false;
+        }
+
+        if (!ValidateTextTarget(betText, $"{prefix} betText", requireActive: false, errors: errors))
+        {
+            isValid = false;
+        }
+
+        isValid &= ValidateTextArray(numberTexts, 15, $"{prefix} numberTexts", requireActive: false, errors: errors);
         isValid &= ValidateGameObjectArray(selectionOverlays, 15, $"{prefix} selectionOverlays", errors);
         isValid &= ValidateGameObjectArray(missingPatternOverlays, 15, $"{prefix} missingPatternOverlays", errors);
         isValid &= ValidateGameObjectArray(matchedPatternOverlays, 15, $"{prefix} matchedPatternOverlays", errors);
@@ -106,7 +130,18 @@ public sealed class CandyCardViewBinding
             }
         }
 
-        if (!ValidateTextTarget(winningText, $"{prefix} winningText", requireActive: true, errors: errors))
+        for (int cellIndex = 0; cellIndex < 15; cellIndex++)
+        {
+            TextMeshProUGUI numberLabel = numberTexts != null && cellIndex < numberTexts.Length ? numberTexts[cellIndex] : null;
+            GameObject selectionOverlay = selectionOverlays != null && cellIndex < selectionOverlays.Length ? selectionOverlays[cellIndex] : null;
+            if (!Theme1GameplayViewRepairUtils.IsDedicatedCardNumberLabel(numberLabel, selectionOverlay))
+            {
+                errors.Add($"{prefix} numberTexts[{cellIndex}] peker ikke til en lokal RealtimeCardNumberLabel.");
+                isValid = false;
+            }
+        }
+
+        if (!ValidateTextTarget(winningText, $"{prefix} winningText", requireActive: false, errors: errors))
         {
             isValid = false;
         }
@@ -315,60 +350,7 @@ public sealed class CandyCardViewBinding
 
     private static bool ValidateTextTarget(TextMeshProUGUI target, string label, bool requireActive, List<string> errors)
     {
-        if (target == null)
-        {
-            errors.Add($"{label} er null.");
-            return false;
-        }
-
-        bool isValid = true;
-        if (target.font == null)
-        {
-            errors.Add($"{label} mangler fontAsset.");
-            isValid = false;
-        }
-
-        if (target.fontSharedMaterial == null)
-        {
-            errors.Add($"{label} mangler sharedMaterial.");
-            isValid = false;
-        }
-
-        if (!target.enabled)
-        {
-            errors.Add($"{label} er disabled.");
-            isValid = false;
-        }
-
-        if (requireActive && !target.gameObject.activeInHierarchy)
-        {
-            errors.Add($"{label} er ikke aktiv i hierarkiet.");
-            isValid = false;
-        }
-
-        if (target.color.a <= 0.01f)
-        {
-            errors.Add($"{label} har alpha=0.");
-            isValid = false;
-        }
-
-        RectTransform rectTransform = target.rectTransform;
-        if (rectTransform == null)
-        {
-            errors.Add($"{label} mangler RectTransform.");
-            isValid = false;
-        }
-        else
-        {
-            Rect rect = rectTransform.rect;
-            if (rect.width <= 1f || rect.height <= 1f)
-            {
-                errors.Add($"{label} har ugyldig TMP-rect ({rect.width:0.##}x{rect.height:0.##}).");
-                isValid = false;
-            }
-        }
-
-        return isValid;
+        return CandyCardViewBindingValidator.ValidateTextTarget(target, label, requireActive, errors);
     }
 }
 
@@ -390,7 +372,7 @@ public sealed class CandyBallSlotBinding
         bindingName = string.IsNullOrWhiteSpace(fallbackName) ? "Ball" : fallbackName.Trim();
         root = sourceRoot;
         image = sourceRoot != null ? sourceRoot.GetComponent<Image>() : null;
-        numberText = sourceRoot != null ? sourceRoot.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+        numberText = Theme1GameplayViewRepairUtils.FindDedicatedBallNumberLabel(sourceRoot);
     }
 
     public bool Validate(List<string> errors, int index)
@@ -409,9 +391,18 @@ public sealed class CandyBallSlotBinding
             isValid = false;
         }
 
-        if (!CandyCardViewBindingValidator.ValidateTextTarget(numberText, $"{prefix} numberText", requireActive: false, errors))
+        if (numberText != null)
         {
-            isValid = false;
+            if (!CandyCardViewBindingValidator.ValidateTextTarget(numberText, $"{prefix} numberText", requireActive: false, errors))
+            {
+                isValid = false;
+            }
+
+            if (!Theme1GameplayViewRepairUtils.IsDedicatedBallNumberLabel(numberText, root))
+            {
+                errors.Add($"{prefix} numberText peker ikke til en lokal RealtimeBallNumberLabel.");
+                isValid = false;
+            }
         }
 
         return isValid;
@@ -467,7 +458,7 @@ internal static class CandyCardViewBindingValidator
         }
         else
         {
-            Rect rect = rectTransform.rect;
+            Rect rect = ResolveEffectiveRect(rectTransform);
             if (rect.width <= 1f || rect.height <= 1f)
             {
                 errors.Add($"{label} har ugyldig TMP-rect ({rect.width:0.##}x{rect.height:0.##}).");
@@ -476,5 +467,37 @@ internal static class CandyCardViewBindingValidator
         }
 
         return isValid;
+    }
+
+    private static Rect ResolveEffectiveRect(RectTransform rectTransform)
+    {
+        if (rectTransform == null)
+        {
+            return default;
+        }
+
+        Rect ownRect = rectTransform.rect;
+        if (ownRect.width > 1f && ownRect.height > 1f)
+        {
+            return ownRect;
+        }
+
+        if (rectTransform.parent != null)
+        {
+            GridLayoutGroup grid = rectTransform.parent.GetComponent<GridLayoutGroup>();
+            if (grid != null && grid.cellSize.x > 1f && grid.cellSize.y > 1f)
+            {
+                return new Rect(0f, 0f, grid.cellSize.x, grid.cellSize.y);
+            }
+
+            if (rectTransform.parent is RectTransform parentRect &&
+                parentRect.rect.width > 1f &&
+                parentRect.rect.height > 1f)
+            {
+                return parentRect.rect;
+            }
+        }
+
+        return ownRect;
     }
 }

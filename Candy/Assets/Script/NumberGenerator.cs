@@ -80,6 +80,7 @@ public class NumberGenerator : MonoBehaviour
     private bool hasLoggedMissingNumberManager;
     private bool hasLoggedMissingApiManager;
     private CandyCardViewBindingSet runtimeCardViewBindings;
+    private bool roundCompletionPendingAfterExtraBall;
 
     private void OnEnable()
     {
@@ -215,6 +216,8 @@ public class NumberGenerator : MonoBehaviour
 
     private void StartGame()
     {
+        roundCompletionPendingAfterExtraBall = false;
+
         if (APIManager.instance != null && APIManager.instance.UseRealtimeBackend)
         {
             if (!ValidateRealtimePatternConfiguration(out string patternError))
@@ -868,16 +871,21 @@ public class NumberGenerator : MonoBehaviour
     {
         if (isExtraBallDone) { return; }
         //Debug.Log("isMissingPattern ------------>>>> " + isMissingPattern);
+        bool startedExtraBallFlow = false;
         if (!showFreeExtraBalls && !isBonusSelected)
         {
+            roundCompletionPendingAfterExtraBall = true;
+            startedExtraBallFlow = true;
             Invoke(nameof(ShowExtraBallSlotMachine), 2);
 
         }
         else if (showFreeExtraBalls && !isBonusSelected && totalExtraBallCount != 0)
         {
+            roundCompletionPendingAfterExtraBall = true;
+            startedExtraBallFlow = true;
             Invoke(nameof(DropBallsFromExtraBallBank), 2);
         }
-        EndGame();
+        EndGame(finalizeRound: !startedExtraBallFlow);
         isExtraBallDone = true;
     }
 
@@ -1076,7 +1084,34 @@ public class NumberGenerator : MonoBehaviour
 
 
 
-    private void EndGame()
+    public void NotifyLegacyExtraBallAnimationCompleted()
+    {
+        if (!roundCompletionPendingAfterExtraBall || showFreeExtraBalls)
+        {
+            return;
+        }
+
+        if (totalExtraBallCount > 0)
+        {
+            return;
+        }
+
+        roundCompletionPendingAfterExtraBall = false;
+        EventManager.RoundComplete();
+    }
+
+    public void NotifyLegacyFreeExtraBallsCompleted()
+    {
+        if (!roundCompletionPendingAfterExtraBall)
+        {
+            return;
+        }
+
+        roundCompletionPendingAfterExtraBall = false;
+        EventManager.RoundComplete();
+    }
+
+    private void EndGame(bool finalizeRound = true)
     {
         if (isBonusSelected)
         {
@@ -1084,6 +1119,12 @@ public class NumberGenerator : MonoBehaviour
         }
         else
         {
+            if (finalizeRound)
+            {
+                roundCompletionPendingAfterExtraBall = false;
+                EventManager.RoundComplete();
+            }
+
             NextPlay();
         }
     }
@@ -1312,6 +1353,26 @@ public class NumberGenerator : MonoBehaviour
             {
                 totalSelectedPatterns.Clear();
                 totalSelectedPatterns.AddRange(runtimePatternIndexes);
+                return;
+            }
+
+            if (APIManager.instance != null && APIManager.instance.UseRealtimeBackend)
+            {
+                totalSelectedPatterns.Clear();
+                if (patternList != null)
+                {
+                    for (int patternIndex = 0; patternIndex < patternList.Count; patternIndex++)
+                    {
+                        totalSelectedPatterns.Add(patternIndex);
+                    }
+                }
+
+                if (!hasLoggedMissingNumberManager)
+                {
+                    Debug.LogWarning("[NumberGenerator] currentPatternIndex er tom i realtime. Bruker alle Candy-mønstre som fallback.");
+                    hasLoggedMissingNumberManager = true;
+                }
+
                 return;
             }
 

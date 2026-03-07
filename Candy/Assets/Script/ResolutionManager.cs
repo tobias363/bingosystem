@@ -7,6 +7,8 @@ public class ResolutionManager : MonoBehaviour
     [Header("Canvas Scaling")]
     [SerializeField] private Vector2 referenceResolution = new Vector2(1920, 1080);
     [SerializeField] [Range(0f, 1f)] private float matchWidthOrHeight = 0.5f;
+    [SerializeField] private float minimumDynamicPixelsPerUnit = CandyTypographySystem.MinimumGameplayCameraCanvasDynamicPixelsPerUnit;
+    [SerializeField] private bool bindCameraForScreenSpaceCameraCanvas = true;
 
     [Header("Screen Resolution")]
     [SerializeField] private bool forceFullscreenResolution = false;
@@ -44,6 +46,32 @@ public class ResolutionManager : MonoBehaviour
             canvasScaler.referenceResolution = referenceResolution;
             canvasScaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
             canvasScaler.matchWidthOrHeight = matchWidthOrHeight;
+        }
+
+        Canvas canvas = GetComponent<Canvas>();
+        if (canvas == null || canvas.renderMode != RenderMode.ScreenSpaceCamera)
+        {
+            return;
+        }
+
+        if (canvasScaler != null &&
+            canvasScaler.dynamicPixelsPerUnit < minimumDynamicPixelsPerUnit)
+        {
+            canvasScaler.dynamicPixelsPerUnit = minimumDynamicPixelsPerUnit;
+        }
+
+        if (bindCameraForScreenSpaceCameraCanvas && canvas.worldCamera == null)
+        {
+            Camera gameplayCamera = ResolveGameplayCamera();
+            if (gameplayCamera != null)
+            {
+                canvas.worldCamera = gameplayCamera;
+            }
+        }
+
+        if (canvas.pixelPerfect)
+        {
+            canvas.pixelPerfect = false;
         }
     }
 
@@ -87,5 +115,26 @@ public class ResolutionManager : MonoBehaviour
             return 2;
         }
         return 0;
+    }
+
+    private static Camera ResolveGameplayCamera()
+    {
+        Camera taggedMainCamera = Camera.main;
+        if (taggedMainCamera != null && taggedMainCamera.isActiveAndEnabled)
+        {
+            return taggedMainCamera;
+        }
+
+        Camera[] cameras = FindObjectsOfType<Camera>(true);
+        for (int i = 0; i < cameras.Length; i++)
+        {
+            Camera camera = cameras[i];
+            if (camera != null && camera.isActiveAndEnabled)
+            {
+                return camera;
+            }
+        }
+
+        return null;
     }
 }

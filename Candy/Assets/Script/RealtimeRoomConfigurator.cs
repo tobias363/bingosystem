@@ -18,7 +18,8 @@ public sealed class RealtimeRoomConfigurator
         string roomCode,
         string playerId,
         int entryFee,
-        Action<JSONNode> onSnapshot)
+        Action<JSONNode> onSnapshot,
+        Action onSnapshotMissing = null)
     {
         if (!useRealtimeBackend || !realtimeScheduledRounds)
         {
@@ -57,6 +58,10 @@ public sealed class RealtimeRoomConfigurator
             if (snapshot != null && !snapshot.IsNull)
             {
                 onSnapshot?.Invoke(snapshot);
+            }
+            else
+            {
+                onSnapshotMissing?.Invoke();
             }
         });
     }

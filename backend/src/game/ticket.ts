@@ -1,7 +1,16 @@
 import { randomInt } from "node:crypto";
 import type { Ticket } from "./types.js";
 
-const BOARD_SIZE = 5;
+const TRADITIONAL_BOARD_SIZE = 5;
+const CANDY_ROWS = 3;
+const CANDY_COLUMNS = 5;
+const CANDY_COLUMN_RANGES: Array<readonly [number, number]> = [
+  [1, 12],
+  [13, 24],
+  [25, 36],
+  [37, 48],
+  [49, 60]
+];
 
 function shuffle<T>(values: T[]): T[] {
   const arr = [...values];
@@ -33,17 +42,17 @@ export function makeShuffledBallBag(maxNumber = 75): number[] {
 
 export function generateTraditional75Ticket(): Ticket {
   const columns = [
-    pickUniqueInRange(1, 15, BOARD_SIZE),
-    pickUniqueInRange(16, 30, BOARD_SIZE),
-    pickUniqueInRange(31, 45, BOARD_SIZE - 1),
-    pickUniqueInRange(46, 60, BOARD_SIZE),
-    pickUniqueInRange(61, 75, BOARD_SIZE)
+    pickUniqueInRange(1, 15, TRADITIONAL_BOARD_SIZE),
+    pickUniqueInRange(16, 30, TRADITIONAL_BOARD_SIZE),
+    pickUniqueInRange(31, 45, TRADITIONAL_BOARD_SIZE - 1),
+    pickUniqueInRange(46, 60, TRADITIONAL_BOARD_SIZE),
+    pickUniqueInRange(61, 75, TRADITIONAL_BOARD_SIZE)
   ];
 
   const grid: number[][] = [];
-  for (let row = 0; row < BOARD_SIZE; row += 1) {
+  for (let row = 0; row < TRADITIONAL_BOARD_SIZE; row += 1) {
     const rowValues: number[] = [];
-    for (let col = 0; col < BOARD_SIZE; col += 1) {
+    for (let col = 0; col < TRADITIONAL_BOARD_SIZE; col += 1) {
       if (row === 2 && col === 2) {
         rowValues.push(0);
       } else if (col === 2 && row > 2) {
@@ -55,11 +64,58 @@ export function generateTraditional75Ticket(): Ticket {
     grid.push(rowValues);
   }
 
-  return { grid };
+  return {
+    numbers: flattenTicketNumbers(grid),
+    grid
+  };
+}
+
+export function generateCandy60Ticket(): Ticket {
+  const columns = CANDY_COLUMN_RANGES.map(([start, end]) => pickUniqueInRange(start, end, CANDY_ROWS));
+  const grid: number[][] = [];
+  const numbers: number[] = [];
+
+  for (let row = 0; row < CANDY_ROWS; row += 1) {
+    const rowValues: number[] = [];
+    for (let col = 0; col < CANDY_COLUMNS; col += 1) {
+      const number = columns[col][row];
+      rowValues.push(number);
+      numbers.push(number);
+    }
+    grid.push(rowValues);
+  }
+
+  return {
+    numbers,
+    grid
+  };
+}
+
+export function flattenTicketNumbers(grid: number[][]): number[] {
+  const values: number[] = [];
+  for (const row of grid) {
+    if (!Array.isArray(row)) {
+      continue;
+    }
+    for (const number of row) {
+      if (Number.isFinite(number) && number > 0) {
+        values.push(number);
+      }
+    }
+  }
+  return values;
+}
+
+export function getTicketNumbers(ticket: Ticket): number[] {
+  if (Array.isArray(ticket?.numbers) && ticket.numbers.length > 0) {
+    return ticket.numbers.filter((value) => Number.isFinite(value) && value > 0);
+  }
+
+  return flattenTicketNumbers(ticket?.grid ?? []);
 }
 
 export function ticketContainsNumber(ticket: Ticket, number: number): boolean {
-  return ticket.grid.some((row) => row.includes(number));
+  return getTicketNumbers(ticket).includes(number);
 }
 
 function isMarked(ticket: Ticket, marks: Set<number>, row: number, col: number): boolean {
@@ -74,28 +130,31 @@ function isMarked(ticket: Ticket, marks: Set<number>, row: number, col: number):
 }
 
 export function findFirstCompleteLinePatternIndex(ticket: Ticket, marks: Set<number>): number {
-  for (let row = 0; row < BOARD_SIZE; row += 1) {
-    const complete = Array.from({ length: BOARD_SIZE }, (_, col) => isMarked(ticket, marks, row, col)).every(Boolean);
+  const rows = ticket.grid.length;
+  const cols = ticket.grid[0]?.length ?? 0;
+  for (let row = 0; row < rows; row += 1) {
+    const complete = Array.from({ length: cols }, (_, col) => isMarked(ticket, marks, row, col)).every(Boolean);
     if (complete) {
       return row;
     }
   }
 
-  for (let col = 0; col < BOARD_SIZE; col += 1) {
-    const complete = Array.from({ length: BOARD_SIZE }, (_, row) => isMarked(ticket, marks, row, col)).every(Boolean);
+  for (let col = 0; col < cols; col += 1) {
+    const complete = Array.from({ length: rows }, (_, row) => isMarked(ticket, marks, row, col)).every(Boolean);
     if (complete) {
-      return BOARD_SIZE + col;
+      return rows + col;
     }
   }
 
-  const leftDiagonal = Array.from({ length: BOARD_SIZE }, (_, i) => isMarked(ticket, marks, i, i)).every(Boolean);
+  const diagonalLength = Math.min(rows, cols);
+  const leftDiagonal = Array.from({ length: diagonalLength }, (_, i) => isMarked(ticket, marks, i, i)).every(Boolean);
   if (leftDiagonal) {
-    return BOARD_SIZE * 2;
+    return rows + cols;
   }
 
-  const rightDiagonal = Array.from({ length: BOARD_SIZE }, (_, i) => isMarked(ticket, marks, i, BOARD_SIZE - 1 - i)).every(Boolean);
+  const rightDiagonal = Array.from({ length: diagonalLength }, (_, i) => isMarked(ticket, marks, i, cols - 1 - i)).every(Boolean);
   if (rightDiagonal) {
-    return BOARD_SIZE * 2 + 1;
+    return rows + cols + 1;
   }
 
   return -1;
@@ -107,6 +166,8 @@ export function hasAnyCompleteLine(ticket: Ticket, marks: Set<number>): boolean 
 
 export function countNearMissLinePattern(ticket: Ticket, marks: Set<number>): number {
   let nearMissCount = 0;
+  const rows = ticket.grid.length;
+  const cols = ticket.grid[0]?.length ?? 0;
 
   const countMissingInPattern = (cells: Array<{ row: number; col: number }>): number => {
     let missing = 0;
@@ -118,33 +179,34 @@ export function countNearMissLinePattern(ticket: Ticket, marks: Set<number>): nu
     return missing;
   };
 
-  for (let row = 0; row < BOARD_SIZE; row += 1) {
+  for (let row = 0; row < rows; row += 1) {
     const missing = countMissingInPattern(
-      Array.from({ length: BOARD_SIZE }, (_, col) => ({ row, col }))
+      Array.from({ length: cols }, (_, col) => ({ row, col }))
     );
     if (missing === 1) {
       nearMissCount += 1;
     }
   }
 
-  for (let col = 0; col < BOARD_SIZE; col += 1) {
+  for (let col = 0; col < cols; col += 1) {
     const missing = countMissingInPattern(
-      Array.from({ length: BOARD_SIZE }, (_, row) => ({ row, col }))
+      Array.from({ length: rows }, (_, row) => ({ row, col }))
     );
     if (missing === 1) {
       nearMissCount += 1;
     }
   }
 
+  const diagonalLength = Math.min(rows, cols);
   const leftDiagonalMissing = countMissingInPattern(
-    Array.from({ length: BOARD_SIZE }, (_, i) => ({ row: i, col: i }))
+    Array.from({ length: diagonalLength }, (_, i) => ({ row: i, col: i }))
   );
   if (leftDiagonalMissing === 1) {
     nearMissCount += 1;
   }
 
   const rightDiagonalMissing = countMissingInPattern(
-    Array.from({ length: BOARD_SIZE }, (_, i) => ({ row: i, col: BOARD_SIZE - 1 - i }))
+    Array.from({ length: diagonalLength }, (_, i) => ({ row: i, col: cols - 1 - i }))
   );
   if (rightDiagonalMissing === 1) {
     nearMissCount += 1;

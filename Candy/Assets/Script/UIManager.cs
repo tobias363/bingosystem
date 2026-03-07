@@ -22,11 +22,37 @@ public class UIManager : MonoBehaviour
 
     public int autoSpinCount = 5;
 
-    private const string RealtimeRerollButtonLabel = "↻";
+    private const string RealtimeRerollButtonLabel = "Bytt alle";
+    private const string RealtimeSingleCardRerollButtonLabel = "Bytt tall";
+    private readonly List<Button> realtimeSingleCardRerollButtons = new();
 
     private bool IsRealtimeMode()
     {
         return APIManager.instance != null && APIManager.instance.UseRealtimeBackend;
+    }
+
+    private bool HasPlayableConfiguredBet()
+    {
+        return GameManager.instance == null || GameManager.instance.CanPlayCurrentBet();
+    }
+
+    private void RefreshLegacyPlayControlsState()
+    {
+        if (IsRealtimeMode())
+        {
+            return;
+        }
+
+        bool canPlay = HasPlayableConfiguredBet();
+        if (playBtn != null && EventManager.isPlayOver)
+        {
+            playBtn.interactable = canPlay;
+        }
+
+        if (autoPlayBtn != null)
+        {
+            autoPlayBtn.interactable = canPlay && !IsProductionAutoPlayBlocked();
+        }
     }
 
     private void ApplyPlayButtonLabel()
@@ -80,8 +106,6 @@ public class UIManager : MonoBehaviour
         {
             playBtn.gameObject.SetActive(true);
         }
-
-        playBtn.interactable = true;
     }
 
     private void EnsureRealtimeStartNowButtonVisible()
@@ -140,15 +164,15 @@ public class UIManager : MonoBehaviour
         ApplyAutoPlayButtonLabel();
         ResetAutoSpinHighlights();
         EnsureRealtimeRerollButton();
+        EnsureRealtimeSingleCardRerollButtons();
         RefreshRealtimeRerollButtonState();
+        RefreshRealtimeSingleCardRerollButtonsState();
+        RefreshRealtimeBetControlsState();
+        RefreshLegacyPlayControlsState();
 
         if (IsRealtimeMode())
         {
             EnsureRealtimeStartNowButtonVisible();
-        }
-        else if (autoPlayBtn != null && IsProductionAutoPlayBlocked())
-        {
-            autoPlayBtn.interactable = false;
         }
     }
 
@@ -159,11 +183,22 @@ public class UIManager : MonoBehaviour
         {
             rerollTicketBtn.onClick.RemoveListener(OnRealtimeRerollClicked);
         }
+
+        for (int i = 0; i < realtimeSingleCardRerollButtons.Count; i++)
+        {
+            if (realtimeSingleCardRerollButtons[i] != null)
+            {
+                realtimeSingleCardRerollButtons[i].onClick.RemoveAllListeners();
+            }
+        }
     }
 
     private void Update()
     {
         RefreshRealtimeRerollButtonState();
+        RefreshRealtimeSingleCardRerollButtonsState();
+        RefreshRealtimeBetControlsState();
+        RefreshLegacyPlayControlsState();
     }
 
     private void EnsureRealtimeRerollButton()
@@ -194,7 +229,7 @@ public class UIManager : MonoBehaviour
                 rect.anchorMin = templateRect.anchorMin;
                 rect.anchorMax = templateRect.anchorMax;
                 rect.pivot = templateRect.pivot;
-                rect.sizeDelta = templateRect.sizeDelta;
+                rect.sizeDelta = new Vector2(Mathf.Max(templateRect.sizeDelta.x, 150f), templateRect.sizeDelta.y);
                 float horizontalSpacing = 16f;
                 if (betDownRect != null)
                 {
@@ -245,9 +280,9 @@ public class UIManager : MonoBehaviour
                                          playBtn.GetComponentInChildren<TMP_Text>(true);
                 if (templateLabel != null)
                 {
-                    label.font = templateLabel.font;
                     label.color = templateLabel.color;
                 }
+                CandyTypographySystem.ApplyRole(label, CandyTypographyRole.Label);
 
                 int playIndex = playBtn.transform.GetSiblingIndex();
                 buttonObject.transform.SetSiblingIndex(Mathf.Max(0, playIndex - 1));
@@ -271,7 +306,8 @@ public class UIManager : MonoBehaviour
             return;
         }
 
-        bool shouldShow = IsRealtimeMode();
+        APIManager apiManager = APIManager.instance;
+        bool shouldShow = IsRealtimeMode() && apiManager != null && apiManager.IsRealtimeRerollWindowOpen;
         if (rerollTicketBtn.gameObject.activeSelf != shouldShow)
         {
             rerollTicketBtn.gameObject.SetActive(shouldShow);
@@ -282,7 +318,7 @@ public class UIManager : MonoBehaviour
             return;
         }
 
-        rerollTicketBtn.interactable = APIManager.instance != null && APIManager.instance.CanRequestRealtimeTicketReroll();
+        rerollTicketBtn.interactable = apiManager != null && apiManager.CanRequestRealtimeTicketReroll();
     }
 
     private void OnRealtimeRerollClicked()
@@ -296,8 +332,286 @@ public class UIManager : MonoBehaviour
         RefreshRealtimeRerollButtonState();
     }
 
+    private void EnsureRealtimeSingleCardRerollButtons()
+    {
+        if (!IsRealtimeMode() || Application.isBatchMode)
+        {
+            SetRealtimeSingleCardRerollButtonsVisible(false);
+            return;
+        }
+
+        APIManager apiManager = APIManager.instance;
+        NumberGenerator generator = FindObjectOfType<NumberGenerator>();
+        RectTransform parent = playBtn != null ? playBtn.transform.parent as RectTransform : null;
+        if (apiManager == null || generator == null || generator.cardClasses == null || parent == null)
+        {
+            return;
+        }
+
+        int buttonCount = apiManager.GetRealtimeVisibleCardCount();
+        while (realtimeSingleCardRerollButtons.Count < buttonCount)
+        {
+            int visibleCardIndex = realtimeSingleCardRerollButtons.Count;
+            realtimeSingleCardRerollButtons.Add(CreateRealtimeSingleCardRerollButton(parent, visibleCardIndex));
+        }
+
+        for (int cardIndex = 0; cardIndex < realtimeSingleCardRerollButtons.Count; cardIndex++)
+        {
+            Button button = realtimeSingleCardRerollButtons[cardIndex];
+            if (button == null)
+            {
+                continue;
+            }
+
+            bool shouldExist = cardIndex < buttonCount;
+            button.gameObject.SetActive(shouldExist);
+            if (!shouldExist)
+            {
+                continue;
+            }
+
+            button.onClick.RemoveAllListeners();
+            int capturedIndex = cardIndex;
+            button.onClick.AddListener(() => OnRealtimeSingleCardRerollClicked(capturedIndex));
+            PositionRealtimeSingleCardRerollButton(button, generator, parent, capturedIndex);
+        }
+    }
+
+    private Button CreateRealtimeSingleCardRerollButton(RectTransform parent, int visibleCardIndex)
+    {
+        GameObject buttonObject = new($"RealtimeSingleCardRerollButton_{visibleCardIndex + 1}");
+        buttonObject.transform.SetParent(parent, false);
+        RectTransform rect = buttonObject.AddComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.sizeDelta = new Vector2(138f, 34f);
+
+        Image image = buttonObject.AddComponent<Image>();
+        Button button = buttonObject.AddComponent<Button>();
+
+        Image templateImage = (rerollTicketBtn != null ? rerollTicketBtn.GetComponent<Image>() : null) ??
+                              (betDown != null ? betDown.GetComponent<Image>() : null) ??
+                              (playBtn != null ? playBtn.GetComponent<Image>() : null);
+        if (templateImage != null)
+        {
+            image.sprite = templateImage.sprite;
+            image.type = templateImage.type;
+            image.pixelsPerUnitMultiplier = templateImage.pixelsPerUnitMultiplier;
+            image.color = templateImage.color;
+            image.material = templateImage.material;
+        }
+
+        Button templateButton = rerollTicketBtn ?? betDown ?? playBtn;
+        if (templateButton != null)
+        {
+            button.colors = templateButton.colors;
+            button.transition = templateButton.transition;
+            button.spriteState = templateButton.spriteState;
+        }
+
+        GameObject labelObject = new("Label");
+        labelObject.transform.SetParent(buttonObject.transform, false);
+        RectTransform labelRect = labelObject.AddComponent<RectTransform>();
+        labelRect.anchorMin = Vector2.zero;
+        labelRect.anchorMax = Vector2.one;
+        labelRect.offsetMin = Vector2.zero;
+        labelRect.offsetMax = Vector2.zero;
+
+        TextMeshProUGUI label = labelObject.AddComponent<TextMeshProUGUI>();
+        label.alignment = TextAlignmentOptions.Center;
+        label.text = RealtimeSingleCardRerollButtonLabel;
+        label.enableAutoSizing = true;
+        label.fontSizeMin = 12f;
+        label.fontSizeMax = 26f;
+        label.fontSize = 20f;
+        label.color = Color.white;
+
+        TMP_Text templateLabel = (rerollTicketBtn != null ? rerollTicketBtn.GetComponentInChildren<TMP_Text>(true) : null) ??
+                                 (betDown != null ? betDown.GetComponentInChildren<TMP_Text>(true) : null) ??
+                                 (playBtn != null ? playBtn.GetComponentInChildren<TMP_Text>(true) : null);
+        if (templateLabel != null)
+        {
+            label.color = templateLabel.color;
+        }
+        CandyTypographySystem.ApplyRole(label, CandyTypographyRole.Label);
+
+        return button;
+    }
+
+    private void PositionRealtimeSingleCardRerollButton(
+        Button button,
+        NumberGenerator generator,
+        RectTransform parent,
+        int visibleCardIndex)
+    {
+        if (button == null || generator == null || generator.cardClasses == null || parent == null)
+        {
+            return;
+        }
+
+        if (visibleCardIndex < 0 || visibleCardIndex >= generator.cardClasses.Length)
+        {
+            button.gameObject.SetActive(false);
+            return;
+        }
+
+        CardClass card = generator.cardClasses[visibleCardIndex];
+        if (card == null || card.num_text == null || card.num_text.Count == 0)
+        {
+            button.gameObject.SetActive(false);
+            return;
+        }
+
+        bool hasBounds = false;
+        float minX = 0f;
+        float maxX = 0f;
+        float maxY = 0f;
+        Vector3[] worldCorners = new Vector3[4];
+        for (int textIndex = 0; textIndex < card.num_text.Count; textIndex++)
+        {
+            TextMeshProUGUI label = card.num_text[textIndex];
+            if (label == null)
+            {
+                continue;
+            }
+
+            RectTransform labelRect = label.rectTransform;
+            if (labelRect == null)
+            {
+                continue;
+            }
+
+            labelRect.GetWorldCorners(worldCorners);
+            for (int cornerIndex = 0; cornerIndex < worldCorners.Length; cornerIndex++)
+            {
+                Vector3 localCorner = parent.InverseTransformPoint(worldCorners[cornerIndex]);
+                if (!hasBounds)
+                {
+                    minX = localCorner.x;
+                    maxX = localCorner.x;
+                    maxY = localCorner.y;
+                    hasBounds = true;
+                    continue;
+                }
+
+                minX = Mathf.Min(minX, localCorner.x);
+                maxX = Mathf.Max(maxX, localCorner.x);
+                maxY = Mathf.Max(maxY, localCorner.y);
+            }
+        }
+
+        if (!hasBounds)
+        {
+            button.gameObject.SetActive(false);
+            return;
+        }
+
+        RectTransform buttonRect = button.GetComponent<RectTransform>();
+        float cardWidth = Mathf.Max(120f, maxX - minX);
+        buttonRect.sizeDelta = new Vector2(Mathf.Clamp(cardWidth * 0.6f, 128f, 170f), 34f);
+        buttonRect.anchoredPosition = new Vector2((minX + maxX) * 0.5f, maxY + 20f);
+        button.gameObject.SetActive(true);
+    }
+
+    private void RefreshRealtimeSingleCardRerollButtonsState()
+    {
+        EnsureRealtimeSingleCardRerollButtons();
+
+        APIManager apiManager = APIManager.instance;
+        bool shouldShow = IsRealtimeMode() && apiManager != null && apiManager.IsRealtimeRerollWindowOpen;
+        int visibleCardCount = apiManager != null ? apiManager.GetRealtimeVisibleCardCount() : 0;
+        for (int i = 0; i < realtimeSingleCardRerollButtons.Count; i++)
+        {
+            Button button = realtimeSingleCardRerollButtons[i];
+            if (button == null)
+            {
+                continue;
+            }
+
+            bool showThisButton = shouldShow && i < visibleCardCount;
+            if (button.gameObject.activeSelf != showThisButton)
+            {
+                button.gameObject.SetActive(showThisButton);
+            }
+
+            if (showThisButton)
+            {
+                button.interactable = apiManager.CanRequestRealtimeTicketRerollForVisibleCard(i);
+            }
+        }
+    }
+
+    private void SetRealtimeSingleCardRerollButtonsVisible(bool visible)
+    {
+        for (int i = 0; i < realtimeSingleCardRerollButtons.Count; i++)
+        {
+            if (realtimeSingleCardRerollButtons[i] != null)
+            {
+                realtimeSingleCardRerollButtons[i].gameObject.SetActive(visible);
+            }
+        }
+    }
+
+    private void OnRealtimeSingleCardRerollClicked(int visibleCardIndex)
+    {
+        if (!IsRealtimeMode())
+        {
+            return;
+        }
+
+        APIManager.instance?.RequestRealtimeTicketRerollForVisibleCard(visibleCardIndex);
+        RefreshRealtimeSingleCardRerollButtonsState();
+    }
+
+    private void RefreshRealtimeBetControlsState()
+    {
+        if (!IsRealtimeMode())
+        {
+            return;
+        }
+
+        EnsurePlayButtonVisible();
+        EnsureRealtimeStartNowButtonVisible();
+        ApplyPlayButtonLabel();
+        ApplyAutoPlayButtonLabel();
+
+        APIManager apiManager = APIManager.instance;
+        bool canEditPreRoundSelection = apiManager == null || apiManager.CanEditRealtimePreRoundSelection;
+        bool hasPlayableBet = HasPlayableConfiguredBet();
+        GameManager gameManager = GameManager.instance;
+        bool canIncreaseBet = gameManager == null || gameManager.betlevel < gameManager.totalBets.Count - 1;
+        bool canDecreaseBet = gameManager == null || gameManager.betlevel > 0;
+
+        if (betUp != null)
+        {
+            betUp.interactable = canEditPreRoundSelection && canIncreaseBet;
+        }
+
+        if (betDown != null)
+        {
+            betDown.interactable = canEditPreRoundSelection && canDecreaseBet;
+        }
+
+        if (playBtn != null)
+        {
+            playBtn.interactable = canEditPreRoundSelection && hasPlayableBet;
+        }
+
+        if (autoPlayBtn != null)
+        {
+            autoPlayBtn.interactable = canEditPreRoundSelection;
+        }
+    }
+
     public void Play()
     {
+        if (!HasPlayableConfiguredBet())
+        {
+            RefreshLegacyPlayControlsState();
+            return;
+        }
+
         if (IsRealtimeMode())
         {
             if (playBtn != null)
@@ -339,6 +653,12 @@ public class UIManager : MonoBehaviour
             return;
         }
 
+        if (!HasPlayableConfiguredBet())
+        {
+            RefreshLegacyPlayControlsState();
+            return;
+        }
+
         if (settingsPanel != null)
         {
             settingsPanel.SetActive(false);
@@ -363,6 +683,12 @@ public class UIManager : MonoBehaviour
         if (IsRealtimeMode())
         {
             APIManager.instance?.RequestRealtimeState();
+            return;
+        }
+
+        if (!HasPlayableConfiguredBet())
+        {
+            RefreshLegacyPlayControlsState();
             return;
         }
 
@@ -427,10 +753,18 @@ public class UIManager : MonoBehaviour
 
     public void ActivePlayBtn()
     {
+        if (IsRealtimeMode())
+        {
+            RefreshRealtimeBetControlsState();
+            return;
+        }
+
         if (playBtn != null)
         {
             playBtn.interactable = true;
         }
+
+        RefreshLegacyPlayControlsState();
     }
 
     public void AutoSpinOptionSelection(int index)
@@ -483,20 +817,35 @@ public class UIManager : MonoBehaviour
         //playBtn.interactable = isOver;
         //autoPlayBtn.interactable = isOver;
         //settingsBtn.interactable = isOver;
-        if (betUp != null)
+        if (IsRealtimeMode())
         {
-            betUp.interactable = isOver;
+            RefreshRealtimeBetControlsState();
+            return;
         }
 
-        if (betDown != null)
+        if (isOver)
         {
-            betDown.interactable = isOver;
+            GameManager.instance?.RefreshBetControls();
+        }
+        else
+        {
+            if (betUp != null)
+            {
+                betUp.interactable = false;
+            }
+
+            if (betDown != null)
+            {
+                betDown.interactable = false;
+            }
         }
 
-        if (rerollTicketBtn != null && !IsRealtimeMode())
+        if (rerollTicketBtn != null)
         {
             rerollTicketBtn.interactable = isOver;
         }
+
+        RefreshLegacyPlayControlsState();
     }
     
 }

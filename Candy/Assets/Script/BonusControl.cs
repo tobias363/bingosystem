@@ -103,6 +103,7 @@ public class BonusControl : MonoBehaviour
     void EndGame()
     {
         bonusCanvas.SetActive(false);
+        EventManager.RoundComplete();
         EventManager.PlayOnBonusOver();
     }
     public void GenerateNewObj()

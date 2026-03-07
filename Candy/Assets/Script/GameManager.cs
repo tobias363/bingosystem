@@ -3,16 +3,25 @@ using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
 using UnityEngine.UI;
-using System.Linq;
 using System;
 
 public class GameManager : MonoBehaviour
 {
+    private const int DefaultStartingCredit = 1000;
+    private const int BetStep = 4;
+    private const int MaxBet = 20;
+    private const int DefaultCardCount = 4;
+    private static readonly int[] BasePatternPayouts =
+    {
+        200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2400
+    };
+
     public static GameManager instance;
 
     [Header("Testing Speed")]
     [SerializeField] private bool increaseGameSpeedInTesting = true;
     [SerializeField] [Range(1f, 5f)] private float testingSpeedMultiplier = 3.5f;
+    [SerializeField] private bool hidePerCardWinLabels = true;
 
     public int extraBallTotal;
     public NumberGenerator numberGenerator;
@@ -32,21 +41,28 @@ public class GameManager : MonoBehaviour
     public int totalMoney = 0;
     public int currentBet;
     public static int winAmt;
-    private List<int> cardWin = new List<int>();
+    private readonly List<int> cardWin = new List<int>();
     public int betlevel;
     public List<int> winList;
-    private ThemeMathEngine themeMathEngine;
     private bool testingSpeedApplied;
+    private bool roundSettlementPending;
+    private bool displayStateInitialized;
+
+    public int CreditBalance => totalMoney;
+    public int RoundWinnings => winAmt;
+
     private void OnEnable()
     {
         EventManager.OnPayAmt += ShowWinAmt;
         EventManager.OnPlay += OnPlay;
+        EventManager.OnRoundComplete += SettleRoundWinnings;
     }
 
     private void OnDisable()
     {
         EventManager.OnPayAmt -= ShowWinAmt;
         EventManager.OnPlay -= OnPlay;
+        EventManager.OnRoundComplete -= SettleRoundWinnings;
         RestoreTestingSpeedIfApplied();
 
     }
@@ -54,18 +70,16 @@ public class GameManager : MonoBehaviour
     void Awake()
     {
         instance = this;
+        EnsureLegacyBetTables();
+        EnsureCardWinCapacity(DefaultCardCount);
+        InitializeDisplayStateIfNeeded();
         ApplyTestingSpeedIfEnabled();
     }
     // Start is called before the first frame update
     void Start()
     {
-        SetTotalMoney(1000);
-        SetCurrentBets(betlevel);
-        for (int i = 0; i < displayCardWinPoints.Count; i++)
-        {
-            cardWin.Add(0);
-            displayCardWinPoints[i].text = "WIN - 0";
-        }
+        InitializeDisplayStateIfNeeded();
+        SetPerCardWinLabelVisibility(!hidePerCardWinLabels);
     }
 
     private void OnDestroy()
@@ -75,87 +89,82 @@ public class GameManager : MonoBehaviour
 
     private void OnPlay()
     {
-        SetTotalMoney(-currentBet);
-        winAmt = 0;
-        if (winList == null)
+        if (!CanPlayCurrentBet())
         {
-            winList = new List<int>();
-        }
-        else if (winList.Count > 0)
-        {
-            winList.Clear();
+            Debug.LogWarning("[GameManager] Ignorerer Play fordi bet er 0.");
+            RefreshBetControls();
+            return;
         }
 
-        winAmtText.text = "0";
-        for (int i = 0; i < displayCardWinPoints.Count; i++)
-        {
-            cardWin[i] = 0;
-            displayCardWinPoints[i].text = "WIN - 0";
-        }
+        AdjustCreditBalance(-currentBet);
+        ResetRoundTracking(clearDisplayedWinnings: true);
+        roundSettlementPending = true;
     }
+
     public void BetUp()
     {
-        if (totalBets.Count - 1 > betlevel)
-        {
-            betlevel++;
-            Debug.Log("??????????? : " + betlevel );
-            SetCurrentBets(betlevel);
-            btn_creditDown.interactable = true;
-        }
-
-        if (totalBets.Count - 1 <= betlevel)
-        {
-            btn_creditUp.interactable = false;
-        }
-        else
-        {
-            btn_creditUp.interactable = true;
-        }
+        ApplyBetLevel(betlevel + 1);
     }
 
     public void BetDown()
     {
-        if (betlevel >= 1)
-        {
-            betlevel--;
-            Debug.Log("??????????? : " + betlevel );
-            SetCurrentBets(betlevel);
-            btn_creditUp.interactable = true;
-        }
-
-         if (betlevel <=  0)
-        {
-            btn_creditDown.interactable = false;
-        }
-        else
-        {
-            btn_creditDown.interactable = true;
-        }
+        ApplyBetLevel(betlevel - 1);
     }
 
     public void SetTotalMoney(int atm)
     {
-        totalMoney += atm;
-        displayTotalMoney.text = totalMoney.ToString() ;
+        AdjustCreditBalance(atm);
     }
 
-    void SetCurrentBets(int lvl)
+    public void ApplyBetLevel(int lvl)
     {
-        currentBet = totalBets[lvl];
-        displayCurrentBets.text = currentBet.ToString();
+        EnsureLegacyBetTables();
+        if (APIManager.instance != null &&
+            APIManager.instance.UseRealtimeBackend &&
+            !APIManager.instance.CanEditRealtimePreRoundSelection)
+        {
+            Debug.LogWarning("[GameManager] Ignorerer bet-endring mens trekningen pågår.");
+            RefreshBetControls();
+            return;
+        }
+
+        int maxLevel = Mathf.Max(0, totalBets.Count - 1);
+        betlevel = Mathf.Clamp(lvl, 0, maxLevel);
+        currentBet = totalBets.Count > 0 ? totalBets[betlevel] : 0;
+        if (displayCurrentBets != null)
+        {
+            RealtimeTextStyleUtils.ApplyHudText(displayCurrentBets, currentBet.ToString());
+        }
+
         APIManager.instance?.SetRealtimeEntryFeeFromGameUI(currentBet);
         for (int i = 0; i < CardBets.Count; i++)
         {
-            CardBets[i].text = "= "+(currentBet / 4).ToString();
+            if (CardBets[i] != null)
+            {
+                CardBets[i].enableAutoSizing = true;
+                CardBets[i].fontSizeMin = 18;
+                CardBets[i].fontSizeMax = 36;
+                CardBets[i].alignment = TextAlignmentOptions.Center;
+                RealtimeTextStyleUtils.ApplyHudText(CardBets[i], FormatCardStakeLabel(), preferredColor: CardBets[i].color);
+            }
         }
-        
-        currentWinPoints = allWinPoints[lvl].points;
-        
+
+        currentWinPoints = betlevel >= 0 && betlevel < allWinPoints.Count
+            ? new List<int>(allWinPoints[betlevel].points)
+            : new List<int>(BasePatternPayouts.Length);
+
         for (int i = 0; i < displayCurrentPoints.Count; i++)
         {
-            displayCurrentPoints[i].text = currentWinPoints[i].ToString();
+            if (displayCurrentPoints[i] != null)
+            {
+                RealtimeTextStyleUtils.ApplyHudText(
+                    displayCurrentPoints[i],
+                    GetFormattedPayoutLabel(i),
+                    preferredColor: displayCurrentPoints[i].color);
+            }
         }
-        //themeMathEngine = new ThemeMathEngine(this);
+
+        RefreshBetControls();
     }
 
     public void AddBonusPayoutToCurrentRound(int bonusAmount)
@@ -166,54 +175,248 @@ public class GameManager : MonoBehaviour
             return;
         }
 
+        AddRoundWinnings(bonusAmount);
+    }
+
+    public void AddRoundWinnings(int amount)
+    {
+        if (amount <= 0)
+        {
+            return;
+        }
+
         if (winList == null)
         {
             winList = new List<int>();
         }
 
-        winList.Add(bonusAmount);
-        int totalWin = winList.Sum(x => Convert.ToInt32(x));
-        winAmt = totalWin;
-        winAmtText.text = totalWin.ToString();
-        SetTotalMoney(bonusAmount);
+        winList.Add(amount);
+        winAmt += amount;
+        UpdateWinningsDisplay();
     }
-    
-    void ShowWinAmt(int cardNo, int index)
+
+    public void SettleRoundWinnings()
+    {
+        if (!roundSettlementPending)
+        {
+            return;
+        }
+
+        roundSettlementPending = false;
+        if (winAmt > 0)
+        {
+            AdjustCreditBalance(winAmt);
+        }
+    }
+
+    public int GetPayoutForPatternSlot(int payoutIndex)
+    {
+        if (currentWinPoints == null || payoutIndex < 0 || payoutIndex >= currentWinPoints.Count)
+        {
+            return 0;
+        }
+
+        return Mathf.Max(0, currentWinPoints[payoutIndex]);
+    }
+
+    public string GetFormattedPayoutLabel(int payoutIndex)
+    {
+        return $"{GetPayoutForPatternSlot(payoutIndex)} kr";
+    }
+
+    public bool TryGetFormattedPayoutLabel(int payoutIndex, out string label)
+    {
+        if (currentWinPoints == null || payoutIndex < 0 || payoutIndex >= currentWinPoints.Count)
+        {
+            label = string.Empty;
+            return false;
+        }
+
+        label = GetFormattedPayoutLabel(payoutIndex);
+        return true;
+    }
+
+    public bool CanPlayCurrentBet()
+    {
+        return currentBet > 0;
+    }
+
+    public void RefreshBetControls()
+    {
+        if (btn_creditUp != null)
+        {
+            btn_creditUp.interactable = totalBets.Count > 0 && betlevel < totalBets.Count - 1;
+        }
+
+        if (btn_creditDown != null)
+        {
+            btn_creditDown.interactable = totalBets.Count > 0 && betlevel > 0;
+        }
+    }
+
+    public static int ResolvePayoutSlotIndex(int rawPatternIndex, int payoutCount)
+    {
+        if (payoutCount <= 0)
+        {
+            return -1;
+        }
+
+        int resolvedIndex = rawPatternIndex;
+        if (resolvedIndex >= 5 && resolvedIndex <= 7)
+        {
+            resolvedIndex = 5;
+        }
+        else if (resolvedIndex > 7 && resolvedIndex < 13)
+        {
+            resolvedIndex -= 2;
+        }
+        else if (resolvedIndex >= 13)
+        {
+            resolvedIndex = payoutCount - 1;
+        }
+
+        return Mathf.Clamp(resolvedIndex, 0, payoutCount - 1);
+    }
+
+    private void ShowWinAmt(int cardNo, int index)
+    {
+        int payoutSlotIndex = ResolvePayoutSlotIndex(index, currentWinPoints != null ? currentWinPoints.Count : 0);
+        int payoutAmount = GetPayoutForPatternSlot(payoutSlotIndex);
+        if (payoutAmount <= 0)
+        {
+            return;
+        }
+
+        EnsureCardWinCapacity(Mathf.Max(DefaultCardCount, cardNo + 1));
+        cardWin[cardNo] += payoutAmount;
+        UpdateCardWinDisplay(cardNo);
+        AddRoundWinnings(payoutAmount);
+    }
+
+    private void EnsureLegacyBetTables()
+    {
+        totalBets.Clear();
+        allWinPoints.Clear();
+
+        for (int betAmount = 0; betAmount <= MaxBet; betAmount += BetStep)
+        {
+            totalBets.Add(betAmount);
+
+            int multiplier = betAmount / BetStep;
+            AllWinPoints winPoints = new AllWinPoints();
+            for (int i = 0; i < BasePatternPayouts.Length; i++)
+            {
+                winPoints.points.Add(BasePatternPayouts[i] * multiplier);
+            }
+
+            allWinPoints.Add(winPoints);
+        }
+    }
+
+    private void InitializeDisplayStateIfNeeded()
+    {
+        if (displayStateInitialized)
+        {
+            return;
+        }
+
+        displayStateInitialized = true;
+        SetCreditBalance(DefaultStartingCredit);
+        ApplyBetLevel(betlevel);
+        ResetRoundTracking(clearDisplayedWinnings: true);
+    }
+
+    private void SetCreditBalance(int amount)
+    {
+        totalMoney = amount;
+        if (displayTotalMoney != null)
+        {
+            RealtimeTextStyleUtils.ApplyHudText(displayTotalMoney, totalMoney.ToString());
+        }
+    }
+
+    private void AdjustCreditBalance(int amountDelta)
+    {
+        SetCreditBalance(totalMoney + amountDelta);
+    }
+
+    private void ResetRoundTracking(bool clearDisplayedWinnings)
     {
         if (winList == null)
         {
             winList = new List<int>();
         }
-
-        if (index < 5) //other
+        else
         {
-            winAmt = currentWinPoints[index];
-        }
-        else if (index >= 5 && index <= 7) //For 2L
-        {
-            winAmt = currentWinPoints[5];
-        }
-        else if (index > 7 && index < 13)
-        {
-            winAmt = currentWinPoints[index - 2];
-        }
-        else if (index >= 13) //For 1L
-        {
-            winAmt = currentWinPoints[currentWinPoints.Count - 1]; 
+            winList.Clear();
         }
 
-        cardWin[cardNo] += winAmt;
+        if (clearDisplayedWinnings)
+        {
+            winAmt = 0;
+            UpdateWinningsDisplay();
+        }
 
-        displayCardWinPoints[cardNo].text = "WIN - "+ cardWin[cardNo].ToString() ;
+        EnsureCardWinCapacity(Mathf.Max(DefaultCardCount, displayCardWinPoints.Count));
+        for (int i = 0; i < cardWin.Count; i++)
+        {
+            cardWin[i] = 0;
+            UpdateCardWinDisplay(i);
+        }
+    }
 
-        winList.Add(winAmt);
-        int totalRoundWin = winList.Sum(x => Convert.ToInt32(x));
-        winAmtText.text = totalRoundWin.ToString();
+    private void UpdateWinningsDisplay()
+    {
+        if (winAmtText != null)
+        {
+            RealtimeTextStyleUtils.ApplyHudText(winAmtText, winAmt.ToString());
+        }
+    }
 
-        // Keep credit updates incremental to avoid double counting the full round sum.
-        SetTotalMoney(winAmt);
+    private void EnsureCardWinCapacity(int requiredCount)
+    {
+        while (cardWin.Count < requiredCount)
+        {
+            cardWin.Add(0);
+        }
+    }
 
-       
+    private void UpdateCardWinDisplay(int cardNo)
+    {
+        if (cardNo < 0 || cardNo >= displayCardWinPoints.Count || displayCardWinPoints[cardNo] == null)
+        {
+            return;
+        }
+
+        RealtimeTextStyleUtils.ApplyHudText(
+            displayCardWinPoints[cardNo],
+            $"WIN - {cardWin[cardNo]}",
+            preferredColor: displayCardWinPoints[cardNo].color);
+    }
+
+    private string FormatCardStakeLabel()
+    {
+        int cardCount = Mathf.Max(1, CardBets != null && CardBets.Count > 0 ? CardBets.Count : DefaultCardCount);
+        int perCardStake = Mathf.Max(0, currentBet / cardCount);
+        return $"Innsats - {perCardStake} kr";
+    }
+
+    private void SetPerCardWinLabelVisibility(bool visible)
+    {
+        if (displayCardWinPoints == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < displayCardWinPoints.Count; i++)
+        {
+            if (displayCardWinPoints[i] == null)
+            {
+                continue;
+            }
+
+            displayCardWinPoints[i].gameObject.SetActive(visible);
+        }
     }
 
     private void ApplyTestingSpeedIfEnabled()

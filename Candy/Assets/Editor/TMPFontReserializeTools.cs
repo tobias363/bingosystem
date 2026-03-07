@@ -16,7 +16,10 @@ public static class TMPFontReserializeTools
         "Assets/TextMesh Pro/Examples _ Extras/Resources/Fonts _ Materials/Roboto-Bold SDF.asset",
         "Assets/UI/UI_Theme1/Font/FredokaOne-Regular SDF.asset",
         "Assets/UI/UI_Theme1/Font/impact SDF.asset",
-        "Assets/UI/UI_Theme1/Font/Impacted SDF.asset"
+        "Assets/UI/UI_Theme1/Font/Impacted SDF.asset",
+        "Assets/Resources/CandyTypography/TMP/CandyFredokaRegularSDF.asset",
+        "Assets/Resources/CandyTypography/TMP/CandyFredokaSemiBoldSDF.asset",
+        "Assets/Resources/CandyTypography/TMP/CandyFredokaBoldSDF.asset"
     };
 
     [MenuItem("Tools/Candy/TMP/Reserialize Units Per EM Fonts")]

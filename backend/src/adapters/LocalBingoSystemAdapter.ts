@@ -1,4 +1,4 @@
-import { generateTraditional75Ticket } from "../game/ticket.js";
+import { generateCandy60Ticket } from "../game/ticket.js";
 import type {
   BingoSystemAdapter,
   ClaimLoggedInput,
@@ -9,7 +9,7 @@ import type {
 
 export class LocalBingoSystemAdapter implements BingoSystemAdapter {
   async createTicket(_input: CreateTicketInput) {
-    return generateTraditional75Ticket();
+    return generateCandy60Ticket();
   }
 
   async onGameStarted(_input: GameStartedInput): Promise<void> {
@@ -24,4 +24,3 @@ export class LocalBingoSystemAdapter implements BingoSystemAdapter {
     // No-op for local development.
   }
 }
-

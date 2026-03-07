@@ -10,7 +10,9 @@ export interface Player {
 }
 
 export interface Ticket {
-  // 5x5 board, where 0 indicates the free center square.
+  // Authoritative cell order for Candy/Theme1 is row-major numbers[15].
+  // grid is kept for compatibility with legacy validation/tests.
+  numbers?: number[];
   grid: number[][];
 }
 

@@ -38,7 +38,7 @@ public sealed class CandyBallViewBindingSet : MonoBehaviour
         }
 
         bigBallImage = manager.bigBallImg;
-        bigBallText = manager.bigBallImg != null ? manager.bigBallImg.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+        bigBallText = Theme1GameplayViewRepairUtils.FindDedicatedBigBallNumberLabel(manager.bigBallImg);
         ballOutMachineAnimParent = manager.ballOutMachineAnimParent;
         ballMachine = manager.ballMachine;
         extraBallMachine = manager.extraBallMachine;
@@ -90,9 +90,18 @@ public sealed class CandyBallViewBindingSet : MonoBehaviour
             isValid = false;
         }
 
-        if (!CandyCardViewBindingValidator.ValidateTextTarget(bigBallText, "BigBallText", requireActive: true, errors))
+        if (bigBallText != null)
         {
-            isValid = false;
+            if (!CandyCardViewBindingValidator.ValidateTextTarget(bigBallText, "BigBallText", requireActive: false, errors))
+            {
+                isValid = false;
+            }
+
+            if (!Theme1GameplayViewRepairUtils.IsDedicatedBigBallNumberLabel(bigBallText, bigBallImage))
+            {
+                errors.Add("CandyBallViewBindingSet bigBallText peker ikke til RealtimeBigBallNumberLabel.");
+                isValid = false;
+            }
         }
 
         if (ballOutMachineAnimParent == null)
