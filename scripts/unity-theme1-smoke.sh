@@ -42,10 +42,10 @@ echo "Running Theme1 realtime smoke test..."
   -batchmode \
   -nographics \
   -projectPath "$PROJECT_PATH" \
-  -executeMethod CandyRealtimePatternVisualSmoke.RunFromCommandLine \
+  -executeMethod CandyTheme1DedicatedRealtimeSmoke.RunFromCommandLine \
   -logFile "$LOG_FILE"
 
-if ! rg -n "\[PatternSmoke\] RESULT status=PASS" "$LOG_FILE" >/dev/null; then
+if ! rg -n "\[Theme1DedicatedSmoke\] RESULT status=PASS" "$LOG_FILE" >/dev/null; then
   echo "Theme1 smoke test did not report PASS. Check log: $LOG_FILE" >&2
   tail -n 120 "$LOG_FILE" >&2 || true
   exit 1

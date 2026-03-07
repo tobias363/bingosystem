@@ -35,6 +35,13 @@ public partial class APIManager
 
     private void HandleRealtimeRoomUpdate(JSONNode snapshot)
     {
+        if (ShouldUseDedicatedTheme1RealtimeView() &&
+            TryResolveDedicatedTheme1GameplayView(out Theme1GameplayViewRoot dedicatedTheme1ViewRoot))
+        {
+            HandleRealtimeRoomUpdateDedicated(snapshot, dedicatedTheme1ViewRoot);
+            return;
+        }
+
         if (snapshot == null || snapshot.IsNull)
         {
             return;
@@ -106,6 +113,19 @@ public partial class APIManager
             bool appliedPreRoundTickets = TryApplyPreRoundTicketsFromSnapshot(snapshot);
             if (appliedPreRoundTickets)
             {
+                overlaysClearedForEndedGameId = string.IsNullOrWhiteSpace(previousGameId)
+                    ? overlaysClearedForEndedGameId
+                    : previousGameId;
+            }
+            else if (TryApplyCachedStableTickets())
+            {
+                overlaysClearedForEndedGameId = string.IsNullOrWhiteSpace(previousGameId)
+                    ? overlaysClearedForEndedGameId
+                    : previousGameId;
+            }
+            else if (preserveTicketNumbersOnTransientSnapshotGaps && activeTicketSets != null && activeTicketSets.Count > 0)
+            {
+                ApplyTicketSetsToCards(activeTicketSets);
                 overlaysClearedForEndedGameId = string.IsNullOrWhiteSpace(previousGameId)
                     ? overlaysClearedForEndedGameId
                     : previousGameId;
@@ -527,7 +547,7 @@ public partial class APIManager
                 card.numb.Add(0);
                 if (i < card.num_text.Count)
                 {
-                    RealtimeTextStyleUtils.ApplyCardNumber(card.num_text[i], string.Empty, numberFallbackFont);
+                    RealtimeTextStyleUtils.ApplyCardNumber(card.num_text[i], "-", numberFallbackFont);
                 }
             }
 
@@ -824,16 +844,7 @@ public partial class APIManager
                 continue;
             }
 
-            Transform probe = selectionCell.transform.parent;
-            TextMeshProUGUI resolved = null;
-            if (probe != null)
-            {
-                resolved = probe.GetComponentInChildren<TextMeshProUGUI>(true);
-                if (resolved == null && probe.parent != null)
-                {
-                    resolved = probe.parent.GetComponentInChildren<TextMeshProUGUI>(true);
-                }
-            }
+            TextMeshProUGUI resolved = Theme1GameplayViewRepairUtils.FindDedicatedCardNumberLabel(selectionCell);
 
             card.num_text[cellIndex] = resolved;
         }
@@ -2545,6 +2556,12 @@ public partial class APIManager
         cachedStableTicketSets.Clear();
         realtimeTicketFallbackLogKey = string.Empty;
         realtimePlayerParticipatingInCurrentRound = false;
+        realtimeBetArmedForNextRound = false;
+        desiredRealtimeBetArmedForNextRound = false;
+        pendingRealtimeBetArmRequest = false;
+        realtimeBetArmAwaitingAck = false;
+        realtimeBetArmMutationVersion = 0;
+        pendingRealtimePreRoundEditContinuation = null;
         delayedOverlayResetGameId = string.Empty;
         overlaysClearedForEndedGameId = string.Empty;
         StopRealtimeNearWinBlinking();

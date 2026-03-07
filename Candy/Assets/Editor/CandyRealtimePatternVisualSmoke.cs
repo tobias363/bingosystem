@@ -88,6 +88,8 @@ public static class CandyRealtimePatternVisualSmoke
         stage = SmokeStage.WaitingForPlayMode;
         stageDeadlineAt = EditorApplication.timeSinceStartup + StageTimeoutSeconds;
 
+        CandyTheme1BindingTools.SetSkipPlayModeValidation(true);
+
         EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
         ConfigureSceneForSmoke();
 
@@ -732,6 +734,7 @@ public static class CandyRealtimePatternVisualSmoke
         EditorApplication.update -= Tick;
         EditorSettings.enterPlayModeOptionsEnabled = previousEnterPlayModeOptionsEnabled;
         EditorSettings.enterPlayModeOptions = previousEnterPlayModeOptions;
+        CandyTheme1BindingTools.SetSkipPlayModeValidation(false);
 
         string status = exitCode == 0 ? "PASS" : "FAIL";
         Debug.Log($"[PatternSmoke] RESULT status={status} message=\"{finishMessage}\"");

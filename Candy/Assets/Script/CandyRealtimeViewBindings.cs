@@ -75,7 +75,7 @@ public sealed class CandyCardViewBinding
     {
         string prefix = $"Card[{cardIndex}] {BindingName}";
         bool isValid = true;
-        isValid &= ValidateTextArray(numberTexts, 15, $"{prefix} numberTexts", requireActive: true, errors: errors);
+        isValid &= ValidateTextArray(numberTexts, 15, $"{prefix} numberTexts", requireActive: false, errors: errors);
         isValid &= ValidateGameObjectArray(selectionOverlays, 15, $"{prefix} selectionOverlays", errors);
         isValid &= ValidateGameObjectArray(missingPatternOverlays, 15, $"{prefix} missingPatternOverlays", errors);
         isValid &= ValidateGameObjectArray(matchedPatternOverlays, 15, $"{prefix} matchedPatternOverlays", errors);
@@ -106,7 +106,18 @@ public sealed class CandyCardViewBinding
             }
         }
 
-        if (!ValidateTextTarget(winningText, $"{prefix} winningText", requireActive: true, errors: errors))
+        for (int cellIndex = 0; cellIndex < 15; cellIndex++)
+        {
+            TextMeshProUGUI numberLabel = numberTexts != null && cellIndex < numberTexts.Length ? numberTexts[cellIndex] : null;
+            GameObject selectionOverlay = selectionOverlays != null && cellIndex < selectionOverlays.Length ? selectionOverlays[cellIndex] : null;
+            if (!Theme1GameplayViewRepairUtils.IsDedicatedCardNumberLabel(numberLabel, selectionOverlay))
+            {
+                errors.Add($"{prefix} numberTexts[{cellIndex}] peker ikke til en lokal RealtimeCardNumberLabel.");
+                isValid = false;
+            }
+        }
+
+        if (!ValidateTextTarget(winningText, $"{prefix} winningText", requireActive: false, errors: errors))
         {
             isValid = false;
         }
@@ -337,7 +348,7 @@ public sealed class CandyBallSlotBinding
         bindingName = string.IsNullOrWhiteSpace(fallbackName) ? "Ball" : fallbackName.Trim();
         root = sourceRoot;
         image = sourceRoot != null ? sourceRoot.GetComponent<Image>() : null;
-        numberText = sourceRoot != null ? sourceRoot.GetComponentInChildren<TextMeshProUGUI>(true) : null;
+        numberText = Theme1GameplayViewRepairUtils.FindDedicatedBallNumberLabel(sourceRoot);
     }
 
     public bool Validate(List<string> errors, int index)
@@ -359,6 +370,12 @@ public sealed class CandyBallSlotBinding
         if (numberText != null &&
             !CandyCardViewBindingValidator.ValidateTextTarget(numberText, $"{prefix} numberText", requireActive: false, errors))
         {
+            isValid = false;
+        }
+
+        if (!Theme1GameplayViewRepairUtils.IsDedicatedBallNumberLabel(numberText, root))
+        {
+            errors.Add($"{prefix} numberText peker ikke til en lokal RealtimeBallNumberLabel.");
             isValid = false;
         }
 

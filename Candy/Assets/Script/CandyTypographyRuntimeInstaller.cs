@@ -63,15 +63,16 @@ public sealed class CandyTypographyRuntimeInstaller : MonoBehaviour
     {
         for (int pass = 0; pass < 10; pass++)
         {
-            yield return null;
             Scene activeScene = SceneManager.GetActiveScene();
             if (!CandyTypographySystem.IsGameplayScene(activeScene))
             {
+                yield return null;
                 continue;
             }
 
             CandyTypographySystem.ApplyToScene(activeScene);
             ApplyDynamicButtonLabels();
+            yield return null;
         }
     }
 
@@ -92,7 +93,10 @@ public sealed class CandyTypographyRuntimeInstaller : MonoBehaviour
                 continue;
             }
 
-            CandyTypographySystem.ApplyRole(label, CandyTypographySystem.Classify(label));
+            CandyTypographySystem.ApplyGameplayRole(
+                label,
+                CandyTypographySystem.Classify(label),
+                RealtimeTextStyleUtils.ClassifyGameplaySurface(label));
         }
     }
 }

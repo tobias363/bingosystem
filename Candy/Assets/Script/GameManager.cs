@@ -46,6 +46,7 @@ public class GameManager : MonoBehaviour
     public List<int> winList;
     private bool testingSpeedApplied;
     private bool roundSettlementPending;
+    private bool displayStateInitialized;
 
     public int CreditBalance => totalMoney;
     public int RoundWinnings => winAmt;
@@ -71,14 +72,13 @@ public class GameManager : MonoBehaviour
         instance = this;
         EnsureLegacyBetTables();
         EnsureCardWinCapacity(DefaultCardCount);
+        InitializeDisplayStateIfNeeded();
         ApplyTestingSpeedIfEnabled();
     }
     // Start is called before the first frame update
     void Start()
     {
-        SetCreditBalance(DefaultStartingCredit);
-        ApplyBetLevel(betlevel);
-        ResetRoundTracking(clearDisplayedWinnings: true);
+        InitializeDisplayStateIfNeeded();
         SetPerCardWinLabelVisibility(!hidePerCardWinLabels);
     }
 
@@ -119,12 +119,21 @@ public class GameManager : MonoBehaviour
     public void ApplyBetLevel(int lvl)
     {
         EnsureLegacyBetTables();
+        if (APIManager.instance != null &&
+            APIManager.instance.UseRealtimeBackend &&
+            !APIManager.instance.CanEditRealtimePreRoundSelection)
+        {
+            Debug.LogWarning("[GameManager] Ignorerer bet-endring mens trekningen pågår.");
+            RefreshBetControls();
+            return;
+        }
+
         int maxLevel = Mathf.Max(0, totalBets.Count - 1);
         betlevel = Mathf.Clamp(lvl, 0, maxLevel);
         currentBet = totalBets.Count > 0 ? totalBets[betlevel] : 0;
         if (displayCurrentBets != null)
         {
-            displayCurrentBets.text = currentBet.ToString();
+            RealtimeTextStyleUtils.ApplyHudText(displayCurrentBets, currentBet.ToString());
         }
 
         APIManager.instance?.SetRealtimeEntryFeeFromGameUI(currentBet);
@@ -136,7 +145,7 @@ public class GameManager : MonoBehaviour
                 CardBets[i].fontSizeMin = 18;
                 CardBets[i].fontSizeMax = 36;
                 CardBets[i].alignment = TextAlignmentOptions.Center;
-                CardBets[i].text = FormatCardStakeLabel();
+                RealtimeTextStyleUtils.ApplyHudText(CardBets[i], FormatCardStakeLabel(), preferredColor: CardBets[i].color);
             }
         }
 
@@ -148,7 +157,10 @@ public class GameManager : MonoBehaviour
         {
             if (displayCurrentPoints[i] != null)
             {
-                displayCurrentPoints[i].text = GetFormattedPayoutLabel(i);
+                RealtimeTextStyleUtils.ApplyHudText(
+                    displayCurrentPoints[i],
+                    GetFormattedPayoutLabel(i),
+                    preferredColor: displayCurrentPoints[i].color);
             }
         }
 
@@ -301,12 +313,25 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    private void InitializeDisplayStateIfNeeded()
+    {
+        if (displayStateInitialized)
+        {
+            return;
+        }
+
+        displayStateInitialized = true;
+        SetCreditBalance(DefaultStartingCredit);
+        ApplyBetLevel(betlevel);
+        ResetRoundTracking(clearDisplayedWinnings: true);
+    }
+
     private void SetCreditBalance(int amount)
     {
         totalMoney = amount;
         if (displayTotalMoney != null)
         {
-            displayTotalMoney.text = totalMoney.ToString();
+            RealtimeTextStyleUtils.ApplyHudText(displayTotalMoney, totalMoney.ToString());
         }
     }
 
@@ -344,7 +369,7 @@ public class GameManager : MonoBehaviour
     {
         if (winAmtText != null)
         {
-            winAmtText.text = winAmt.ToString();
+            RealtimeTextStyleUtils.ApplyHudText(winAmtText, winAmt.ToString());
         }
     }
 
@@ -363,7 +388,10 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        displayCardWinPoints[cardNo].text = $"WIN - {cardWin[cardNo]}";
+        RealtimeTextStyleUtils.ApplyHudText(
+            displayCardWinPoints[cardNo],
+            $"WIN - {cardWin[cardNo]}",
+            preferredColor: displayCardWinPoints[cardNo].color);
     }
 
     private string FormatCardStakeLabel()

@@ -59,6 +59,7 @@ public class TopperManager : MonoBehaviour
     private readonly List<string> defaultPrizeTexts = new List<string>();
 
     private Coroutine missingBlinkCoroutine;
+    private Coroutine initialPrizeRefreshCoroutine;
     private bool missingBlinkVisible;
     private Sprite solidHighlightSprite;
     private TMP_FontAsset prizeFontOverride;
@@ -72,6 +73,7 @@ public class TopperManager : MonoBehaviour
         CacheDefaultPrizeTexts();
         RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: false);
         ApplyPrizeTypography();
+        RestartInitialPrizeRefresh();
     }
 
     private void OnDisable()
@@ -81,6 +83,7 @@ public class TopperManager : MonoBehaviour
         EventManager.OnMissingPattern -= ShowMissingPattern;
 
         StopBlinkRoutine();
+        StopInitialPrizeRefresh();
         activeNearWins.Clear();
         activeMatchedPatternIndexes.Clear();
         missingCellLabelCache.Clear();
@@ -94,6 +97,36 @@ public class TopperManager : MonoBehaviour
         RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: true);
         ApplyPrizeTypography();
         Reset();
+        RestartInitialPrizeRefresh();
+    }
+
+    private void RestartInitialPrizeRefresh()
+    {
+        StopInitialPrizeRefresh();
+        initialPrizeRefreshCoroutine = StartCoroutine(RefreshPrizeTextsAfterBootstrap());
+    }
+
+    private void StopInitialPrizeRefresh()
+    {
+        if (initialPrizeRefreshCoroutine == null)
+        {
+            return;
+        }
+
+        StopCoroutine(initialPrizeRefreshCoroutine);
+        initialPrizeRefreshCoroutine = null;
+    }
+
+    private IEnumerator RefreshPrizeTextsAfterBootstrap()
+    {
+        for (int pass = 0; pass < 6; pass++)
+        {
+            yield return null;
+            RefreshDefaultPrizeTextsFromRuntime(applyToPrizeLabels: true);
+            ApplyPrizeTypography();
+        }
+
+        initialPrizeRefreshCoroutine = null;
     }
 
     private void ShowAllPatterns()
@@ -710,21 +743,11 @@ public class TopperManager : MonoBehaviour
 
     private void ApplyPrizeTypography()
     {
-        TMP_FontAsset preferredFont = ResolvePrizeFontOverride();
         for (int i = 0; i < prizes.Count; i++)
         {
             if (prizes[i] == null)
             {
                 continue;
-            }
-
-            if (preferredFont != null)
-            {
-                prizes[i].font = preferredFont;
-                if (preferredFont.material != null)
-                {
-                    prizes[i].fontSharedMaterial = preferredFont.material;
-                }
             }
 
             prizes[i].enableWordWrapping = false;
@@ -734,7 +757,10 @@ public class TopperManager : MonoBehaviour
             prizes[i].fontSize = 18f;
             prizes[i].alignment = TextAlignmentOptions.Center;
             prizes[i].overflowMode = TextOverflowModes.Overflow;
-            CandyTypographySystem.ApplyRole(prizes[i], CandyTypographyRole.Headline);
+            RealtimeTextStyleUtils.ApplyGameplayTextPresentation(
+                prizes[i],
+                CandyTypographyRole.Label,
+                GameplayTextSurface.TopperValue);
         }
     }
 
@@ -818,7 +844,7 @@ public class TopperManager : MonoBehaviour
             return prizeFontOverride;
         }
 
-        prizeFontOverride = CandyTypographySystem.GetFont(CandyTypographyRole.Headline);
+        prizeFontOverride = CandyTypographySystem.GetFont(CandyTypographyRole.Label);
         if (prizeFontOverride == null)
         {
             prizeFontOverride = RealtimeTextStyleUtils.ResolveStableFallbackFont();

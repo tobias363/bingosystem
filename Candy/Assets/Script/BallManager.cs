@@ -180,7 +180,7 @@ public class BallManager : MonoBehaviour
                 image.preserveAspect = true;
             }
 
-            TextMeshProUGUI numberText = ball.GetComponentInChildren<TextMeshProUGUI>(true);
+            TextMeshProUGUI numberText = Theme1GameplayViewRepairUtils.FindDedicatedBallNumberLabel(ball);
             if (numberText != null)
             {
                 RectTransform textRect = numberText.rectTransform;
@@ -573,7 +573,7 @@ public class BallManager : MonoBehaviour
 
             TextMeshProUGUI label = slotBinding != null
                 ? slotBinding.NumberText
-                : (transformRef != null ? transformRef.GetComponentInChildren<TextMeshProUGUI>(true) : null);
+                : Theme1GameplayViewRepairUtils.FindDedicatedBallNumberLabel(ball);
 
             cachedBallTexts.Add(label);
         }
@@ -730,7 +730,7 @@ public class BallManager : MonoBehaviour
             return null;
         }
 
-        cachedBigBallText = bigBallImg.GetComponentInChildren<TextMeshProUGUI>(true);
+        cachedBigBallText = Theme1GameplayViewRepairUtils.FindDedicatedBigBallNumberLabel(bigBallImg);
         ApplyBigBallTextLayout(cachedBigBallText);
         return cachedBigBallText;
     }

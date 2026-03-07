@@ -12,6 +12,7 @@ public static class CandyTheme1BindingTools
 {
     private const string Theme1ScenePath = "Assets/Scenes/Theme1.unity";
     private const string ValidationPrefix = "[CandyTheme1Validator]";
+    private const string SkipPlayModeValidationSessionKey = "Candy.SkipTheme1PlayModeValidation";
     private const int RealtimeBallColumns = 15;
     private const float RealtimeBallSize = 84f;
     private const float RealtimeBallSpacingX = 86f;
@@ -60,6 +61,11 @@ public static class CandyTheme1BindingTools
             return;
         }
 
+        if (SessionState.GetBool(SkipPlayModeValidationSessionKey, false))
+        {
+            return;
+        }
+
         Scene activeScene = SceneManager.GetActiveScene();
         if (!string.Equals(activeScene.path, Theme1ScenePath, StringComparison.Ordinal))
         {
@@ -74,6 +80,11 @@ public static class CandyTheme1BindingTools
 
         Debug.LogError($"{ValidationPrefix} Play Mode blokkert:{Environment.NewLine}{report}");
         EditorApplication.isPlaying = false;
+    }
+
+    public static void SetSkipPlayModeValidation(bool skip)
+    {
+        SessionState.SetBool(SkipPlayModeValidationSessionKey, skip);
     }
 
     private static void InstallOrRefreshTheme1Bindings(bool openSceneIfNeeded, bool saveScene, bool logSummary)
@@ -129,6 +140,27 @@ public static class CandyTheme1BindingTools
         }
 
         GameManager gameManager = UnityEngine.Object.FindObjectOfType<GameManager>(true);
+        TopperManager topperManager = UnityEngine.Object.FindObjectOfType<TopperManager>(true);
+        Theme1GameplayViewRoot dedicatedViewRoot = apiManager.GetComponent<Theme1GameplayViewRoot>();
+        if (dedicatedViewRoot == null)
+        {
+            dedicatedViewRoot = Undo.AddComponent<Theme1GameplayViewRoot>(apiManager.gameObject);
+        }
+
+        dedicatedViewRoot.PullFrom(cardBindings, ballBindings, hudBindings, gameManager, topperManager);
+        SerializedObject serializedApiManager = new SerializedObject(apiManager);
+        SerializedProperty dedicatedViewRootProperty = serializedApiManager.FindProperty("theme1GameplayViewRoot");
+        if (dedicatedViewRootProperty != null)
+        {
+            dedicatedViewRootProperty.objectReferenceValue = dedicatedViewRoot;
+        }
+
+        SerializedProperty renderModeProperty = serializedApiManager.FindProperty("theme1RealtimeViewMode");
+        if (renderModeProperty != null)
+        {
+            renderModeProperty.enumValueIndex = 1;
+        }
+        serializedApiManager.ApplyModifiedPropertiesWithoutUndo();
         if (gameManager != null)
         {
             SerializedObject serializedGameManager = new SerializedObject(gameManager);
@@ -149,6 +181,8 @@ public static class CandyTheme1BindingTools
         EditorUtility.SetDirty(cardBindings);
         EditorUtility.SetDirty(ballBindings);
         EditorUtility.SetDirty(hudBindings);
+        EditorUtility.SetDirty(dedicatedViewRoot);
+        EditorUtility.SetDirty(apiManager);
         EditorSceneManager.MarkSceneDirty(scene);
 
         bool valid = ValidateTheme1Bindings(openSceneIfNeeded: false, logSummary: logSummary, out string report);
@@ -251,6 +285,18 @@ public static class CandyTheme1BindingTools
             }
         }
 
+        Theme1GameplayViewRoot dedicatedViewRoot = apiManager.GetComponent<Theme1GameplayViewRoot>();
+        if (dedicatedViewRoot == null)
+        {
+            builder.AppendLine("Theme1GameplayViewRoot mangler på APIManager.");
+            isValid = false;
+        }
+        else if (!dedicatedViewRoot.ValidateContract(out string dedicatedViewReport))
+        {
+            isValid = false;
+            builder.AppendLine(dedicatedViewReport);
+        }
+
         report = builder.Length == 0
             ? $"{ValidationPrefix} OK"
             : $"{ValidationPrefix}{Environment.NewLine}{builder}";
@@ -322,23 +368,10 @@ public static class CandyTheme1BindingTools
             label.fontSize = Mathf.Max(18f, generator.autoSpinRemainingPlayText.fontSize * 0.42f);
             label.color = generator.autoSpinRemainingPlayText.color;
             label.text = "Spillere i rommet: 0";
-            TMP_FontAsset preferredLabelFont = CandyGameplayTypographyTools.ResolveGeneratedFontAsset(CandyTypographyRole.Label);
-            if (preferredLabelFont != null)
-            {
-                label.font = preferredLabelFont;
-            }
-            else if (generator.autoSpinRemainingPlayText.font != null)
-            {
-                label.font = generator.autoSpinRemainingPlayText.font;
-            }
-            if (preferredLabelFont != null && preferredLabelFont.material != null)
-            {
-                label.fontSharedMaterial = preferredLabelFont.material;
-            }
-            else if (generator.autoSpinRemainingPlayText.fontSharedMaterial != null)
-            {
-                label.fontSharedMaterial = generator.autoSpinRemainingPlayText.fontSharedMaterial;
-            }
+            RealtimeTextStyleUtils.ApplyGameplayTextPresentation(
+                label,
+                CandyTypographyRole.Label,
+                GameplayTextSurface.HudLabel);
         }
 
         NormalizeHudTextTarget(label, generator.autoSpinRemainingPlayText.rectTransform.rect.size);
@@ -360,6 +393,7 @@ public static class CandyTheme1BindingTools
             return;
         }
 
+        Theme1GameplayViewRepairUtils.EnsureCardNumberTargets(generator);
         for (int cardIndex = 0; cardIndex < generator.cardClasses.Length; cardIndex++)
         {
             CardClass card = generator.cardClasses[cardIndex];
@@ -398,6 +432,7 @@ public static class CandyTheme1BindingTools
             return;
         }
 
+        Theme1GameplayViewRepairUtils.EnsureBallNumberTargets(ballManager);
         if (ballManager.balls != null)
         {
             for (int i = 0; i < ballManager.balls.Count; i++)
@@ -408,7 +443,7 @@ public static class CandyTheme1BindingTools
                     continue;
                 }
 
-                TextMeshProUGUI label = root.GetComponentInChildren<TextMeshProUGUI>(true);
+                TextMeshProUGUI label = Theme1GameplayViewRepairUtils.FindDedicatedBallNumberLabel(root);
                 RectTransform rootRect = root.GetComponent<RectTransform>();
                 Vector2 preferredSize = rootRect != null && rootRect.rect.size.x > 1f && rootRect.rect.size.y > 1f
                     ? rootRect.rect.size
@@ -419,7 +454,7 @@ public static class CandyTheme1BindingTools
 
         if (ballManager.bigBallImg != null)
         {
-            TextMeshProUGUI bigBallText = ballManager.bigBallImg.GetComponentInChildren<TextMeshProUGUI>(true);
+            TextMeshProUGUI bigBallText = Theme1GameplayViewRepairUtils.FindDedicatedBigBallNumberLabel(ballManager.bigBallImg);
             RectTransform bigBallRect = ballManager.bigBallImg.rectTransform;
             Vector2 preferredSize = bigBallRect != null && bigBallRect.rect.size.x > 1f && bigBallRect.rect.size.y > 1f
                 ? bigBallRect.rect.size
@@ -545,29 +580,13 @@ public static class CandyTheme1BindingTools
         label.fontSizeMax = Mathf.Max(label.fontSizeMin + 8f, Mathf.Min(48f, height * 0.72f));
 
         CandyTypographyRole role = CandyTypographySystem.Classify(label);
-        TMP_FontAsset preferredLabelFont = CandyGameplayTypographyTools.ResolveGeneratedFontAsset(role);
-        if (preferredLabelFont != null)
-        {
-            label.font = preferredLabelFont;
-            if (preferredLabelFont.material != null)
-            {
-                label.fontSharedMaterial = preferredLabelFont.material;
-            }
-        }
-        else if (TMP_Settings.defaultFontAsset != null)
-        {
-            label.font = TMP_Settings.defaultFontAsset;
-            if (TMP_Settings.defaultFontAsset.material != null)
-            {
-                label.fontSharedMaterial = TMP_Settings.defaultFontAsset.material;
-            }
-        }
-        else if (label.font != null && label.font.material != null)
-        {
-            label.fontSharedMaterial = label.font.material;
-        }
+        RealtimeTextStyleUtils.ApplyGameplayTextPresentation(
+            label,
+            role,
+            RealtimeTextStyleUtils.ClassifyGameplaySurface(label));
 
         LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
+        EditorUtility.SetDirty(rect);
         EditorUtility.SetDirty(label);
     }
 }

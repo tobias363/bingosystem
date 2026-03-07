@@ -577,7 +577,7 @@ public class UIManager : MonoBehaviour
         ApplyAutoPlayButtonLabel();
 
         APIManager apiManager = APIManager.instance;
-        bool lockBetControls = apiManager != null && apiManager.IsRealtimeBetLocked;
+        bool canEditPreRoundSelection = apiManager == null || apiManager.CanEditRealtimePreRoundSelection;
         bool hasPlayableBet = HasPlayableConfiguredBet();
         GameManager gameManager = GameManager.instance;
         bool canIncreaseBet = gameManager == null || gameManager.betlevel < gameManager.totalBets.Count - 1;
@@ -585,17 +585,22 @@ public class UIManager : MonoBehaviour
 
         if (betUp != null)
         {
-            betUp.interactable = !lockBetControls && canIncreaseBet;
+            betUp.interactable = canEditPreRoundSelection && canIncreaseBet;
         }
 
         if (betDown != null)
         {
-            betDown.interactable = !lockBetControls && canDecreaseBet;
+            betDown.interactable = canEditPreRoundSelection && canDecreaseBet;
         }
 
         if (playBtn != null)
         {
-            playBtn.interactable = !lockBetControls && hasPlayableBet;
+            playBtn.interactable = canEditPreRoundSelection && hasPlayableBet;
+        }
+
+        if (autoPlayBtn != null)
+        {
+            autoPlayBtn.interactable = canEditPreRoundSelection;
         }
     }
 
@@ -748,9 +753,15 @@ public class UIManager : MonoBehaviour
 
     public void ActivePlayBtn()
     {
+        if (IsRealtimeMode())
+        {
+            RefreshRealtimeBetControlsState();
+            return;
+        }
+
         if (playBtn != null)
         {
-            playBtn.interactable = IsRealtimeMode();
+            playBtn.interactable = true;
         }
 
         RefreshLegacyPlayControlsState();

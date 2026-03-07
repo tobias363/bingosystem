@@ -15,6 +15,12 @@ public enum CandyTypographyRole
 
 public static class CandyTypographySystem
 {
+    public const string PreferredGameplayShaderName = "TextMeshPro/Distance Field";
+    public const string MobileGameplayShaderName = "TextMeshPro/Mobile/Distance Field";
+    public const string BitmapShaderName = "TextMeshPro/Bitmap";
+    public const string MobileBitmapShaderName = "TextMeshPro/Mobile/Bitmap";
+    public const float MinimumGameplayCameraCanvasDynamicPixelsPerUnit = 8f;
+
     private const string RegularFontResourcePath = "CandyTypography/Fredoka/Fredoka-Regular";
     private const string SemiBoldFontResourcePath = "CandyTypography/Fredoka/Fredoka-SemiBold";
     private const string BoldFontResourcePath = "CandyTypography/Fredoka/Fredoka-Bold";
@@ -66,6 +72,7 @@ public static class CandyTypographySystem
 
     private static readonly Dictionary<CandyTypographyRole, TMP_FontAsset> CachedFonts = new();
     private static readonly Dictionary<CandyTypographyRole, Font> CachedSourceFonts = new();
+    private static readonly Dictionary<string, Material> CachedGameplayMaterials = new();
     private static readonly string CommonCharacters =
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz" +
         ".,:;!?%+-_=()[]{}<>/\\|@#$&*'\" " +
@@ -98,6 +105,7 @@ public static class CandyTypographySystem
         }
 
         TMP_FontAsset persistent = Resources.Load<TMP_FontAsset>(GetTmpResourcePath(role));
+        TryPrimeFontAsset(persistent);
         if (IsFontAssetUsable(persistent))
         {
             EnsureRuntimeMaterial(persistent);
@@ -140,9 +148,8 @@ public static class CandyTypographySystem
         }
 
         generated.name = "Runtime " + GetTmpAssetName(role);
-        EnsureRuntimeMaterial(generated);
         EnsureFallbacks(generated);
-        TryAddCommonCharacters(generated);
+        TryPrimeFontAsset(generated);
         if (IsFontAssetUsable(generated))
         {
             CachedFonts[role] = generated;
@@ -177,9 +184,10 @@ public static class CandyTypographySystem
         bool wasAutoSizing = target.enableAutoSizing;
 
         target.font = fontAsset;
-        if (fontAsset.material != null)
+        Material sharedMaterial = ResolveDefaultSharedMaterial(fontAsset);
+        if (sharedMaterial != null)
         {
-            target.fontSharedMaterial = fontAsset.material;
+            target.fontSharedMaterial = sharedMaterial;
         }
 
         target.fontStyle = FontStyles.Normal;
@@ -204,6 +212,143 @@ public static class CandyTypographySystem
         target.SetVerticesDirty();
         target.SetLayoutDirty();
         target.ForceMeshUpdate(ignoreActiveState: true, forceTextReparsing: true);
+    }
+
+    public static void ApplyGameplayRole(
+        TMP_Text target,
+        CandyTypographyRole role,
+        GameplayTextSurface surface,
+        bool preserveColor = true,
+        bool preserveExistingFont = false)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        TMP_FontAsset resolvedFont = preserveExistingFont && IsFontAssetUsable(target.font)
+            ? target.font
+            : GetFont(role);
+        if (resolvedFont == null)
+        {
+            return;
+        }
+
+        Color existingColor = target.color;
+        bool wasWrapping = target.enableWordWrapping;
+        float currentSize = target.fontSize;
+        bool wasAutoSizing = target.enableAutoSizing;
+
+        if (!preserveExistingFont || target.font == null || !IsFontAssetUsable(target.font))
+        {
+            target.font = resolvedFont;
+        }
+
+        Material sharedMaterial = GetGameplaySharedMaterial(target.font != null ? target.font : resolvedFont, surface);
+        if (sharedMaterial != null)
+        {
+            target.fontSharedMaterial = sharedMaterial;
+        }
+
+        target.fontStyle = FontStyles.Normal;
+        target.fontWeight = ResolveWeight(role);
+        target.enableWordWrapping = role == CandyTypographyRole.Body && wasWrapping;
+        target.textWrappingMode = role == CandyTypographyRole.Body
+            ? TextWrappingModes.Normal
+            : TextWrappingModes.NoWrap;
+        target.overflowMode = TextOverflowModes.Overflow;
+        target.enableAutoSizing = wasAutoSizing;
+        ApplyRoleSizeBounds(target, role, currentSize);
+
+        if (preserveColor)
+        {
+            target.color = existingColor;
+        }
+
+        target.havePropertiesChanged = true;
+        target.UpdateMeshPadding();
+        target.SetVerticesDirty();
+        target.SetLayoutDirty();
+        target.ForceMeshUpdate(ignoreActiveState: true, forceTextReparsing: true);
+    }
+
+    public static Material GetGameplaySharedMaterial(TMP_FontAsset fontAsset, GameplayTextSurface surface)
+    {
+        if (fontAsset == null)
+        {
+            return null;
+        }
+
+        EnsureRuntimeMaterial(fontAsset);
+        Material sourceMaterial = fontAsset.material;
+        if (sourceMaterial == null)
+        {
+            return null;
+        }
+
+        if (!Application.isPlaying)
+        {
+            SanitizeGameplayMaterial(sourceMaterial, fontAsset);
+            return sourceMaterial;
+        }
+
+        string cacheKey = fontAsset.GetInstanceID() + ":" + (int)surface;
+        if (!CachedGameplayMaterials.TryGetValue(cacheKey, out Material runtimeMaterial) ||
+            runtimeMaterial == null)
+        {
+            runtimeMaterial = new Material(sourceMaterial)
+            {
+                name = sourceMaterial.name + " (Gameplay " + surface + ")"
+            };
+            CachedGameplayMaterials[cacheKey] = runtimeMaterial;
+        }
+
+        SyncMaterialAtlas(runtimeMaterial, fontAsset);
+        SanitizeGameplayMaterial(runtimeMaterial, fontAsset);
+        return runtimeMaterial;
+    }
+
+    public static Shader ResolvePreferredGameplayShader()
+    {
+        return Shader.Find(PreferredGameplayShaderName) ??
+               Shader.Find(MobileGameplayShaderName);
+    }
+
+    public static bool IsPreferredGameplayShader(Shader shader)
+    {
+        return shader != null &&
+               string.Equals(shader.name, PreferredGameplayShaderName, StringComparison.Ordinal);
+    }
+
+    public static bool IsForbiddenGameplayShader(Shader shader, out string details)
+    {
+        details = string.Empty;
+        if (shader == null)
+        {
+            details = "shader=null";
+            return true;
+        }
+
+        string shaderName = shader.name ?? string.Empty;
+        if (string.Equals(shaderName, PreferredGameplayShaderName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (shaderName.IndexOf("Bitmap", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            details = "bitmap shader " + shaderName;
+            return true;
+        }
+
+        if (shaderName.IndexOf("Mobile", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            details = "mobile shader " + shaderName;
+            return true;
+        }
+
+        details = "unexpected shader " + shaderName;
+        return true;
     }
 
     public static CandyTypographyRole Classify(TMP_Text target)
@@ -262,7 +407,7 @@ public static class CandyTypographySystem
                     continue;
                 }
 
-                ApplyRole(text, Classify(text));
+                ApplyGameplayRole(text, Classify(text), RealtimeTextStyleUtils.ClassifyGameplaySurface(text));
                 updatedCount += 1;
             }
         }
@@ -274,6 +419,24 @@ public static class CandyTypographySystem
     {
         CachedFonts.Clear();
         CachedSourceFonts.Clear();
+        foreach (KeyValuePair<string, Material> entry in CachedGameplayMaterials)
+        {
+            if (entry.Value == null)
+            {
+                continue;
+            }
+
+            if (Application.isPlaying)
+            {
+                UnityEngine.Object.Destroy(entry.Value);
+            }
+            else
+            {
+                UnityEngine.Object.DestroyImmediate(entry.Value);
+            }
+        }
+
+        CachedGameplayMaterials.Clear();
     }
 
     public static string GetTmpAssetName(CandyTypographyRole role)
@@ -390,6 +553,11 @@ public static class CandyTypographySystem
             return;
         }
 
+        if (fontAsset.atlasPopulationMode == AtlasPopulationMode.Static)
+        {
+            return;
+        }
+
         try
         {
             fontAsset.TryAddCharacters(CommonCharacters, out _, true);
@@ -397,6 +565,17 @@ public static class CandyTypographySystem
         catch
         {
         }
+    }
+
+    private static void TryPrimeFontAsset(TMP_FontAsset fontAsset)
+    {
+        if (fontAsset == null)
+        {
+            return;
+        }
+
+        TryAddCommonCharacters(fontAsset);
+        EnsureRuntimeMaterial(fontAsset);
     }
 
     private static void EnsureFallbacks(TMP_FontAsset fontAsset)
@@ -420,32 +599,53 @@ public static class CandyTypographySystem
         }
     }
 
+    private static Material ResolveDefaultSharedMaterial(TMP_FontAsset fontAsset)
+    {
+        if (fontAsset == null)
+        {
+            return null;
+        }
+
+        EnsureRuntimeMaterial(fontAsset);
+        Material material = fontAsset.material;
+        if (material != null)
+        {
+            SanitizeGameplayMaterial(material, fontAsset);
+        }
+
+        return material;
+    }
+
     private static void EnsureRuntimeMaterial(TMP_FontAsset fontAsset)
     {
-        if (fontAsset == null || fontAsset.material != null || !TryGetAtlasTexture(fontAsset, out Texture2D atlasTexture))
+        if (fontAsset == null || !TryGetAtlasTexture(fontAsset, out Texture2D atlasTexture))
         {
             return;
         }
 
         ShaderUtilities.GetShaderPropertyIDs();
-        Shader distanceFieldShader = Shader.Find("TextMeshPro/Mobile/Distance Field") ??
-                                     Shader.Find("TextMeshPro/Distance Field");
-        if (distanceFieldShader == null)
+        Shader preferredShader = ResolvePreferredGameplayShader();
+        Material material = fontAsset.material;
+        if (material == null)
         {
-            return;
+            if (preferredShader == null)
+            {
+                return;
+            }
+
+            material = new Material(preferredShader)
+            {
+                name = fontAsset.name + " Material"
+            };
+            fontAsset.material = material;
+        }
+        else if (preferredShader != null && material.shader != preferredShader)
+        {
+            material.shader = preferredShader;
         }
 
-        Material material = new Material(distanceFieldShader)
-        {
-            name = fontAsset.name + " Material"
-        };
-        material.SetTexture(ShaderUtilities.ID_MainTex, atlasTexture);
-        material.SetFloat(ShaderUtilities.ID_TextureWidth, atlasTexture.width);
-        material.SetFloat(ShaderUtilities.ID_TextureHeight, atlasTexture.height);
-        material.SetFloat(ShaderUtilities.ID_GradientScale, 9f);
-        material.SetFloat(ShaderUtilities.ID_WeightNormal, fontAsset.normalStyle);
-        material.SetFloat(ShaderUtilities.ID_WeightBold, fontAsset.boldStyle);
-        fontAsset.material = material;
+        SyncMaterialAtlas(material, fontAsset);
+        SanitizeGameplayMaterial(material, fontAsset);
     }
 
     private static TMP_FontAsset ResolveSafeFallbackFontAsset()
@@ -467,7 +667,26 @@ public static class CandyTypographySystem
 
     private static bool IsFontAssetUsable(TMP_FontAsset fontAsset)
     {
-        return TryGetAtlasTexture(fontAsset, out _);
+        if (!TryGetAtlasTexture(fontAsset, out Texture2D atlasTexture))
+        {
+            return false;
+        }
+
+        if (atlasTexture.width <= 1 || atlasTexture.height <= 1)
+        {
+            return false;
+        }
+
+        try
+        {
+            int glyphCount = fontAsset.glyphTable != null ? fontAsset.glyphTable.Count : 0;
+            int characterCount = fontAsset.characterTable != null ? fontAsset.characterTable.Count : 0;
+            return glyphCount > 0 || characterCount > 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
     }
 
     private static bool TryGetAtlasTexture(TMP_FontAsset fontAsset, out Texture2D atlasTexture)
@@ -486,6 +705,106 @@ public static class CandyTypographySystem
         catch (Exception)
         {
             return false;
+        }
+    }
+
+    private static void SyncMaterialAtlas(Material material, TMP_FontAsset fontAsset)
+    {
+        if (material == null || !TryGetAtlasTexture(fontAsset, out Texture2D atlasTexture))
+        {
+            return;
+        }
+
+        if (material.HasProperty(ShaderUtilities.ID_MainTex))
+        {
+            material.SetTexture(ShaderUtilities.ID_MainTex, atlasTexture);
+        }
+
+        if (material.HasProperty(ShaderUtilities.ID_TextureWidth))
+        {
+            material.SetFloat(ShaderUtilities.ID_TextureWidth, atlasTexture.width);
+        }
+
+        if (material.HasProperty(ShaderUtilities.ID_TextureHeight))
+        {
+            material.SetFloat(ShaderUtilities.ID_TextureHeight, atlasTexture.height);
+        }
+
+        if (material.HasProperty(ShaderUtilities.ID_GradientScale))
+        {
+            material.SetFloat(ShaderUtilities.ID_GradientScale, Mathf.Max(5f, material.GetFloat(ShaderUtilities.ID_GradientScale)));
+        }
+
+        if (material.HasProperty(ShaderUtilities.ID_WeightNormal))
+        {
+            material.SetFloat(ShaderUtilities.ID_WeightNormal, fontAsset.normalStyle);
+        }
+
+        if (material.HasProperty(ShaderUtilities.ID_WeightBold))
+        {
+            material.SetFloat(ShaderUtilities.ID_WeightBold, fontAsset.boldStyle);
+        }
+    }
+
+    private static void SanitizeGameplayMaterial(Material material, TMP_FontAsset fontAsset)
+    {
+        if (material == null)
+        {
+            return;
+        }
+
+        Shader preferredShader = ResolvePreferredGameplayShader();
+        if (preferredShader != null && material.shader != preferredShader)
+        {
+            material.shader = preferredShader;
+        }
+
+        DisableKeyword(material, "UNDERLAY_ON");
+        DisableKeyword(material, "UNDERLAY_INNER");
+        DisableKeyword(material, "OUTLINE_ON");
+        DisableKeyword(material, "GLOW_ON");
+        DisableKeyword(material, "BEVEL_ON");
+
+        SetFloatIfPresent(material, "_OutlineWidth", 0f);
+        SetFloatIfPresent(material, "_OutlineSoftness", 0f);
+        SetFloatIfPresent(material, "_FaceDilate", 0f);
+        SetFloatIfPresent(material, "_GlowPower", 0f);
+        SetFloatIfPresent(material, "_GlowInner", 0f);
+        SetFloatIfPresent(material, "_GlowOuter", 0f);
+        SetFloatIfPresent(material, "_UnderlaySoftness", 0f);
+        SetFloatIfPresent(material, "_UnderlayDilate", 0f);
+        SetFloatIfPresent(material, "_UnderlayOffsetX", 0f);
+        SetFloatIfPresent(material, "_UnderlayOffsetY", 0f);
+        SetColorIfPresent(material, "_UnderlayColor", new Color(0f, 0f, 0f, 0f));
+        SetColorIfPresent(material, "_OutlineColor", new Color(0f, 0f, 0f, 0f));
+        SetColorIfPresent(material, "_GlowColor", new Color(0f, 0f, 0f, 0f));
+
+        SyncMaterialAtlas(material, fontAsset);
+    }
+
+    private static void DisableKeyword(Material material, string keyword)
+    {
+        if (material == null || string.IsNullOrWhiteSpace(keyword))
+        {
+            return;
+        }
+
+        material.DisableKeyword(keyword);
+    }
+
+    private static void SetFloatIfPresent(Material material, string propertyName, float value)
+    {
+        if (material != null && material.HasProperty(propertyName))
+        {
+            material.SetFloat(propertyName, value);
+        }
+    }
+
+    private static void SetColorIfPresent(Material material, string propertyName, Color value)
+    {
+        if (material != null && material.HasProperty(propertyName))
+        {
+            material.SetColor(propertyName, value);
         }
     }
 
