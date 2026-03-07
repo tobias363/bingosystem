@@ -172,6 +172,7 @@ public partial class APIManager : MonoBehaviour
     private readonly HashSet<string> realtimeClaimAttemptKeys = new();
     private bool hasTriggeredEditorLocalFallback = false;
     private bool hasLoggedMissingRealtimeNumberGenerator = false;
+    private float nextMissingRealtimeTicketsResyncAt = -1f;
     private float nextRuntimeDiagnosticsLogAt = 0f;
     private string lastRuntimeDiagnosticsSnapshot = string.Empty;
     private string lastPatternConfigurationIssue = string.Empty;
@@ -1429,7 +1430,8 @@ public partial class APIManager : MonoBehaviour
             activeRoomCode,
             activePlayerId,
             realtimeEntryFee,
-            HandleRealtimeRoomUpdate);
+            HandleRealtimeRoomUpdate,
+            RequestRealtimeState);
     }
 
     private void ApplySchedulerMetadata(JSONNode snapshot)
@@ -1563,6 +1565,7 @@ public partial class APIManager : MonoBehaviour
         label.color = countdownText.color;
         label.enableWordWrapping = false;
         label.text = $"{realtimeRoomPlayerCountPrefix} 0";
+        CandyTypographySystem.ApplyRole(label, CandyTypographyRole.Label);
 
         ReportRealtimeRenderMismatch("HUD roomPlayerCountText manglet i Theme1. Opprettet midlertidig runtime-label.", asError: false);
         return label;

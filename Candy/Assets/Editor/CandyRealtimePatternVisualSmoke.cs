@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using SimpleJSON;
+using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -13,6 +14,7 @@ public static class CandyRealtimePatternVisualSmoke
     {
         WaitingForPlayMode,
         InjectNearWin,
+        ValidateTicketLabels,
         ValidateNearWin,
         InjectMatchedWin,
         ValidateMatchedWin,
@@ -175,8 +177,20 @@ public static class CandyRealtimePatternVisualSmoke
                     return;
                 }
 
-                stage = SmokeStage.ValidateNearWin;
+                stage = SmokeStage.ValidateTicketLabels;
                 stageDeadlineAt = EditorApplication.timeSinceStartup + StageTimeoutSeconds;
+                break;
+
+            case SmokeStage.ValidateTicketLabels:
+                if (TryValidateTicketLabels(out string ticketError))
+                {
+                    stage = SmokeStage.ValidateNearWin;
+                    stageDeadlineAt = EditorApplication.timeSinceStartup + StageTimeoutSeconds;
+                }
+                else if (!string.IsNullOrEmpty(ticketError))
+                {
+                    Fail(ticketError);
+                }
                 break;
 
             case SmokeStage.ValidateNearWin:
@@ -244,9 +258,15 @@ public static class CandyRealtimePatternVisualSmoke
         APIManager apiManager = UnityEngine.Object.FindFirstObjectByType<APIManager>(FindObjectsInactive.Include);
         NumberGenerator generator = UnityEngine.Object.FindFirstObjectByType<NumberGenerator>(FindObjectsInactive.Include);
         TopperManager topperManager = UnityEngine.Object.FindFirstObjectByType<TopperManager>(FindObjectsInactive.Include);
-        if (apiManager == null || generator == null || topperManager == null)
+        UIManager uiManager = UnityEngine.Object.FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
+        if (apiManager == null || generator == null || topperManager == null || uiManager == null)
         {
-            error = "[PatternSmoke] Missing APIManager, NumberGenerator or TopperManager in scene.";
+            error = "[PatternSmoke] Missing APIManager, NumberGenerator, TopperManager or UIManager in scene.";
+            return false;
+        }
+
+        if (!TryValidateVisibleGameplayControls(uiManager, out error))
+        {
             return false;
         }
 
@@ -328,13 +348,137 @@ public static class CandyRealtimePatternVisualSmoke
                 numbers.Add(ticket[cellIndex]);
             }
 
-            ticketArray.Add(numbers);
+            JSONObject ticketNode = new JSONObject();
+            ticketNode["numbers"] = numbers;
+            ticketArray.Add(ticketNode);
         }
 
         ticketsByPlayer[PlayerId] = ticketArray;
         currentGame["tickets"] = ticketsByPlayer;
         snapshot["currentGame"] = currentGame;
         return snapshot;
+    }
+
+    private static bool TryValidateVisibleGameplayControls(UIManager uiManager, out string error)
+    {
+        error = string.Empty;
+        if (uiManager == null)
+        {
+            error = "[PatternSmoke] UIManager missing while validating gameplay controls.";
+            return false;
+        }
+
+        List<string> issues = new();
+        ValidateButton(uiManager.playBtn, "playBtn", issues);
+        ValidateButton(uiManager.autoPlayBtn, "autoPlayBtn", issues);
+        ValidateButton(uiManager.betUp, "betUp", issues);
+        ValidateButton(uiManager.betDown, "betDown", issues);
+
+        if (issues.Count == 0)
+        {
+            return true;
+        }
+
+        error = "[PatternSmoke] Gameplay controls hidden or invalid: " + string.Join("; ", issues);
+        return false;
+    }
+
+    private static void ValidateButton(UnityEngine.UI.Button button, string label, List<string> issues)
+    {
+        if (button == null)
+        {
+            issues.Add($"{label}=null");
+            return;
+        }
+
+        if (!button.gameObject.activeInHierarchy)
+        {
+            issues.Add($"{label} inactive");
+        }
+
+        UnityEngine.UI.Image image = button.GetComponent<UnityEngine.UI.Image>();
+        if (image == null || !image.enabled)
+        {
+            issues.Add($"{label} image missing");
+        }
+    }
+
+    private static bool TryValidateTicketLabels(out string error)
+    {
+        error = string.Empty;
+
+        NumberGenerator generator = UnityEngine.Object.FindFirstObjectByType<NumberGenerator>(FindObjectsInactive.Include);
+        if (generator == null || generator.cardClasses == null)
+        {
+            error = "[PatternSmoke] NumberGenerator/cardClasses missing while validating ticket labels.";
+            return false;
+        }
+
+        int expectedLabelCount = generator.cardClasses.Length * 15;
+        int visiblePopulatedLabels = 0;
+        for (int cardIndex = 0; cardIndex < generator.cardClasses.Length; cardIndex++)
+        {
+            CardClass card = generator.cardClasses[cardIndex];
+            if (card == null || card.num_text == null)
+            {
+                continue;
+            }
+
+            for (int cellIndex = 0; cellIndex < card.num_text.Count; cellIndex++)
+            {
+                if (IsVisiblePopulatedLabel(card.num_text[cellIndex]))
+                {
+                    visiblePopulatedLabels += 1;
+                }
+            }
+        }
+
+        if (visiblePopulatedLabels < expectedLabelCount)
+        {
+            return false;
+        }
+
+        return
+            DoesCardLabelMatch(generator, 0, 0, "1") &&
+            DoesCardLabelMatch(generator, 0, 14, "15") &&
+            DoesCardLabelMatch(generator, 3, 0, "46");
+    }
+
+    private static bool IsVisiblePopulatedLabel(TextMeshProUGUI label)
+    {
+        if (label == null || !label.enabled || !label.gameObject.activeInHierarchy || label.alpha <= 0.01f)
+        {
+            return false;
+        }
+
+        string value = (label.text ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "-", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        label.ForceMeshUpdate(ignoreActiveState: true, forceTextReparsing: false);
+        return label.textInfo != null && label.textInfo.characterCount > 0;
+    }
+
+    private static bool DoesCardLabelMatch(NumberGenerator generator, int cardIndex, int cellIndex, string expected)
+    {
+        if (generator == null ||
+            generator.cardClasses == null ||
+            cardIndex < 0 ||
+            cardIndex >= generator.cardClasses.Length)
+        {
+            return false;
+        }
+
+        CardClass card = generator.cardClasses[cardIndex];
+        if (card == null || card.num_text == null || cellIndex < 0 || cellIndex >= card.num_text.Count)
+        {
+            return false;
+        }
+
+        TextMeshProUGUI label = card.num_text[cellIndex];
+        return label != null && string.Equals((label.text ?? string.Empty).Trim(), expected, StringComparison.Ordinal);
     }
 
     private static bool TryValidateNearWinVisuals(out string error)
@@ -354,7 +498,11 @@ public static class CandyRealtimePatternVisualSmoke
         int activeHeaderCells = CountActiveHeaderNearWinCells(topperManager);
         int activeCardCells = CountActiveCardNearWinCells(generator);
 
-        if (activeNearWins > 0 && missingBlinkVisible && activeHeaderCells > 0 && activeCardCells > 0)
+        if (activeNearWins > 0 &&
+            missingBlinkVisible &&
+            activeHeaderCells > 0 &&
+            activeCardCells > 0 &&
+            TryValidateTicketLabels(out _))
         {
             return true;
         }

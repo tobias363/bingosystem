@@ -150,14 +150,26 @@ public static class RealtimeDrawSoakTests
 
     private static void ConfigureScene()
     {
+        string displayName = BuildUniqueDisplayName(loginEmail);
+
         APIManager apiManager = UnityEngine.Object.FindObjectOfType<APIManager>(true);
         if (apiManager != null)
         {
             SerializedObject so = new(apiManager);
+            SetSerializedBool(so, "useRealtimeBackend", true);
             SetSerializedString(so, "launchResolveBaseUrl", apiBaseUrl);
+            SetSerializedString(so, "realtimeBackendBaseUrl", apiBaseUrl);
+            SetSerializedString(so, "accessToken", string.Empty);
+            SetSerializedString(so, "roomCode", string.Empty);
+            SetSerializedString(so, "hallId", string.Empty);
+            SetSerializedString(so, "walletId", string.Empty);
+            SetSerializedString(so, "playerName", displayName);
             SetSerializedBool(so, "joinOrCreateOnStart", true);
+            SetSerializedBool(so, "triggerAutoLoginWhenAuthMissing", true);
             SetSerializedBool(so, "logRealtimeDrawMetrics", true);
             so.ApplyModifiedPropertiesWithoutUndo();
+
+            InvokePrivateMethod(apiManager, "ResetActiveRoomState", true);
         }
 
         BingoAutoLogin autoLogin = UnityEngine.Object.FindObjectOfType<BingoAutoLogin>(true);
@@ -167,6 +179,8 @@ public static class RealtimeDrawSoakTests
             SetSerializedString(so, "backendBaseUrl", apiBaseUrl);
             SetSerializedString(so, "email", loginEmail);
             SetSerializedString(so, "password", loginPassword);
+            SetSerializedString(so, "displayName", displayName);
+            SetSerializedBool(so, "useEphemeralFallbackEmailByDefault", false);
             SetSerializedBool(so, "autoLoginOnStart", true);
             SetSerializedBool(so, "autoConnectAndJoin", true);
             so.ApplyModifiedPropertiesWithoutUndo();
@@ -177,6 +191,7 @@ public static class RealtimeDrawSoakTests
         {
             SerializedObject so = new(realtimeClient);
             SetSerializedString(so, "backendBaseUrl", apiBaseUrl);
+            SetSerializedString(so, "accessToken", string.Empty);
             so.ApplyModifiedPropertiesWithoutUndo();
         }
     }
@@ -301,8 +316,15 @@ public static class RealtimeDrawSoakTests
         try
         {
             UIManager uiManager = UnityEngine.Object.FindObjectOfType<UIManager>(true);
-            if (uiManager == null || uiManager.playBtn == null)
+            GameManager gameManager = GameManager.instance;
+            if (uiManager == null || uiManager.playBtn == null || gameManager == null)
             {
+                return;
+            }
+
+            if (!gameManager.CanPlayCurrentBet())
+            {
+                TryIncreaseBetToPlayable(uiManager, gameManager);
                 return;
             }
 
@@ -318,6 +340,25 @@ public static class RealtimeDrawSoakTests
         {
             Debug.LogWarning("[DrawSoak] Play button press failed: " + error.Message);
         }
+    }
+
+    private static void TryIncreaseBetToPlayable(UIManager uiManager, GameManager gameManager)
+    {
+        if (gameManager == null || gameManager.CanPlayCurrentBet())
+        {
+            return;
+        }
+
+        if (uiManager != null && uiManager.betUp != null && uiManager.betUp.interactable)
+        {
+            uiManager.betUp.onClick.Invoke();
+        }
+        else
+        {
+            gameManager.BetUp();
+        }
+
+        Debug.Log($"[DrawSoak] Increased bet to {gameManager.currentBet} before attempting play.");
     }
 
     private static void HandleLogMessage(string condition, string stacktrace, LogType type)
@@ -665,6 +706,17 @@ public static class RealtimeDrawSoakTests
         return fieldInfo?.GetValue(target);
     }
 
+    private static void InvokePrivateMethod(object target, string methodName, params object[] args)
+    {
+        if (target == null || string.IsNullOrWhiteSpace(methodName))
+        {
+            return;
+        }
+
+        MethodInfo method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+        method?.Invoke(target, args);
+    }
+
     private static void SetSerializedString(SerializedObject so, string propertyName, string value)
     {
         SerializedProperty property = so.FindProperty(propertyName);
@@ -695,6 +747,23 @@ public static class RealtimeDrawSoakTests
         string safeLocal = localPart.Replace("+", "-").Replace(" ", "-");
         string suffix = DateTime.UtcNow.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
         return $"{safeLocal}-soak-{suffix}@{domain}";
+    }
+
+    private static string BuildUniqueDisplayName(string email)
+    {
+        string normalized = (email ?? string.Empty).Trim();
+        int atIndex = normalized.IndexOf('@');
+        string localPart = atIndex > 0 ? normalized.Substring(0, atIndex) : "Demo";
+        string compactLocal = localPart.Replace(".", string.Empty)
+                                       .Replace("_", string.Empty)
+                                       .Replace("-", string.Empty);
+        if (compactLocal.Length > 12)
+        {
+            compactLocal = compactLocal.Substring(compactLocal.Length - 12, 12);
+        }
+
+        string suffix = DateTime.UtcNow.ToString("HHmmss", CultureInfo.InvariantCulture);
+        return $"Soak{compactLocal}{suffix}";
     }
 
     private static string GetCommandLineArgValue(string name, string fallback)

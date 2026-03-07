@@ -318,11 +318,20 @@ public static class CandyTheme1BindingTools
             label.fontSize = Mathf.Max(18f, generator.autoSpinRemainingPlayText.fontSize * 0.42f);
             label.color = generator.autoSpinRemainingPlayText.color;
             label.text = "Spillere i rommet: 0";
-            if (generator.autoSpinRemainingPlayText.font != null)
+            TMP_FontAsset preferredLabelFont = CandyGameplayTypographyTools.ResolveGeneratedFontAsset(CandyTypographyRole.Label);
+            if (preferredLabelFont != null)
+            {
+                label.font = preferredLabelFont;
+            }
+            else if (generator.autoSpinRemainingPlayText.font != null)
             {
                 label.font = generator.autoSpinRemainingPlayText.font;
             }
-            if (generator.autoSpinRemainingPlayText.fontSharedMaterial != null)
+            if (preferredLabelFont != null && preferredLabelFont.material != null)
+            {
+                label.fontSharedMaterial = preferredLabelFont.material;
+            }
+            else if (generator.autoSpinRemainingPlayText.fontSharedMaterial != null)
             {
                 label.fontSharedMaterial = generator.autoSpinRemainingPlayText.fontSharedMaterial;
             }
@@ -531,7 +540,17 @@ public static class CandyTheme1BindingTools
         label.fontSizeMin = Mathf.Max(16f, label.fontSizeMin);
         label.fontSizeMax = Mathf.Max(label.fontSizeMin + 8f, Mathf.Min(48f, height * 0.72f));
 
-        if (TMP_Settings.defaultFontAsset != null)
+        CandyTypographyRole role = CandyTypographySystem.Classify(label);
+        TMP_FontAsset preferredLabelFont = CandyGameplayTypographyTools.ResolveGeneratedFontAsset(role);
+        if (preferredLabelFont != null)
+        {
+            label.font = preferredLabelFont;
+            if (preferredLabelFont.material != null)
+            {
+                label.fontSharedMaterial = preferredLabelFont.material;
+            }
+        }
+        else if (TMP_Settings.defaultFontAsset != null)
         {
             label.font = TMP_Settings.defaultFontAsset;
             if (TMP_Settings.defaultFontAsset.material != null)

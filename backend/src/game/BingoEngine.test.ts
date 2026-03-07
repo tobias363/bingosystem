@@ -225,13 +225,13 @@ async function createRoomWithTwoPlayers(input: {
   hostWalletId: string;
   guestName: string;
   guestWalletId: string;
-}): Promise<{ roomCode: string; hostPlayerId: string }> {
+}): Promise<{ roomCode: string; hostPlayerId: string; guestPlayerId: string }> {
   const { roomCode, playerId } = await input.engine.createRoom({
     hallId: input.hallId,
     playerName: input.hostName,
     walletId: input.hostWalletId
   });
-  await input.engine.joinRoom({
+  const joined = await input.engine.joinRoom({
     roomCode,
     hallId: input.hallId,
     playerName: input.guestName,
@@ -239,7 +239,8 @@ async function createRoomWithTwoPlayers(input: {
   });
   return {
     roomCode,
-    hostPlayerId: playerId
+    hostPlayerId: playerId,
+    guestPlayerId: joined.playerId
   };
 }
 
@@ -500,7 +501,47 @@ test("rerollTicketsForPlayer keeps pre-round tickets and startGame reuses them",
   assert.ok(runningSnapshot.currentGame);
   assert.equal(runningSnapshot.currentGame?.status, "RUNNING");
   assert.deepEqual(runningSnapshot.currentGame?.tickets[hostPlayerId], preroundTickets.tickets);
-  assert.equal(runningSnapshot.preRoundTickets, undefined);
+  assert.equal(runningSnapshot.preRoundTickets?.[hostPlayerId]?.length, 4);
+});
+
+test("startGame keeps visible pre-round tickets for observers and refreshes next-round tickets for participants", async () => {
+  const engine = new BingoEngine(new SequenceTicketBingoAdapter(), new InMemoryWalletAdapter(), {
+    minPlayersToStart: 2
+  });
+  const { roomCode, hostPlayerId, guestPlayerId } = await createRoomWithTwoPlayers({
+    engine,
+    hallId: "hall-1",
+    hostName: "Host",
+    hostWalletId: "wallet-host",
+    guestName: "Guest",
+    guestWalletId: "wallet-guest"
+  });
+
+  const hostPreround = await engine.rerollTicketsForPlayer({
+    roomCode,
+    playerId: hostPlayerId,
+    ticketsPerPlayer: 4
+  });
+  const guestPreround = await engine.ensurePreRoundTicketsForPlayer({
+    roomCode,
+    playerId: guestPlayerId,
+    ticketsPerPlayer: 4
+  });
+
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    ticketsPerPlayer: 4,
+    entryFee: 0,
+    participantPlayerIds: [hostPlayerId],
+    allowEmptyRound: true
+  });
+
+  const runningSnapshot = engine.getRoomSnapshot(roomCode);
+  assert.deepEqual(runningSnapshot.currentGame?.tickets[hostPlayerId], hostPreround.tickets);
+  assert.deepEqual(runningSnapshot.preRoundTickets?.[guestPlayerId], guestPreround);
+  assert.equal(runningSnapshot.preRoundTickets?.[hostPlayerId]?.length, 4);
+  assert.notDeepEqual(runningSnapshot.preRoundTickets?.[hostPlayerId], hostPreround.tickets);
 });
 
 test("rerollTicketsForPlayer can reroll a single preround ticket without replacing the others", async () => {
@@ -538,7 +579,7 @@ test("rerollTicketsForPlayer can reroll a single preround ticket without replaci
   assert.deepEqual(snapshot.preRoundTickets?.[hostPlayerId], rerolled.tickets);
 });
 
-test("rerollTicketsForPlayer blocks reroll while round is running", async () => {
+test("rerollTicketsForPlayer blocks reroll while active player is in the running round", async () => {
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), new InMemoryWalletAdapter(), {
     minPlayersToStart: 2
   });
@@ -567,6 +608,48 @@ test("rerollTicketsForPlayer blocks reroll while round is running", async () => 
       }),
     (error: unknown) => error instanceof DomainError && error.code === "ROUND_ALREADY_RUNNING"
   );
+});
+
+test("rerollTicketsForPlayer allows observer preround reroll while another player's round is running", async () => {
+  const engine = new BingoEngine(new SequenceTicketBingoAdapter(), new InMemoryWalletAdapter(), {
+    minPlayersToStart: 2
+  });
+  const { roomCode, hostPlayerId, guestPlayerId } = await createRoomWithTwoPlayers({
+    engine,
+    hallId: "hall-1",
+    hostName: "Host",
+    hostWalletId: "wallet-host",
+    guestName: "Guest",
+    guestWalletId: "wallet-guest"
+  });
+
+  const guestPreround = await engine.ensurePreRoundTicketsForPlayer({
+    roomCode,
+    playerId: guestPlayerId,
+    ticketsPerPlayer: 4
+  });
+
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    ticketsPerPlayer: 4,
+    entryFee: 0,
+    participantPlayerIds: [hostPlayerId],
+    allowEmptyRound: true
+  });
+
+  const rerolled = await engine.rerollTicketsForPlayer({
+    roomCode,
+    playerId: guestPlayerId,
+    ticketsPerPlayer: 4,
+    ticketIndex: 1
+  });
+
+  assert.deepEqual(rerolled.rerolledTicketIndexes, [1]);
+  assert.deepEqual(rerolled.tickets[0], guestPreround[0]);
+  assert.notDeepEqual(rerolled.tickets[1], guestPreround[1]);
+  assert.deepEqual(rerolled.tickets[2], guestPreround[2]);
+  assert.deepEqual(rerolled.tickets[3], guestPreround[3]);
 });
 
 test("rerollTicketsForPlayer validates ticketsPerPlayer range", async () => {
@@ -863,11 +946,122 @@ test("line claim includes deterministic backend bonus contract fields in claim a
   assert.equal(claimFromSnapshot?.bonusAmount, claim.payoutAmount);
 });
 
-test("adaptive payout telemetry stays within gate for 60/75/90 targets in deterministic simulation", async () => {
+test("submitClaim validates against drawn numbers and snapshot marks without explicit client marking", async () => {
+  const { engine, roomCode, hostPlayerId } = await makeEngineWithRoom();
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    entryFee: 100,
+    ticketsPerPlayer: 1,
+    payoutPercent: 80
+  });
+
+  prioritizeDrawNumbers(engine, roomCode, [1, 2, 3, 4, 5]);
+  for (let drawCount = 0; drawCount < 5; drawCount += 1) {
+    await engine.drawNextNumber({
+      roomCode,
+      actorPlayerId: hostPlayerId
+    });
+  }
+
+  const snapshotBeforeClaim = engine.getRoomSnapshot(roomCode);
+  assert.deepEqual(snapshotBeforeClaim.currentGame?.marks[hostPlayerId], [1, 2, 3, 4, 5]);
+
+  const claim = await engine.submitClaim({
+    roomCode,
+    playerId: hostPlayerId,
+    type: "LINE"
+  });
+  assert.equal(claim.valid, true);
+  assert.equal(claim.winningPatternIndex, 0);
+  assert.equal(claim.payoutAmount, 60);
+});
+
+test("drawNextNumber auto-settles a line claim before the round ends on the final allowed draw", async () => {
+  const engine = new BingoEngine(new FixedTicketBingoAdapter(), new InMemoryWalletAdapter(), {
+    maxDrawsPerRound: 5
+  });
+  const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
+    hallId: "hall-auto-line",
+    playerName: "Host",
+    walletId: "wallet-host-auto-line"
+  });
+  await engine.joinRoom({
+    roomCode,
+    hallId: "hall-auto-line",
+    playerName: "Guest",
+    walletId: "wallet-guest-auto-line"
+  });
+
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    entryFee: 100,
+    ticketsPerPlayer: 1,
+    payoutPercent: 80
+  });
+
+  prioritizeDrawNumbers(engine, roomCode, [1, 2, 3, 4, 5]);
+  for (let drawCount = 0; drawCount < 5; drawCount += 1) {
+    await engine.drawNextNumber({
+      roomCode,
+      actorPlayerId: hostPlayerId,
+      autoSettleClaims: true
+    });
+  }
+
+  const snapshot = engine.getRoomSnapshot(roomCode);
+  assert.equal(snapshot.currentGame?.status, "ENDED");
+  assert.equal(snapshot.currentGame?.endedReason, "MAX_DRAWS_REACHED");
+  assert.equal(snapshot.currentGame?.lineWinnerId, hostPlayerId);
+  const lineClaim = snapshot.currentGame?.claims.find((claim) => claim.valid && claim.type === "LINE");
+  assert.ok(lineClaim);
+  assert.equal(lineClaim?.payoutAmount, 60);
+});
+
+test("drawNextNumber auto-settles line and bingo claims for realtime-safe payout delivery", async () => {
+  const { engine, roomCode, hostPlayerId } = await makeEngineWithRoom();
+  await engine.startGame({
+    roomCode,
+    actorPlayerId: hostPlayerId,
+    entryFee: 100,
+    ticketsPerPlayer: 1,
+    payoutPercent: 80
+  });
+
+  prioritizeHostTicketForFastWin(engine, roomCode, hostPlayerId);
+  for (let safety = 0; safety < 30; safety += 1) {
+    await engine.drawNextNumber({
+      roomCode,
+      actorPlayerId: hostPlayerId,
+      autoSettleClaims: true
+    });
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    if (snapshot.currentGame?.status === "ENDED") {
+      break;
+    }
+  }
+
+  const snapshot = engine.getRoomSnapshot(roomCode);
+  assert.equal(snapshot.currentGame?.status, "ENDED");
+  assert.equal(snapshot.currentGame?.endedReason, "BINGO_CLAIMED");
+  assert.equal(snapshot.currentGame?.lineWinnerId, hostPlayerId);
+  assert.equal(snapshot.currentGame?.bingoWinnerId, hostPlayerId);
+
+  const validClaims = snapshot.currentGame?.claims.filter((claim) => claim.valid) ?? [];
+  assert.equal(validClaims.some((claim) => claim.type === "LINE"), true);
+  assert.equal(validClaims.some((claim) => claim.type === "BINGO"), true);
+  assert.equal(
+    validClaims.reduce((sum, claim) => sum + (claim.payoutAmount ?? 0), 0),
+    160
+  );
+});
+
+test("adaptive payout telemetry stays within gate for 60/75/80/90 targets in deterministic simulation", async () => {
   const originalDateNow = Date.now;
   try {
     const roundsPerTarget = 120;
-    const targets = [60, 75, 90];
+    const targets = [60, 75, 80, 90];
     for (const target of targets) {
       const wallet = new InMemoryWalletAdapter();
       const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
@@ -915,6 +1109,51 @@ test("adaptive payout telemetry stays within gate for 60/75/90 targets in determ
         `target=${target} actual=${telemetry.payoutPercentActualAvg} deviation=${deviation}`
       );
     }
+  } finally {
+    Date.now = originalDateNow;
+  }
+});
+
+test("adaptive payout controller never schedules below configured target", async () => {
+  const originalDateNow = Date.now;
+  try {
+    const wallet = new InMemoryWalletAdapter();
+    const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
+      dailyLossLimit: 5_000_000,
+      monthlyLossLimit: 5_000_000,
+      maxDrawsPerRound: 75,
+      nearMissBiasEnabled: false,
+      rtpRollingWindowSize: 200
+    });
+    const hallId = "hall-rtp-floor";
+    const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
+      hallId,
+      playerName: "Host",
+      walletId: "wallet-host-rtp-floor"
+    });
+    await engine.joinRoom({
+      roomCode,
+      hallId,
+      playerName: "Guest",
+      walletId: "wallet-guest-rtp-floor"
+    });
+    await wallet.topUp("wallet-host-rtp-floor", 5_000_000, "rtp-floor-funding");
+    await wallet.topUp("wallet-guest-rtp-floor", 5_000_000, "rtp-floor-funding");
+
+    let fakeNowMs = Date.now() + 60_000;
+    Date.now = () => fakeNowMs;
+    for (let round = 0; round < 20; round += 1) {
+      fakeNowMs += 31_000;
+      await runDeterministicRoundWithClaims({
+        engine,
+        roomCode,
+        hostPlayerId,
+        payoutPercent: 90,
+        hallId
+      });
+    }
+
+    assert.equal(engine.resolvePayoutPercentForNextRound(80, hallId), 80);
   } finally {
     Date.now = originalDateNow;
   }

@@ -64,9 +64,16 @@ interface RerollTicketsResult {
   rerolledTicketIndexes: number[];
 }
 
+interface EnsurePreRoundTicketsInput {
+  roomCode: string;
+  playerId: string;
+  ticketsPerPlayer: number;
+}
+
 interface DrawNextInput {
   roomCode: string;
   actorPlayerId: string;
+  autoSettleClaims?: boolean;
 }
 
 interface MarkNumberInput {
@@ -535,12 +542,29 @@ export class BingoEngine {
     return { roomCode, playerId };
   }
 
+  async ensurePreRoundTicketsForPlayer(input: EnsurePreRoundTicketsInput): Promise<Ticket[]> {
+    const room = this.requireRoom(input.roomCode);
+    const player = this.requirePlayer(room, input.playerId);
+    this.assertWalletAllowedForGameplay(player.walletId, Date.now());
+
+    const ticketsPerPlayer = input.ticketsPerPlayer;
+    if (!Number.isInteger(ticketsPerPlayer) || ticketsPerPlayer < 1 || ticketsPerPlayer > 5) {
+      throw new DomainError(
+        "INVALID_TICKETS_PER_PLAYER",
+        "ticketsPerPlayer må være et heltall mellom 1 og 5."
+      );
+    }
+
+    const tickets = await this.ensurePreRoundTicketsForPlayerState(room, player, ticketsPerPlayer);
+    return tickets.map((ticket) => this.cloneTicket(ticket));
+  }
+
   async rerollTicketsForPlayer(input: RerollTicketsInput): Promise<RerollTicketsResult> {
     const room = this.requireRoom(input.roomCode);
     const player = this.requirePlayer(room, input.playerId);
     this.assertWalletAllowedForGameplay(player.walletId, Date.now());
     this.assertRoundCleanupComplete(room);
-    if (room.currentGame?.status === "RUNNING") {
+    if (room.currentGame?.status === "RUNNING" && room.currentGame.tickets.has(player.id)) {
       throw new DomainError("ROUND_ALREADY_RUNNING", "Kan ikke bytte bonger mens runden pågår.");
     }
 
@@ -564,50 +588,17 @@ export class BingoEngine {
       );
     }
 
-    const existingTickets = room.preRoundTicketsByPlayer.get(player.id);
-    const canReuseExistingTickets =
-      Array.isArray(existingTickets) &&
-      existingTickets.length === ticketsPerPlayer;
-
-    const pseudoGameId = `preround-${randomUUID()}`;
-    const tickets: Ticket[] = canReuseExistingTickets
-      ? existingTickets.map((ticket) => this.cloneTicket(ticket))
-      : [];
-
-    if (!canReuseExistingTickets) {
-      for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
-        const ticket = await this.bingoAdapter.createTicket({
-          roomCode: room.code,
-          gameId: pseudoGameId,
-          player,
-          ticketIndex,
-          ticketsPerPlayer
-        });
-        tickets.push(this.cloneTicket(ticket));
-      }
-    }
+    const tickets = await this.ensurePreRoundTicketsForPlayerState(room, player, ticketsPerPlayer);
 
     const rerolledTicketIndexes: number[] = [];
     if (hasSpecificTicketIndex) {
       const ticketIndex = ticketIndexInput as number;
-      const ticket = await this.bingoAdapter.createTicket({
-        roomCode: room.code,
-        gameId: pseudoGameId,
-        player,
-        ticketIndex,
-        ticketsPerPlayer
-      });
+      const ticket = await this.createPreRoundTicket(room, player, ticketIndex, ticketsPerPlayer);
       tickets[ticketIndex] = this.cloneTicket(ticket);
       rerolledTicketIndexes.push(ticketIndex);
     } else {
       for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
-        const ticket = await this.bingoAdapter.createTicket({
-          roomCode: room.code,
-          gameId: pseudoGameId,
-          player,
-          ticketIndex,
-          ticketsPerPlayer
-        });
+        const ticket = await this.createPreRoundTicket(room, player, ticketIndex, ticketsPerPlayer);
         tickets[ticketIndex] = this.cloneTicket(ticket);
         rerolledTicketIndexes.push(ticketIndex);
       }
@@ -727,34 +718,26 @@ export class BingoEngine {
     for (const player of players) {
       const playerTickets: Ticket[] = [];
       const playerMarks: Set<number>[] = [];
-      const preRoundTickets = room.preRoundTicketsByPlayer.get(player.id);
-      const canReusePreRoundTickets =
-        Array.isArray(preRoundTickets) &&
-        preRoundTickets.length === ticketsPerPlayer;
+      const preRoundTickets = await this.ensurePreRoundTicketsForPlayerState(room, player, ticketsPerPlayer);
 
-      if (canReusePreRoundTickets) {
-        for (const ticket of preRoundTickets) {
-          playerTickets.push(this.cloneTicket(ticket));
-          playerMarks.push(new Set<number>());
-        }
-      } else {
-        for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
-          const ticket = await this.bingoAdapter.createTicket({
-            roomCode: room.code,
-            gameId,
-            player,
-            ticketIndex,
-            ticketsPerPlayer
-          });
-          playerTickets.push(ticket);
-          playerMarks.push(new Set<number>());
-        }
+      for (const ticket of preRoundTickets) {
+        playerTickets.push(this.cloneTicket(ticket));
+        playerMarks.push(new Set<number>());
       }
 
       tickets.set(player.id, playerTickets);
       marks.set(player.id, playerMarks);
     }
-    room.preRoundTicketsByPlayer.clear();
+
+    const participantIds = new Set(players.map((player) => player.id));
+    for (const roomPlayer of room.players.values()) {
+      if (participantIds.has(roomPlayer.id)) {
+        await this.refreshPreRoundTicketsForPlayerState(room, roomPlayer, ticketsPerPlayer);
+        continue;
+      }
+
+      await this.ensurePreRoundTicketsForPlayerState(room, roomPlayer, ticketsPerPlayer);
+    }
 
     const prizePool = this.roundCurrency(entryFee * players.length);
     const maxPayoutBudget = this.roundCurrency((prizePool * normalizedPayoutPercent) / 100);
@@ -832,7 +815,12 @@ export class BingoEngine {
         drawIndex: game.drawnNumbers.length
       });
     }
-    if (game.drawnNumbers.length >= this.maxDrawsPerRound) {
+
+    if (input.autoSettleClaims) {
+      await this.processAutomaticClaimsForDraw(room, game, nextNumber);
+    }
+
+    if (game.status === "RUNNING" && game.drawnNumbers.length >= this.maxDrawsPerRound) {
       const endedAt = new Date();
       game.status = "ENDED";
       game.endedAt = endedAt.toISOString();
@@ -891,16 +879,19 @@ export class BingoEngine {
     let valid = false;
     let reason: string | undefined;
     let winningPatternIndex: number | undefined;
+    const drawnSet = new Set<number>(game.drawnNumbers);
 
     if (input.type === "LINE") {
       if (game.lineWinnerId) {
         reason = "LINE_ALREADY_CLAIMED";
       } else {
         for (let ticketIndex = 0; ticketIndex < playerTickets.length; ticketIndex += 1) {
-          const resolvedPatternIndex = findFirstCompleteLinePatternIndex(
+          const effectiveMarks = this.buildEffectiveMarks(
             playerTickets[ticketIndex],
-            playerMarks[ticketIndex]
+            playerMarks[ticketIndex],
+            drawnSet
           );
+          const resolvedPatternIndex = findFirstCompleteLinePatternIndex(playerTickets[ticketIndex], effectiveMarks);
           if (resolvedPatternIndex < 0) {
             continue;
           }
@@ -914,7 +905,9 @@ export class BingoEngine {
         }
       }
     } else if (input.type === "BINGO") {
-      valid = playerTickets.some((ticket, index) => hasFullBingo(ticket, playerMarks[index]));
+      valid = playerTickets.some((ticket, index) =>
+        hasFullBingo(ticket, this.buildEffectiveMarks(ticket, playerMarks[index], drawnSet))
+      );
       if (!valid) {
         reason = "NO_VALID_BINGO";
       }
@@ -1171,7 +1164,11 @@ export class BingoEngine {
 
     const deviation = normalizedTarget - telemetry.payoutPercentActualAvg;
     const adjusted = normalizedTarget + deviation * this.rtpControllerGain;
-    return Math.min(100, Math.max(0, this.roundCurrency(adjusted)));
+    const normalizedAdjusted = Math.min(100, Math.max(0, this.roundCurrency(adjusted)));
+
+    // Treat the configured RTP as a floor so the controller compensates upward
+    // when actual payout lags behind, but never intentionally schedules below target.
+    return Math.max(normalizedTarget, normalizedAdjusted);
   }
 
   getRtpNearMissTelemetry(input: { hallId?: string; windowSize?: number } = {}): RtpNearMissTelemetry {
@@ -1370,20 +1367,7 @@ export class BingoEngine {
       for (let ticketIndex = 0; ticketIndex < tickets.length; ticketIndex += 1) {
         const ticket = tickets[ticketIndex];
         totalTickets += 1;
-        const effectiveMarks = new Set<number>();
-
-        for (const row of ticket.grid) {
-          for (const number of row) {
-            if (number > 0 && drawnSet.has(number)) {
-              effectiveMarks.add(number);
-            }
-          }
-        }
-        for (const marked of marksByTicket[ticketIndex] ?? []) {
-          if (marked > 0) {
-            effectiveMarks.add(marked);
-          }
-        }
+        const effectiveMarks = this.buildEffectiveMarks(ticket, marksByTicket[ticketIndex], drawnSet);
 
         if (hasFullBingo(ticket, effectiveMarks)) {
           continue;
@@ -3184,6 +3168,60 @@ export class BingoEngine {
     return normalized;
   }
 
+  private async createPreRoundTicket(
+    room: RoomState,
+    player: Player,
+    ticketIndex: number,
+    ticketsPerPlayer: number
+  ): Promise<Ticket> {
+    return this.cloneTicket(
+      await this.bingoAdapter.createTicket({
+        roomCode: room.code,
+        gameId: `preround-${randomUUID()}`,
+        player,
+        ticketIndex,
+        ticketsPerPlayer
+      })
+    );
+  }
+
+  private async createPreRoundTicketSet(
+    room: RoomState,
+    player: Player,
+    ticketsPerPlayer: number
+  ): Promise<Ticket[]> {
+    const tickets: Ticket[] = [];
+    for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
+      tickets.push(await this.createPreRoundTicket(room, player, ticketIndex, ticketsPerPlayer));
+    }
+    return tickets;
+  }
+
+  private async ensurePreRoundTicketsForPlayerState(
+    room: RoomState,
+    player: Player,
+    ticketsPerPlayer: number
+  ): Promise<Ticket[]> {
+    const existingTickets = room.preRoundTicketsByPlayer.get(player.id);
+    if (Array.isArray(existingTickets) && existingTickets.length === ticketsPerPlayer) {
+      return existingTickets.map((ticket) => this.cloneTicket(ticket));
+    }
+
+    const tickets = await this.createPreRoundTicketSet(room, player, ticketsPerPlayer);
+    room.preRoundTicketsByPlayer.set(player.id, tickets.map((ticket) => this.cloneTicket(ticket)));
+    return tickets.map((ticket) => this.cloneTicket(ticket));
+  }
+
+  private async refreshPreRoundTicketsForPlayerState(
+    room: RoomState,
+    player: Player,
+    ticketsPerPlayer: number
+  ): Promise<Ticket[]> {
+    const tickets = await this.createPreRoundTicketSet(room, player, ticketsPerPlayer);
+    room.preRoundTicketsByPlayer.set(player.id, tickets.map((ticket) => this.cloneTicket(ticket)));
+    return tickets.map((ticket) => this.cloneTicket(ticket));
+  }
+
   private serializeRoom(room: RoomState): RoomSnapshot {
     const preRoundTickets =
       room.preRoundTicketsByPlayer.size > 0
@@ -3208,14 +3246,17 @@ export class BingoEngine {
   }
 
   private serializeGame(game: GameState): GameSnapshot {
+    const drawnSet = new Set<number>(game.drawnNumbers);
     const ticketByPlayerId = Object.fromEntries(
       [...game.tickets.entries()].map(([playerId, tickets]) => [playerId, tickets.map((ticket) => ({ ...ticket }))])
     );
     const marksByPlayerId = Object.fromEntries(
-      [...game.marks.entries()].map(([playerId, marksByTicket]) => {
+      [...game.tickets.entries()].map(([playerId, tickets]) => {
+        const marksByTicket = game.marks.get(playerId) ?? [];
         const mergedMarks = new Set<number>();
-        for (const marks of marksByTicket) {
-          for (const number of marks.values()) {
+        for (let ticketIndex = 0; ticketIndex < tickets.length; ticketIndex += 1) {
+          const effectiveMarks = this.buildEffectiveMarks(tickets[ticketIndex], marksByTicket[ticketIndex], drawnSet);
+          for (const number of effectiveMarks.values()) {
             mergedMarks.add(number);
           }
         }
@@ -3250,6 +3291,96 @@ export class BingoEngine {
     return {
       grid: ticket.grid.map((row) => [...row])
     };
+  }
+
+  private buildEffectiveMarks(
+    ticket: Ticket,
+    explicitMarks: Set<number> | undefined,
+    drawnSet: ReadonlySet<number>
+  ): Set<number> {
+    const effectiveMarks = new Set<number>();
+    for (const row of ticket.grid) {
+      for (const number of row) {
+        if (number > 0 && drawnSet.has(number)) {
+          effectiveMarks.add(number);
+        }
+      }
+    }
+    if (explicitMarks) {
+      for (const marked of explicitMarks) {
+        if (marked > 0) {
+          effectiveMarks.add(marked);
+        }
+      }
+    }
+    return effectiveMarks;
+  }
+
+  private applyAutomaticMarksForNumber(game: GameState, number: number): void {
+    for (const [playerId, tickets] of game.tickets.entries()) {
+      const marksByTicket = game.marks.get(playerId);
+      if (!marksByTicket) {
+        continue;
+      }
+      for (let ticketIndex = 0; ticketIndex < tickets.length; ticketIndex += 1) {
+        if (ticketContainsNumber(tickets[ticketIndex], number)) {
+          marksByTicket[ticketIndex]?.add(number);
+        }
+      }
+    }
+  }
+
+  private findAutomaticClaimCandidate(game: GameState, type: ClaimType): string | undefined {
+    const drawnSet = new Set<number>(game.drawnNumbers);
+    for (const [playerId, tickets] of game.tickets.entries()) {
+      const marksByTicket = game.marks.get(playerId) ?? [];
+      for (let ticketIndex = 0; ticketIndex < tickets.length; ticketIndex += 1) {
+        const effectiveMarks = this.buildEffectiveMarks(tickets[ticketIndex], marksByTicket[ticketIndex], drawnSet);
+        if (type === "LINE") {
+          if (findFirstCompleteLinePatternIndex(tickets[ticketIndex], effectiveMarks) >= 0) {
+            return playerId;
+          }
+          continue;
+        }
+        if (hasFullBingo(tickets[ticketIndex], effectiveMarks)) {
+          return playerId;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  private async processAutomaticClaimsForDraw(room: RoomState, game: GameState, number: number): Promise<void> {
+    this.applyAutomaticMarksForNumber(game, number);
+    if (game.status !== "RUNNING") {
+      return;
+    }
+
+    if (!game.lineWinnerId) {
+      const linePlayerId = this.findAutomaticClaimCandidate(game, "LINE");
+      if (linePlayerId) {
+        await this.submitClaim({
+          roomCode: room.code,
+          playerId: linePlayerId,
+          type: "LINE"
+        });
+      }
+    }
+
+    if (game.status !== "RUNNING" || game.bingoWinnerId) {
+      return;
+    }
+
+    const bingoPlayerId = this.findAutomaticClaimCandidate(game, "BINGO");
+    if (!bingoPlayerId) {
+      return;
+    }
+
+    await this.submitClaim({
+      roomCode: room.code,
+      playerId: bingoPlayerId,
+      type: "BINGO"
+    });
   }
 }
 

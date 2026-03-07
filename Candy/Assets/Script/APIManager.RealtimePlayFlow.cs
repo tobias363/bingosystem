@@ -24,9 +24,17 @@ public partial class APIManager
             return false;
         }
 
-        return
-            !realtimeScheduler.IsGameRunning &&
-            !string.Equals(realtimeScheduler.LatestGameStatus, "ENDED", StringComparison.OrdinalIgnoreCase);
+        if (string.Equals(realtimeScheduler.LatestGameStatus, "ENDED", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (IsRealtimeBetLocked)
+        {
+            return false;
+        }
+
+        return !realtimeScheduler.IsGameRunning || !realtimePlayerParticipatingInCurrentRound;
     }
 
     public void RequestRealtimeTicketReroll()
@@ -66,9 +74,13 @@ public partial class APIManager
         BindRealtimeClient();
         if (!CanRequestRealtimeTicketReroll())
         {
-            if (realtimeScheduler.IsGameRunning)
+            if (IsRealtimeBetLocked)
             {
-                Debug.LogWarning("[APIManager] Kan ikke bytte bonger mens runden kjører.");
+                Debug.LogWarning("[APIManager] Kan ikke bytte bonger etter at innsatsen er låst for aktiv/neste runde.");
+            }
+            else if (realtimeScheduler.IsGameRunning)
+            {
+                Debug.LogWarning("[APIManager] Kan ikke bytte bonger mens din aktive runde kjører.");
             }
             else if (string.IsNullOrWhiteSpace(activeRoomCode) || string.IsNullOrWhiteSpace(activePlayerId))
             {

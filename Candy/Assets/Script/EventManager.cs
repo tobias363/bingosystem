@@ -22,6 +22,7 @@ public class EventManager : MonoBehaviour
     public static Action<int, int, bool, int, int> OnMissingPattern;
 
     public static Action OnBonusOver;
+    public static Action OnRoundComplete;
        
     public static bool isPlayOver = false;
     public static bool isAutoSpinStart = false;
@@ -91,5 +92,10 @@ public class EventManager : MonoBehaviour
     public static void PlayOnBonusOver()
     {
         OnBonusOver?.Invoke();
+    }
+
+    public static void RoundComplete()
+    {
+        OnRoundComplete?.Invoke();
     }
 }

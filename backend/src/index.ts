@@ -298,7 +298,7 @@ const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
     Math.max(1, parsePositiveIntEnv(process.env.AUTO_ROUND_TICKETS_PER_PLAYER, 4))
   ),
   payoutPercent: Math.round(
-    Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 100))) * 100
+    Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 80))) * 100
   ) / 100,
   autoDrawEnabled: forceCandyAutoDraw ? true : autoplayAllowed ? requestedAutoDrawEnabled : false,
   autoDrawIntervalMs: parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 1200)
@@ -1428,6 +1428,20 @@ function resolveAdaptivePayoutPercent(hallId: string): number {
   return engine.resolvePayoutPercentForNextRound(runtimeCandyManiaSettings.payoutPercent, hallId);
 }
 
+async function resolveDefaultTicketsPerPlayerForRoom(roomCode: string): Promise<number> {
+  const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
+  return Math.min(hallGameConfig.maxTicketsPerPlayer, runtimeCandyManiaSettings.autoRoundTicketsPerPlayer);
+}
+
+async function ensurePlayerHasVisiblePreRoundTickets(roomCode: string, playerId: string): Promise<void> {
+  const ticketsPerPlayer = await resolveDefaultTicketsPerPlayerForRoom(roomCode);
+  await engine.ensurePreRoundTicketsForPlayer({
+    roomCode,
+    playerId,
+    ticketsPerPlayer
+  });
+}
+
 function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<string, unknown> {
   const nextStartAtMs = runtimeCandyManiaSettings.autoRoundStartEnabled
     ? normalizeRoomNextAutoStartAt(snapshot.code, nowMs)
@@ -1746,7 +1760,8 @@ async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummari
     try {
       const number = await engine.drawNextNumber({
         roomCode,
-        actorPlayerId: latestSnapshot.hostPlayerId
+        actorPlayerId: latestSnapshot.hostPlayerId,
+        autoSettleClaims: true
       });
       io.to(roomCode).emit("draw:new", { number, source: "auto" });
     } catch (error) {
@@ -2668,7 +2683,8 @@ app.post("/api/admin/rooms/:roomCode/draw-next", async (req, res) => {
     const snapshot = engine.getRoomSnapshot(roomCode);
     const number = await engine.drawNextNumber({
       roomCode,
-      actorPlayerId: snapshot.hostPlayerId
+      actorPlayerId: snapshot.hostPlayerId,
+      autoSettleClaims: true
     });
     const updatedSnapshot = await emitRoomUpdate(roomCode);
     apiSuccess(res, {
@@ -3463,6 +3479,7 @@ io.on("connection", (socket: Socket) => {
           let playerId = existingPlayer?.id ?? "";
           if (existingPlayer) {
             engine.attachPlayerSocket(canonicalRoom.code, existingPlayer.id, socket.id);
+            await ensurePlayerHasVisiblePreRoundTickets(canonicalRoom.code, existingPlayer.id);
           } else {
             const joined = await engine.joinRoom({
               roomCode: canonicalRoom.code,
@@ -3472,6 +3489,7 @@ io.on("connection", (socket: Socket) => {
               socketId: socket.id
             });
             playerId = joined.playerId;
+            await ensurePlayerHasVisiblePreRoundTickets(canonicalRoom.code, playerId);
           }
 
           socket.join(canonicalRoom.code);
@@ -3495,6 +3513,7 @@ io.on("connection", (socket: Socket) => {
         walletId: identity.walletId,
         socketId: socket.id
       });
+      await ensurePlayerHasVisiblePreRoundTickets(roomCode, playerId);
       socket.join(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { roomCode, playerId, snapshot });
@@ -3532,6 +3551,7 @@ io.on("connection", (socket: Socket) => {
             socketId: socket.id
           });
           roomCode = created.roomCode;
+          await ensurePlayerHasVisiblePreRoundTickets(roomCode, created.playerId);
           socket.join(roomCode);
           const snapshot = await emitRoomUpdate(roomCode);
           ackSuccess(callback, { roomCode, playerId: created.playerId, snapshot });
@@ -3552,6 +3572,7 @@ io.on("connection", (socket: Socket) => {
       const existingPlayer = findPlayerInRoomByWallet(roomSnapshot, identity.walletId);
       if (existingPlayer) {
         engine.attachPlayerSocket(roomCode, existingPlayer.id, socket.id);
+        await ensurePlayerHasVisiblePreRoundTickets(roomCode, existingPlayer.id);
         socket.join(roomCode);
         const snapshot = await emitRoomUpdate(roomCode);
         ackSuccess(callback, { roomCode, playerId: existingPlayer.id, snapshot });
@@ -3573,6 +3594,7 @@ io.on("connection", (socket: Socket) => {
         walletId: identity.walletId,
         socketId: socket.id
       });
+      await ensurePlayerHasVisiblePreRoundTickets(roomCode, playerId);
       socket.join(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { roomCode, playerId, snapshot });
@@ -3599,6 +3621,7 @@ io.on("connection", (socket: Socket) => {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
       assertCanonicalCandyRoomForGameplay(roomCode);
       engine.attachPlayerSocket(roomCode, playerId, socket.id);
+      await ensurePlayerHasVisiblePreRoundTickets(roomCode, playerId);
       socket.join(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { snapshot });
@@ -3715,7 +3738,11 @@ io.on("connection", (socket: Socket) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
       assertCanonicalCandyRoomForGameplay(roomCode);
-      const number = await engine.drawNextNumber({ roomCode, actorPlayerId: playerId });
+      const number = await engine.drawNextNumber({
+        roomCode,
+        actorPlayerId: playerId,
+        autoSettleClaims: true
+      });
       io.to(roomCode).emit("draw:new", { number });
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { number, snapshot });
@@ -3788,6 +3815,14 @@ io.on("connection", (socket: Socket) => {
           Math.min(hallGameConfig.maxTicketsPerPlayer, runtimeCandyManiaSettings.autoRoundTicketsPerPlayer);
         assertTicketsPerPlayerWithinHallLimit(ticketsPerPlayer, hallGameConfig.maxTicketsPerPlayer);
 
+        const roomSnapshotAfterReroll = engine.getRoomSnapshot(roomCode);
+        const isArmedForUpcomingRound = getArmedPlayerIdsForSnapshot(roomSnapshotAfterReroll).includes(playerId);
+        if (roomSnapshotAfterReroll.currentGame?.status === "RUNNING" && isArmedForUpcomingRound) {
+          throw new DomainError(
+            "BET_LOCKED_DURING_RUNNING_GAME",
+            "Kan ikke bytte tall etter at innsatsen er låst for neste runde mens trekningen pågår."
+          );
+        }
         const rerollResult = await engine.rerollTicketsForPlayer({
           roomCode,
           playerId,
@@ -3835,6 +3870,13 @@ io.on("connection", (socket: Socket) => {
       const requestedRoomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
       const roomCode = resolveCanonicalRoomCodeOrThrow(requestedRoomCode);
       assertUserCanAccessRoom(user, roomCode);
+
+      const roomSnapshot = engine.getRoomSnapshot(roomCode);
+      const existingPlayer = findPlayerInRoomByWallet(roomSnapshot, user.walletId);
+      if (existingPlayer) {
+        await ensurePlayerHasVisiblePreRoundTickets(roomCode, existingPlayer.id);
+      }
+
       const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
       ackSuccess(callback, { snapshot });
     } catch (error) {

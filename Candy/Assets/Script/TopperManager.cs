@@ -61,6 +61,7 @@ public class TopperManager : MonoBehaviour
     private Coroutine missingBlinkCoroutine;
     private bool missingBlinkVisible;
     private Sprite solidHighlightSprite;
+    private TMP_FontAsset prizeFontOverride;
 
     private void OnEnable()
     {
@@ -629,14 +630,6 @@ public class TopperManager : MonoBehaviour
 
             if (i >= 0 && i < defaultPrizeTexts.Count)
             {
-                if (showBonusLabelUnderConfiguredPattern && i == ResolveBonusPatternIndexFromRight())
-                {
-                    string trimmedBonusLabel = string.IsNullOrWhiteSpace(bonusPatternLabel) ? "BONUS" : bonusPatternLabel.Trim();
-                    resolvedText = string.IsNullOrWhiteSpace(resolvedText)
-                        ? trimmedBonusLabel
-                        : $"{resolvedText}\n{trimmedBonusLabel}";
-                }
-
                 defaultPrizeTexts[i] = resolvedText;
             }
 
@@ -651,23 +644,22 @@ public class TopperManager : MonoBehaviour
     {
         runtimePrizeText = string.Empty;
 
-        List<int> currentWinPoints = GameManager.instance?.currentWinPoints;
-        if (currentWinPoints == null || patternIndex < 0 || patternIndex >= currentWinPoints.Count)
+        GameManager gameManager = GameManager.instance;
+        if (gameManager == null || !gameManager.TryGetFormattedPayoutLabel(patternIndex, out runtimePrizeText))
         {
             return false;
         }
 
-        runtimePrizeText = Mathf.Max(0, currentWinPoints[patternIndex]).ToString();
-        return true;
+        return !string.IsNullOrWhiteSpace(runtimePrizeText);
     }
 
     private int ResolvePatternPayoutAmount(int rawPatternIndex)
     {
         int payoutIndex = GetPatternIndex(rawPatternIndex);
-        List<int> currentWinPoints = GameManager.instance?.currentWinPoints;
-        if (currentWinPoints != null && payoutIndex >= 0 && payoutIndex < currentWinPoints.Count)
+        GameManager gameManager = GameManager.instance;
+        if (gameManager != null && payoutIndex >= 0)
         {
-            return Mathf.Max(0, currentWinPoints[payoutIndex]);
+            return gameManager.GetPayoutForPatternSlot(payoutIndex);
         }
 
         if (payoutIndex >= 0 && payoutIndex < prizes.Count && prizes[payoutIndex] != null &&
@@ -693,14 +685,6 @@ public class TopperManager : MonoBehaviour
     {
         if (TryResolveRuntimePrizeText(index, out string runtimePrizeText))
         {
-            if (showBonusLabelUnderConfiguredPattern && index == ResolveBonusPatternIndexFromRight())
-            {
-                string trimmedBonusLabel = string.IsNullOrWhiteSpace(bonusPatternLabel) ? "BONUS" : bonusPatternLabel.Trim();
-                return string.IsNullOrWhiteSpace(runtimePrizeText)
-                    ? trimmedBonusLabel
-                    : $"{runtimePrizeText}\n{trimmedBonusLabel}";
-            }
-
             return runtimePrizeText;
         }
 
@@ -726,7 +710,7 @@ public class TopperManager : MonoBehaviour
 
     private void ApplyPrizeTypography()
     {
-        TMP_FontAsset preferredFont = RealtimeTextStyleUtils.ResolvePreferredGameFont();
+        TMP_FontAsset preferredFont = ResolvePrizeFontOverride();
         for (int i = 0; i < prizes.Count; i++)
         {
             if (prizes[i] == null)
@@ -734,26 +718,29 @@ public class TopperManager : MonoBehaviour
                 continue;
             }
 
-            RealtimeTextStyleUtils.ApplyReadableTypography(prizes[i], preferredFont, minFontSize: 16f, maxFontSize: 40f);
+            if (preferredFont != null)
+            {
+                prizes[i].font = preferredFont;
+                if (preferredFont.material != null)
+                {
+                    prizes[i].fontSharedMaterial = preferredFont.material;
+                }
+            }
+
+            prizes[i].enableWordWrapping = false;
+            prizes[i].enableAutoSizing = true;
+            prizes[i].fontSizeMin = 12f;
+            prizes[i].fontSizeMax = 24f;
+            prizes[i].fontSize = 18f;
+            prizes[i].alignment = TextAlignmentOptions.Center;
+            prizes[i].overflowMode = TextOverflowModes.Overflow;
+            CandyTypographySystem.ApplyRole(prizes[i], CandyTypographyRole.Headline);
         }
     }
 
     public int GetPatternIndex(int index)
     {
-        if (index >= 5 && index <= 7)
-        {
-            index = 5;
-        }
-        else if (index > 7 && index < 13)
-        {
-            index = index - 2;
-        }
-        else if (index >= 13)
-        {
-            index = missedPattern.Count - 1;
-        }
-
-        return index;
+        return GameManager.ResolvePayoutSlotIndex(index, Mathf.Max(0, prizes.Count));
     }
 
     private void Reset()
@@ -822,6 +809,22 @@ public class TopperManager : MonoBehaviour
 
         string digits = rawText.Substring(start, end - start);
         return int.TryParse(digits, out value);
+    }
+
+    private TMP_FontAsset ResolvePrizeFontOverride()
+    {
+        if (prizeFontOverride != null)
+        {
+            return prizeFontOverride;
+        }
+
+        prizeFontOverride = CandyTypographySystem.GetFont(CandyTypographyRole.Headline);
+        if (prizeFontOverride == null)
+        {
+            prizeFontOverride = RealtimeTextStyleUtils.ResolveStableFallbackFont();
+        }
+
+        return prizeFontOverride;
     }
 
     private static void SetActiveIfChanged(GameObject target, bool active)

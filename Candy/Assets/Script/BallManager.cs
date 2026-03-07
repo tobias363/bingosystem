@@ -4,14 +4,36 @@ using UnityEngine;
 using DG.Tweening;
 using TMPro;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 
 public class BallManager : MonoBehaviour
 {
+    private static readonly string[] GameplayOverlayPathsToHide =
+    {
+        "BingoCanvas/Image",
+        "BingoCanvas/Cards/Image",
+        "BonusCanvas/BG/Button",
+    };
+
+    private static readonly string[] GameplayOverlaySpriteNamesToHide =
+    {
+        "select-ui",
+        "WhatsApp Image 2023-11-22 at 7.08.47 PM",
+        "black-strip_0",
+    };
+
     private const int RealtimeBallColumns = 15;
-    private const float RealtimeBallSize = 84f;
-    private const float RealtimeBallSpacingX = 86f;
-    private const float RealtimeBallTopRowY = -350f;
-    private const float RealtimeBallBottomRowY = -258f;
+    private const float RealtimeBallSize = 76f;
+    private const float RealtimeBallSpacingX = 82f;
+    private const float RealtimeBallTopRowY = -314f;
+    private const float RealtimeBallBottomRowY = -226f;
+    private const float RealtimeBallTextBoxInset = 10f;
+    private const float RealtimeBallNumberYOffset = 1f;
+    private const float RealtimeBallNumberFontMin = 14f;
+    private const float RealtimeBallNumberFontMax = 34f;
+    private const float BigBallNumberYOffset = 4f;
+    private const float BigBallNumberFontMin = 40f;
+    private const float BigBallNumberFontMax = 62f;
 
     public NumberGenerator numberGenerator;
     public List<GameObject> balls;
@@ -46,6 +68,7 @@ public class BallManager : MonoBehaviour
     private Coroutine extraBallBatchRoutine;
     private TextMeshProUGUI cachedBigBallText;
     private readonly List<Animator> cachedGlassAnimators = new List<Animator>();
+    private readonly Dictionary<string, GameObject> cachedOverlayObjects = new Dictionary<string, GameObject>();
     private float appliedGlassAnimatorSpeed = -1f;
     private CandyBallViewBindingSet explicitViewBindings;
 
@@ -58,6 +81,7 @@ public class BallManager : MonoBehaviour
         EventManager.OnTapForExtraBall += ShowExtraBallOnTap;
 
         ApplyExplicitRealtimeViewBindingsFromComponent();
+        HideGameplayOverlays();
         GetStartPosition_ExtraBalls();
         ApplyRealtimeBallSlotLayout();
         CacheBallComponentRefs();
@@ -79,12 +103,14 @@ public class BallManager : MonoBehaviour
 
     private void Start()
     {
+        HideGameplayOverlays();
         // Ensure speed sync after all Awake calls and scene activation.
         ApplyGlassAnimationSpeed(force: true);
     }
 
     private void Update()
     {
+        HideGameplayOverlays();
         ApplyGlassAnimationSpeed();
     }
 
@@ -134,15 +160,10 @@ public class BallManager : MonoBehaviour
             RectTransform rootRect = ball.GetComponent<RectTransform>();
             if (rootRect != null)
             {
-                int row = i / RealtimeBallColumns;
-                int col = i % RealtimeBallColumns;
-                float x = (col - ((RealtimeBallColumns - 1) * 0.5f)) * RealtimeBallSpacingX;
-                float y = row == 0 ? RealtimeBallTopRowY : RealtimeBallBottomRowY;
-
                 rootRect.anchorMin = new Vector2(0.5f, 0.5f);
                 rootRect.anchorMax = new Vector2(0.5f, 0.5f);
                 rootRect.pivot = new Vector2(0.5f, 0.5f);
-                rootRect.anchoredPosition = new Vector2(x, y);
+                rootRect.anchoredPosition = GetBallSlotAnchoredPosition(i);
                 rootRect.sizeDelta = new Vector2(RealtimeBallSize, RealtimeBallSize);
                 rootRect.localScale = Vector3.one;
             }
@@ -162,18 +183,151 @@ public class BallManager : MonoBehaviour
                     textRect.anchorMin = new Vector2(0.5f, 0.5f);
                     textRect.anchorMax = new Vector2(0.5f, 0.5f);
                     textRect.pivot = new Vector2(0.5f, 0.5f);
-                    textRect.anchoredPosition = Vector2.zero;
-                    textRect.sizeDelta = new Vector2(RealtimeBallSize, RealtimeBallSize);
+                    textRect.anchoredPosition = new Vector2(0f, RealtimeBallNumberYOffset);
+                    textRect.sizeDelta = new Vector2(
+                        RealtimeBallSize - RealtimeBallTextBoxInset,
+                        RealtimeBallSize - RealtimeBallTextBoxInset);
                     textRect.localScale = Vector3.one;
                 }
 
-                numberText.alignment = TextAlignmentOptions.Center;
+                numberText.alignment = TextAlignmentOptions.CenterGeoAligned;
                 numberText.enableAutoSizing = true;
-                numberText.fontSizeMin = Mathf.Max(18f, numberText.fontSizeMin);
-                numberText.fontSizeMax = Mathf.Max(numberText.fontSizeMin + 8f, 44f);
+                numberText.fontSizeMin = RealtimeBallNumberFontMin;
+                numberText.fontSizeMax = RealtimeBallNumberFontMax;
+                numberText.textWrappingMode = TextWrappingModes.NoWrap;
+                numberText.margin = new Vector4(2f, 0f, 2f, 0f);
                 numberText.overflowMode = TextOverflowModes.Overflow;
             }
         }
+    }
+
+    private static Vector2 GetBallSlotAnchoredPosition(int slotIndex)
+    {
+        int row = slotIndex / RealtimeBallColumns;
+        int col = slotIndex % RealtimeBallColumns;
+        float x = (col - ((RealtimeBallColumns - 1) * 0.5f)) * RealtimeBallSpacingX;
+        float y = row == 0 ? RealtimeBallTopRowY : RealtimeBallBottomRowY;
+        return new Vector2(x, y);
+    }
+
+    private static void ApplyBigBallTextLayout(TextMeshProUGUI target)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        RectTransform rect = target.rectTransform;
+        if (rect != null)
+        {
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = new Vector2(0f, BigBallNumberYOffset);
+            rect.localScale = Vector3.one;
+        }
+
+        target.alignment = TextAlignmentOptions.CenterGeoAligned;
+        target.enableAutoSizing = true;
+        target.fontSizeMin = BigBallNumberFontMin;
+        target.fontSizeMax = BigBallNumberFontMax;
+        target.overflowMode = TextOverflowModes.Overflow;
+    }
+
+    private void HideGameplayOverlays()
+    {
+        // Legacy overlay suppression started hiding live controls after the scene cleanup.
+        // Keep the method as a no-op so existing call sites stay harmless.
+        return;
+
+        for (int i = 0; i < GameplayOverlayPathsToHide.Length; i++)
+        {
+            string path = GameplayOverlayPathsToHide[i];
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            GameObject target = ResolveSceneObjectByPath(path);
+            if (target != null && target.activeSelf)
+            {
+                target.SetActive(false);
+            }
+        }
+
+        Image[] sceneImages = FindObjectsByType<Image>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < sceneImages.Length; i++)
+        {
+            Image image = sceneImages[i];
+            if (image == null || image.sprite == null)
+            {
+                continue;
+            }
+
+            if (image.gameObject.scene != gameObject.scene)
+            {
+                continue;
+            }
+
+            string spriteName = image.sprite.name;
+            for (int nameIndex = 0; nameIndex < GameplayOverlaySpriteNamesToHide.Length; nameIndex++)
+            {
+                if (spriteName == GameplayOverlaySpriteNamesToHide[nameIndex] && image.gameObject.activeSelf)
+                {
+                    image.gameObject.SetActive(false);
+                    break;
+                }
+            }
+        }
+    }
+
+    private GameObject ResolveSceneObjectByPath(string path)
+    {
+        if (cachedOverlayObjects.TryGetValue(path, out GameObject cached) && cached != null)
+        {
+            return cached;
+        }
+
+        string[] parts = path.Split('/');
+        if (parts.Length == 0)
+        {
+            return null;
+        }
+
+        Scene activeScene = gameObject.scene;
+        if (!activeScene.IsValid())
+        {
+            return null;
+        }
+
+        GameObject[] roots = activeScene.GetRootGameObjects();
+        Transform current = null;
+        for (int i = 0; i < roots.Length; i++)
+        {
+            if (roots[i] != null && roots[i].name == parts[0])
+            {
+                current = roots[i].transform;
+                break;
+            }
+        }
+
+        if (current == null)
+        {
+            return null;
+        }
+
+        for (int i = 1; i < parts.Length; i++)
+        {
+            current = current.Find(parts[i]);
+            if (current == null)
+            {
+                return null;
+            }
+        }
+
+        GameObject resolved = current.gameObject;
+        cachedOverlayObjects[path] = resolved;
+        return resolved;
     }
 
     private void ApplyGlassAnimationSpeed(bool force = false)
@@ -422,11 +576,13 @@ public class BallManager : MonoBehaviour
         if (explicitViewBindings != null && explicitViewBindings.BigBallText != null)
         {
             cachedBigBallText = explicitViewBindings.BigBallText;
+            ApplyBigBallTextLayout(cachedBigBallText);
             return cachedBigBallText;
         }
 
         if (cachedBigBallText != null)
         {
+            ApplyBigBallTextLayout(cachedBigBallText);
             return cachedBigBallText;
         }
 
@@ -436,6 +592,7 @@ public class BallManager : MonoBehaviour
         }
 
         cachedBigBallText = bigBallImg.GetComponentInChildren<TextMeshProUGUI>(true);
+        ApplyBigBallTextLayout(cachedBigBallText);
         return cachedBigBallText;
     }
 
@@ -770,10 +927,7 @@ public class BallManager : MonoBehaviour
             SetActiveIfChanged(balls[i], true);
             yield return new WaitForSeconds(numberGenerator.ballAnimSpeed);
             KillTransformTweens(ballTransform);
-            if (i < 15)
-                ballTransform.DOLocalMoveY(-350, numberGenerator.ballAnimSpeed);
-            else
-                ballTransform.DOLocalMoveY(-280, numberGenerator.ballAnimSpeed);
+            ballTransform.DOLocalMove(GetBallSlotAnchoredPosition(i), numberGenerator.ballAnimSpeed);
             
             EventManager.ShowBallOnCard(i);
 
@@ -782,48 +936,7 @@ public class BallManager : MonoBehaviour
                 yield return null;
             }
             else {
-                if (i <= 21)
-                {
-                    yield return new WaitForSeconds(numberGenerator.ballAnimSpeed);
-                    if (i < 7)
-                    {
-                        KillTransformTweens(ballTransform);
-                        ballTransform.DOLocalMoveX(70 * ((i % 7) - 7), numberGenerator.ballAnimSpeed);
-                    }
-                    else if (i >= 7 && i < 14)
-                    {
-                        KillTransformTweens(ballTransform);
-                        ballTransform.DOLocalMoveX(70 * (7 - (i % 7)), numberGenerator.ballAnimSpeed);
-                    }
-                    else if ((i > 14 && i <= 21))
-                    {
-                        if (i == 21)
-                        {
-                            KillTransformTweens(ballTransform);
-                            ballTransform.DOLocalMoveX(-70, numberGenerator.ballAnimSpeed);
-                        }
-                        else
-                        {
-                            KillTransformTweens(ballTransform);
-                            ballTransform.DOLocalMoveX(70 * ((i % 7) - 7 - 1), numberGenerator.ballAnimSpeed);
-                        }
-                    }
-                }
-                else
-                {
-                    yield return new WaitForSeconds(numberGenerator.ballAnimSpeed);
-                    if (i == 28)
-                    {
-                        KillTransformTweens(ballTransform);
-                        ballTransform.DOLocalMoveX(70, numberGenerator.ballAnimSpeed);
-                    }
-                    else
-                    {
-                        KillTransformTweens(ballTransform);
-                        ballTransform.DOLocalMoveX(70 * (7 + 1 - (i % 7)), numberGenerator.ballAnimSpeed);
-                    }
-
-                }
+                yield return new WaitForSeconds(numberGenerator.ballAnimSpeed);
             }
         }
 
@@ -879,6 +992,7 @@ public class BallManager : MonoBehaviour
         {
             resetBigBallText.color = Color.black;
         }
+        numberGenerator?.NotifyLegacyFreeExtraBallsCompleted();
         EventManager.AutoSpinOver(true);
         extraBallBatchRoutine = null;
     }
@@ -978,6 +1092,7 @@ public class BallManager : MonoBehaviour
         }
         yield return new WaitForSeconds(numberGenerator.ballAnimSpeed);
         EventManager.ShowBallOnCard(ballIndexList.Count - 1);
+        numberGenerator?.NotifyLegacyExtraBallAnimationCompleted();
         extraBallMoveRoutines.Remove(g);
     }
 

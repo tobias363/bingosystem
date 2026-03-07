@@ -31,6 +31,30 @@ public class UIManager : MonoBehaviour
         return APIManager.instance != null && APIManager.instance.UseRealtimeBackend;
     }
 
+    private bool HasPlayableConfiguredBet()
+    {
+        return GameManager.instance == null || GameManager.instance.CanPlayCurrentBet();
+    }
+
+    private void RefreshLegacyPlayControlsState()
+    {
+        if (IsRealtimeMode())
+        {
+            return;
+        }
+
+        bool canPlay = HasPlayableConfiguredBet();
+        if (playBtn != null && EventManager.isPlayOver)
+        {
+            playBtn.interactable = canPlay;
+        }
+
+        if (autoPlayBtn != null)
+        {
+            autoPlayBtn.interactable = canPlay && !IsProductionAutoPlayBlocked();
+        }
+    }
+
     private void ApplyPlayButtonLabel()
     {
         if (playBtn == null)
@@ -82,8 +106,6 @@ public class UIManager : MonoBehaviour
         {
             playBtn.gameObject.SetActive(true);
         }
-
-        playBtn.interactable = true;
     }
 
     private void EnsureRealtimeStartNowButtonVisible()
@@ -145,14 +167,12 @@ public class UIManager : MonoBehaviour
         EnsureRealtimeSingleCardRerollButtons();
         RefreshRealtimeRerollButtonState();
         RefreshRealtimeSingleCardRerollButtonsState();
+        RefreshRealtimeBetControlsState();
+        RefreshLegacyPlayControlsState();
 
         if (IsRealtimeMode())
         {
             EnsureRealtimeStartNowButtonVisible();
-        }
-        else if (autoPlayBtn != null && IsProductionAutoPlayBlocked())
-        {
-            autoPlayBtn.interactable = false;
         }
     }
 
@@ -177,6 +197,8 @@ public class UIManager : MonoBehaviour
     {
         RefreshRealtimeRerollButtonState();
         RefreshRealtimeSingleCardRerollButtonsState();
+        RefreshRealtimeBetControlsState();
+        RefreshLegacyPlayControlsState();
     }
 
     private void EnsureRealtimeRerollButton()
@@ -258,9 +280,9 @@ public class UIManager : MonoBehaviour
                                          playBtn.GetComponentInChildren<TMP_Text>(true);
                 if (templateLabel != null)
                 {
-                    label.font = templateLabel.font;
                     label.color = templateLabel.color;
                 }
+                CandyTypographySystem.ApplyRole(label, CandyTypographyRole.Label);
 
                 int playIndex = playBtn.transform.GetSiblingIndex();
                 buttonObject.transform.SetSiblingIndex(Mathf.Max(0, playIndex - 1));
@@ -312,7 +334,7 @@ public class UIManager : MonoBehaviour
 
     private void EnsureRealtimeSingleCardRerollButtons()
     {
-        if (!IsRealtimeMode())
+        if (!IsRealtimeMode() || Application.isBatchMode)
         {
             SetRealtimeSingleCardRerollButtonsVisible(false);
             return;
@@ -410,9 +432,9 @@ public class UIManager : MonoBehaviour
                                  (playBtn != null ? playBtn.GetComponentInChildren<TMP_Text>(true) : null);
         if (templateLabel != null)
         {
-            label.font = templateLabel.font;
             label.color = templateLabel.color;
         }
+        CandyTypographySystem.ApplyRole(label, CandyTypographyRole.Label);
 
         return button;
     }
@@ -542,8 +564,49 @@ public class UIManager : MonoBehaviour
         RefreshRealtimeSingleCardRerollButtonsState();
     }
 
+    private void RefreshRealtimeBetControlsState()
+    {
+        if (!IsRealtimeMode())
+        {
+            return;
+        }
+
+        EnsurePlayButtonVisible();
+        EnsureRealtimeStartNowButtonVisible();
+        ApplyPlayButtonLabel();
+        ApplyAutoPlayButtonLabel();
+
+        APIManager apiManager = APIManager.instance;
+        bool lockBetControls = apiManager != null && apiManager.IsRealtimeBetLocked;
+        bool hasPlayableBet = HasPlayableConfiguredBet();
+        GameManager gameManager = GameManager.instance;
+        bool canIncreaseBet = gameManager == null || gameManager.betlevel < gameManager.totalBets.Count - 1;
+        bool canDecreaseBet = gameManager == null || gameManager.betlevel > 0;
+
+        if (betUp != null)
+        {
+            betUp.interactable = !lockBetControls && canIncreaseBet;
+        }
+
+        if (betDown != null)
+        {
+            betDown.interactable = !lockBetControls && canDecreaseBet;
+        }
+
+        if (playBtn != null)
+        {
+            playBtn.interactable = !lockBetControls && hasPlayableBet;
+        }
+    }
+
     public void Play()
     {
+        if (!HasPlayableConfiguredBet())
+        {
+            RefreshLegacyPlayControlsState();
+            return;
+        }
+
         if (IsRealtimeMode())
         {
             if (playBtn != null)
@@ -585,6 +648,12 @@ public class UIManager : MonoBehaviour
             return;
         }
 
+        if (!HasPlayableConfiguredBet())
+        {
+            RefreshLegacyPlayControlsState();
+            return;
+        }
+
         if (settingsPanel != null)
         {
             settingsPanel.SetActive(false);
@@ -609,6 +678,12 @@ public class UIManager : MonoBehaviour
         if (IsRealtimeMode())
         {
             APIManager.instance?.RequestRealtimeState();
+            return;
+        }
+
+        if (!HasPlayableConfiguredBet())
+        {
+            RefreshLegacyPlayControlsState();
             return;
         }
 
@@ -675,8 +750,10 @@ public class UIManager : MonoBehaviour
     {
         if (playBtn != null)
         {
-            playBtn.interactable = true;
+            playBtn.interactable = IsRealtimeMode();
         }
+
+        RefreshLegacyPlayControlsState();
     }
 
     public void AutoSpinOptionSelection(int index)
@@ -729,20 +806,35 @@ public class UIManager : MonoBehaviour
         //playBtn.interactable = isOver;
         //autoPlayBtn.interactable = isOver;
         //settingsBtn.interactable = isOver;
-        if (betUp != null)
+        if (IsRealtimeMode())
         {
-            betUp.interactable = isOver;
+            RefreshRealtimeBetControlsState();
+            return;
         }
 
-        if (betDown != null)
+        if (isOver)
         {
-            betDown.interactable = isOver;
+            GameManager.instance?.RefreshBetControls();
+        }
+        else
+        {
+            if (betUp != null)
+            {
+                betUp.interactable = false;
+            }
+
+            if (betDown != null)
+            {
+                betDown.interactable = false;
+            }
         }
 
-        if (rerollTicketBtn != null && !IsRealtimeMode())
+        if (rerollTicketBtn != null)
         {
             rerollTicketBtn.interactable = isOver;
         }
+
+        RefreshLegacyPlayControlsState();
     }
     
 }

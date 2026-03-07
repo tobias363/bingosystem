@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -8,86 +9,49 @@ public static class RealtimeTextStyleUtils
     private static readonly Color DefaultCardNumberColor = new Color32(184, 51, 99, 255);
     private static readonly Color DefaultBallNumberColor = Color.white;
     private static readonly Color DefaultHudTextColor = Color.white;
+    private static readonly Dictionary<int, Material> BallTextMaterials = new Dictionary<int, Material>();
 
     public static TMP_FontAsset ResolveFallbackFont()
     {
-        GameManager gm = GameManager.instance;
-        NumberGenerator generator = gm != null ? gm.numberGenerator : UnityEngine.Object.FindObjectOfType<NumberGenerator>();
-        if (generator != null && generator.cardClasses != null)
-        {
-            for (int cardIndex = 0; cardIndex < generator.cardClasses.Length; cardIndex++)
-            {
-                CardClass card = generator.cardClasses[cardIndex];
-                if (card?.num_text == null)
-                {
-                    continue;
-                }
-
-                for (int textIndex = 0; textIndex < card.num_text.Count; textIndex++)
-                {
-                    TextMeshProUGUI label = card.num_text[textIndex];
-                    if (label != null && label.font != null)
-                    {
-                        return label.font;
-                    }
-                }
-            }
-        }
-
-        if (gm != null)
-        {
-            if (gm.displayCurrentBets != null && gm.displayCurrentBets.font != null)
-            {
-                return gm.displayCurrentBets.font;
-            }
-
-            if (gm.displayTotalMoney != null && gm.displayTotalMoney.font != null)
-            {
-                return gm.displayTotalMoney.font;
-            }
-
-            if (gm.winAmtText != null && gm.winAmtText.font != null)
-            {
-                return gm.winAmtText.font;
-            }
-        }
-
-        if (generator != null)
-        {
-            if (generator.autoSpinRemainingPlayText != null && generator.autoSpinRemainingPlayText.font != null)
-            {
-                return generator.autoSpinRemainingPlayText.font;
-            }
-
-            if (generator.extraBallCountText != null && generator.extraBallCountText.font != null)
-            {
-                return generator.extraBallCountText.font;
-            }
-        }
-
-        return TMP_Settings.defaultFontAsset;
+        return CandyTypographySystem.GetFont(CandyTypographyRole.Body);
     }
 
     public static TMP_FontAsset ResolvePreferredGameFont()
     {
-        return ResolveFallbackFont();
+        return CandyTypographySystem.GetFont(CandyTypographyRole.Number);
     }
 
     public static TMP_FontAsset ResolveStableFallbackFont()
     {
-        return TMP_Settings.defaultFontAsset != null
-            ? TMP_Settings.defaultFontAsset
-            : ResolveFallbackFont();
+        TMP_FontAsset preferred = CandyTypographySystem.GetFont(CandyTypographyRole.Label);
+        return preferred != null
+            ? preferred
+            : (TMP_Settings.defaultFontAsset != null ? TMP_Settings.defaultFontAsset : ResolveFallbackFont());
     }
 
     public static void ApplyCardNumber(TextMeshProUGUI target, string value, TMP_FontAsset fallbackFont = null)
     {
-        Apply(target, value, DefaultCardNumberColor, fallbackFont, forceStableFallback: true);
+        Apply(
+            target,
+            value,
+            DefaultCardNumberColor,
+            fallbackFont != null ? fallbackFont : CandyTypographySystem.GetFont(CandyTypographyRole.Number),
+            forceStableFallback: false,
+            preserveExistingFont: false);
+        CandyTypographySystem.ApplyRole(target, CandyTypographyRole.Number);
     }
 
     public static void ApplyBallNumber(TextMeshProUGUI target, string value, TMP_FontAsset fallbackFont = null)
     {
-        Apply(target, value, DefaultBallNumberColor, fallbackFont, forceStableFallback: true);
+        Apply(
+            target,
+            value,
+            DefaultBallNumberColor,
+            fallbackFont != null ? fallbackFont : CandyTypographySystem.GetFont(CandyTypographyRole.Number),
+            forceStableFallback: true,
+            preserveExistingFont: false);
+        CandyTypographySystem.ApplyRole(target, CandyTypographyRole.Number);
+        ApplyBallTextPresentation(target);
     }
 
     public static void ApplyHudText(
@@ -102,7 +66,14 @@ public static class RealtimeTextStyleUtils
             color.a = 1f;
         }
 
-        Apply(target, value, color, fallbackFont, forceStableFallback: true);
+        Apply(
+            target,
+            value,
+            color,
+            fallbackFont != null ? fallbackFont : CandyTypographySystem.GetFont(CandyTypographyRole.Label),
+            forceStableFallback: true,
+            preserveExistingFont: false);
+        CandyTypographySystem.ApplyRole(target, CandyTypographyRole.Label);
     }
 
     public static void ApplyReadableTypography(
@@ -116,7 +87,7 @@ public static class RealtimeTextStyleUtils
             return;
         }
 
-        TMP_FontAsset resolvedFont = preferredFont != null ? preferredFont : ResolveFallbackFont();
+        TMP_FontAsset resolvedFont = preferredFont != null ? preferredFont : CandyTypographySystem.GetFont(CandyTypographyRole.Body);
         if (target.font == null && resolvedFont != null)
         {
             target.font = resolvedFont;
@@ -126,14 +97,12 @@ public static class RealtimeTextStyleUtils
             }
         }
 
-        if (target.font == null)
-        {
-            target.enableWordWrapping = false;
-            target.enableAutoSizing = true;
-            target.fontSizeMin = Mathf.Clamp(minFontSize, 10f, 72f);
-            target.fontSizeMax = Mathf.Clamp(maxFontSize, target.fontSizeMin, 96f);
-            target.overflowMode = TextOverflowModes.Overflow;
-        }
+        target.textWrappingMode = TextWrappingModes.NoWrap;
+        target.enableAutoSizing = true;
+        target.fontSizeMin = Mathf.Clamp(minFontSize, 10f, 72f);
+        target.fontSizeMax = Mathf.Clamp(maxFontSize, target.fontSizeMin, 96f);
+        target.overflowMode = TextOverflowModes.Overflow;
+        CandyTypographySystem.ApplyRole(target, CandyTypographyRole.Body);
     }
 
     private static void Apply(
@@ -141,7 +110,8 @@ public static class RealtimeTextStyleUtils
         string value,
         Color preferredColor,
         TMP_FontAsset fallbackFont,
-        bool forceStableFallback)
+        bool forceStableFallback,
+        bool preserveExistingFont)
     {
         if (target == null)
         {
@@ -159,7 +129,8 @@ public static class RealtimeTextStyleUtils
             ? ResolveStableFallbackFont()
             : (fallbackFont != null ? fallbackFont : ResolveFallbackFont());
 
-        if (resolvedFallback != null)
+        bool shouldReplaceFont = !preserveExistingFont || target.font == null;
+        if (resolvedFallback != null && shouldReplaceFont)
         {
             if (target.font != resolvedFallback)
             {
@@ -176,9 +147,21 @@ public static class RealtimeTextStyleUtils
             target.fontSharedMaterial = target.font.material;
         }
 
+        if (preserveExistingFont &&
+            target.fontSharedMaterial == null &&
+            target.font != null &&
+            target.font.material != null)
+        {
+            target.fontSharedMaterial = target.font.material;
+        }
+
         Color color = preferredColor;
         color.a = 1f;
         target.color = color;
+        target.fontStyle = FontStyles.Normal;
+        target.fontWeight = FontWeight.Regular;
+        target.textWrappingMode = TextWrappingModes.NoWrap;
+        target.overflowMode = TextOverflowModes.Overflow;
 
         target.alpha = 1f;
         target.text = value;
@@ -201,6 +184,87 @@ public static class RealtimeTextStyleUtils
 
                 ForceRefresh(target, forceTextReparsing: true);
             }
+        }
+    }
+
+    private static void ApplyBallTextPresentation(TextMeshProUGUI target)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        target.fontStyle = FontStyles.Normal;
+        target.fontWeight = FontWeight.Regular;
+        target.textWrappingMode = TextWrappingModes.NoWrap;
+        target.characterSpacing = 0f;
+        target.wordSpacing = 0f;
+        target.lineSpacing = 0f;
+
+        Material sourceMaterial = target.fontSharedMaterial != null
+            ? target.fontSharedMaterial
+            : (target.font != null ? target.font.material : null);
+        if (sourceMaterial == null)
+        {
+            return;
+        }
+
+        int targetId = target.GetInstanceID();
+        if (!BallTextMaterials.TryGetValue(targetId, out Material runtimeMaterial) ||
+            runtimeMaterial == null)
+        {
+            runtimeMaterial = new Material(sourceMaterial)
+            {
+                name = sourceMaterial.name + " (CandyBallRuntime)"
+            };
+            BallTextMaterials[targetId] = runtimeMaterial;
+        }
+
+        DisableKeyword(runtimeMaterial, "UNDERLAY_ON");
+        DisableKeyword(runtimeMaterial, "UNDERLAY_INNER");
+        DisableKeyword(runtimeMaterial, "OUTLINE_ON");
+        SetFloatIfPresent(runtimeMaterial, "_OutlineWidth", 0f);
+        SetFloatIfPresent(runtimeMaterial, "_OutlineSoftness", 0f);
+        SetFloatIfPresent(runtimeMaterial, "_FaceDilate", 0f);
+        SetFloatIfPresent(runtimeMaterial, "_UnderlaySoftness", 0f);
+        SetFloatIfPresent(runtimeMaterial, "_UnderlayDilate", 0f);
+        SetFloatIfPresent(runtimeMaterial, "_UnderlayOffsetX", 0f);
+        SetFloatIfPresent(runtimeMaterial, "_UnderlayOffsetY", 0f);
+        SetColorIfPresent(runtimeMaterial, "_UnderlayColor", new Color(0f, 0f, 0f, 0f));
+        SetColorIfPresent(runtimeMaterial, "_OutlineColor", new Color(0f, 0f, 0f, 0f));
+
+        if (target.fontMaterial != runtimeMaterial)
+        {
+            target.fontMaterial = runtimeMaterial;
+        }
+
+        target.UpdateMeshPadding();
+        ForceRefresh(target, forceTextReparsing: false);
+    }
+
+    private static void DisableKeyword(Material material, string keyword)
+    {
+        if (material == null || string.IsNullOrWhiteSpace(keyword))
+        {
+            return;
+        }
+
+        material.DisableKeyword(keyword);
+    }
+
+    private static void SetFloatIfPresent(Material material, string propertyName, float value)
+    {
+        if (material != null && material.HasProperty(propertyName))
+        {
+            material.SetFloat(propertyName, value);
+        }
+    }
+
+    private static void SetColorIfPresent(Material material, string propertyName, Color value)
+    {
+        if (material != null && material.HasProperty(propertyName))
+        {
+            material.SetColor(propertyName, value);
         }
     }
 
