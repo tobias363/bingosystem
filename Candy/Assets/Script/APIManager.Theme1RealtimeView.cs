@@ -6,8 +6,6 @@ using UnityEngine;
 
 public partial class APIManager
 {
-    private bool hasPreparedDedicatedTheme1ViewBindings;
-
     private bool ShouldUseDedicatedTheme1RealtimeView()
     {
         return useRealtimeBackend && theme1RealtimeViewMode != Theme1RealtimeViewMode.LegacyOnly;
@@ -15,18 +13,9 @@ public partial class APIManager
 
     private bool TryResolveDedicatedTheme1GameplayView(out Theme1GameplayViewRoot viewRoot)
     {
-        viewRoot = theme1GameplayViewRoot != null ? theme1GameplayViewRoot : GetComponent<Theme1GameplayViewRoot>();
-        if (viewRoot == null)
+        if (!TryResolveTheme1GameplayViewContract(out viewRoot))
         {
-            ReportRealtimeRenderMismatch("Theme1GameplayViewRoot mangler. Faller tilbake til legacy-render.", asError: true);
-            return false;
-        }
-
-        theme1GameplayViewRoot = viewRoot;
-        PrepareDedicatedTheme1ViewBindings(viewRoot);
-        if (!viewRoot.ValidateContract(out string report))
-        {
-            ReportRealtimeRenderMismatch("Theme1GameplayViewRoot er ugyldig. " + report, asError: true);
+            ReportRealtimeRenderMismatch("Theme1GameplayViewRoot mangler eller er ugyldig. Faller tilbake til legacy-render.", asError: true);
             return false;
         }
 
@@ -258,7 +247,6 @@ public partial class APIManager
             }
 
             RegisterRealtimeDrawObserved(drawnNumbersNode.Count, drawnNumber);
-            ShowRealtimeDrawBall(drawIndex, drawnNumber);
 
             if (shouldTrace)
             {
@@ -329,8 +317,8 @@ public partial class APIManager
 
     private void RenderDedicatedTheme1State(Theme1GameplayViewRoot viewRoot, JSONNode currentGame)
     {
-        Theme1RoundRenderState renderState = BuildDedicatedTheme1RoundRenderState(currentGame, viewRoot);
-        theme1RealtimePresenter.Render(viewRoot, renderState);
+        Theme1DisplayState renderState = BuildDedicatedTheme1DisplayState(currentGame, viewRoot);
+        theme1DisplayPresenter.Render(viewRoot, renderState);
         RegisterDedicatedTheme1RenderMetrics(viewRoot, renderState);
 
         if (currentGame != null && !currentGame.IsNull)
@@ -340,7 +328,7 @@ public partial class APIManager
         }
     }
 
-    private Theme1RoundRenderState BuildDedicatedTheme1RoundRenderState(JSONNode currentGame, Theme1GameplayViewRoot viewRoot)
+    private Theme1DisplayState BuildDedicatedTheme1DisplayState(JSONNode currentGame, Theme1GameplayViewRoot viewRoot)
     {
         Theme1StateBuildInput input = new Theme1StateBuildInput
         {
@@ -366,67 +354,7 @@ public partial class APIManager
             BetLabel = ResolveDedicatedHudValue(viewRoot.HudBar?.BetText, GameManager.instance != null ? GameManager.instance.currentBet.ToString() : "0")
         };
 
-        return theme1StateBuilder.Build(input);
-    }
-
-    private void PrepareDedicatedTheme1ViewBindings(Theme1GameplayViewRoot viewRoot)
-    {
-        if (viewRoot == null)
-        {
-            return;
-        }
-
-        NumberGenerator generator = ResolveNumberGenerator();
-        BallManager resolvedBallManager = ResolveBallManager();
-        if (generator == null || resolvedBallManager == null)
-        {
-            return;
-        }
-
-        Theme1GameplayViewRepairUtils.EnsureCardNumberTargets(generator);
-        Theme1GameplayViewRepairUtils.EnsureBallNumberTargets(resolvedBallManager);
-
-        CandyCardViewBindingSet cardBindings = generator.GetComponent<CandyCardViewBindingSet>();
-        if (cardBindings != null)
-        {
-            cardBindings.PullFrom(generator);
-            cardBindings.TryApplyTo(generator, out _);
-        }
-
-        CandyBallViewBindingSet ballBindings = resolvedBallManager.GetComponent<CandyBallViewBindingSet>();
-        if (ballBindings != null)
-        {
-            ballBindings.PullFrom(resolvedBallManager);
-            resolvedBallManager.ApplyExplicitRealtimeViewBindingsFromComponent();
-        }
-
-        bool needsRebuild = !hasPreparedDedicatedTheme1ViewBindings;
-        if (!needsRebuild && !viewRoot.ValidateContract(out _))
-        {
-            needsRebuild = true;
-        }
-
-        if (!needsRebuild)
-        {
-            return;
-        }
-
-        CandyTheme1HudBindingSet hudBindings = GetComponent<CandyTheme1HudBindingSet>();
-        GameManager gameManager = GameManager.instance != null ? GameManager.instance : FindObjectOfType<GameManager>(true);
-        TopperManager topperManager = FindObjectOfType<TopperManager>(true);
-        if (hudBindings != null)
-        {
-            hudBindings.PullFrom(generator);
-        }
-
-        if (cardBindings != null && ballBindings != null && hudBindings != null)
-        {
-            viewRoot.PullFrom(cardBindings, ballBindings, hudBindings, gameManager, topperManager);
-            hasPreparedDedicatedTheme1ViewBindings = true;
-            return;
-        }
-
-        hasPreparedDedicatedTheme1ViewBindings = false;
+        return theme1RealtimeStateAdapter.Build(input);
     }
 
     private static string ResolveDedicatedHudValue(TMP_Text target, string fallback)
@@ -579,7 +507,7 @@ public partial class APIManager
         return payoutAmounts;
     }
 
-    private void RegisterDedicatedTheme1RenderMetrics(Theme1GameplayViewRoot viewRoot, Theme1RoundRenderState renderState)
+    private void RegisterDedicatedTheme1RenderMetrics(Theme1GameplayViewRoot viewRoot, Theme1DisplayState renderState)
     {
         int renderedCardCellCount = 0;
         for (int cardIndex = 0; viewRoot.Cards != null && cardIndex < viewRoot.Cards.Length; cardIndex++)
@@ -638,7 +566,7 @@ public partial class APIManager
             ballRackView.BigBallText);
     }
 
-    private static Dictionary<int, HashSet<int>> BuildWinningPatternsByCard(Theme1RoundRenderState renderState)
+    private static Dictionary<int, HashSet<int>> BuildWinningPatternsByCard(Theme1DisplayState renderState)
     {
         Dictionary<int, HashSet<int>> winningPatterns = new Dictionary<int, HashSet<int>>();
         if (renderState?.Cards == null)

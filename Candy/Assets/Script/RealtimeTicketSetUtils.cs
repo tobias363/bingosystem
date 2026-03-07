@@ -79,12 +79,6 @@ public static class RealtimeTicketSetUtils
 
     public static List<int> ExtractCandyTicketNumbersFromGrid(JSONNode gridNode)
     {
-        List<int> projected = TryProjectTraditionalGridToCandyBoard(gridNode);
-        if (projected.Count == 15)
-        {
-            return projected;
-        }
-
         List<int> flattened = FlattenTicketGrid(gridNode);
         if (flattened.Count == 15)
         {
@@ -393,60 +387,5 @@ public static class RealtimeTicketSetUtils
 
         value = parsed;
         return true;
-    }
-
-    private static List<int> TryProjectTraditionalGridToCandyBoard(JSONNode gridNode)
-    {
-        List<int> projected = new();
-        if (gridNode == null || gridNode.IsNull || !gridNode.IsArray || gridNode.Count != 5)
-        {
-            return projected;
-        }
-
-        List<int[]> rows = new();
-        for (int row = 0; row < gridNode.Count; row++)
-        {
-            JSONNode rowNode = gridNode[row];
-            if (rowNode == null || rowNode.IsNull || !rowNode.IsArray || rowNode.Count != 5)
-            {
-                return new List<int>();
-            }
-
-            int[] parsedRow = new int[5];
-            for (int col = 0; col < rowNode.Count; col++)
-            {
-                parsedRow[col] = rowNode[col].AsInt;
-            }
-
-            rows.Add(parsedRow);
-        }
-
-        // Candy board indexes are column-major (5 columns x 3 rows). When realtime
-        // backend still sends a traditional 5x5 bingo grid, compact each column down
-        // to its top three playable values so the board layout matches the 15-cell
-        // Candy pattern masks.
-        for (int col = 0; col < 5; col++)
-        {
-            List<int> columnValues = new();
-            for (int row = 0; row < rows.Count; row++)
-            {
-                int value = rows[row][col];
-                if (value > 0)
-                {
-                    columnValues.Add(value);
-                }
-            }
-
-            if (columnValues.Count < 3)
-            {
-                return new List<int>();
-            }
-
-            projected.Add(columnValues[0]);
-            projected.Add(columnValues[1]);
-            projected.Add(columnValues[2]);
-        }
-
-        return projected;
     }
 }

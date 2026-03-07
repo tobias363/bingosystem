@@ -97,6 +97,9 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] [Min(1)] private int realtimeBonusPatternPositionFromRight = 2;
     [SerializeField] private Theme1RealtimeViewMode theme1RealtimeViewMode = Theme1RealtimeViewMode.DualRunCompare;
     [SerializeField] private Theme1GameplayViewRoot theme1GameplayViewRoot;
+    [SerializeField] private NumberGenerator theme1NumberGenerator;
+    [SerializeField] private GameManager theme1GameManager;
+    [SerializeField] private TopperManager theme1TopperManager;
     [SerializeField] private string launchResolveBaseUrl = DEFAULT_REALTIME_BACKEND_BASE_URL;
     [SerializeField] private BallManager ballManager;
     [Header("Runtime diagnostics")]
@@ -205,10 +208,12 @@ public partial class APIManager : MonoBehaviour
     private string lastRenderedCountdownHealth = string.Empty;
     private string lastRenderedPlayerCountHealth = string.Empty;
     private string lastRealtimeRenderMismatch = string.Empty;
-    private readonly Theme1StateBuilder theme1StateBuilder = new();
-    private readonly Theme1RealtimePresenter theme1RealtimePresenter = new();
+    private readonly Theme1RealtimeStateAdapter theme1RealtimeStateAdapter = new();
+    private readonly Theme1LocalStateAdapter theme1LocalStateAdapter = new();
+    private readonly Theme1DisplayPresenter theme1DisplayPresenter = new();
     private bool hasLoggedFirstRealtimeCardRender = false;
     private bool hasLoggedFirstRealtimeBallRender = false;
+    private bool hasRenderedTheme1IdleState;
     private Action pendingRealtimePreRoundEditContinuation;
     private TextMeshProUGUI realtimeDebugOverlayText;
     private Image realtimeDebugOverlayBackground;
@@ -320,6 +325,7 @@ public partial class APIManager : MonoBehaviour
 
     void Start()
     {
+        TryRenderTheme1IdleDisplayState();
         if (useRealtimeBackend)
         {
             ApplyExplicitRealtimeHudBindingsFromComponent();
@@ -359,7 +365,13 @@ public partial class APIManager : MonoBehaviour
     {
         if (!useRealtimeBackend)
         {
+            TryRenderTheme1LocalDisplayState();
             return;
+        }
+
+        if (!hasRenderedTheme1IdleState)
+        {
+            TryRenderTheme1IdleDisplayState();
         }
 
         TickDrawRenderResync();
@@ -442,7 +454,11 @@ public partial class APIManager : MonoBehaviour
             return;
         }
 
-        if (!hudBindings.TryApplyTo(ResolveNumberGenerator(), this, out string error))
+        if (!hudBindings.TryApplyTo(
+                ResolveNumberGenerator(),
+                this,
+                ResolveGameManager(),
+                out string error))
         {
             PublishRuntimeStatus("HUD bindings er ugyldige i Theme1. " + error, asError: true);
         }
@@ -639,36 +655,44 @@ public partial class APIManager : MonoBehaviour
             return ballManager;
         }
 
-        ballManager = FindObjectOfType<BallManager>();
-        if (ballManager != null)
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
         {
-            return ballManager;
+            ballManager = FindObjectOfType<BallManager>(true);
         }
-
-        BallManager[] allManagers = FindObjectsOfType<BallManager>(true);
-        if (allManagers != null && allManagers.Length > 0)
-        {
-            ballManager = allManagers[0];
-        }
-
+#endif
         return ballManager;
     }
 
     private NumberGenerator ResolveNumberGenerator()
     {
-        NumberGenerator generatorFromManager = GameManager.instance != null ? GameManager.instance.numberGenerator : null;
+        if (theme1NumberGenerator != null)
+        {
+            hasLoggedMissingRealtimeNumberGenerator = false;
+            return theme1NumberGenerator;
+        }
+
+        GameManager resolvedGameManager = ResolveGameManager();
+        NumberGenerator generatorFromManager = resolvedGameManager != null ? resolvedGameManager.numberGenerator : null;
         if (generatorFromManager != null)
         {
+            theme1NumberGenerator = generatorFromManager;
             hasLoggedMissingRealtimeNumberGenerator = false;
             return generatorFromManager;
         }
 
-        NumberGenerator fallbackGenerator = FindObjectOfType<NumberGenerator>();
-        if (fallbackGenerator != null)
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
         {
-            hasLoggedMissingRealtimeNumberGenerator = false;
-            return fallbackGenerator;
+            NumberGenerator fallbackGenerator = FindObjectOfType<NumberGenerator>(true);
+            if (fallbackGenerator != null)
+            {
+                theme1NumberGenerator = fallbackGenerator;
+                hasLoggedMissingRealtimeNumberGenerator = false;
+                return fallbackGenerator;
+            }
         }
+#endif
 
         if (!hasLoggedMissingRealtimeNumberGenerator)
         {
@@ -677,6 +701,44 @@ public partial class APIManager : MonoBehaviour
         }
 
         return null;
+    }
+
+    private GameManager ResolveGameManager()
+    {
+        if (theme1GameManager != null)
+        {
+            return theme1GameManager;
+        }
+
+        if (GameManager.instance != null)
+        {
+            theme1GameManager = GameManager.instance;
+            return theme1GameManager;
+        }
+
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+        {
+            theme1GameManager = FindObjectOfType<GameManager>(true);
+        }
+#endif
+        return theme1GameManager;
+    }
+
+    private TopperManager ResolveTopperManager()
+    {
+        if (theme1TopperManager != null)
+        {
+            return theme1TopperManager;
+        }
+
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+        {
+            theme1TopperManager = FindObjectOfType<TopperManager>(true);
+        }
+#endif
+        return theme1TopperManager;
     }
 
     private void ResetRealtimeRoundVisuals()

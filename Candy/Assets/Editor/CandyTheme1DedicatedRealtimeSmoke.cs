@@ -153,6 +153,12 @@ public static class CandyTheme1DedicatedRealtimeSmoke
     private static bool TryBindRuntimeMembers(out string error)
     {
         error = string.Empty;
+        if (!CandyBallVisualCatalog.TryValidateComplete(out string ballCatalogError))
+        {
+            error = "[Theme1DedicatedSmoke] " + ballCatalogError;
+            return false;
+        }
+
         handleRealtimeRoomUpdateMethod = typeof(APIManager).GetMethod(
             "HandleRealtimeRoomUpdate",
             BindingFlags.Instance | BindingFlags.NonPublic);
@@ -190,6 +196,12 @@ public static class CandyTheme1DedicatedRealtimeSmoke
         if (!viewRoot.ValidateContract(out string viewReport))
         {
             error = "[Theme1DedicatedSmoke] Ugyldig Theme1GameplayViewRoot:\n" + viewReport;
+            return false;
+        }
+
+        if (!ValidateDedicatedVisibleContract(viewRoot, out string contractError))
+        {
+            error = contractError;
             return false;
         }
 
@@ -232,6 +244,12 @@ public static class CandyTheme1DedicatedRealtimeSmoke
         if (!HasVisibleBallNumbers(dedicatedState))
         {
             error = "[Theme1DedicatedSmoke] Dedicated view rendret ikke synlige balltall.";
+            return false;
+        }
+
+        if (!UsesCatalogBallSprites(dedicatedState, out string spriteError))
+        {
+            error = spriteError;
             return false;
         }
 
@@ -437,6 +455,58 @@ public static class CandyTheme1DedicatedRealtimeSmoke
                state.BallRack.Slots[0].NumberLabel == "1";
     }
 
+    private static bool UsesCatalogBallSprites(Theme1RoundRenderState state, out string error)
+    {
+        error = string.Empty;
+        if (!CandyBallVisualCatalog.TryValidateComplete(out string ballCatalogError))
+        {
+            error = "[Theme1DedicatedSmoke] " + ballCatalogError;
+            return false;
+        }
+
+        Theme1GameplayViewRoot viewRoot = UnityEngine.Object.FindFirstObjectByType<Theme1GameplayViewRoot>(FindObjectsInactive.Include);
+        if (viewRoot?.BallRack?.Slots == null || viewRoot.BallRack.Slots.Length == 0)
+        {
+            error = "[Theme1DedicatedSmoke] Theme1GameplayViewRoot mangler ballslotter for sprite-validering.";
+            return false;
+        }
+
+        if (!CandyBallVisualCatalog.TryGetSmallSprite(1, out Sprite expectedSmall) || expectedSmall == null)
+        {
+            error = "[Theme1DedicatedSmoke] CandyBallVisualCatalog mangler small sprite for ball 1.";
+            return false;
+        }
+
+        int bigBallNumber = state?.BallRack != null && int.TryParse(state.BallRack.BigBallNumber, out int parsedBigBallNumber)
+            ? parsedBigBallNumber
+            : 0;
+        if (!CandyBallVisualCatalog.TryGetBigSprite(bigBallNumber, out Sprite expectedBig) || expectedBig == null)
+        {
+            error = "[Theme1DedicatedSmoke] CandyBallVisualCatalog mangler big sprite for siste synlige trekk.";
+            return false;
+        }
+
+        Sprite actualSmall = viewRoot.BallRack.Slots[0]?.SpriteTarget != null
+            ? viewRoot.BallRack.Slots[0].SpriteTarget.sprite
+            : null;
+        Sprite actualBig = viewRoot.BallRack.BigBallImage != null
+            ? viewRoot.BallRack.BigBallImage.sprite
+            : null;
+        if (actualSmall == null || actualSmall.name != expectedSmall.name)
+        {
+            error = "[Theme1DedicatedSmoke] Første synlige ballslot bruker ikke katalog-sprite.";
+            return false;
+        }
+
+        if (actualBig == null || actualBig.name != expectedBig.name)
+        {
+            error = "[Theme1DedicatedSmoke] Big ball bruker ikke katalog-sprite.";
+            return false;
+        }
+
+        return true;
+    }
+
     private static bool HasReadableFirstCardLabelColor()
     {
         Theme1GameplayViewRoot viewRoot = UnityEngine.Object.FindFirstObjectByType<Theme1GameplayViewRoot>(FindObjectsInactive.Include);
@@ -460,7 +530,93 @@ public static class CandyTheme1DedicatedRealtimeSmoke
         return state?.Hud != null &&
                !string.IsNullOrWhiteSpace(state.Hud.CreditLabel) &&
                !string.IsNullOrWhiteSpace(state.Hud.WinningsLabel) &&
-               !string.IsNullOrWhiteSpace(state.Hud.BetLabel);
+            !string.IsNullOrWhiteSpace(state.Hud.BetLabel);
+    }
+
+    private static bool ValidateDedicatedVisibleContract(Theme1GameplayViewRoot viewRoot, out string error)
+    {
+        error = string.Empty;
+        if (viewRoot == null)
+        {
+            error = "[Theme1DedicatedSmoke] Theme1GameplayViewRoot mangler.";
+            return false;
+        }
+
+        int cardLabelCount = 0;
+        for (int cardIndex = 0; cardIndex < viewRoot.Cards.Length; cardIndex++)
+        {
+            Theme1CardGridView card = viewRoot.Cards[cardIndex];
+            if (card == null)
+            {
+                error = $"[Theme1DedicatedSmoke] Card view {cardIndex} mangler.";
+                return false;
+            }
+
+            if (!HasDedicatedLabelName(card.HeaderLabel, $"RealtimeCardHeaderLabel_{cardIndex + 1}") ||
+                !HasDedicatedLabelName(card.BetLabel, $"RealtimeCardBetLabel_{cardIndex + 1}") ||
+                !HasDedicatedLabelName(card.WinLabel, $"RealtimeCardWinLabel_{cardIndex + 1}"))
+            {
+                error = $"[Theme1DedicatedSmoke] Card {cardIndex + 1} bruker ikke dedikerte header/bet/win-labels.";
+                return false;
+            }
+
+            for (int cellIndex = 0; cellIndex < card.Cells.Length; cellIndex++)
+            {
+                TextMeshProUGUI label = card.Cells[cellIndex]?.NumberLabel;
+                if (label == null ||
+                    !string.Equals(label.gameObject.name, "RealtimeCardNumberLabel", StringComparison.Ordinal) ||
+                    label.transform.parent == null ||
+                    !label.transform.parent.name.StartsWith("RealtimeCardCell_", StringComparison.Ordinal) ||
+                    label.transform.parent.parent == null ||
+                    !string.Equals(label.transform.parent.parent.name, "RealtimeCardNumbers", StringComparison.Ordinal))
+                {
+                    error = $"[Theme1DedicatedSmoke] Card {cardIndex + 1} cell {cellIndex + 1} peker ikke til dedikert RealtimeCardNumbers-lag.";
+                    return false;
+                }
+
+                cardLabelCount += 1;
+            }
+        }
+
+        if (cardLabelCount != 60)
+        {
+            error = $"[Theme1DedicatedSmoke] Forventet 60 dedikerte kortlabels. Fikk {cardLabelCount}.";
+            return false;
+        }
+
+        Theme1HudBarView hud = viewRoot.HudBar;
+        if (!HasDedicatedLabelName(hud?.CreditText, "RealtimeCreditValueLabel") ||
+            !HasDedicatedLabelName(hud?.WinningsText, "RealtimeWinningsValueLabel") ||
+            !HasDedicatedLabelName(hud?.BetText, "RealtimeBetValueLabel"))
+        {
+            error = "[Theme1DedicatedSmoke] HUD peker ikke til dedikerte verdi-labels.";
+            return false;
+        }
+
+        Theme1TopperStripView topper = viewRoot.TopperStrip;
+        for (int slotIndex = 0; topper?.Slots != null && slotIndex < topper.Slots.Length; slotIndex++)
+        {
+            if (!HasDedicatedLabelName(topper.Slots[slotIndex]?.PrizeLabel, $"RealtimeTopperPrizeLabel_{slotIndex + 1}"))
+            {
+                error = $"[Theme1DedicatedSmoke] Topper slot {slotIndex + 1} peker ikke til dedikert prize-label.";
+                return false;
+            }
+        }
+
+        if (CandyBallVisualCatalog.ExpectedBallCount != 60)
+        {
+            error = $"[Theme1DedicatedSmoke] Ballkatalogen forventer ikke 60 baller. Fikk {CandyBallVisualCatalog.ExpectedBallCount}.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool HasDedicatedLabelName(TMP_Text label, string expectedName)
+    {
+        return label != null &&
+               label.gameObject != null &&
+               string.Equals(label.gameObject.name, expectedName, StringComparison.Ordinal);
     }
 
     private static bool HasMatchedPayline(Theme1RoundRenderState state)

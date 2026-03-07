@@ -6,6 +6,8 @@ using UnityEngine.UI;
 
 public static class Theme1GameplayViewRepairUtils
 {
+    private const string CardNumberLayerName = "RealtimeCardNumbers";
+    private const string CardNumberHostPrefix = "RealtimeCardCell_";
     private const string CardNumberLabelName = "RealtimeCardNumberLabel";
     private const string BallNumberLabelName = "RealtimeBallNumberLabel";
     private const string BigBallNumberLabelName = "RealtimeBigBallNumberLabel";
@@ -53,9 +55,10 @@ public static class Theme1GameplayViewRepairUtils
                 }
 
                 PlaceCardNumberLabel(label.rectTransform, labelHost);
-                DeactivateLegacyTextLabels(labelHost, label);
                 card.num_text[cellIndex] = label;
             }
+
+            PromoteCardNumberLayer(card);
         }
     }
 
@@ -122,7 +125,7 @@ public static class Theme1GameplayViewRepairUtils
 
     public static TextMeshProUGUI FindDedicatedCardNumberLabel(GameObject selectionOverlay)
     {
-        Transform labelHost = ResolveCardNumberHost(selectionOverlay);
+        Transform labelHost = ResolveCardNumberHost(selectionOverlay, createIfMissing: false);
         return FindNamedTextLabel(labelHost, CardNumberLabelName);
     }
 
@@ -165,14 +168,8 @@ public static class Theme1GameplayViewRepairUtils
             return false;
         }
 
-        Transform labelHost = ResolveCardNumberHost(selectionOverlay);
-        if (labelHost != null && label.transform.IsChildOf(labelHost))
-        {
-            return true;
-        }
-
-        Transform cardRoot = ResolveCardRoot(selectionOverlay);
-        return cardRoot != null && label.transform.IsChildOf(cardRoot);
+        Transform labelHost = ResolveCardNumberHost(selectionOverlay, createIfMissing: false);
+        return labelHost != null && label.transform.IsChildOf(labelHost);
     }
 
     public static bool IsTextLocalToBallRoot(TextMeshProUGUI label, GameObject root)
@@ -195,41 +192,78 @@ public static class Theme1GameplayViewRepairUtils
 
     private static Transform ResolveCardNumberHost(CardClass card, int cellIndex, GameObject selectionOverlay)
     {
-        TextMeshProUGUI existingLabel = card?.num_text != null && cellIndex >= 0 && cellIndex < card.num_text.Count
-            ? card.num_text[cellIndex]
-            : null;
-        Transform existingHost = ResolveExistingCardNumberHost(existingLabel);
-        return existingHost != null ? existingHost : ResolveCardNumberHost(selectionOverlay);
+        Transform cardRoot = ResolveCardRoot(selectionOverlay);
+        if (cardRoot == null)
+        {
+            TextMeshProUGUI existingLabel = card?.num_text != null && cellIndex >= 0 && cellIndex < card.num_text.Count
+                ? card.num_text[cellIndex]
+                : null;
+            Transform existingHost = ResolveExistingCardNumberHost(existingLabel);
+            if (existingHost != null)
+            {
+                return existingHost;
+            }
+
+            return null;
+        }
+
+        RectTransform cardRootRect = cardRoot as RectTransform;
+        Transform numberLayer = EnsureCardNumberLayer(cardRoot);
+        if (numberLayer == null || cardRootRect == null)
+        {
+            return null;
+        }
+
+        string hostName = CardNumberHostPrefix + (cellIndex + 1).ToString("00");
+        Transform host = numberLayer.Find(hostName);
+        if (host == null)
+        {
+            GameObject hostObject = new GameObject(hostName, typeof(RectTransform));
+            hostObject.transform.SetParent(numberLayer, false);
+            host = hostObject.transform;
+        }
+
+        PositionCardNumberHost(host as RectTransform, cardRootRect, selectionOverlay != null ? selectionOverlay.GetComponent<RectTransform>() : null);
+        host.SetAsLastSibling();
+        return host;
     }
 
-    private static Transform ResolveCardNumberHost(GameObject selectionOverlay)
+    private static Transform ResolveCardNumberHost(GameObject selectionOverlay, bool createIfMissing)
     {
         if (selectionOverlay == null)
         {
             return null;
         }
 
-        Transform overlayTransform = selectionOverlay.transform;
-        Transform selectedCardGrid = overlayTransform.parent;
-        int siblingIndex = overlayTransform.GetSiblingIndex();
         Transform cardRoot = ResolveCardRoot(selectionOverlay);
-        if (cardRoot != null)
+        RectTransform cardRootRect = cardRoot as RectTransform;
+        if (cardRootRect == null)
         {
-            Transform numberGrid = cardRoot.Find("CardNumbers");
-            if (numberGrid != null &&
-                siblingIndex >= 0 &&
-                siblingIndex < numberGrid.childCount)
-            {
-                return numberGrid.GetChild(siblingIndex);
-            }
+            return null;
         }
 
-        if (selectedCardGrid is RectTransform)
+        Transform numberLayer = createIfMissing ? EnsureCardNumberLayer(cardRoot) : cardRoot.Find(CardNumberLayerName);
+        if (numberLayer == null)
         {
-            return selectedCardGrid;
+            return null;
         }
 
-        return overlayTransform;
+        int siblingIndex = selectionOverlay.transform.GetSiblingIndex();
+        string hostName = CardNumberHostPrefix + (siblingIndex + 1).ToString("00");
+        Transform host = numberLayer.Find(hostName);
+        if (host == null && createIfMissing)
+        {
+            GameObject hostObject = new GameObject(hostName, typeof(RectTransform));
+            hostObject.transform.SetParent(numberLayer, false);
+            host = hostObject.transform;
+        }
+
+        if (host is RectTransform hostRect)
+        {
+            PositionCardNumberHost(hostRect, cardRootRect, selectionOverlay.GetComponent<RectTransform>());
+        }
+
+        return host;
     }
 
     private static Transform ResolveCardRoot(GameObject selectionOverlay)
@@ -256,6 +290,94 @@ public static class Theme1GameplayViewRepairUtils
         }
 
         return existingLabel.transform;
+    }
+
+    private static Transform EnsureCardNumberLayer(Transform cardRoot)
+    {
+        if (cardRoot == null)
+        {
+            return null;
+        }
+
+        Transform layer = cardRoot.Find(CardNumberLayerName);
+        if (layer == null)
+        {
+            GameObject layerObject = new GameObject(CardNumberLayerName, typeof(RectTransform));
+            layerObject.transform.SetParent(cardRoot, false);
+            layer = layerObject.transform;
+        }
+
+        if (layer is RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.localScale = Vector3.one;
+        }
+
+        if (!layer.gameObject.activeSelf)
+        {
+            layer.gameObject.SetActive(true);
+        }
+
+        return layer;
+    }
+
+    private static void PromoteCardNumberLayer(CardClass card)
+    {
+        if (card?.selectionImg == null || card.selectionImg.Count == 0)
+        {
+            return;
+        }
+
+        Transform cardRoot = ResolveCardRoot(card.selectionImg[0]);
+        if (cardRoot == null)
+        {
+            return;
+        }
+
+        Transform numberLayer = cardRoot.Find(CardNumberLayerName);
+        if (numberLayer != null)
+        {
+            numberLayer.SetAsLastSibling();
+        }
+    }
+
+    private static void PositionCardNumberHost(RectTransform hostRect, RectTransform cardRootRect, RectTransform overlayRect)
+    {
+        if (hostRect == null || cardRootRect == null)
+        {
+            return;
+        }
+
+        hostRect.anchorMin = new Vector2(0.5f, 0.5f);
+        hostRect.anchorMax = new Vector2(0.5f, 0.5f);
+        hostRect.pivot = new Vector2(0.5f, 0.5f);
+        hostRect.localScale = Vector3.one;
+
+        if (overlayRect == null)
+        {
+            hostRect.anchoredPosition = Vector2.zero;
+            if (hostRect.sizeDelta.x <= 1f || hostRect.sizeDelta.y <= 1f)
+            {
+                hostRect.sizeDelta = new Vector2(96f, 72f);
+            }
+            return;
+        }
+
+        Vector3[] worldCorners = new Vector3[4];
+        overlayRect.GetWorldCorners(worldCorners);
+        Vector3 localMin = cardRootRect.InverseTransformPoint(worldCorners[0]);
+        Vector3 localMax = cardRootRect.InverseTransformPoint(worldCorners[2]);
+        Vector2 size = new Vector2(Mathf.Abs(localMax.x - localMin.x), Mathf.Abs(localMax.y - localMin.y));
+        Vector2 center = new Vector2((localMin.x + localMax.x) * 0.5f, (localMin.y + localMax.y) * 0.5f);
+
+        hostRect.anchoredPosition = center;
+        hostRect.sizeDelta = new Vector2(
+            size.x > 1f ? size.x : 96f,
+            size.y > 1f ? size.y : 72f);
     }
 
     private static Vector2 ResolvePreferredCellSize(Transform cellRoot)

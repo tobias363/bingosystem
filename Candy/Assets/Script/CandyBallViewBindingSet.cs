@@ -90,16 +90,18 @@ public sealed class CandyBallViewBindingSet : MonoBehaviour
             isValid = false;
         }
 
-        if (bigBallText != null &&
-            !CandyCardViewBindingValidator.ValidateTextTarget(bigBallText, "BigBallText", requireActive: false, errors))
+        if (bigBallText != null)
         {
-            isValid = false;
-        }
+            if (!CandyCardViewBindingValidator.ValidateTextTarget(bigBallText, "BigBallText", requireActive: false, errors))
+            {
+                isValid = false;
+            }
 
-        if (!Theme1GameplayViewRepairUtils.IsDedicatedBigBallNumberLabel(bigBallText, bigBallImage))
-        {
-            errors.Add("CandyBallViewBindingSet bigBallText peker ikke til RealtimeBigBallNumberLabel.");
-            isValid = false;
+            if (!Theme1GameplayViewRepairUtils.IsDedicatedBigBallNumberLabel(bigBallText, bigBallImage))
+            {
+                errors.Add("CandyBallViewBindingSet bigBallText peker ikke til RealtimeBigBallNumberLabel.");
+                isValid = false;
+            }
         }
 
         if (ballOutMachineAnimParent == null)

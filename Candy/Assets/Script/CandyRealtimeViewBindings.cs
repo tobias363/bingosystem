@@ -8,6 +8,8 @@ using UnityEngine.UI;
 public sealed class CandyCardViewBinding
 {
     [SerializeField] private string bindingName = string.Empty;
+    [SerializeField] private TextMeshProUGUI headerText;
+    [SerializeField] private TextMeshProUGUI betText;
     [SerializeField] private TextMeshProUGUI[] numberTexts = new TextMeshProUGUI[15];
     [SerializeField] private GameObject[] selectionOverlays = new GameObject[15];
     [SerializeField] private GameObject[] missingPatternOverlays = new GameObject[15];
@@ -16,6 +18,8 @@ public sealed class CandyCardViewBinding
     [SerializeField] private TextMeshProUGUI winningText;
 
     public string BindingName => string.IsNullOrWhiteSpace(bindingName) ? "Card" : bindingName.Trim();
+    public TextMeshProUGUI HeaderText => headerText;
+    public TextMeshProUGUI BetText => betText;
     public IReadOnlyList<TextMeshProUGUI> NumberTexts => numberTexts;
     public IReadOnlyList<GameObject> SelectionOverlays => selectionOverlays;
     public IReadOnlyList<GameObject> MissingPatternOverlays => missingPatternOverlays;
@@ -32,6 +36,16 @@ public sealed class CandyCardViewBinding
         matchedPatternOverlays = CopyGameObjectList(source != null ? source.matchPatternImg : null, 15);
         paylineObjects = CopyGameObjectList(source != null ? source.paylineObj : null, -1);
         winningText = ResolveWinningText(source);
+    }
+
+    public void SetDisplayTexts(TextMeshProUGUI header, TextMeshProUGUI bet, TextMeshProUGUI win)
+    {
+        headerText = header;
+        betText = bet;
+        if (win != null)
+        {
+            winningText = win;
+        }
     }
 
     public void ApplyTo(CardClass target)
@@ -75,6 +89,16 @@ public sealed class CandyCardViewBinding
     {
         string prefix = $"Card[{cardIndex}] {BindingName}";
         bool isValid = true;
+        if (!ValidateTextTarget(headerText, $"{prefix} headerText", requireActive: false, errors: errors))
+        {
+            isValid = false;
+        }
+
+        if (!ValidateTextTarget(betText, $"{prefix} betText", requireActive: false, errors: errors))
+        {
+            isValid = false;
+        }
+
         isValid &= ValidateTextArray(numberTexts, 15, $"{prefix} numberTexts", requireActive: false, errors: errors);
         isValid &= ValidateGameObjectArray(selectionOverlays, 15, $"{prefix} selectionOverlays", errors);
         isValid &= ValidateGameObjectArray(missingPatternOverlays, 15, $"{prefix} missingPatternOverlays", errors);
@@ -367,16 +391,18 @@ public sealed class CandyBallSlotBinding
             isValid = false;
         }
 
-        if (numberText != null &&
-            !CandyCardViewBindingValidator.ValidateTextTarget(numberText, $"{prefix} numberText", requireActive: false, errors))
+        if (numberText != null)
         {
-            isValid = false;
-        }
+            if (!CandyCardViewBindingValidator.ValidateTextTarget(numberText, $"{prefix} numberText", requireActive: false, errors))
+            {
+                isValid = false;
+            }
 
-        if (!Theme1GameplayViewRepairUtils.IsDedicatedBallNumberLabel(numberText, root))
-        {
-            errors.Add($"{prefix} numberText peker ikke til en lokal RealtimeBallNumberLabel.");
-            isValid = false;
+            if (!Theme1GameplayViewRepairUtils.IsDedicatedBallNumberLabel(numberText, root))
+            {
+                errors.Add($"{prefix} numberText peker ikke til en lokal RealtimeBallNumberLabel.");
+                isValid = false;
+            }
         }
 
         return isValid;

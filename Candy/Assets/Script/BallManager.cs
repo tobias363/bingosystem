@@ -277,6 +277,11 @@ public class BallManager : MonoBehaviour
 
     private bool TryGetNumberedBallSprite(int ballNumber, out Sprite sprite)
     {
+        if (CandyBallVisualCatalog.TryGetSmallSprite(ballNumber, out sprite))
+        {
+            return sprite != null;
+        }
+
         EnsureNumberedBallSpritesLoaded();
         return numberedBallSprites.TryGetValue(ballNumber, out sprite) && sprite != null;
     }
@@ -323,12 +328,14 @@ public class BallManager : MonoBehaviour
 
             if (targetText != null)
             {
-                targetText.text = string.Empty;
+                targetText.text = ballNumber.ToString();
             }
 
             SetBallNumberVisibility(targetText, false);
             return true;
         }
+
+        CandyBallVisualCatalog.LogMissingVisual(ballNumber, targetImage != null ? targetImage.gameObject.name : "ball-target");
 
         Sprite resolvedFallbackSprite = fallbackSprite != null
             ? fallbackSprite

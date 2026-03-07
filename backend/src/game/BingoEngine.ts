@@ -102,6 +102,7 @@ interface ComplianceOptions {
   playSessionLimitMs?: number;
   pauseDurationMs?: number;
   selfExclusionMinMs?: number;
+  maxBallNumber?: number;
   maxDrawsPerRound?: number;
   rtpRollingWindowSize?: number;
   rtpControllerGain?: number;
@@ -367,7 +368,8 @@ interface PlayerComplianceSnapshot {
 const POLICY_WILDCARD = "*";
 const DEFAULT_SELF_EXCLUSION_MIN_MS = 365 * 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_DRAWS_PER_ROUND = 30;
-const MAX_BINGO_BALLS = 75;
+const DEFAULT_MAX_BINGO_BALLS = 75;
+const MAX_SUPPORTED_BINGO_BALLS = 75;
 const DEFAULT_BONUS_TRIGGER_PATTERN_INDEX = 1;
 const DEFAULT_RTP_ROLLING_WINDOW_SIZE = 1000;
 const DEFAULT_RTP_CONTROLLER_GAIN = 0.5;
@@ -395,6 +397,7 @@ export class BingoEngine {
   private readonly playSessionLimitMs: number;
   private readonly pauseDurationMs: number;
   private readonly selfExclusionMinMs: number;
+  private readonly maxBallNumber: number;
   private readonly maxDrawsPerRound: number;
   private readonly rtpRollingWindowSize: number;
   private readonly rtpControllerGain: number;
@@ -443,21 +446,34 @@ export class BingoEngine {
         `selfExclusionMinMs må være minst ${DEFAULT_SELF_EXCLUSION_MIN_MS} ms (1 år).`
       );
     }
+    const maxBallNumber = options.maxBallNumber ?? DEFAULT_MAX_BINGO_BALLS;
+    if (
+      !Number.isFinite(maxBallNumber) ||
+      !Number.isInteger(maxBallNumber) ||
+      maxBallNumber < 1 ||
+      maxBallNumber > MAX_SUPPORTED_BINGO_BALLS
+    ) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        `maxBallNumber må være et heltall mellom 1 og ${MAX_SUPPORTED_BINGO_BALLS}.`
+      );
+    }
     const maxDrawsPerRound = options.maxDrawsPerRound ?? DEFAULT_MAX_DRAWS_PER_ROUND;
     if (
       !Number.isFinite(maxDrawsPerRound) ||
       !Number.isInteger(maxDrawsPerRound) ||
       maxDrawsPerRound < 1 ||
-      maxDrawsPerRound > MAX_BINGO_BALLS
+      maxDrawsPerRound > maxBallNumber
     ) {
       throw new DomainError(
         "INVALID_CONFIG",
-        `maxDrawsPerRound må være et heltall mellom 1 og ${MAX_BINGO_BALLS}.`
+        `maxDrawsPerRound må være et heltall mellom 1 og ${maxBallNumber}.`
       );
     }
     this.playSessionLimitMs = Math.floor(playSessionLimitMs);
     this.pauseDurationMs = Math.floor(pauseDurationMs);
     this.selfExclusionMinMs = Math.floor(selfExclusionMinMs);
+    this.maxBallNumber = Math.floor(maxBallNumber);
     this.maxDrawsPerRound = Math.floor(maxDrawsPerRound);
     this.rtpRollingWindowSize = Math.max(
       10,
@@ -744,7 +760,7 @@ export class BingoEngine {
 
     const prizePool = this.roundCurrency(entryFee * players.length);
     const maxPayoutBudget = this.roundCurrency((prizePool * normalizedPayoutPercent) / 100);
-    let drawBag = makeShuffledBallBag(MAX_BINGO_BALLS);
+    let drawBag = makeShuffledBallBag(this.maxBallNumber);
     if (this.nearMissBiasEnabled && this.nearMissTargetRate > 0) {
       const adaptiveNearMissRate = this.resolveAdaptiveNearMissRate(room.hallId);
       drawBag = this.applyNearMissBias(drawBag, tickets, adaptiveNearMissRate);
@@ -3251,7 +3267,7 @@ export class BingoEngine {
   private serializeGame(game: GameState): GameSnapshot {
     const drawnSet = new Set<number>(game.drawnNumbers);
     const ticketByPlayerId = Object.fromEntries(
-      [...game.tickets.entries()].map(([playerId, tickets]) => [playerId, tickets.map((ticket) => ({ ...ticket }))])
+      [...game.tickets.entries()].map(([playerId, tickets]) => [playerId, tickets.map((ticket) => this.cloneTicket(ticket))])
     );
     const marksByPlayerId = Object.fromEntries(
       [...game.tickets.entries()].map(([playerId, tickets]) => {
@@ -3292,6 +3308,7 @@ export class BingoEngine {
 
   private cloneTicket(ticket: Ticket): Ticket {
     return {
+      numbers: Array.isArray(ticket.numbers) ? [...ticket.numbers] : undefined,
       grid: ticket.grid.map((row) => [...row])
     };
   }

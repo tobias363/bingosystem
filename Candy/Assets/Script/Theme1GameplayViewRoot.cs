@@ -137,13 +137,13 @@ public sealed class Theme1HudBarView
     public TextMeshProUGUI WinningsText => winningsText;
     public TextMeshProUGUI BetText => betText;
 
-    public void PullFrom(CandyTheme1HudBindingSet hudBindings, GameManager gameManager)
+    public void PullFrom(CandyTheme1HudBindingSet hudBindings)
     {
         countdownText = hudBindings != null ? hudBindings.CountdownText : null;
         roomPlayerCountText = hudBindings != null ? hudBindings.RoomPlayerCountText : null;
-        creditText = gameManager != null ? gameManager.displayTotalMoney : null;
-        winningsText = gameManager != null ? gameManager.winAmtText : null;
-        betText = gameManager != null ? gameManager.displayCurrentBets : null;
+        creditText = hudBindings != null ? hudBindings.CreditText : null;
+        winningsText = hudBindings != null ? hudBindings.WinningsText : null;
+        betText = hudBindings != null ? hudBindings.BetText : null;
     }
 }
 
@@ -225,24 +225,24 @@ public sealed class Theme1GameplayViewRoot : MonoBehaviour
         CandyCardViewBindingSet cardBindings,
         CandyBallViewBindingSet ballBindings,
         CandyTheme1HudBindingSet hudBindings,
-        GameManager gameManager,
         TopperManager topperManager)
     {
         cards = new Theme1CardGridView[cardBindings != null ? cardBindings.Cards.Count : 0];
         for (int i = 0; i < cards.Length; i++)
         {
             cards[i] = new Theme1CardGridView();
-            TextMeshProUGUI headerLabel = ResolveCardHeaderLabel(cardBindings.Cards[i]);
-            TextMeshProUGUI betLabel = ResolveByIndex(gameManager != null ? gameManager.CardBets : null, i);
-            TextMeshProUGUI winLabel = ResolveByIndex(gameManager != null ? gameManager.displayCardWinPoints : null, i) ?? cardBindings.Cards[i].WinningText;
-            cards[i].PullFrom(cardBindings.Cards[i], headerLabel, betLabel, winLabel);
+            cards[i].PullFrom(
+                cardBindings.Cards[i],
+                cardBindings.Cards[i].HeaderText,
+                cardBindings.Cards[i].BetText,
+                cardBindings.Cards[i].WinningText);
         }
 
         ballRack = new Theme1BallRackView();
         ballRack.PullFrom(ballBindings);
 
         hudBar = new Theme1HudBarView();
-        hudBar.PullFrom(hudBindings, gameManager);
+        hudBar.PullFrom(hudBindings);
 
         topperStrip = new Theme1TopperStripView();
         topperStrip.PullFrom(topperManager);
@@ -257,7 +257,13 @@ public sealed class Theme1GameplayViewRoot : MonoBehaviour
         }
 
         presentationInitialized = true;
+        RegisterManagedTextTargets();
         ApplyTypography();
+    }
+
+    private void OnDisable()
+    {
+        Theme1ManagedTypographyRegistry.Clear();
     }
 
     public bool ValidateContract(out string report)
@@ -282,17 +288,17 @@ public sealed class Theme1GameplayViewRoot : MonoBehaviour
                     continue;
                 }
 
-                if (!ValidateText(card.HeaderLabel, $"cards[{cardIndex}].headerLabel", errors))
+                if (!ValidateText(card.HeaderLabel, $"cards[{cardIndex}].headerLabel", errors, requireActive: true))
                 {
                     isValid = false;
                 }
 
-                if (!ValidateText(card.BetLabel, $"cards[{cardIndex}].betLabel", errors))
+                if (!ValidateText(card.BetLabel, $"cards[{cardIndex}].betLabel", errors, requireActive: true))
                 {
                     isValid = false;
                 }
 
-                if (!ValidateText(card.WinLabel, $"cards[{cardIndex}].winLabel", errors))
+                if (!ValidateText(card.WinLabel, $"cards[{cardIndex}].winLabel", errors, requireActive: false))
                 {
                     isValid = false;
                 }
@@ -314,7 +320,7 @@ public sealed class Theme1GameplayViewRoot : MonoBehaviour
                             continue;
                         }
 
-                        if (!ValidateText(cell.NumberLabel, $"cards[{cardIndex}].cells[{cellIndex}].numberLabel", errors))
+                        if (!ValidateText(cell.NumberLabel, $"cards[{cardIndex}].cells[{cellIndex}].numberLabel", errors, requireActive: true))
                         {
                             isValid = false;
                         }
@@ -377,28 +383,12 @@ public sealed class Theme1GameplayViewRoot : MonoBehaviour
                         isValid = false;
                     }
 
-                    if (!ValidateText(slot.NumberLabel, $"ballRack.slots[{slotIndex}].numberLabel", errors))
+                    if (slot.SpriteTarget == null)
                     {
-                        isValid = false;
-                    }
-
-                    if (!Theme1GameplayViewRepairUtils.IsDedicatedBallNumberLabel(slot.NumberLabel, slot.Root))
-                    {
-                        errors.Add($"ballRack.slots[{slotIndex}].numberLabel peker ikke til lokal RealtimeBallNumberLabel.");
+                        errors.Add($"ballRack.slots[{slotIndex}].spriteTarget mangler.");
                         isValid = false;
                     }
                 }
-            }
-
-            if (!ValidateText(ballRack.BigBallText, "ballRack.bigBallText", errors))
-            {
-                isValid = false;
-            }
-
-            if (!Theme1GameplayViewRepairUtils.IsDedicatedBigBallNumberLabel(ballRack.BigBallText, ballRack.BigBallImage))
-            {
-                errors.Add("ballRack.bigBallText peker ikke til RealtimeBigBallNumberLabel.");
-                isValid = false;
             }
 
             if (ballRack.BigBallImage == null)
@@ -415,11 +405,11 @@ public sealed class Theme1GameplayViewRoot : MonoBehaviour
         }
         else
         {
-            isValid &= ValidateText(hudBar.CountdownText, "hudBar.countdownText", errors);
-            isValid &= ValidateText(hudBar.RoomPlayerCountText, "hudBar.roomPlayerCountText", errors);
-            isValid &= ValidateText(hudBar.CreditText, "hudBar.creditText", errors);
-            isValid &= ValidateText(hudBar.WinningsText, "hudBar.winningsText", errors);
-            isValid &= ValidateText(hudBar.BetText, "hudBar.betText", errors);
+            isValid &= ValidateText(hudBar.CountdownText, "hudBar.countdownText", errors, requireActive: true);
+            isValid &= ValidateText(hudBar.RoomPlayerCountText, "hudBar.roomPlayerCountText", errors, requireActive: true);
+            isValid &= ValidateText(hudBar.CreditText, "hudBar.creditText", errors, requireActive: true);
+            isValid &= ValidateText(hudBar.WinningsText, "hudBar.winningsText", errors, requireActive: true);
+            isValid &= ValidateText(hudBar.BetText, "hudBar.betText", errors, requireActive: true);
         }
 
         if (topperStrip == null || topperStrip.Slots == null || topperStrip.Slots.Length == 0)
@@ -451,7 +441,7 @@ public sealed class Theme1GameplayViewRoot : MonoBehaviour
                     isValid = false;
                 }
 
-                if (!ValidateText(slot.PrizeLabel, $"topperStrip.slots[{slotIndex}].prizeLabel", errors))
+                if (!ValidateText(slot.PrizeLabel, $"topperStrip.slots[{slotIndex}].prizeLabel", errors, requireActive: true))
                 {
                     isValid = false;
                 }
@@ -587,91 +577,43 @@ public sealed class Theme1GameplayViewRoot : MonoBehaviour
         }
     }
 
-    private static bool ValidateText(TextMeshProUGUI target, string label, List<string> errors)
+    private void RegisterManagedTextTargets()
     {
-        if (target != null)
+        Theme1ManagedTypographyRegistry.Clear();
+
+        for (int cardIndex = 0; cards != null && cardIndex < cards.Length; cardIndex++)
         {
-            return true;
+            Theme1CardGridView card = cards[cardIndex];
+            Theme1ManagedTypographyRegistry.Register(card?.HeaderLabel);
+            Theme1ManagedTypographyRegistry.Register(card?.BetLabel);
+            Theme1ManagedTypographyRegistry.Register(card?.WinLabel);
+            for (int cellIndex = 0; card?.Cells != null && cellIndex < card.Cells.Length; cellIndex++)
+            {
+                Theme1ManagedTypographyRegistry.Register(card.Cells[cellIndex]?.NumberLabel);
+            }
         }
 
-        errors.Add(label + " mangler.");
-        return false;
+        Theme1ManagedTypographyRegistry.Register(ballRack?.BigBallText);
+        for (int slotIndex = 0; ballRack?.Slots != null && slotIndex < ballRack.Slots.Length; slotIndex++)
+        {
+            Theme1ManagedTypographyRegistry.Register(ballRack.Slots[slotIndex]?.NumberLabel);
+        }
+
+        Theme1ManagedTypographyRegistry.Register(hudBar?.CountdownText);
+        Theme1ManagedTypographyRegistry.Register(hudBar?.RoomPlayerCountText);
+        Theme1ManagedTypographyRegistry.Register(hudBar?.CreditText);
+        Theme1ManagedTypographyRegistry.Register(hudBar?.WinningsText);
+        Theme1ManagedTypographyRegistry.Register(hudBar?.BetText);
+
+        for (int slotIndex = 0; topperStrip?.Slots != null && slotIndex < topperStrip.Slots.Length; slotIndex++)
+        {
+            Theme1ManagedTypographyRegistry.Register(topperStrip.Slots[slotIndex]?.PrizeLabel);
+        }
     }
 
-    private static TextMeshProUGUI ResolveCardHeaderLabel(CandyCardViewBinding binding)
+    private static bool ValidateText(TextMeshProUGUI target, string label, List<string> errors, bool requireActive)
     {
-        TextMeshProUGUI anchorLabel = ResolveFirstNumberLabel(binding);
-        if (anchorLabel == null)
-        {
-            return null;
-        }
-
-        Transform current = anchorLabel.transform;
-        while (current != null)
-        {
-            TextMeshProUGUI[] labels = current.GetComponentsInChildren<TextMeshProUGUI>(true);
-            for (int i = 0; i < labels.Length; i++)
-            {
-                TextMeshProUGUI label = labels[i];
-                if (label != null && (label.text ?? string.Empty).Trim().StartsWith("Card", StringComparison.OrdinalIgnoreCase))
-                {
-                    return label;
-                }
-            }
-
-            current = current.parent;
-        }
-
-        TextMeshProUGUI[] sceneLabels = UnityEngine.Object.FindObjectsByType<TextMeshProUGUI>(
-            FindObjectsInactive.Include,
-            FindObjectsSortMode.None);
-        TextMeshProUGUI nearest = null;
-        float nearestDistance = float.MaxValue;
-        for (int i = 0; i < sceneLabels.Length; i++)
-        {
-            TextMeshProUGUI candidate = sceneLabels[i];
-            if (candidate == null || !(candidate.text ?? string.Empty).Trim().StartsWith("Card", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            float distance = Vector3.Distance(anchorLabel.transform.position, candidate.transform.position);
-            if (distance < nearestDistance)
-            {
-                nearestDistance = distance;
-                nearest = candidate;
-            }
-        }
-
-        return nearest;
-    }
-
-    private static TextMeshProUGUI ResolveFirstNumberLabel(CandyCardViewBinding binding)
-    {
-        if (binding?.NumberTexts == null)
-        {
-            return null;
-        }
-
-        for (int i = 0; i < binding.NumberTexts.Count; i++)
-        {
-            if (binding.NumberTexts[i] != null)
-            {
-                return binding.NumberTexts[i];
-            }
-        }
-
-        return null;
-    }
-
-    private static TextMeshProUGUI ResolveByIndex(List<TextMeshProUGUI> labels, int index)
-    {
-        if (labels == null || index < 0 || index >= labels.Count)
-        {
-            return null;
-        }
-
-        return labels[index];
+        return CandyCardViewBindingValidator.ValidateTextTarget(target, label, requireActive, errors);
     }
 
     private static string ReadText(TMP_Text target)

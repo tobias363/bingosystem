@@ -93,6 +93,11 @@ public sealed class CandyTypographyRuntimeInstaller : MonoBehaviour
                 continue;
             }
 
+            if (Theme1ManagedTypographyRegistry.Contains(label))
+            {
+                continue;
+            }
+
             CandyTypographySystem.ApplyGameplayRole(
                 label,
                 CandyTypographySystem.Classify(label),

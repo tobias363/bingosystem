@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using TMPro;
 using UnityEditor;
@@ -103,6 +104,9 @@ public static class CandyTheme1BindingTools
             throw new InvalidOperationException($"{ValidationPrefix} Fant ikke NumberGenerator, BallManager eller APIManager i Theme1.");
         }
 
+        GameManager gameManager = UnityEngine.Object.FindObjectOfType<GameManager>(true);
+        TopperManager topperManager = UnityEngine.Object.FindObjectOfType<TopperManager>(true);
+
         CandyCardViewBindingSet cardBindings = generator.GetComponent<CandyCardViewBindingSet>();
         if (cardBindings == null)
         {
@@ -110,6 +114,7 @@ public static class CandyTheme1BindingTools
         }
         NormalizeCardNumberTargets(generator);
         cardBindings.PullFrom(generator);
+        ApplyCardDisplayTextBindings(cardBindings, gameManager);
         if (!cardBindings.TryApplyTo(generator, out string cardApplyError))
         {
             throw new InvalidOperationException($"{ValidationPrefix} Klarte ikke anvende card bindings: {cardApplyError}");
@@ -133,26 +138,50 @@ public static class CandyTheme1BindingTools
 
         EnsureRealtimeRoomPlayerCountLabel(generator, apiManager);
         NormalizeHudTargets(generator, apiManager);
-        hudBindings.PullFrom(generator);
-        if (!hudBindings.TryApplyTo(generator, apiManager, out string hudApplyError))
+        hudBindings.PullFrom(generator, gameManager);
+        if (!hudBindings.TryApplyTo(generator, apiManager, gameManager, out string hudApplyError))
         {
             throw new InvalidOperationException($"{ValidationPrefix} Klarte ikke anvende HUD bindings: {hudApplyError}");
         }
 
-        GameManager gameManager = UnityEngine.Object.FindObjectOfType<GameManager>(true);
-        TopperManager topperManager = UnityEngine.Object.FindObjectOfType<TopperManager>(true);
+        NormalizeTopperPrizeTargets(topperManager, gameManager);
+
         Theme1GameplayViewRoot dedicatedViewRoot = apiManager.GetComponent<Theme1GameplayViewRoot>();
         if (dedicatedViewRoot == null)
         {
             dedicatedViewRoot = Undo.AddComponent<Theme1GameplayViewRoot>(apiManager.gameObject);
         }
 
-        dedicatedViewRoot.PullFrom(cardBindings, ballBindings, hudBindings, gameManager, topperManager);
+        dedicatedViewRoot.PullFrom(cardBindings, ballBindings, hudBindings, topperManager);
         SerializedObject serializedApiManager = new SerializedObject(apiManager);
         SerializedProperty dedicatedViewRootProperty = serializedApiManager.FindProperty("theme1GameplayViewRoot");
         if (dedicatedViewRootProperty != null)
         {
             dedicatedViewRootProperty.objectReferenceValue = dedicatedViewRoot;
+        }
+
+        SerializedProperty numberGeneratorProperty = serializedApiManager.FindProperty("theme1NumberGenerator");
+        if (numberGeneratorProperty != null)
+        {
+            numberGeneratorProperty.objectReferenceValue = generator;
+        }
+
+        SerializedProperty gameManagerProperty = serializedApiManager.FindProperty("theme1GameManager");
+        if (gameManagerProperty != null)
+        {
+            gameManagerProperty.objectReferenceValue = gameManager;
+        }
+
+        SerializedProperty topperManagerProperty = serializedApiManager.FindProperty("theme1TopperManager");
+        if (topperManagerProperty != null)
+        {
+            topperManagerProperty.objectReferenceValue = topperManager;
+        }
+
+        SerializedProperty ballManagerProperty = serializedApiManager.FindProperty("ballManager");
+        if (ballManagerProperty != null)
+        {
+            ballManagerProperty.objectReferenceValue = ballManager;
         }
 
         SerializedProperty renderModeProperty = serializedApiManager.FindProperty("theme1RealtimeViewMode");
@@ -173,6 +202,11 @@ public static class CandyTheme1BindingTools
             if (speedMultiplier != null)
             {
                 speedMultiplier.floatValue = 1f;
+            }
+            SerializedProperty hidePerCardWinLabels = serializedGameManager.FindProperty("hidePerCardWinLabels");
+            if (hidePerCardWinLabels != null)
+            {
+                hidePerCardWinLabels.boolValue = false;
             }
             serializedGameManager.ApplyModifiedPropertiesWithoutUndo();
             EditorUtility.SetDirty(gameManager);
@@ -223,6 +257,12 @@ public static class CandyTheme1BindingTools
 
         StringBuilder builder = new StringBuilder();
         bool isValid = true;
+
+        if (!CandyBallVisualCatalog.TryValidateComplete(out string ballCatalogError))
+        {
+            builder.AppendLine(ballCatalogError);
+            isValid = false;
+        }
 
         CandyCardViewBindingSet cardBindings = generator.GetComponent<CandyCardViewBindingSet>();
         if (cardBindings == null)
@@ -330,6 +370,136 @@ public static class CandyTheme1BindingTools
         }
 
         return EditorSceneManager.OpenScene(Theme1ScenePath, OpenSceneMode.Single);
+    }
+
+    private static void ApplyCardDisplayTextBindings(CandyCardViewBindingSet cardBindings, GameManager gameManager)
+    {
+        if (cardBindings?.Cards == null)
+        {
+            return;
+        }
+
+        List<TextMeshProUGUI> resolvedBetLabels = new List<TextMeshProUGUI>();
+        List<TextMeshProUGUI> resolvedWinLabels = new List<TextMeshProUGUI>();
+        for (int cardIndex = 0; cardIndex < cardBindings.Cards.Count; cardIndex++)
+        {
+            CandyCardViewBinding binding = cardBindings.Cards[cardIndex];
+            if (binding == null)
+            {
+                resolvedBetLabels.Add(null);
+                resolvedWinLabels.Add(null);
+                continue;
+            }
+
+            TextMeshProUGUI anchor = ResolveFirstNumberLabel(binding);
+            Transform cardRoot = ResolveCardRoot(binding);
+            TextMeshProUGUI headerTemplate = ResolveNearestText(
+                anchor,
+                candidate => (candidate.text ?? string.Empty).Trim().StartsWith("Card", StringComparison.OrdinalIgnoreCase));
+            TextMeshProUGUI betTemplate = ResolveByIndex(gameManager != null ? gameManager.CardBets : null, cardIndex) ??
+                                          ResolveNearestText(
+                                              anchor,
+                                              candidate =>
+                                                  (candidate.text ?? string.Empty).Trim().StartsWith("BET", StringComparison.OrdinalIgnoreCase) ||
+                                                  (candidate.text ?? string.Empty).IndexOf("Innsats", StringComparison.OrdinalIgnoreCase) >= 0);
+            TextMeshProUGUI runtimeWinLabel = ResolveByIndex(gameManager != null ? gameManager.displayCardWinPoints : null, cardIndex);
+            TextMeshProUGUI winTemplate = runtimeWinLabel != null ? runtimeWinLabel : binding.WinningText;
+
+            TextMeshProUGUI header = EnsureDedicatedOverlayLabel(
+                cardRoot,
+                $"RealtimeCardHeaderLabel_{cardIndex + 1}",
+                headerTemplate,
+                $"Card -{cardIndex + 1}",
+                GameplayTextSurface.CardHeader,
+                Color.white,
+                fallbackSize: new Vector2(92f, 24f));
+            TextMeshProUGUI bet = EnsureDedicatedOverlayLabel(
+                cardRoot,
+                $"RealtimeCardBetLabel_{cardIndex + 1}",
+                betTemplate,
+                "Innsats - 0 kr",
+                GameplayTextSurface.HudLabel,
+                Color.white,
+                fallbackSize: new Vector2(144f, 30f));
+            TextMeshProUGUI win = EnsureDedicatedOverlayLabel(
+                cardRoot,
+                $"RealtimeCardWinLabel_{cardIndex + 1}",
+                winTemplate,
+                "WIN - 0",
+                GameplayTextSurface.HudLabel,
+                Color.white,
+                fallbackSize: new Vector2(116f, 30f));
+
+            binding.SetDisplayTexts(header, bet, win);
+            resolvedBetLabels.Add(bet);
+            resolvedWinLabels.Add(win);
+        }
+
+        if (gameManager != null)
+        {
+            gameManager.CardBets = resolvedBetLabels;
+            gameManager.displayCardWinPoints = resolvedWinLabels;
+            EditorUtility.SetDirty(gameManager);
+        }
+    }
+
+    private static TextMeshProUGUI ResolveFirstNumberLabel(CandyCardViewBinding binding)
+    {
+        if (binding?.NumberTexts == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < binding.NumberTexts.Count; i++)
+        {
+            if (binding.NumberTexts[i] != null)
+            {
+                return binding.NumberTexts[i];
+            }
+        }
+
+        return null;
+    }
+
+    private static TextMeshProUGUI ResolveNearestText(TextMeshProUGUI anchor, Func<TextMeshProUGUI, bool> predicate)
+    {
+        if (anchor == null || predicate == null)
+        {
+            return null;
+        }
+
+        TextMeshProUGUI[] labels = UnityEngine.Object.FindObjectsByType<TextMeshProUGUI>(
+            FindObjectsInactive.Include,
+            FindObjectsSortMode.None);
+        TextMeshProUGUI nearest = null;
+        float nearestDistance = float.MaxValue;
+        for (int i = 0; i < labels.Length; i++)
+        {
+            TextMeshProUGUI candidate = labels[i];
+            if (candidate == null || candidate.gameObject.scene != anchor.gameObject.scene || !predicate(candidate))
+            {
+                continue;
+            }
+
+            float distance = Vector3.Distance(anchor.transform.position, candidate.transform.position);
+            if (distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearest = candidate;
+            }
+        }
+
+        return nearest;
+    }
+
+    private static TextMeshProUGUI ResolveByIndex(IReadOnlyList<TextMeshProUGUI> labels, int index)
+    {
+        if (labels == null || index < 0 || index >= labels.Count)
+        {
+            return null;
+        }
+
+        return labels[index];
     }
 
     private static void EnsureRealtimeRoomPlayerCountLabel(NumberGenerator generator, APIManager apiManager)
@@ -528,6 +698,216 @@ public static class CandyTheme1BindingTools
                 : new Vector2(240f, 42f);
             NormalizeHudTextTarget(roomPlayerCountText, new Vector2(Mathf.Max(220f, countdownSize.x), Mathf.Max(26f, countdownSize.y * 0.52f)));
         }
+
+        GameManager gameManager = UnityEngine.Object.FindObjectOfType<GameManager>(true);
+        if (gameManager != null)
+        {
+            gameManager.displayTotalMoney = EnsureDedicatedHudValueTarget(
+                gameManager.displayTotalMoney,
+                "RealtimeCreditValueLabel",
+                gameManager.totalMoney.ToString());
+            gameManager.winAmtText = EnsureDedicatedHudValueTarget(
+                gameManager.winAmtText,
+                "RealtimeWinningsValueLabel",
+                GameManager.winAmt.ToString());
+            gameManager.displayCurrentBets = EnsureDedicatedHudValueTarget(
+                gameManager.displayCurrentBets,
+                "RealtimeBetValueLabel",
+                gameManager.currentBet.ToString());
+            EditorUtility.SetDirty(gameManager);
+        }
+    }
+
+    private static void NormalizeTopperPrizeTargets(TopperManager topperManager, GameManager gameManager)
+    {
+        if (topperManager?.prizes == null)
+        {
+            return;
+        }
+
+        List<TextMeshProUGUI> dedicatedLabels = new List<TextMeshProUGUI>(topperManager.prizes.Count);
+        for (int i = 0; i < topperManager.prizes.Count; i++)
+        {
+            TextMeshProUGUI template = topperManager.prizes[i];
+            string defaultText = gameManager != null && gameManager.TryGetFormattedPayoutLabel(i, out string payoutLabel)
+                ? payoutLabel
+                : ReadText(template, "0 kr");
+            TextMeshProUGUI dedicated = EnsureDedicatedOverlayLabel(
+                template != null ? template.transform.parent : null,
+                $"RealtimeTopperPrizeLabel_{i + 1}",
+                template,
+                defaultText,
+                GameplayTextSurface.TopperValue,
+                template != null ? template.color : Color.white,
+                fallbackSize: new Vector2(168f, 36f));
+            dedicatedLabels.Add(dedicated);
+        }
+
+        topperManager.prizes = dedicatedLabels;
+        if (gameManager != null)
+        {
+            gameManager.displayCurrentPoints = new List<TextMeshProUGUI>(dedicatedLabels);
+            EditorUtility.SetDirty(gameManager);
+        }
+
+        EditorUtility.SetDirty(topperManager);
+    }
+
+    private static TextMeshProUGUI EnsureDedicatedHudValueTarget(TextMeshProUGUI template, string objectName, string defaultText)
+    {
+        Transform parent = template != null ? template.transform.parent : null;
+        return EnsureDedicatedOverlayLabel(
+            parent,
+            objectName,
+            template,
+            defaultText,
+            GameplayTextSurface.HudLabel,
+            Color.white,
+            fallbackSize: new Vector2(200f, 50f));
+    }
+
+    private static TextMeshProUGUI EnsureDedicatedOverlayLabel(
+        Transform parent,
+        string objectName,
+        TextMeshProUGUI template,
+        string defaultText,
+        GameplayTextSurface surface,
+        Color fallbackColor,
+        Vector2 fallbackSize)
+    {
+        if (parent == null)
+        {
+            return template;
+        }
+
+        TextMeshProUGUI label = FindNamedTextLabel(parent, objectName);
+        if (label == null)
+        {
+            GameObject labelObject = new GameObject(objectName, typeof(RectTransform), typeof(TextMeshProUGUI));
+            Undo.RegisterCreatedObjectUndo(labelObject, $"Create {objectName}");
+            labelObject.transform.SetParent(parent, false);
+            label = labelObject.GetComponent<TextMeshProUGUI>();
+        }
+
+        if (label == null)
+        {
+            return template;
+        }
+
+        RectTransform rect = label.rectTransform;
+        if (template != null)
+        {
+            CopyRectTransform(template.rectTransform, rect, fallbackSize);
+            label.color = template.color;
+            label.fontSize = template.fontSize;
+            label.enableAutoSizing = template.enableAutoSizing;
+            label.fontSizeMin = template.fontSizeMin;
+            label.fontSizeMax = template.fontSizeMax;
+            label.alignment = template.alignment;
+            label.fontStyle = template.fontStyle;
+            label.fontWeight = template.fontWeight;
+        }
+        else
+        {
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = fallbackSize;
+            label.color = fallbackColor;
+            label.enableAutoSizing = true;
+            label.fontSizeMin = 18f;
+            label.fontSizeMax = 48f;
+            label.alignment = TextAlignmentOptions.Center;
+        }
+
+        label.gameObject.name = objectName;
+        label.enabled = true;
+        label.raycastTarget = false;
+        label.alpha = 1f;
+        label.text = !string.IsNullOrWhiteSpace(ReadText(label, string.Empty))
+            ? ReadText(label, string.Empty)
+            : (!string.IsNullOrWhiteSpace(ReadText(template, string.Empty)) ? ReadText(template, string.Empty) : defaultText);
+        label.transform.SetAsLastSibling();
+        RealtimeTextStyleUtils.ApplyGameplayTextPresentation(
+            label,
+            surface == GameplayTextSurface.CardHeader ? CandyTypographyRole.Label : CandyTypographyRole.Label,
+            surface,
+            preserveExistingFont: false);
+        EditorUtility.SetDirty(label);
+        EditorUtility.SetDirty(rect);
+        return label;
+    }
+
+    private static Transform ResolveCardRoot(CandyCardViewBinding binding)
+    {
+        if (binding?.SelectionOverlays == null)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < binding.SelectionOverlays.Count; i++)
+        {
+            GameObject overlay = binding.SelectionOverlays[i];
+            if (overlay == null)
+            {
+                continue;
+            }
+
+            Transform selectedGrid = overlay.transform.parent;
+            if (selectedGrid != null && selectedGrid.parent != null)
+            {
+                return selectedGrid.parent;
+            }
+        }
+
+        return null;
+    }
+
+    private static TextMeshProUGUI FindNamedTextLabel(Transform parent, string objectName)
+    {
+        if (parent == null || string.IsNullOrWhiteSpace(objectName))
+        {
+            return null;
+        }
+
+        Transform child = parent.Find(objectName);
+        return child != null ? child.GetComponent<TextMeshProUGUI>() : null;
+    }
+
+    private static void CopyRectTransform(RectTransform source, RectTransform target, Vector2 fallbackSize)
+    {
+        if (target == null)
+        {
+            return;
+        }
+
+        if (source == null)
+        {
+            target.anchorMin = new Vector2(0.5f, 0.5f);
+            target.anchorMax = new Vector2(0.5f, 0.5f);
+            target.pivot = new Vector2(0.5f, 0.5f);
+            target.anchoredPosition = Vector2.zero;
+            target.sizeDelta = fallbackSize;
+            target.localScale = Vector3.one;
+            return;
+        }
+
+        target.anchorMin = source.anchorMin;
+        target.anchorMax = source.anchorMax;
+        target.pivot = source.pivot;
+        target.anchoredPosition = source.anchoredPosition;
+        target.sizeDelta = source.rect.size.x > 1f && source.rect.size.y > 1f
+            ? source.rect.size
+            : fallbackSize;
+        target.localScale = Vector3.one;
+        target.localRotation = Quaternion.identity;
+    }
+
+    private static string ReadText(TMP_Text label, string fallback)
+    {
+        string value = label != null ? (label.text ?? string.Empty) : string.Empty;
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
 
     private static void NormalizeHudTextTarget(TextMeshProUGUI label, Vector2 preferredSize)

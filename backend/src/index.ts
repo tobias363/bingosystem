@@ -250,7 +250,7 @@ const bingoSelfExclusionMinMs = Math.max(
   parsePositiveIntEnv(process.env.BINGO_SELF_EXCLUSION_MIN_MS, 365 * 24 * 60 * 60 * 1000)
 );
 const bingoMaxDrawsPerRound = Math.min(
-  75,
+  60,
   Math.max(1, parsePositiveIntEnv(process.env.BINGO_MAX_DRAWS_PER_ROUND, 30))
 );
 const bingoRtpRollingWindowSize = Math.max(10, parsePositiveIntEnv(process.env.BINGO_RTP_ROLLING_WINDOW_SIZE, 1000));
@@ -331,6 +331,7 @@ const engine = new BingoEngine(new LocalBingoSystemAdapter(), walletAdapter, {
   playSessionLimitMs: bingoPlaySessionLimitMs,
   pauseDurationMs: bingoPauseDurationMs,
   selfExclusionMinMs: bingoSelfExclusionMinMs,
+  maxBallNumber: 60,
   maxDrawsPerRound: bingoMaxDrawsPerRound,
   rtpRollingWindowSize: bingoRtpRollingWindowSize,
   rtpControllerGain: bingoRtpControllerGain,
@@ -1438,6 +1439,7 @@ async function resolveDefaultTicketsPerPlayerForRoom(roomCode: string): Promise<
 function cloneTicketSet(tickets: Ticket[]): Ticket[] {
   return tickets.map((ticket) => ({
     ...ticket,
+    numbers: Array.isArray(ticket.numbers) ? [...ticket.numbers] : undefined,
     grid: ticket.grid.map((row) => [...row])
   }));
 }
