@@ -1315,6 +1315,26 @@ public class NumberGenerator : MonoBehaviour
                 return;
             }
 
+            if (APIManager.instance != null && APIManager.instance.UseRealtimeBackend)
+            {
+                totalSelectedPatterns.Clear();
+                if (patternList != null)
+                {
+                    for (int patternIndex = 0; patternIndex < patternList.Count; patternIndex++)
+                    {
+                        totalSelectedPatterns.Add(patternIndex);
+                    }
+                }
+
+                if (!hasLoggedMissingNumberManager)
+                {
+                    Debug.LogWarning("[NumberGenerator] currentPatternIndex er tom i realtime. Bruker alle Candy-mønstre som fallback.");
+                    hasLoggedMissingNumberManager = true;
+                }
+
+                return;
+            }
+
             if (!hasLoggedMissingNumberManager)
             {
                 if (NumberManager.instance == null)

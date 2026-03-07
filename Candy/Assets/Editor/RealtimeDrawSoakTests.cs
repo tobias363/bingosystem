@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -41,6 +42,19 @@ public static class RealtimeDrawSoakTests
     private static int renderedRawCount;
     private static int fallbackRawCount;
     private static int skippedRawCount;
+    private static int nearWinVisibleSamples;
+    private static int matchedVisibleSamples;
+    private static int nearWinBlinkTransitions;
+    private static int nearWinBlinkVisibleSamples;
+    private static bool? previousMissingBlinkVisible;
+    private static int maxActiveNearWinCount;
+    private static int maxActiveMatchedPatternCount;
+    private static int maxHeaderNearWinCells;
+    private static int maxCardNearWinCells;
+    private static int maxActivePaylines;
+    private static int maxActiveMatchedHeaders;
+
+    private static readonly Dictionary<Type, Dictionary<string, FieldInfo>> FieldCache = new();
 
     private static bool previousEnterPlayModeOptionsEnabled;
     private static EnterPlayModeOptions previousEnterPlayModeOptions;
@@ -211,13 +225,74 @@ public static class RealtimeDrawSoakTests
             nextPlayPressAt = now + playPressIntervalSeconds;
         }
 
+        if (EditorApplication.isPlaying)
+        {
+            PollPatternVisualState();
+        }
+
         if (now >= nextProgressLogAt)
         {
             Debug.Log(
                 $"[DrawSoak] PROGRESS visible={visibleDrawCount}/{targetDraws} " +
                 $"rendered={GetRenderedDrawCount()} fallback={GetFallbackDrawCount()} " +
-                $"enqueued={GetEnqueuedDrawCount()} skipped={skippedDrawCount} playPresses={playPressCount}");
+                $"enqueued={GetEnqueuedDrawCount()} skipped={skippedDrawCount} playPresses={playPressCount} " +
+                $"nearWinVisible={nearWinVisibleSamples} matchedVisible={matchedVisibleSamples} " +
+                $"blinkTransitions={nearWinBlinkTransitions} maxNearWins={maxActiveNearWinCount} " +
+                $"maxMatched={maxActiveMatchedPatternCount} maxHeaderCells={maxHeaderNearWinCells} " +
+                $"maxCardCells={maxCardNearWinCells} maxMatchedHeaders={maxActiveMatchedHeaders} " +
+                $"maxPaylines={maxActivePaylines}");
             nextProgressLogAt = now + 15.0;
+        }
+    }
+
+    private static void PollPatternVisualState()
+    {
+        TopperManager topperManager = UnityEngine.Object.FindObjectOfType<TopperManager>(true);
+        NumberGenerator numberGenerator = UnityEngine.Object.FindObjectOfType<NumberGenerator>(true);
+        if (topperManager == null || numberGenerator == null)
+        {
+            return;
+        }
+
+        int activeNearWinCount = GetPrivateCollectionCount(topperManager, "activeNearWins");
+        int activeMatchedPatternCount = GetPrivateCollectionCount(topperManager, "activeMatchedPatternIndexes");
+        bool missingBlinkVisible = GetPrivateBoolField(topperManager, "missingBlinkVisible");
+
+        if (activeNearWinCount > 0)
+        {
+            if (previousMissingBlinkVisible.HasValue && previousMissingBlinkVisible.Value != missingBlinkVisible)
+            {
+                nearWinBlinkTransitions += 1;
+            }
+
+            if (missingBlinkVisible)
+            {
+                nearWinBlinkVisibleSamples += 1;
+            }
+        }
+
+        previousMissingBlinkVisible = activeNearWinCount > 0 ? missingBlinkVisible : null;
+
+        int activeHeaderNearWinCells = CountActiveHeaderNearWinCells(topperManager);
+        int activeCardNearWinCells = CountActiveCardNearWinCells(numberGenerator);
+        int activeMatchedHeaderPatterns = CountActiveObjects(topperManager.matchedPatterns);
+        int activePaylines = CountActivePaylines(numberGenerator);
+
+        maxActiveNearWinCount = Math.Max(maxActiveNearWinCount, activeNearWinCount);
+        maxActiveMatchedPatternCount = Math.Max(maxActiveMatchedPatternCount, activeMatchedPatternCount);
+        maxHeaderNearWinCells = Math.Max(maxHeaderNearWinCells, activeHeaderNearWinCells);
+        maxCardNearWinCells = Math.Max(maxCardNearWinCells, activeCardNearWinCells);
+        maxActivePaylines = Math.Max(maxActivePaylines, activePaylines);
+        maxActiveMatchedHeaders = Math.Max(maxActiveMatchedHeaders, activeMatchedHeaderPatterns);
+
+        if (activeNearWinCount > 0 && missingBlinkVisible && activeHeaderNearWinCells > 0 && activeCardNearWinCells > 0)
+        {
+            nearWinVisibleSamples += 1;
+        }
+
+        if (activeMatchedPatternCount > 0 && activeMatchedHeaderPatterns > 0 && activePaylines > 0)
+        {
+            matchedVisibleSamples += 1;
         }
     }
 
@@ -339,11 +414,38 @@ public static class RealtimeDrawSoakTests
         }
 
         string status = exitCode == 0 ? "PASS" : "FAIL";
+        if (exitCode == 0)
+        {
+            if (nearWinVisibleSamples == 0)
+            {
+                exitCode = 1;
+                status = "FAIL";
+                finishReason = "no synchronized near-win visuals observed";
+            }
+            else if (matchedVisibleSamples == 0)
+            {
+                exitCode = 1;
+                status = "FAIL";
+                finishReason = "no matched payline visuals observed";
+            }
+            else if (nearWinBlinkTransitions == 0 || nearWinBlinkVisibleSamples == 0)
+            {
+                exitCode = 1;
+                status = "FAIL";
+                finishReason = "no near-win blink transitions observed";
+            }
+        }
+
         Debug.Log(
             $"[DrawSoak] RESULT status={status} reason=\"{finishReason}\" " +
             $"visible={GetVisibleDrawCount()} target={targetDraws} " +
             $"rendered={GetRenderedDrawCount()} fallback={GetFallbackDrawCount()} " +
-            $"enqueued={GetEnqueuedDrawCount()} skipped={GetSkippedDrawCount()} playPresses={playPressCount}");
+            $"enqueued={GetEnqueuedDrawCount()} skipped={GetSkippedDrawCount()} playPresses={playPressCount} " +
+            $"nearWinVisible={nearWinVisibleSamples} matchedVisible={matchedVisibleSamples} " +
+            $"blinkTransitions={nearWinBlinkTransitions} blinkVisibleSamples={nearWinBlinkVisibleSamples} " +
+            $"maxNearWins={maxActiveNearWinCount} maxMatched={maxActiveMatchedPatternCount} " +
+            $"maxHeaderCells={maxHeaderNearWinCells} maxCardCells={maxCardNearWinCells} " +
+            $"maxMatchedHeaders={maxActiveMatchedHeaders} maxPaylines={maxActivePaylines}");
 
         CleanupAndExit(exitCode);
     }
@@ -399,6 +501,168 @@ public static class RealtimeDrawSoakTests
         fallbackRawCount = 0;
         skippedRawCount = 0;
         playPressCount = 0;
+        nearWinVisibleSamples = 0;
+        matchedVisibleSamples = 0;
+        nearWinBlinkTransitions = 0;
+        nearWinBlinkVisibleSamples = 0;
+        previousMissingBlinkVisible = null;
+        maxActiveNearWinCount = 0;
+        maxActiveMatchedPatternCount = 0;
+        maxHeaderNearWinCells = 0;
+        maxCardNearWinCells = 0;
+        maxActivePaylines = 0;
+        maxActiveMatchedHeaders = 0;
+    }
+
+    private static int CountActiveHeaderNearWinCells(TopperManager topperManager)
+    {
+        if (topperManager == null || topperManager.missedPattern == null)
+        {
+            return 0;
+        }
+
+        int total = 0;
+        for (int patternIndex = 0; patternIndex < topperManager.missedPattern.Count; patternIndex++)
+        {
+            GameObject patternObject = topperManager.missedPattern[patternIndex];
+            if (patternObject == null)
+            {
+                continue;
+            }
+
+            foreach (Transform child in patternObject.transform)
+            {
+                if (child != null && child.gameObject.activeInHierarchy)
+                {
+                    total += 1;
+                }
+            }
+        }
+
+        return total;
+    }
+
+    private static int CountActiveCardNearWinCells(NumberGenerator numberGenerator)
+    {
+        if (numberGenerator == null || numberGenerator.cardClasses == null)
+        {
+            return 0;
+        }
+
+        int total = 0;
+        for (int cardIndex = 0; cardIndex < numberGenerator.cardClasses.Length; cardIndex++)
+        {
+            CardClass card = numberGenerator.cardClasses[cardIndex];
+            if (card == null || card.missingPatternImg == null)
+            {
+                continue;
+            }
+
+            for (int cellIndex = 0; cellIndex < card.missingPatternImg.Count; cellIndex++)
+            {
+                GameObject missingCell = card.missingPatternImg[cellIndex];
+                if (missingCell != null && missingCell.activeInHierarchy)
+                {
+                    total += 1;
+                }
+            }
+        }
+
+        return total;
+    }
+
+    private static int CountActivePaylines(NumberGenerator numberGenerator)
+    {
+        if (numberGenerator == null || numberGenerator.cardClasses == null)
+        {
+            return 0;
+        }
+
+        int total = 0;
+        for (int cardIndex = 0; cardIndex < numberGenerator.cardClasses.Length; cardIndex++)
+        {
+            CardClass card = numberGenerator.cardClasses[cardIndex];
+            if (card == null || card.paylineObj == null)
+            {
+                continue;
+            }
+
+            for (int patternIndex = 0; patternIndex < card.paylineObj.Count; patternIndex++)
+            {
+                GameObject paylineObject = card.paylineObj[patternIndex];
+                if (paylineObject != null && paylineObject.activeInHierarchy)
+                {
+                    total += 1;
+                }
+            }
+        }
+
+        return total;
+    }
+
+    private static int CountActiveObjects(IReadOnlyList<GameObject> objects)
+    {
+        if (objects == null)
+        {
+            return 0;
+        }
+
+        int total = 0;
+        for (int i = 0; i < objects.Count; i++)
+        {
+            if (objects[i] != null && objects[i].activeInHierarchy)
+            {
+                total += 1;
+            }
+        }
+
+        return total;
+    }
+
+    private static int GetPrivateCollectionCount(object target, string fieldName)
+    {
+        object fieldValue = GetPrivateFieldValue(target, fieldName);
+        if (fieldValue == null)
+        {
+            return 0;
+        }
+
+        PropertyInfo countProperty = fieldValue.GetType().GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
+        if (countProperty == null || countProperty.PropertyType != typeof(int))
+        {
+            return 0;
+        }
+
+        return (int)countProperty.GetValue(fieldValue);
+    }
+
+    private static bool GetPrivateBoolField(object target, string fieldName)
+    {
+        object fieldValue = GetPrivateFieldValue(target, fieldName);
+        return fieldValue is bool boolValue && boolValue;
+    }
+
+    private static object GetPrivateFieldValue(object target, string fieldName)
+    {
+        if (target == null || string.IsNullOrWhiteSpace(fieldName))
+        {
+            return null;
+        }
+
+        Type type = target.GetType();
+        if (!FieldCache.TryGetValue(type, out Dictionary<string, FieldInfo> fieldMap))
+        {
+            fieldMap = new Dictionary<string, FieldInfo>(StringComparer.Ordinal);
+            FieldCache[type] = fieldMap;
+        }
+
+        if (!fieldMap.TryGetValue(fieldName, out FieldInfo fieldInfo))
+        {
+            fieldInfo = type.GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            fieldMap[fieldName] = fieldInfo;
+        }
+
+        return fieldInfo?.GetValue(target);
     }
 
     private static void SetSerializedString(SerializedObject so, string propertyName, string value)

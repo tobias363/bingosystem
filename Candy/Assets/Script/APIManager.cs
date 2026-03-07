@@ -143,6 +143,7 @@ public partial class APIManager : MonoBehaviour
     private readonly RealtimeSchedulerState realtimeScheduler = new();
     private readonly RealtimeCountdownPresenter realtimeCountdownPresenter = new();
     private readonly RealtimeRoomConfigurator realtimeRoomConfigurator = new();
+    private readonly HashSet<int> realtimeMatchedPatternIndexes = new();
     private readonly Dictionary<int, Coroutine> realtimeNearWinBlinkCoroutines = new();
     private readonly Dictionary<int, RealtimeNearWinMeta> realtimeNearWinMetaByKey = new();
     private readonly Dictionary<int, RealtimeNearWinState> realtimeNearWinStates = new();
@@ -160,6 +161,7 @@ public partial class APIManager : MonoBehaviour
     private int drawMetricSkipped = 0;
     private string drawMetricsGameId = string.Empty;
     private bool realtimeBetArmedForNextRound = false;
+    private bool realtimePlayerParticipatingInCurrentRound = false;
     private bool pendingRealtimeBetArmRequest = false;
     private bool treatBetArmAsUnsupported = false;
     private bool realtimeBetArmAwaitingAck = false;
@@ -202,9 +204,14 @@ public partial class APIManager : MonoBehaviour
     public string ActiveHallId => hallId;
     public int CurrentTicketPage => currentTicketPage;
     public bool IsRealtimeRoundRunning => useRealtimeBackend && realtimeScheduler.IsGameRunning;
+    public bool IsActivePlayerParticipatingInRealtimeRound => useRealtimeBackend && realtimePlayerParticipatingInCurrentRound;
+    public bool IsRealtimeBetLocked =>
+        useRealtimeBackend &&
+        realtimeScheduler.IsGameRunning &&
+        (realtimePlayerParticipatingInCurrentRound || realtimeBetArmedForNextRound);
     public bool IsRealtimeRerollWindowOpen =>
         useRealtimeBackend &&
-        !realtimeScheduler.IsGameRunning &&
+        (!realtimeScheduler.IsGameRunning || !IsRealtimeBetLocked) &&
         !string.Equals(realtimeScheduler.LatestGameStatus, "ENDED", StringComparison.OrdinalIgnoreCase);
 
     public int TicketPageCount
