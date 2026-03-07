@@ -315,60 +315,7 @@ public sealed class CandyCardViewBinding
 
     private static bool ValidateTextTarget(TextMeshProUGUI target, string label, bool requireActive, List<string> errors)
     {
-        if (target == null)
-        {
-            errors.Add($"{label} er null.");
-            return false;
-        }
-
-        bool isValid = true;
-        if (target.font == null)
-        {
-            errors.Add($"{label} mangler fontAsset.");
-            isValid = false;
-        }
-
-        if (target.fontSharedMaterial == null)
-        {
-            errors.Add($"{label} mangler sharedMaterial.");
-            isValid = false;
-        }
-
-        if (!target.enabled)
-        {
-            errors.Add($"{label} er disabled.");
-            isValid = false;
-        }
-
-        if (requireActive && !target.gameObject.activeInHierarchy)
-        {
-            errors.Add($"{label} er ikke aktiv i hierarkiet.");
-            isValid = false;
-        }
-
-        if (target.color.a <= 0.01f)
-        {
-            errors.Add($"{label} har alpha=0.");
-            isValid = false;
-        }
-
-        RectTransform rectTransform = target.rectTransform;
-        if (rectTransform == null)
-        {
-            errors.Add($"{label} mangler RectTransform.");
-            isValid = false;
-        }
-        else
-        {
-            Rect rect = rectTransform.rect;
-            if (rect.width <= 1f || rect.height <= 1f)
-            {
-                errors.Add($"{label} har ugyldig TMP-rect ({rect.width:0.##}x{rect.height:0.##}).");
-                isValid = false;
-            }
-        }
-
-        return isValid;
+        return CandyCardViewBindingValidator.ValidateTextTarget(target, label, requireActive, errors);
     }
 }
 
@@ -409,7 +356,8 @@ public sealed class CandyBallSlotBinding
             isValid = false;
         }
 
-        if (!CandyCardViewBindingValidator.ValidateTextTarget(numberText, $"{prefix} numberText", requireActive: false, errors))
+        if (numberText != null &&
+            !CandyCardViewBindingValidator.ValidateTextTarget(numberText, $"{prefix} numberText", requireActive: false, errors))
         {
             isValid = false;
         }
@@ -467,7 +415,7 @@ internal static class CandyCardViewBindingValidator
         }
         else
         {
-            Rect rect = rectTransform.rect;
+            Rect rect = ResolveEffectiveRect(rectTransform);
             if (rect.width <= 1f || rect.height <= 1f)
             {
                 errors.Add($"{label} har ugyldig TMP-rect ({rect.width:0.##}x{rect.height:0.##}).");
@@ -476,5 +424,37 @@ internal static class CandyCardViewBindingValidator
         }
 
         return isValid;
+    }
+
+    private static Rect ResolveEffectiveRect(RectTransform rectTransform)
+    {
+        if (rectTransform == null)
+        {
+            return default;
+        }
+
+        Rect ownRect = rectTransform.rect;
+        if (ownRect.width > 1f && ownRect.height > 1f)
+        {
+            return ownRect;
+        }
+
+        if (rectTransform.parent != null)
+        {
+            GridLayoutGroup grid = rectTransform.parent.GetComponent<GridLayoutGroup>();
+            if (grid != null && grid.cellSize.x > 1f && grid.cellSize.y > 1f)
+            {
+                return new Rect(0f, 0f, grid.cellSize.x, grid.cellSize.y);
+            }
+
+            if (rectTransform.parent is RectTransform parentRect &&
+                parentRect.rect.width > 1f &&
+                parentRect.rect.height > 1f)
+            {
+                return parentRect.rect;
+            }
+        }
+
+        return ownRect;
     }
 }

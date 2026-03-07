@@ -305,7 +305,7 @@ public class BallManager : MonoBehaviour
         }
     }
 
-    private void ApplyBallVisual(
+    private bool ApplyBallVisual(
         Image targetImage,
         TextMeshProUGUI targetText,
         int ballNumber,
@@ -327,7 +327,7 @@ public class BallManager : MonoBehaviour
             }
 
             SetBallNumberVisibility(targetText, false);
-            return;
+            return true;
         }
 
         Sprite resolvedFallbackSprite = fallbackSprite != null
@@ -342,6 +342,7 @@ public class BallManager : MonoBehaviour
 
         SetBallNumberVisibility(targetText, true);
         RealtimeTextStyleUtils.ApplyBallNumber(targetText, ballNumber.ToString(), numberFallbackFont);
+        return false;
     }
 
     private static Vector2 GetBallSlotAnchoredPosition(int slotIndex)
@@ -629,12 +630,7 @@ public class BallManager : MonoBehaviour
                 continue;
             }
 
-            if (candidate.transform.childCount == 0)
-            {
-                continue;
-            }
-
-            if (candidate.GetComponentInChildren<TextMeshProUGUI>(true) == null)
+            if (candidate.GetComponent<Image>() == null)
             {
                 continue;
             }
@@ -729,7 +725,7 @@ public class BallManager : MonoBehaviour
             return cachedBigBallText;
         }
 
-        if (bigBallImg == null || bigBallImg.transform.childCount == 0)
+        if (bigBallImg == null)
         {
             return null;
         }
@@ -860,8 +856,8 @@ public class BallManager : MonoBehaviour
         {
             SetActiveIfChanged(bigBallImg.gameObject, true);
             TextMeshProUGUI bigBallText = ResolveBigBallText();
-            ApplyBallVisual(bigBallImg, bigBallText, drawnNumber, numberFallbackFont, bigBallSprite);
-            if (bigBallText == null)
+            bool usedNumberedBigBall = ApplyBallVisual(bigBallImg, bigBallText, drawnNumber, numberFallbackFont, bigBallSprite);
+            if (bigBallText == null && !usedNumberedBigBall)
             {
                 APIManager.instance?.ReportRealtimeRenderMismatch("draw received but no big ball text target", asError: true);
             }
@@ -893,14 +889,29 @@ public class BallManager : MonoBehaviour
         Image img = slotIndex < cachedBallImages.Count ? cachedBallImages[slotIndex] : ballObject.GetComponent<Image>();
         TextMeshProUGUI tmp = slotIndex < cachedBallTexts.Count ? cachedBallTexts[slotIndex] : null;
         TextMeshProUGUI bigBallLabel = ResolveBigBallText();
-        ApplyBallVisual(img, tmp, drawnNumber, numberFallbackFont, ballSprite);
+        bool usedNumberedSlotBall = ApplyBallVisual(img, tmp, drawnNumber, numberFallbackFont, ballSprite);
+        int configuredOverlayTargetCount = cachedBallTexts.Count;
+        if (configuredOverlayTargetCount <= 0 && usedNumberedSlotBall)
+        {
+            configuredOverlayTargetCount = 1;
+        }
+
         if (tmp != null)
         {
             APIManager.instance?.RegisterRealtimeBallRendered(
                 drawnNumber,
                 slotIndex,
-                cachedBallTexts.Count,
+                configuredOverlayTargetCount,
                 tmp,
+                bigBallLabel);
+        }
+        else if (usedNumberedSlotBall)
+        {
+            APIManager.instance?.RegisterRealtimeBallRendered(
+                drawnNumber,
+                slotIndex,
+                configuredOverlayTargetCount,
+                null,
                 bigBallLabel);
         }
         else

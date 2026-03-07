@@ -234,10 +234,14 @@ public static class CandyTheme1BindingTools
                 isValid = false;
             }
 
-            if (ballBindings != null && ballBindings.CountValidBallTextTargets() != 30)
+            if (ballBindings != null)
             {
-                builder.AppendLine($"Ball bindings har ikke 30 gyldige tallfelt. Fikk {ballBindings.CountValidBallTextTargets()}.");
-                isValid = false;
+                int validBallTextTargets = ballBindings.CountValidBallTextTargets();
+                if (validBallTextTargets != 0 && validBallTextTargets != 30)
+                {
+                    builder.AppendLine($"Ball bindings har ugyldig antall gyldige tallfelt. Forventet 0 eller 30. Fikk {validBallTextTargets}.");
+                    isValid = false;
+                }
             }
 
             if (generator.autoSpinRemainingPlayText == null)

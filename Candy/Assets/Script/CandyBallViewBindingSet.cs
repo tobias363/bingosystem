@@ -90,7 +90,8 @@ public sealed class CandyBallViewBindingSet : MonoBehaviour
             isValid = false;
         }
 
-        if (!CandyCardViewBindingValidator.ValidateTextTarget(bigBallText, "BigBallText", requireActive: true, errors))
+        if (bigBallText != null &&
+            !CandyCardViewBindingValidator.ValidateTextTarget(bigBallText, "BigBallText", requireActive: true, errors))
         {
             isValid = false;
         }
