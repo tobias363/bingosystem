@@ -606,11 +606,12 @@ test("rerollTicketsForPlayer blocks reroll while active player is in the running
         playerId: hostPlayerId,
         ticketsPerPlayer: 4
       }),
-    (error: unknown) => error instanceof DomainError && error.code === "ROUND_ALREADY_RUNNING"
+    (error: unknown) =>
+      error instanceof DomainError && error.code === "BET_LOCKED_DURING_RUNNING_GAME"
   );
 });
 
-test("rerollTicketsForPlayer allows observer preround reroll while another player's round is running", async () => {
+test("rerollTicketsForPlayer blocks preround reroll for observers while another player's round is running", async () => {
   const engine = new BingoEngine(new SequenceTicketBingoAdapter(), new InMemoryWalletAdapter(), {
     minPlayersToStart: 2
   });
@@ -638,18 +639,20 @@ test("rerollTicketsForPlayer allows observer preround reroll while another playe
     allowEmptyRound: true
   });
 
-  const rerolled = await engine.rerollTicketsForPlayer({
-    roomCode,
-    playerId: guestPlayerId,
-    ticketsPerPlayer: 4,
-    ticketIndex: 1
-  });
+  await assert.rejects(
+    async () =>
+      engine.rerollTicketsForPlayer({
+        roomCode,
+        playerId: guestPlayerId,
+        ticketsPerPlayer: 4,
+        ticketIndex: 1
+      }),
+    (error: unknown) =>
+      error instanceof DomainError && error.code === "BET_LOCKED_DURING_RUNNING_GAME"
+  );
 
-  assert.deepEqual(rerolled.rerolledTicketIndexes, [1]);
-  assert.deepEqual(rerolled.tickets[0], guestPreround[0]);
-  assert.notDeepEqual(rerolled.tickets[1], guestPreround[1]);
-  assert.deepEqual(rerolled.tickets[2], guestPreround[2]);
-  assert.deepEqual(rerolled.tickets[3], guestPreround[3]);
+  const snapshot = engine.getRoomSnapshot(roomCode);
+  assert.deepEqual(snapshot.preRoundTickets?.[guestPlayerId], guestPreround);
 });
 
 test("rerollTicketsForPlayer validates ticketsPerPlayer range", async () => {

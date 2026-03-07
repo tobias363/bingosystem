@@ -564,8 +564,11 @@ export class BingoEngine {
     const player = this.requirePlayer(room, input.playerId);
     this.assertWalletAllowedForGameplay(player.walletId, Date.now());
     this.assertRoundCleanupComplete(room);
-    if (room.currentGame?.status === "RUNNING" && room.currentGame.tickets.has(player.id)) {
-      throw new DomainError("ROUND_ALREADY_RUNNING", "Kan ikke bytte bonger mens runden pågår.");
+    if (room.currentGame?.status === "RUNNING") {
+      throw new DomainError(
+        "BET_LOCKED_DURING_RUNNING_GAME",
+        "Kan ikke bytte tall etter at innsatsen er låst for neste runde mens trekningen pågår."
+      );
     }
 
     const ticketsPerPlayer = input.ticketsPerPlayer;
