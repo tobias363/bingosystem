@@ -9,9 +9,10 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "check": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts",
-    "test:compliance": "tsx --test src/compliance/**/*.test.ts",
-    "sim:rtp-near-miss": "tsx src/compliance/rtp-near-miss-simulation.ts"
+    "test": "BINGO_RTP_TELEMETRY_LOGS=false tsx --test src/**/*.test.ts",
+    "test:compliance": "BINGO_RTP_TELEMETRY_LOGS=false tsx --test src/compliance/**/*.test.ts",
+    "sim:rtp-near-miss": "tsx src/compliance/rtp-near-miss-simulation.ts",
+    "check:rtp-near-miss": "BINGO_RTP_TELEMETRY_LOGS=false tsx src/compliance/rtp-near-miss-simulation.ts --rounds=500 --targets=80 --windowSize=500 --entryFee=100 --no-near-miss-gate && BINGO_RTP_TELEMETRY_LOGS=false tsx src/compliance/rtp-near-miss-simulation.ts --rounds=500 --targets=80 --windowSize=500 --entryFee=100 --no-force-host-win --no-rtp-gate"
   },
   "dependencies": {
     "cors": "^2.8.5",

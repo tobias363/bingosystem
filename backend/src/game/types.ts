@@ -47,6 +47,7 @@ export interface GameState {
   remainingPayoutBudget: number;
   drawBag: number[];
   drawnNumbers: number[];
+  nearMissTargetRateApplied?: number;
   tickets: Map<string, Ticket[]>;
   marks: Map<string, Set<number>[]>;
   claims: ClaimRecord[];
@@ -80,6 +81,7 @@ export interface GameSnapshot {
   remainingPayoutBudget: number;
   drawnNumbers: number[];
   remainingNumbers: number;
+  nearMissTargetRateApplied?: number;
   lineWinnerId?: string;
   bingoWinnerId?: string;
   claims: ClaimRecord[];

@@ -32,3 +32,6 @@ jobs:
 
       - name: Run compliance suite (required gate)
         run: npm --prefix backend run test:compliance
+
+      - name: Run RTP / near-miss simulation gate
+        run: npm --prefix backend run check:rtp-near-miss

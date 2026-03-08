@@ -39,5 +39,8 @@ jobs:
       - name: Run compliance suite
         run: npm --prefix backend run test:compliance
 
+      - name: Run RTP / near-miss gate
+        run: npm --prefix backend run check:rtp-near-miss
+
       - name: Build backend
         run: npm --prefix backend run build

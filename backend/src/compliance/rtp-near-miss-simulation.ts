@@ -13,6 +13,8 @@ interface SimulationOptions {
   forceHostWin: boolean;
   windowSize: number;
   outputJson: boolean;
+  enforceRtpGate: boolean;
+  enforceNearMissGate: boolean;
 }
 
 interface SimulationResult {
@@ -21,11 +23,15 @@ interface SimulationResult {
   payoutPercentActualAvg: number;
   payoutPercentTargetAvg: number;
   nearMissRateAvg: number;
+  nearMissTargetRate: number;
   rtpDeviation: number;
   rtpFloorPass: boolean;
   rtpPass: boolean;
   nearMissPass: boolean;
 }
+
+const NEAR_MISS_TARGET_RATE = 0.35;
+const NEAR_MISS_TOLERANCE = 0.05;
 
 function parseArgs(argv: string[]): SimulationOptions {
   const options: SimulationOptions = {
@@ -36,7 +42,9 @@ function parseArgs(argv: string[]): SimulationOptions {
     ticketsPerPlayer: 4,
     forceHostWin: true,
     windowSize: 10_000,
-    outputJson: false
+    outputJson: false,
+    enforceRtpGate: true,
+    enforceNearMissGate: true
   };
 
   for (const arg of argv) {
@@ -46,6 +54,14 @@ function parseArgs(argv: string[]): SimulationOptions {
     }
     if (arg === "--no-force-host-win") {
       options.forceHostWin = false;
+      continue;
+    }
+    if (arg === "--no-rtp-gate") {
+      options.enforceRtpGate = false;
+      continue;
+    }
+    if (arg === "--no-near-miss-gate") {
+      options.enforceNearMissGate = false;
       continue;
     }
     if (!arg.startsWith("--")) {
@@ -202,13 +218,22 @@ async function runRound(input: {
     try {
       number = await input.engine.drawNextNumber({
         roomCode: input.roomCode,
-        actorPlayerId: input.hostPlayerId
+        actorPlayerId: input.hostPlayerId,
+        autoSettleClaims: !input.forceHostWin
       });
     } catch (error) {
       if (error instanceof DomainError && error.code === "NO_MORE_NUMBERS") {
         break;
       }
       throw error;
+    }
+
+    if (!input.forceHostWin) {
+      const snapshot = input.engine.getRoomSnapshot(input.roomCode);
+      if (snapshot.currentGame?.status === "ENDED") {
+        break;
+      }
+      continue;
     }
 
     await input.engine.markNumber({
@@ -268,7 +293,7 @@ async function runTargetSimulation(options: SimulationOptions, target: number): 
     maxDrawsPerRound: 30,
     rtpRollingWindowSize: options.windowSize,
     nearMissBiasEnabled: true,
-    nearMissTargetRate: 0.3
+    nearMissTargetRate: NEAR_MISS_TARGET_RATE
   });
 
   const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
@@ -320,10 +345,11 @@ async function runTargetSimulation(options: SimulationOptions, target: number): 
     payoutPercentActualAvg: telemetry.payoutPercentActualAvg,
     payoutPercentTargetAvg: telemetry.payoutPercentTargetAvg,
     nearMissRateAvg: nearMissRate,
+    nearMissTargetRate: NEAR_MISS_TARGET_RATE,
     rtpDeviation,
     rtpFloorPass,
     rtpPass: rtpDeviation <= 1.0 && rtpFloorPass,
-    nearMissPass: nearMissRate >= 0.25 && nearMissRate <= 0.35
+    nearMissPass: Math.abs(nearMissRate - NEAR_MISS_TARGET_RATE) <= NEAR_MISS_TOLERANCE
   };
 }
 
@@ -340,7 +366,11 @@ async function main(): Promise<void> {
     options,
     generatedAt: new Date().toISOString(),
     results,
-    allGatesPass: results.every((result) => result.rtpPass && result.nearMissPass)
+    allGatesPass: results.every(
+      (result) =>
+        (!options.enforceRtpGate || result.rtpPass) &&
+        (!options.enforceNearMissGate || result.nearMissPass)
+    )
   };
 
   if (options.outputJson) {
@@ -350,7 +380,8 @@ async function main(): Promise<void> {
       console.log(
         `[sim] target=${result.targetRtpPercent}% rounds=${result.rounds} ` +
           `actualRtp=${result.payoutPercentActualAvg}% deviation=${result.rtpDeviation} ` +
-          `nearMiss=${result.nearMissRateAvg} rtpFloorPass=${result.rtpFloorPass} ` +
+          `nearMiss=${result.nearMissRateAvg} nearMissTarget=${result.nearMissTargetRate} ` +
+          `rtpFloorPass=${result.rtpFloorPass} ` +
           `rtpPass=${result.rtpPass} nearMissPass=${result.nearMissPass}`
       );
     }
