@@ -211,6 +211,12 @@ public static class Theme1ProductionGuardrails
             isValid = false;
         }
 
+        if (!Theme1TextlessControlMigration.ValidateOpenScene(activeScene, out string textlessReport))
+        {
+            builder.AppendLine(textlessReport);
+            isValid = false;
+        }
+
         report = builder.Length == 0
             ? $"{Prefix} OK"
             : $"{Prefix}{Environment.NewLine}{builder}";

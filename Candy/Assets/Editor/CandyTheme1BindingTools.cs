@@ -222,6 +222,7 @@ public static class CandyTheme1BindingTools
 
         ApplyTheme1SceneCanvasPolicy(scene);
         Theme1SceneScaleNormalizer.ApplyPolicy(scene, productionRoot, logSummary);
+        Theme1TextlessControlMigration.ApplyToOpenScene(scene, saveScene: false, logSummary: false);
         Theme1AssetImportAudit.ApplyTheme1AssetImportPolicyCli();
 
         EditorUtility.SetDirty(productionRootObject);

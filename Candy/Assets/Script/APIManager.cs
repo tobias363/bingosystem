@@ -1675,12 +1675,6 @@ public partial class APIManager : MonoBehaviour
             if (generator != null && generator.autoSpinRemainingPlayText != null)
             {
                 realtimeRoomPlayerCountText = CandyTheme1HudBindingSet.FindExistingPlayerCountText(generator.autoSpinRemainingPlayText);
-                if (realtimeRoomPlayerCountText == null &&
-                    !HasExplicitTheme1HudBindings() &&
-                    !Theme1ManagedTypographyRegistry.BelongsToTheme1Presentation(generator.autoSpinRemainingPlayText))
-                {
-                    realtimeRoomPlayerCountText = CreateRuntimeRealtimeRoomPlayerCountText(generator.autoSpinRemainingPlayText);
-                }
             }
         }
 
@@ -1719,42 +1713,6 @@ public partial class APIManager : MonoBehaviour
     private bool HasExplicitTheme1HudBindings()
     {
         return GetComponent<CandyTheme1HudBindingSet>() != null || theme1GameplayViewRoot != null;
-    }
-
-    private TextMeshProUGUI CreateRuntimeRealtimeRoomPlayerCountText(TextMeshProUGUI countdownText)
-    {
-        if (countdownText == null || countdownText.transform.parent == null)
-        {
-            return null;
-        }
-
-        Transform parent = countdownText.transform.parent;
-        GameObject labelObject = new GameObject("RealtimeRoomPlayerCountText");
-        labelObject.transform.SetParent(parent, false);
-
-        RectTransform rect = labelObject.AddComponent<RectTransform>();
-        rect.anchorMin = countdownText.rectTransform.anchorMin;
-        rect.anchorMax = countdownText.rectTransform.anchorMax;
-        rect.pivot = countdownText.rectTransform.pivot;
-        rect.anchoredPosition = countdownText.rectTransform.anchoredPosition + realtimeRoomPlayerCountOffset;
-        rect.sizeDelta = new Vector2(
-            Mathf.Max(realtimeRoomPlayerCountMinWidth, countdownText.rectTransform.rect.width),
-            Mathf.Max(24f, countdownText.rectTransform.rect.height * 0.5f));
-
-        TextMeshProUGUI label = labelObject.AddComponent<TextMeshProUGUI>();
-        label.alignment = TextAlignmentOptions.Center;
-        label.raycastTarget = false;
-        label.fontSize = Mathf.Max(18f, countdownText.fontSize * 0.42f);
-        label.color = countdownText.color;
-        label.enableWordWrapping = false;
-        label.text = $"{realtimeRoomPlayerCountPrefix} 0";
-        RealtimeTextStyleUtils.ApplyHudText(
-            label,
-            $"{realtimeRoomPlayerCountPrefix} 0",
-            preferredColor: countdownText.color);
-
-        ReportRealtimeRenderMismatch("HUD roomPlayerCountText manglet i Theme1. Opprettet midlertidig runtime-label.", asError: false);
-        return label;
     }
 
     private void TickScheduledRoundStateRefresh()

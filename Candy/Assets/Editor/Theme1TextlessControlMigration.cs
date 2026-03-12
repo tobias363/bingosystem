@@ -217,7 +217,7 @@ public static class Theme1TextlessControlMigration
             throw new InvalidOperationException($"{Prefix} '{definition.ObjectName}' mangler Image-komponent.");
         }
 
-        Sprite sprite = AssetDatabase.LoadAssetAtPath<Sprite>(definition.SpriteAssetPath);
+        Sprite sprite = LoadSprite(definition.SpriteAssetPath);
         if (sprite == null)
         {
             throw new InvalidOperationException($"{Prefix} Fant ikke sprite '{definition.SpriteAssetPath}'.");
@@ -232,6 +232,83 @@ public static class Theme1TextlessControlMigration
         image.sprite = sprite;
         EditorUtility.SetDirty(image);
         return 1;
+    }
+
+    private static Sprite LoadSprite(string assetPath)
+    {
+        Sprite sprite = AssetDatabase.LoadAssetAtPath<Sprite>(assetPath);
+        if (sprite != null)
+        {
+            return sprite;
+        }
+
+        TextureImporter importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+        if (importer == null)
+        {
+            return null;
+        }
+
+        bool changed = false;
+        if (importer.textureType != TextureImporterType.Sprite)
+        {
+            importer.textureType = TextureImporterType.Sprite;
+            changed = true;
+        }
+
+        if (importer.spriteImportMode != SpriteImportMode.Single)
+        {
+            importer.spriteImportMode = SpriteImportMode.Single;
+            changed = true;
+        }
+
+        if (importer.textureCompression != TextureImporterCompression.Uncompressed)
+        {
+            importer.textureCompression = TextureImporterCompression.Uncompressed;
+            changed = true;
+        }
+
+        if (importer.compressionQuality != 100)
+        {
+            importer.compressionQuality = 100;
+            changed = true;
+        }
+
+        if (importer.mipmapEnabled)
+        {
+            importer.mipmapEnabled = false;
+            changed = true;
+        }
+
+        if (importer.streamingMipmaps)
+        {
+            importer.streamingMipmaps = false;
+            changed = true;
+        }
+
+        if (!importer.alphaIsTransparency)
+        {
+            importer.alphaIsTransparency = true;
+            changed = true;
+        }
+
+        if (importer.maxTextureSize < 4096)
+        {
+            importer.maxTextureSize = 4096;
+            changed = true;
+        }
+
+        if (importer.filterMode != FilterMode.Bilinear)
+        {
+            importer.filterMode = FilterMode.Bilinear;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            importer.SaveAndReimport();
+        }
+
+        return AssetDatabase.LoadAssetAtPath<Sprite>(assetPath);
     }
 
     private static int EnsureLabel(GameObject target, ControlDefinition definition)
@@ -285,7 +362,7 @@ public static class Theme1TextlessControlMigration
         label.textWrappingMode = definition.AllowWrap ? TextWrappingModes.Normal : TextWrappingModes.NoWrap;
         label.overflowMode = TextOverflowModes.Overflow;
         label.alignment = TextAlignmentOptions.Center;
-        label.enableExtraPadding = true;
+        label.extraPadding = true;
         Theme1BongTypography.ApplyPrizeLabel(label);
         EditorUtility.SetDirty(rect);
         EditorUtility.SetDirty(label);

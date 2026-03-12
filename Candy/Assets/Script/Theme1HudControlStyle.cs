@@ -89,7 +89,7 @@ public static class Theme1HudControlStyle
         target.fontSizeMax = Mathf.Max(minSize, maxSize);
         target.fontWeight = FontWeight.Medium;
         target.fontStyle = FontStyles.Normal;
-        target.enableExtraPadding = true;
+        target.extraPadding = true;
         target.textWrappingMode = TextWrappingModes.NoWrap;
         target.overflowMode = TextOverflowModes.Overflow;
         target.raycastTarget = false;
