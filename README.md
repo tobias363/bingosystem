@@ -130,6 +130,12 @@ Full lokal workflow er dokumentert i:
 
 - `docs/LOCAL_SOURCE_OF_TRUTH_WORKFLOW.md`
 
+Anbefalt Unity-verifisering for Theme1/Candy pattern-endringer:
+
+```bash
+bash scripts/unity-pattern-smoke.sh
+```
+
 ## Rask kvalitets-sjekk (backend + Unity)
 
 Kjør alle basiskontroller med:

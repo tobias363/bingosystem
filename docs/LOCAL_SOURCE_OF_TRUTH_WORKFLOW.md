@@ -57,7 +57,13 @@ git switch codex/source-of-truth
 git cherry-pick <commit>
 ```
 
-Eksempel pa ny verifisering:
+Anbefalt verifisering for Theme1/Candy pattern-endringer:
+
+```bash
+bash scripts/unity-pattern-smoke.sh
+```
+
+Legacy dedicated parity-smoke finnes fortsatt ved behov:
 
 ```bash
 bash scripts/unity-theme1-smoke.sh
