@@ -9,6 +9,34 @@ using System.Text;
 
 public class BallManager : MonoBehaviour
 {
+    private sealed class MachineClusterBall
+    {
+        public RectTransform Rect;
+        public Vector2 BasePosition;
+        public Vector2 CurrentPosition;
+        public Vector2 Velocity;
+        public float BaseScale;
+        public float OrbitRadiusX;
+        public float OrbitRadiusY;
+        public float OrbitSpeed;
+        public float OrbitPhase;
+        public float FlowAmplitudeX;
+        public float FlowAmplitudeY;
+        public float FlowSpeed;
+        public float FlowPhase;
+        public float NoiseSeedX;
+        public float NoiseSeedY;
+        public float NoiseSpeed;
+        public float JitterAmplitudeX;
+        public float JitterAmplitudeY;
+        public float RotationAmplitude;
+        public float ScaleAmplitude;
+        public float ScaleSpeed;
+        public float ShakeSeedA;
+        public float ShakeSeedB;
+        public float ShakeSeedC;
+    }
+
     private static readonly string[] GameplayOverlayPathsToHide =
     {
         "BingoCanvas/Image",
@@ -58,6 +86,7 @@ public class BallManager : MonoBehaviour
     private List<int> ballIndexList = new List<int>();
     [SerializeField] private bool verboseDrawLogging = false;
     [SerializeField] [Range(0.1f, 1f)] private float glassAnimationSpeedMultiplier = 0.59f;
+    [SerializeField] private bool overrideTheme1GlassMotion = false;
     private int[] extraBallPosArr = new int[5] { -140, -70, 140, 70, 0 };
     private List<GameObject> instantiatedExtraBall = new List<GameObject>();
     private readonly List<Vector3> realtimeBallLayoutPositions = new List<Vector3>();
@@ -71,8 +100,14 @@ public class BallManager : MonoBehaviour
     private Coroutine extraBallBatchRoutine;
     private TextMeshProUGUI cachedBigBallText;
     private readonly List<Animator> cachedGlassAnimators = new List<Animator>();
+    private readonly List<MachineClusterBall> machineClusterBalls = new List<MachineClusterBall>();
     private readonly Dictionary<string, GameObject> cachedOverlayObjects = new Dictionary<string, GameObject>();
     private float appliedGlassAnimatorSpeed = -1f;
+    private float observedTimeScale = float.NaN;
+    private float machineClusterRattleBoost;
+    private Vector2 machineClusterBaseParentPosition;
+    private bool machineClusterMotionReady;
+    private bool customGlassMotionActive;
     private CandyBallViewBindingSet explicitViewBindings;
     private bool numberedBallSpritesLoaded;
 
@@ -92,7 +127,9 @@ public class BallManager : MonoBehaviour
         CacheExtraBallTextRefs();
         cachedBigBallText = ResolveBigBallText();
         CacheGlassAnimator();
+        CacheTheme1MachineClusterBalls();
         EnsureNumberedBallSpritesLoaded();
+        observedTimeScale = Time.timeScale;
         ApplyGlassAnimationSpeed(force: true);
 
         SetActiveIfChanged(ballOutMachineAnimParent, true);
@@ -111,13 +148,28 @@ public class BallManager : MonoBehaviour
         HideGameplayOverlays();
         // Ensure speed sync after all Awake calls and scene activation.
         EnsureNumberedBallSpritesLoaded();
+        CacheTheme1MachineClusterBalls();
+        observedTimeScale = Time.timeScale;
         ApplyGlassAnimationSpeed(force: true);
     }
 
     private void Update()
     {
-        HideGameplayOverlays();
-        ApplyGlassAnimationSpeed();
+        if (Mathf.Abs(observedTimeScale - Time.timeScale) < 0.001f)
+        {
+            return;
+        }
+
+        observedTimeScale = Time.timeScale;
+        ApplyGlassAnimationSpeed(force: true);
+    }
+
+    private void LateUpdate()
+    {
+        if (overrideTheme1GlassMotion)
+        {
+            AnimateTheme1MachineCluster(Time.unscaledTime, Time.unscaledDeltaTime);
+        }
     }
 
     private void CacheGlassAnimator()
@@ -483,6 +535,11 @@ public class BallManager : MonoBehaviour
 
     private void ApplyGlassAnimationSpeed(bool force = false)
     {
+        if (overrideTheme1GlassMotion && customGlassMotionActive)
+        {
+            return;
+        }
+
         if (cachedGlassAnimators.Count == 0)
         {
             return;
@@ -508,6 +565,234 @@ public class BallManager : MonoBehaviour
         }
 
         appliedGlassAnimatorSpeed = desiredSpeed;
+    }
+
+    private void CacheTheme1MachineClusterBalls()
+    {
+        machineClusterBalls.Clear();
+        machineClusterMotionReady = false;
+        customGlassMotionActive = false;
+
+        if (!overrideTheme1GlassMotion)
+        {
+            RestoreGlassAnimators();
+            return;
+        }
+
+        if (ballOutMachineAnimParent == null)
+        {
+            return;
+        }
+
+        if (!string.Equals(SceneManager.GetActiveScene().name, "Theme1", System.StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        RectTransform parentRect = ballOutMachineAnimParent.transform as RectTransform;
+        if (parentRect == null)
+        {
+            return;
+        }
+
+        machineClusterBaseParentPosition = parentRect.anchoredPosition;
+
+        System.Random random = new System.Random(31);
+        for (int i = 0; i < parentRect.childCount; i++)
+        {
+            RectTransform childRect = parentRect.GetChild(i) as RectTransform;
+            if (childRect == null || childRect.GetComponent<Image>() == null)
+            {
+                continue;
+            }
+
+            Vector2 basePosition = childRect.anchoredPosition;
+            basePosition = new Vector2(basePosition.x * 1.26f, (basePosition.y * 1.06f) - 10f);
+            MachineClusterBall clusterBall = new MachineClusterBall
+            {
+                Rect = childRect,
+                BasePosition = basePosition,
+                CurrentPosition = basePosition,
+                Velocity = Vector2.zero,
+                BaseScale = childRect.localScale.x,
+                OrbitRadiusX = Mathf.Lerp(1.5f, 4.2f, (float)random.NextDouble()),
+                OrbitRadiusY = Mathf.Lerp(2.5f, 6.5f, (float)random.NextDouble()),
+                OrbitSpeed = Mathf.Lerp(0.65f, 1.05f, (float)random.NextDouble()),
+                OrbitPhase = (float)(random.NextDouble() * Mathf.PI * 2f),
+                FlowAmplitudeX = Mathf.Lerp(6f, 12f, (float)random.NextDouble()),
+                FlowAmplitudeY = Mathf.Lerp(22f, 38f, (float)random.NextDouble()),
+                FlowSpeed = Mathf.Lerp(2.8f, 4.8f, (float)random.NextDouble()),
+                FlowPhase = (float)(random.NextDouble() * Mathf.PI * 2f),
+                NoiseSeedX = Mathf.Lerp(4f, 96f, (float)random.NextDouble()),
+                NoiseSeedY = Mathf.Lerp(104f, 196f, (float)random.NextDouble()),
+                NoiseSpeed = Mathf.Lerp(1.8f, 3.4f, (float)random.NextDouble()),
+                JitterAmplitudeX = Mathf.Lerp(9f, 17f, (float)random.NextDouble()),
+                JitterAmplitudeY = Mathf.Lerp(16f, 28f, (float)random.NextDouble()),
+                RotationAmplitude = Mathf.Lerp(10f, 22f, (float)random.NextDouble()),
+                ScaleAmplitude = Mathf.Lerp(0.025f, 0.065f, (float)random.NextDouble()),
+                ScaleSpeed = Mathf.Lerp(4.4f, 6.8f, (float)random.NextDouble()),
+                ShakeSeedA = Mathf.Lerp(220f, 480f, (float)random.NextDouble()),
+                ShakeSeedB = Mathf.Lerp(520f, 820f, (float)random.NextDouble()),
+                ShakeSeedC = Mathf.Lerp(920f, 1280f, (float)random.NextDouble())
+            };
+
+            childRect.anchoredPosition = basePosition;
+            childRect.localScale = Vector3.one * clusterBall.BaseScale;
+            machineClusterBalls.Add(clusterBall);
+        }
+
+        if (machineClusterBalls.Count == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < cachedGlassAnimators.Count; i++)
+        {
+            Animator animator = cachedGlassAnimators[i];
+            if (animator != null)
+            {
+                animator.enabled = false;
+            }
+        }
+
+        machineClusterMotionReady = true;
+        customGlassMotionActive = true;
+    }
+
+    private void RestoreGlassAnimators()
+    {
+        customGlassMotionActive = false;
+        machineClusterMotionReady = false;
+        machineClusterBalls.Clear();
+
+        if (ballOutMachineAnimParent != null && ballOutMachineAnimParent.transform is RectTransform parentRect)
+        {
+            parentRect.anchoredPosition = machineClusterBaseParentPosition;
+            parentRect.localEulerAngles = Vector3.zero;
+        }
+
+        for (int i = 0; i < cachedGlassAnimators.Count; i++)
+        {
+            Animator animator = cachedGlassAnimators[i];
+            if (animator != null && !animator.enabled)
+            {
+                animator.enabled = true;
+            }
+        }
+    }
+
+    private void AnimateTheme1MachineCluster(float time, float dt)
+    {
+        if (!machineClusterMotionReady || !customGlassMotionActive || machineClusterBalls.Count == 0)
+        {
+            return;
+        }
+
+        if (ballOutMachineAnimParent == null || !ballOutMachineAnimParent.activeInHierarchy)
+        {
+            return;
+        }
+
+        float shakeBoost = 1f + (machineClusterRattleBoost * 2.45f);
+        Vector2 clusterShake = new Vector2(
+            ((((Mathf.PerlinNoise(14.7f, time * 15.4f) - 0.5f) * 2f) * 9f) + Mathf.Sin(time * 37.4f) * 4.8f + Mathf.Cos(time * 29.5f) * 3.1f + Mathf.Sign(Mathf.Sin(time * 17.8f)) * 2.8f) * shakeBoost,
+            ((((Mathf.PerlinNoise(27.4f, time * 16.9f) - 0.5f) * 2f) * 17f) + Mathf.Sin(time * 34.6f) * 12.6f + Mathf.Cos(time * 41.8f) * 10.1f + Mathf.Sign(Mathf.Sin(time * 21.7f)) * 5.2f) * shakeBoost);
+        Vector2 globalLift = new Vector2(
+            Mathf.Sin(time * 6.2f) * 2.4f,
+            Mathf.Sin(time * 9.6f) * 6.8f + Mathf.Cos(time * 5.4f) * 4.2f);
+        if (ballOutMachineAnimParent.transform is RectTransform clusterParentRect)
+        {
+            Vector2 parentShake = new Vector2(clusterShake.x * 0.16f, clusterShake.y * 0.13f);
+            clusterParentRect.anchoredPosition = machineClusterBaseParentPosition + parentShake;
+            clusterParentRect.localEulerAngles = new Vector3(
+                0f,
+                0f,
+                (Mathf.Sin(time * 12.6f) * 1.6f + Mathf.Cos(time * 8.4f) * 0.8f) * (0.45f + machineClusterRattleBoost));
+        }
+
+        for (int i = 0; i < machineClusterBalls.Count; i++)
+        {
+            MachineClusterBall ball = machineClusterBalls[i];
+            if (ball.Rect == null)
+            {
+                continue;
+            }
+
+            float orbitTime = (time * ball.OrbitSpeed) + ball.OrbitPhase;
+            Vector2 orbitOffset = new Vector2(
+                Mathf.Cos(orbitTime) * ball.OrbitRadiusX,
+                Mathf.Sin((orbitTime * 1.18f) + ball.FlowPhase) * ball.OrbitRadiusY);
+
+            float flowTime = (time * ball.FlowSpeed) + ball.FlowPhase;
+            Vector2 flowOffset = new Vector2(
+                Mathf.Sin(flowTime) * ball.FlowAmplitudeX,
+                Mathf.Cos(flowTime * 1.21f) * ball.FlowAmplitudeY * shakeBoost);
+
+            float noiseTime = time * ball.NoiseSpeed;
+            Vector2 jitterOffset = new Vector2(
+                (((Mathf.PerlinNoise(ball.NoiseSeedX, noiseTime) - 0.5f) * 2f) * ball.JitterAmplitudeX +
+                 Mathf.Sin((time * 22.4f) + ball.ShakeSeedA) * 4.1f +
+                 Mathf.Sign(Mathf.Sin((time * 18.7f) + ball.ShakeSeedB)) * 2.4f) * shakeBoost,
+                (((Mathf.PerlinNoise(ball.NoiseSeedY, noiseTime * 1.24f) - 0.5f) * 2f) * ball.JitterAmplitudeY +
+                 Mathf.Cos((time * 27.7f) + ball.ShakeSeedB) * 6.4f +
+                 Mathf.Sign(Mathf.Sin((time * 24.8f) + ball.ShakeSeedC)) * 4.2f) * shakeBoost);
+            Vector2 microShake = new Vector2(
+                Mathf.Sin((time * 31.8f) + ball.ShakeSeedC) * 4.8f + Mathf.Sign(Mathf.Sin((time * 39.4f) + ball.ShakeSeedA)) * 2.6f,
+                Mathf.Cos((time * 37.6f) + ball.ShakeSeedA) * 8.1f + Mathf.Sign(Mathf.Sin((time * 43.2f) + ball.ShakeSeedB)) * 3.8f) * shakeBoost;
+
+            Vector2 desiredPosition = ConstrainMachineClusterToGlobe(ball, ball.BasePosition + clusterShake + globalLift + orbitOffset + flowOffset + jitterOffset + microShake);
+            Vector2 springDelta = desiredPosition - ball.CurrentPosition;
+            float springStrength = 24.5f;
+            float damping = Mathf.Clamp01(1f - (dt * 4.9f));
+            ball.Velocity += springDelta * springStrength * dt;
+            ball.Velocity += new Vector2(
+                Mathf.Sin((time * 33.7f) + ball.ShakeSeedB) * 22f + Mathf.Sign(Mathf.Sin((time * 41.8f) + ball.ShakeSeedC)) * 14f,
+                Mathf.Cos((time * 39.1f) + ball.ShakeSeedC) * 34f + Mathf.Sign(Mathf.Sin((time * 46.5f) + ball.ShakeSeedA)) * 22f) * (dt * shakeBoost);
+            ball.Velocity *= damping;
+            ball.CurrentPosition = ConstrainMachineClusterToGlobe(ball, ball.CurrentPosition + (ball.Velocity * dt));
+            ball.Rect.anchoredPosition = ball.CurrentPosition;
+
+            float rotation = (((Mathf.PerlinNoise(ball.NoiseSeedX + 34.2f, noiseTime * 1.5f) - 0.5f) * 2f) * ball.RotationAmplitude
+                + Mathf.Sin((time * 21.8f) + ball.ShakeSeedA) * 4.8f) * shakeBoost;
+            ball.Rect.localEulerAngles = new Vector3(0f, 0f, rotation);
+
+            float scalePulse = 1f + (Mathf.Sin((time * ball.ScaleSpeed) + ball.FlowPhase) * ball.ScaleAmplitude);
+            ball.Rect.localScale = Vector3.one * (ball.BaseScale * scalePulse);
+        }
+
+        machineClusterBalls.Sort((left, right) => left.Rect.anchoredPosition.y.CompareTo(right.Rect.anchoredPosition.y));
+        for (int i = 0; i < machineClusterBalls.Count; i++)
+        {
+            if (machineClusterBalls[i].Rect != null)
+            {
+                machineClusterBalls[i].Rect.SetSiblingIndex(i);
+            }
+        }
+
+        if (machineClusterRattleBoost > 0f)
+        {
+            machineClusterRattleBoost = Mathf.MoveTowards(machineClusterRattleBoost, 0f, dt * 0.55f);
+        }
+    }
+
+    private static Vector2 ConstrainMachineClusterToGlobe(MachineClusterBall ball, Vector2 targetPosition)
+    {
+        float ballRadius = (25f * ball.BaseScale) + 2f;
+        Vector2 ellipseCenter = new Vector2(0f, -4f);
+        float radiusX = Mathf.Max(24f, 138f - (ballRadius * 0.88f));
+        float radiusY = Mathf.Max(20f, 118f - (ballRadius * 0.88f));
+
+        Vector2 relative = targetPosition - ellipseCenter;
+        float nx = relative.x / radiusX;
+        float ny = relative.y / radiusY;
+        float magnitude = (nx * nx) + (ny * ny);
+        if (magnitude <= 1f)
+        {
+            return targetPosition;
+        }
+
+        float scale = 1f / Mathf.Sqrt(magnitude);
+        return ellipseCenter + new Vector2(relative.x * scale, relative.y * scale);
     }
 
     private void OnDisable()
@@ -851,6 +1136,11 @@ public class BallManager : MonoBehaviour
         ApplyExplicitRealtimeViewBindingsFromComponent();
         TryAutoResolveBallsFromHierarchy();
         CacheBallComponentRefs();
+        CacheTheme1MachineClusterBalls();
+        if (overrideTheme1GlassMotion)
+        {
+            machineClusterRattleBoost = Mathf.Max(machineClusterRattleBoost, 1.15f);
+        }
 
         TMP_FontAsset numberFallbackFont = RealtimeTextStyleUtils.ResolveFallbackFont();
         CacheRealtimeBallLayoutPositions();
@@ -953,6 +1243,11 @@ public class BallManager : MonoBehaviour
         //debug.Log()
         TryAutoResolveBallsFromHierarchy();
         CacheBallComponentRefs();
+        CacheTheme1MachineClusterBalls();
+        if (overrideTheme1GlassMotion)
+        {
+            machineClusterRattleBoost = Mathf.Max(machineClusterRattleBoost, 1.15f);
+        }
         bool realtimeMode = APIManager.instance != null && APIManager.instance.UseRealtimeBackend;
         SetActiveIfChanged(ballOutMachineAnimParent, realtimeMode);
 

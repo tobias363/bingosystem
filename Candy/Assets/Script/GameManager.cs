@@ -19,6 +19,7 @@ public class GameManager : MonoBehaviour
     };
 
     public static GameManager instance;
+    public static event Action GameplayControlsStateChanged;
 
     [Header("Testing Speed")]
     [SerializeField] private bool increaseGameSpeedInTesting = true;
@@ -56,6 +57,11 @@ public class GameManager : MonoBehaviour
 
     public int CreditBalance => totalMoney;
     public int RoundWinnings => winAmt;
+
+    private static void NotifyGameplayControlsStateChanged()
+    {
+        GameplayControlsStateChanged?.Invoke();
+    }
 
     private void OnEnable()
     {
@@ -152,7 +158,7 @@ public class GameManager : MonoBehaviour
                 CardBets[i].fontSizeMin = 18;
                 CardBets[i].fontSizeMax = 36;
                 CardBets[i].alignment = TextAlignmentOptions.Center;
-                RealtimeTextStyleUtils.ApplyHudText(CardBets[i], FormatCardStakeLabel(), preferredColor: CardBets[i].color);
+                Theme1PresentationTextUtils.ApplyText(CardBets[i], FormatCardStakeLabel());
             }
         }
 
@@ -164,10 +170,10 @@ public class GameManager : MonoBehaviour
         {
             if (displayCurrentPoints[i] != null)
             {
-                RealtimeTextStyleUtils.ApplyHudText(
+                Theme1PresentationTextUtils.ApplyTopperText(
                     displayCurrentPoints[i],
                     GetFormattedPayoutLabel(i),
-                    preferredColor: displayCurrentPoints[i].color);
+                    displayCurrentPoints[i].color);
             }
         }
 
@@ -273,6 +279,8 @@ public class GameManager : MonoBehaviour
         {
             btn_creditDown.interactable = totalBets.Count > 0 && betlevel > 0;
         }
+
+        NotifyGameplayControlsStateChanged();
     }
 
     public static int ResolvePayoutSlotIndex(int rawPatternIndex, int payoutCount)
@@ -511,10 +519,10 @@ public class GameManager : MonoBehaviour
                 continue;
             }
 
-            RealtimeTextStyleUtils.ApplyHudText(
+            Theme1PresentationTextUtils.ApplyTopperText(
                 displayCurrentPoints[i],
                 GetFormattedPayoutLabel(i),
-                preferredColor: displayCurrentPoints[i].color);
+                displayCurrentPoints[i].color);
         }
     }
 
@@ -536,10 +544,15 @@ public class GameManager : MonoBehaviour
         int amount = GetCardWinAmount(cardNo);
         if (amount > 0)
         {
-            RealtimeTextStyleUtils.ApplyHudText(
+            Theme1PresentationTextUtils.ApplyText(
                 displayCardWinPoints[cardNo],
-                FormatCardWinLabel(amount),
-                preferredColor: displayCardWinPoints[cardNo].color);
+                FormatCardWinLabel(amount));
+        }
+        else
+        {
+            Theme1PresentationTextUtils.ApplyText(
+                displayCardWinPoints[cardNo],
+                string.Empty);
         }
 
         displayCardWinPoints[cardNo].gameObject.SetActive(amount > 0);
@@ -731,7 +744,7 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        RealtimeTextStyleUtils.ApplyHudText(target, FormatWholeNumber(value));
+        Theme1PresentationTextUtils.ApplyHudText(target, FormatWholeNumber(value));
     }
 
     private void ApplyTestingSpeedIfEnabled()

@@ -42,6 +42,8 @@ public sealed class Theme1CardRenderState
     public Theme1CardCellRenderState[] Cells = new Theme1CardCellRenderState[15];
     public bool[] PaylinesActive = Array.Empty<bool>();
     public int[] MatchedPatternIndexes = Array.Empty<int>();
+    public Theme1CompletedPatternRenderState[] CompletedPatterns = Array.Empty<Theme1CompletedPatternRenderState>();
+    public Theme1NearPatternRenderState ActiveNearPattern;
 
     public static Theme1CardRenderState CreateEmpty()
     {
@@ -55,10 +57,44 @@ public sealed class Theme1CardRenderState
     }
 }
 
+public readonly struct Theme1CellPrizeLabelRenderState
+{
+    public Theme1CellPrizeLabelRenderState(
+        string text,
+        Theme1WinLabelAnchor anchor,
+        int prizeAmountKr,
+        int rawPatternIndex)
+    {
+        Text = text ?? string.Empty;
+        Anchor = anchor;
+        PrizeAmountKr = prizeAmountKr;
+        RawPatternIndex = rawPatternIndex;
+    }
+
+    public string Text { get; }
+    public Theme1WinLabelAnchor Anchor { get; }
+    public int PrizeAmountKr { get; }
+    public int RawPatternIndex { get; }
+}
+
 public readonly struct Theme1CardCellRenderState
 {
     public static readonly Theme1CardCellRenderState Empty =
-        new Theme1CardCellRenderState("-", false, false, false, -1, 0, Array.Empty<int>());
+        new Theme1CardCellRenderState(
+            "-",
+            false,
+            false,
+            false,
+            -1,
+            0,
+            Array.Empty<int>(),
+            Theme1CardCellVisualState.Normal,
+            false,
+            false,
+            string.Empty,
+            Theme1WinLabelAnchor.BottomCenter,
+            Array.Empty<int>(),
+            Array.Empty<Theme1CellPrizeLabelRenderState>());
 
     public Theme1CardCellRenderState(
         string numberLabel,
@@ -67,7 +103,14 @@ public readonly struct Theme1CardCellRenderState
         bool isMatched,
         int nearWinPatternIndex = -1,
         int missingNumber = 0,
-        int[] nearWinPatternIndexes = null)
+        int[] nearWinPatternIndexes = null,
+        Theme1CardCellVisualState visualState = Theme1CardCellVisualState.Normal,
+        bool isPrizeCell = false,
+        bool isNearTargetCell = false,
+        string prizeLabel = "",
+        Theme1WinLabelAnchor prizeAnchor = Theme1WinLabelAnchor.BottomCenter,
+        int[] completedPatternIndexes = null,
+        Theme1CellPrizeLabelRenderState[] prizeLabels = null)
     {
         NumberLabel = numberLabel ?? string.Empty;
         IsSelected = isSelected;
@@ -84,6 +127,25 @@ public readonly struct Theme1CardCellRenderState
             NearWinPatternIndex = nearWinPatternIndex;
         }
         MissingNumber = missingNumber;
+        VisualState = visualState;
+        IsPrizeCell = isPrizeCell;
+        IsNearTargetCell = isNearTargetCell;
+        PrizeLabels = prizeLabels != null && prizeLabels.Length > 0
+            ? (Theme1CellPrizeLabelRenderState[])prizeLabels.Clone()
+            : BuildLegacyPrizeLabels(prizeLabel, prizeAnchor, nearWinPatternIndex, completedPatternIndexes);
+        if (PrizeLabels.Length > 0)
+        {
+            PrizeLabel = PrizeLabels[0].Text ?? string.Empty;
+            PrizeAnchor = PrizeLabels[0].Anchor;
+        }
+        else
+        {
+            PrizeLabel = prizeLabel ?? string.Empty;
+            PrizeAnchor = prizeAnchor;
+        }
+        CompletedPatternIndexes = completedPatternIndexes != null && completedPatternIndexes.Length > 0
+            ? (int[])completedPatternIndexes.Clone()
+            : Array.Empty<int>();
     }
 
     public string NumberLabel { get; }
@@ -93,6 +155,36 @@ public readonly struct Theme1CardCellRenderState
     public int NearWinPatternIndex { get; }
     public int[] NearWinPatternIndexes { get; }
     public int MissingNumber { get; }
+    public Theme1CardCellVisualState VisualState { get; }
+    public bool IsPrizeCell { get; }
+    public bool IsNearTargetCell { get; }
+    public string PrizeLabel { get; }
+    public Theme1WinLabelAnchor PrizeAnchor { get; }
+    public Theme1CellPrizeLabelRenderState[] PrizeLabels { get; }
+    public int[] CompletedPatternIndexes { get; }
+
+    private static Theme1CellPrizeLabelRenderState[] BuildLegacyPrizeLabels(
+        string prizeLabel,
+        Theme1WinLabelAnchor prizeAnchor,
+        int nearWinPatternIndex,
+        int[] completedPatternIndexes)
+    {
+        if (string.IsNullOrWhiteSpace(prizeLabel))
+        {
+            return Array.Empty<Theme1CellPrizeLabelRenderState>();
+        }
+
+        int rawPatternIndex = nearWinPatternIndex;
+        if (completedPatternIndexes != null && completedPatternIndexes.Length > 0)
+        {
+            rawPatternIndex = completedPatternIndexes[0];
+        }
+
+        return new[]
+        {
+            new Theme1CellPrizeLabelRenderState(prizeLabel, prizeAnchor, 0, rawPatternIndex)
+        };
+    }
 }
 
 public sealed class Theme1BallRackRenderState
@@ -187,6 +279,7 @@ public sealed class Theme1StateBuildInput
     public int[] DrawnNumbers = Array.Empty<int>();
     public int[][] TicketSets = Array.Empty<int[]>();
     public int[] ActivePatternIndexes = Array.Empty<int>();
+    public int[] PreferredNearPatternIndexesByCard = Array.Empty<int>();
     public byte[][] PatternMasks = Array.Empty<byte[]>();
     public string[] CardHeaderLabels = Array.Empty<string>();
     public string[] CardBetLabels = Array.Empty<string>();

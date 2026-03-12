@@ -96,49 +96,110 @@ public static class CandyRealtimeDrawLoopBenchmark
             throw new Exception("[DrawLoopBenchmark] Fant ikke APIManager.activeTicketSets via reflection.");
         }
 
+        FieldInfo logRealtimeDrawTraceField = typeof(APIManager).GetField(
+            "logRealtimeDrawTrace",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (logRealtimeDrawTraceField == null)
+        {
+            throw new Exception("[DrawLoopBenchmark] Fant ikke APIManager.logRealtimeDrawTrace via reflection.");
+        }
+
+        FieldInfo logBootstrapEventsField = typeof(APIManager).GetField(
+            "logBootstrapEvents",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (logBootstrapEventsField == null)
+        {
+            throw new Exception("[DrawLoopBenchmark] Fant ikke APIManager.logBootstrapEvents via reflection.");
+        }
+
+        FieldInfo logRealtimeLifecycleEventsField = typeof(APIManager).GetField(
+            "logRealtimeLifecycleEvents",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (logRealtimeLifecycleEventsField == null)
+        {
+            throw new Exception("[DrawLoopBenchmark] Fant ikke APIManager.logRealtimeLifecycleEvents via reflection.");
+        }
+
+        FieldInfo logRuntimeDiagnosticsField = typeof(APIManager).GetField(
+            "logRuntimeDiagnostics",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (logRuntimeDiagnosticsField == null)
+        {
+            throw new Exception("[DrawLoopBenchmark] Fant ikke APIManager.logRuntimeDiagnostics via reflection.");
+        }
+
+        FieldInfo showRealtimeDebugOverlayField = typeof(APIManager).GetField(
+            "showRealtimeDebugOverlayInEditor",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (showRealtimeDebugOverlayField == null)
+        {
+            throw new Exception("[DrawLoopBenchmark] Fant ikke APIManager.showRealtimeDebugOverlayInEditor via reflection.");
+        }
+
         activePlayerIdField.SetValue(apiManager, BenchmarkPlayerId);
         activeGameIdField.SetValue(apiManager, BenchmarkGameId);
+        bool originalLogRealtimeDrawTrace = (bool)logRealtimeDrawTraceField.GetValue(apiManager);
+        bool originalLogBootstrapEvents = (bool)logBootstrapEventsField.GetValue(apiManager);
+        bool originalLogRealtimeLifecycleEvents = (bool)logRealtimeLifecycleEventsField.GetValue(apiManager);
+        bool originalLogRuntimeDiagnostics = (bool)logRuntimeDiagnosticsField.GetValue(apiManager);
+        bool originalShowRealtimeDebugOverlay = (bool)showRealtimeDebugOverlayField.GetValue(apiManager);
+        logRealtimeDrawTraceField.SetValue(apiManager, false);
+        logBootstrapEventsField.SetValue(apiManager, false);
+        logRealtimeLifecycleEventsField.SetValue(apiManager, false);
+        logRuntimeDiagnosticsField.SetValue(apiManager, false);
+        showRealtimeDebugOverlayField.SetValue(apiManager, false);
 
-        JSONNode snapshotNode = BuildBenchmarkSnapshotNode();
-        ResetCardStates(generator);
-        processedDrawCountField.SetValue(apiManager, 0);
-        activeTicketSetsField.SetValue(apiManager, new List<List<int>>());
-        handleRealtimeRoomUpdateMethod.Invoke(apiManager, new object[] { snapshotNode });
-
-        List<double> samplesMs = new List<double>(Iterations);
-        Stopwatch stopwatch = new Stopwatch();
-
-        for (int i = 0; i < WarmupIterations; i++)
+        try
         {
+            JSONNode snapshotNode = BuildBenchmarkSnapshotNode();
             ResetCardStates(generator);
             processedDrawCountField.SetValue(apiManager, 0);
             activeTicketSetsField.SetValue(apiManager, new List<List<int>>());
             handleRealtimeRoomUpdateMethod.Invoke(apiManager, new object[] { snapshotNode });
-        }
 
-        for (int i = 0; i < Iterations; i++)
+            List<double> samplesMs = new List<double>(Iterations);
+            Stopwatch stopwatch = new Stopwatch();
+
+            for (int i = 0; i < WarmupIterations; i++)
+            {
+                ResetCardStates(generator);
+                processedDrawCountField.SetValue(apiManager, 0);
+                activeTicketSetsField.SetValue(apiManager, new List<List<int>>());
+                handleRealtimeRoomUpdateMethod.Invoke(apiManager, new object[] { snapshotNode });
+            }
+
+            for (int i = 0; i < Iterations; i++)
+            {
+                ResetCardStates(generator);
+                processedDrawCountField.SetValue(apiManager, 0);
+                activeTicketSetsField.SetValue(apiManager, new List<List<int>>());
+
+                stopwatch.Restart();
+                handleRealtimeRoomUpdateMethod.Invoke(apiManager, new object[] { snapshotNode });
+                stopwatch.Stop();
+
+                samplesMs.Add(stopwatch.Elapsed.TotalMilliseconds);
+            }
+
+            samplesMs.Sort();
+            double p50 = Percentile(samplesMs, 50);
+            double p95 = Percentile(samplesMs, 95);
+            double avg = samplesMs.Average();
+            double min = samplesMs.FirstOrDefault();
+            double max = samplesMs.LastOrDefault();
+
+            UnityEngine.Debug.Log(
+                $"[DrawLoopBenchmark] scene={resolvedScenePath} iterations={Iterations} drawCount=30 " +
+                $"avgMs={avg:F3} p50Ms={p50:F3} p95Ms={p95:F3} minMs={min:F3} maxMs={max:F3}");
+        }
+        finally
         {
-            ResetCardStates(generator);
-            processedDrawCountField.SetValue(apiManager, 0);
-            activeTicketSetsField.SetValue(apiManager, new List<List<int>>());
-
-            stopwatch.Restart();
-            handleRealtimeRoomUpdateMethod.Invoke(apiManager, new object[] { snapshotNode });
-            stopwatch.Stop();
-
-            samplesMs.Add(stopwatch.Elapsed.TotalMilliseconds);
+            logRealtimeDrawTraceField.SetValue(apiManager, originalLogRealtimeDrawTrace);
+            logBootstrapEventsField.SetValue(apiManager, originalLogBootstrapEvents);
+            logRealtimeLifecycleEventsField.SetValue(apiManager, originalLogRealtimeLifecycleEvents);
+            logRuntimeDiagnosticsField.SetValue(apiManager, originalLogRuntimeDiagnostics);
+            showRealtimeDebugOverlayField.SetValue(apiManager, originalShowRealtimeDebugOverlay);
         }
-
-        samplesMs.Sort();
-        double p50 = Percentile(samplesMs, 50);
-        double p95 = Percentile(samplesMs, 95);
-        double avg = samplesMs.Average();
-        double min = samplesMs.FirstOrDefault();
-        double max = samplesMs.LastOrDefault();
-
-        UnityEngine.Debug.Log(
-            $"[DrawLoopBenchmark] scene={resolvedScenePath} iterations={Iterations} drawCount=30 " +
-            $"avgMs={avg:F3} p50Ms={p50:F3} p95Ms={p95:F3} minMs={min:F3} maxMs={max:F3}");
     }
 
     private static JSONNode BuildBenchmarkSnapshotNode()

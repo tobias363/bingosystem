@@ -98,10 +98,12 @@ public partial class APIManager
     private void RequestRealtimeTicketRerollInternalCore(int? ticketIndex)
     {
         realtimeRerollRequestPending = true;
+        NotifyRealtimeControlsStateChanged();
         int ticketsPerPlayer = Mathf.Clamp(realtimeTicketsPerPlayer, 1, 5);
         realtimeClient.RerollTickets(activeRoomCode, activePlayerId, ticketsPerPlayer, ticketIndex, (ack) =>
         {
             realtimeRerollRequestPending = false;
+            NotifyRealtimeControlsStateChanged();
             if (ack == null)
             {
                 Debug.LogError("[APIManager] ticket:reroll feilet uten ack.");
@@ -170,6 +172,8 @@ public partial class APIManager
         LogRealtimeLifecycleEvent(
             "bet_arm_intent_changed",
             $"roomCode={activeRoomCode} playerId={activePlayerId} armed={armed} reason={reason}");
+
+        NotifyRealtimeControlsStateChanged();
 
         if (!realtimeBetArmAwaitingAck)
         {
@@ -444,6 +448,7 @@ public partial class APIManager
         realtimeBetArmAwaitingAck = false;
         realtimeBetArmRequestedAt = -1f;
         treatBetArmAsUnsupported = true;
+        NotifyRealtimeControlsStateChanged();
         Debug.LogWarning("[APIManager] bet:arm ack-timeout. Faller tilbake til direkte game:start.");
         TryFallbackSetBetArmViaHttp("socket_ack_timeout", desiredRealtimeBetArmedForNextRound, realtimeBetArmMutationVersion);
 
@@ -593,6 +598,7 @@ public partial class APIManager
 
         realtimeBetArmAwaitingAck = false;
         realtimeBetArmRequestedAt = -1f;
+        NotifyRealtimeControlsStateChanged();
         Debug.Log($"[APIManager] HTTP bet-arm fallback ok via {usedEndpoint} armed={armed}");
 
         JSONNode snapshotNode = root["data"]?["snapshot"];
@@ -620,6 +626,8 @@ public partial class APIManager
             pendingRealtimeBetArmRequest = true;
             TrySendPendingRealtimeBetArm("http_fallback_superseded_mutation");
         }
+
+        NotifyRealtimeControlsStateChanged();
 
         if (snapshotNode == null || snapshotNode.IsNull)
         {

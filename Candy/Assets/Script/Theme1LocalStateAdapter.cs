@@ -40,12 +40,12 @@ public sealed class Theme1LocalStateAdapter
             cardState.BetLabel = gameManager != null
                 ? gameManager.GetCardStakeLabel()
                 : GameManager.FormatTheme1CardStakeLabel(0);
-            cardState.WinLabel = winAmount > 0
-                ? (gameManager != null
-                    ? gameManager.FormatCardWinLabel(winAmount)
-                    : GameManager.FormatTheme1CardWinLabel(winAmount))
-                : ReadHiddenWinLabel(contractCard?.WinLabel);
-            cardState.ShowWinLabel = winAmount > 0;
+            cardState.WinLabel = Theme1CardLabelPolicy.ResolveWinLabel(
+                gameManager,
+                winAmount,
+                Theme1CardLabelPolicy.ReadHiddenWinLabel(contractCard?.WinLabel),
+                out bool showWinLabel);
+            cardState.ShowWinLabel = showWinLabel;
 
             int paylineCount = contractCard?.PaylineObjects != null ? contractCard.PaylineObjects.Length : 0;
             cardState.PaylinesActive = new bool[paylineCount];
@@ -182,17 +182,6 @@ public sealed class Theme1LocalStateAdapter
         string value = target != null ? (target.text ?? string.Empty) : string.Empty;
         return string.IsNullOrWhiteSpace(value) ? fallback : value;
     }
-
-    private static string ReadHiddenWinLabel(TMP_Text target)
-    {
-        if (target == null || !target.gameObject.activeSelf)
-        {
-            return string.Empty;
-        }
-
-        return ReadText(target, string.Empty);
-    }
-
     private static string ReadHudValue(TMP_Text primary, TMP_Text fallback)
     {
         string value = ReadText(primary, ReadText(fallback, string.Empty));

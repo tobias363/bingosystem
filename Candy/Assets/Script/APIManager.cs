@@ -39,6 +39,7 @@ public partial class APIManager : MonoBehaviour
     }
 
     public static APIManager instance;
+    public static event Action RealtimeControlsStateChanged;
 
     private const string BASE_URL = "https://bingoapi.codehabbit.com/";
     private const string DEFAULT_REALTIME_BACKEND_BASE_URL = "https://bingosystem-staging.onrender.com";
@@ -106,6 +107,7 @@ public partial class APIManager : MonoBehaviour
     [SerializeField] private bool logRuntimeDiagnostics = true;
     [SerializeField] [Min(2f)] private float runtimeDiagnosticsLogIntervalSeconds = 8f;
     [SerializeField] private bool showRealtimeDebugOverlayInEditor = true;
+    [SerializeField] [Min(0.05f)] private float realtimeDebugOverlayRefreshIntervalSeconds = 0.25f;
     [Header("Realtime UI")]
     [SerializeField] private TextMeshProUGUI realtimeRoomPlayerCountText;
     [SerializeField] private string realtimeRoomPlayerCountPrefix = "Spillere i rommet:";
@@ -148,6 +150,8 @@ public partial class APIManager : MonoBehaviour
     private float nextScheduledHeartbeatAt = -1f;
     private float nextInsufficientFundsWarningAt = -1f;
     private float nextDrawResyncAt = -1f;
+    private string lastRenderedCountdownLabel = string.Empty;
+    private string lastRenderedPlayerCountLabel = string.Empty;
     private string lastSchedulerObservationKey = string.Empty;
     private Coroutine delayedOverlayResetCoroutine;
     private string delayedOverlayResetGameId = string.Empty;
@@ -188,7 +192,9 @@ public partial class APIManager : MonoBehaviour
     private bool hasLoggedMissingRealtimeNumberGenerator = false;
     private float nextMissingRealtimeTicketsResyncAt = -1f;
     private float nextRuntimeDiagnosticsLogAt = 0f;
+    private float nextRealtimeDebugOverlayRefreshAt = 0f;
     private string lastRuntimeDiagnosticsSnapshot = string.Empty;
+    private string lastRealtimeDebugOverlaySnapshot = string.Empty;
     private string lastPatternConfigurationIssue = string.Empty;
     private int lastObservedTicketSetCount = 0;
     private int lastRenderedCardCellCount = 0;
@@ -279,6 +285,11 @@ public partial class APIManager : MonoBehaviour
         return currentTicketPage * Mathf.Max(1, GetCardSlotsCount()) + visibleCardIndex;
     }
 
+    private static void NotifyRealtimeControlsStateChanged()
+    {
+        RealtimeControlsStateChanged?.Invoke();
+    }
+
     void Awake()
     {
         instance = this;
@@ -287,10 +298,6 @@ public partial class APIManager : MonoBehaviour
         disableEntryFeeSyncAfterInsufficientFundsFallback = false;
         realtimeBackendBaseUrl = NormalizeRealtimeBackendBaseUrl(realtimeBackendBaseUrl);
         launchResolveBaseUrl = NormalizeRealtimeBackendBaseUrl(launchResolveBaseUrl);
-        if (theme1GameplayViewRoot == null)
-        {
-            theme1GameplayViewRoot = GetComponent<Theme1GameplayViewRoot>();
-        }
 #if UNITY_EDITOR
         if (!enableEditorLocalRoundFallback)
         {
@@ -387,7 +394,10 @@ public partial class APIManager : MonoBehaviour
             return;
         }
 
-        RefreshRealtimeCountdownLabel();
+        if (Time.unscaledTime >= nextCountdownRefreshAt || string.IsNullOrEmpty(lastRenderedCountdownLabel))
+        {
+            RefreshRealtimeCountdownLabel();
+        }
         TickScheduledRoundStateRefresh();
         TickScheduledRoomStateHeartbeat();
         TryStartRealtimeRoundFromSchedulerFallback(
@@ -1065,7 +1075,20 @@ public partial class APIManager : MonoBehaviour
             realtimeDebugOverlayBackground.enabled = true;
         }
 
-        realtimeDebugOverlayText.text = BuildRealtimeDebugOverlayText();
+        if (Time.unscaledTime < nextRealtimeDebugOverlayRefreshAt)
+        {
+            return;
+        }
+
+        nextRealtimeDebugOverlayRefreshAt = Time.unscaledTime + Mathf.Max(0.05f, realtimeDebugOverlayRefreshIntervalSeconds);
+        string snapshot = BuildRealtimeDebugOverlayText();
+        if (string.Equals(lastRealtimeDebugOverlaySnapshot, snapshot, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        lastRealtimeDebugOverlaySnapshot = snapshot;
+        realtimeDebugOverlayText.text = snapshot;
     }
 
     private bool ShouldShowRealtimeDebugOverlay()
@@ -1345,32 +1368,39 @@ public partial class APIManager : MonoBehaviour
 
     private void HandleRealtimeConnectionChanged(bool connected)
     {
-        if (!connected)
+        try
         {
-            return;
-        }
-
-        if (isJoinOrCreatePending)
-        {
-            if (IsJoinOrCreateTimedOut())
-            {
-                ClearJoinOrCreatePending();
-            }
-            else
+            if (!connected)
             {
                 return;
             }
-        }
 
-        if (!string.IsNullOrWhiteSpace(activeRoomCode) && !string.IsNullOrWhiteSpace(activePlayerId))
-        {
-            realtimeClient.ResumeRoom(activeRoomCode, activePlayerId, HandleResumeAck);
-            return;
-        }
+            if (isJoinOrCreatePending)
+            {
+                if (IsJoinOrCreateTimedOut())
+                {
+                    ClearJoinOrCreatePending();
+                }
+                else
+                {
+                    return;
+                }
+            }
 
-        if (joinOrCreateOnStart && string.IsNullOrWhiteSpace(activePlayerId))
+            if (!string.IsNullOrWhiteSpace(activeRoomCode) && !string.IsNullOrWhiteSpace(activePlayerId))
+            {
+                realtimeClient.ResumeRoom(activeRoomCode, activePlayerId, HandleResumeAck);
+                return;
+            }
+
+            if (joinOrCreateOnStart && string.IsNullOrWhiteSpace(activePlayerId))
+            {
+                JoinOrCreateRoom();
+            }
+        }
+        finally
         {
-            JoinOrCreateRoom();
+            NotifyRealtimeControlsStateChanged();
         }
     }
 
@@ -1513,6 +1543,7 @@ public partial class APIManager : MonoBehaviour
             InvalidateRealtimeBetCommitForPreRoundEdit(
                 "entry_fee_changed",
                 "Tall eller innsats ble endret. Trykk Plasser innsats på nytt for å bli med i neste runde.");
+            NotifyRealtimeControlsStateChanged();
         }
 
         if (!useRealtimeBackend || !realtimeScheduledRounds)
@@ -1616,14 +1647,18 @@ public partial class APIManager : MonoBehaviour
         {
             return;
         }
-        nextCountdownRefreshAt = Time.unscaledTime + 0.2f;
+        nextCountdownRefreshAt = Time.unscaledTime + 0.5f;
 
         PositionRealtimeCountdownBelowBalls();
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         string countdownLabel = realtimeScheduler.BuildCountdownLabel(nowMs);
-        RealtimeTextStyleUtils.ApplyHudText(generator.autoSpinRemainingPlayText, countdownLabel);
+        if (forceRefresh || !string.Equals(lastRenderedCountdownLabel, countdownLabel, StringComparison.Ordinal))
+        {
+            Theme1PresentationTextUtils.ApplyHudText(generator.autoSpinRemainingPlayText, countdownLabel);
+            lastRenderedCountdownLabel = countdownLabel;
+        }
         RegisterRealtimeCountdownRendered(generator.autoSpinRemainingPlayText);
-        RefreshRealtimeRoomPlayerCountLabel();
+        RefreshRealtimeRoomPlayerCountLabel(forceRefresh);
     }
 
     private void EnsureRealtimeRoomPlayerCountLabel()
@@ -1640,7 +1675,9 @@ public partial class APIManager : MonoBehaviour
             if (generator != null && generator.autoSpinRemainingPlayText != null)
             {
                 realtimeRoomPlayerCountText = CandyTheme1HudBindingSet.FindExistingPlayerCountText(generator.autoSpinRemainingPlayText);
-                if (realtimeRoomPlayerCountText == null)
+                if (realtimeRoomPlayerCountText == null &&
+                    !HasExplicitTheme1HudBindings() &&
+                    !Theme1ManagedTypographyRegistry.BelongsToTheme1Presentation(generator.autoSpinRemainingPlayText))
                 {
                     realtimeRoomPlayerCountText = CreateRuntimeRealtimeRoomPlayerCountText(generator.autoSpinRemainingPlayText);
                 }
@@ -1652,10 +1689,16 @@ public partial class APIManager : MonoBehaviour
             return;
         }
 
+        if (HasExplicitTheme1HudBindings())
+        {
+            ReportRealtimeRenderMismatch("HUD roomPlayerCountText mangler i Theme1. Runtime-opprettelse er deaktivert for scene-bundet HUD.", asError: true);
+            return;
+        }
+
         ReportRealtimeRenderMismatch("HUD roomPlayerCountText mangler i Theme1.", asError: true);
     }
 
-    private void RefreshRealtimeRoomPlayerCountLabel()
+    private void RefreshRealtimeRoomPlayerCountLabel(bool forceRefresh = false)
     {
         EnsureRealtimeRoomPlayerCountLabel();
         if (realtimeRoomPlayerCountText == null)
@@ -1665,8 +1708,17 @@ public partial class APIManager : MonoBehaviour
 
         int playerCount = Mathf.Max(0, realtimeScheduler.PlayerCount);
         string labelValue = $"{realtimeRoomPlayerCountPrefix} {playerCount}";
-        RealtimeTextStyleUtils.ApplyHudText(realtimeRoomPlayerCountText, labelValue);
+        if (forceRefresh || !string.Equals(lastRenderedPlayerCountLabel, labelValue, StringComparison.Ordinal))
+        {
+            Theme1PresentationTextUtils.ApplyHudText(realtimeRoomPlayerCountText, labelValue);
+            lastRenderedPlayerCountLabel = labelValue;
+        }
         RegisterRealtimePlayerCountRendered(realtimeRoomPlayerCountText);
+    }
+
+    private bool HasExplicitTheme1HudBindings()
+    {
+        return GetComponent<CandyTheme1HudBindingSet>() != null || theme1GameplayViewRoot != null;
     }
 
     private TextMeshProUGUI CreateRuntimeRealtimeRoomPlayerCountText(TextMeshProUGUI countdownText)

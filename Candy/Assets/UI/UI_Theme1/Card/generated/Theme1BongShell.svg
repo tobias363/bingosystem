@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="380" viewBox="0 0 560 380" fill="none">
+  <defs>
+    <linearGradient id="shellGradient" x1="280" y1="0" x2="280" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF99DC"/>
+      <stop offset="0.52" stop-color="#FF48B2"/>
+      <stop offset="1" stop-color="#FF99DC"/>
+    </linearGradient>
+    <radialGradient id="shellHighlightTop" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(280 22) rotate(90) scale(86 240)">
+      <stop offset="0" stop-color="white" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="shellHighlightLeft" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(134 252) rotate(90) scale(58 96)">
+      <stop offset="0" stop-color="white" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="shellHighlightRight" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(436 286) rotate(90) scale(52 90)">
+      <stop offset="0" stop-color="white" stop-opacity="0.11"/>
+      <stop offset="1" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="topPanelGradient" x1="280" y1="12" x2="280" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF67C8"/>
+      <stop offset="0.46" stop-color="#FB40AC"/>
+      <stop offset="1" stop-color="#D20A82"/>
+    </linearGradient>
+    <linearGradient id="footerGradient" x1="280" y1="326" x2="280" y2="370" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFA5DE" stop-opacity="0.88"/>
+      <stop offset="0.2" stop-color="#FF86D4" stop-opacity="0.46"/>
+      <stop offset="1" stop-color="#FF3EAD" stop-opacity="0.9"/>
+    </linearGradient>
+    <linearGradient id="tabGradient" x1="280" y1="328" x2="280" y2="367" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF67C8"/>
+      <stop offset="0.46" stop-color="#FB40AC"/>
+      <stop offset="1" stop-color="#D20A82"/>
+    </linearGradient>
+    <linearGradient id="gridInsetHighlight" x1="280" y1="64" x2="280" y2="322" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="white" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="white" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="softShadow" x="-4" y="-4" width="568" height="388" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#A3005C" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#softShadow)">
+    <rect width="560" height="380" rx="34" fill="url(#shellGradient)"/>
+    <rect width="560" height="380" rx="34" fill="url(#shellHighlightTop)"/>
+    <rect width="560" height="380" rx="34" fill="url(#shellHighlightLeft)"/>
+    <rect width="560" height="380" rx="34" fill="url(#shellHighlightRight)"/>
+
+    <rect x="7" y="7" width="546" height="366" rx="25" stroke="#FFD6EE" stroke-opacity="0.72" stroke-width="4"/>
+    <rect x="14" y="14" width="532" height="352" rx="24" stroke="#FF78C6" stroke-opacity="0.46" stroke-width="2"/>
+
+    <path d="M38 12H522C536.359 12 548 23.6406 548 38V56C548 60.4183 544.418 64 540 64H20C15.5817 64 12 60.4183 12 56V38C12 23.6406 23.6406 12 38 12Z" fill="url(#topPanelGradient)" stroke="#AD0A66" stroke-opacity="0.72" stroke-width="3"/>
+    <path d="M20 18H540V30C540 42.1503 530.15 52 518 52H42C29.8497 52 20 42.1503 20 30V18Z" fill="white" fill-opacity="0.14"/>
+
+    <path d="M14 326H546V356C546 363.732 539.732 370 532 370H28C20.268 370 14 363.732 14 356V326Z" fill="url(#footerGradient)" stroke="#FFABDF" stroke-opacity="0.3" stroke-width="2"/>
+    <path d="M24 332H128V362H24V332Z" fill="white" fill-opacity="0.06"/>
+    <path d="M432 332H536V362H432V332Z" fill="white" fill-opacity="0.05"/>
+
+    <rect x="201" y="328" width="158" height="39" fill="url(#tabGradient)" stroke="#AD0A66" stroke-opacity="0.72" stroke-width="3"/>
+
+    <rect x="20" y="64" width="520" height="258" rx="4" fill="#B14173"/>
+    <rect x="20" y="64" width="520" height="258" rx="4" stroke="#FF97D7" stroke-opacity="0.46" stroke-width="2"/>
+    <rect x="21" y="65" width="518" height="256" rx="3" fill="url(#gridInsetHighlight)"/>
+  </g>
+</svg>

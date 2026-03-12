@@ -18,6 +18,7 @@ public static class CandyRealtimePatternVisualSmoke
         ValidateNearWin,
         InjectMatchedWin,
         ValidateMatchedWin,
+        ValidateSyntheticScenarios,
         Completed,
         Failed
     }
@@ -37,12 +38,25 @@ public static class CandyRealtimePatternVisualSmoke
         new[] { 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45 },
         new[] { 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60 },
     };
+    private static readonly int[] SyntheticTicket = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
+    private static readonly int[] SyntheticNearDraws = { 1, 4, 7, 10 };
+    private static readonly int[] SyntheticWonAndNearDraws = { 3, 6, 9, 12, 1, 4, 5, 7, 10, 11, 14, 15 };
+    private static readonly int[] SyntheticPayoutAmounts = { 100, 200, 300, 400, 500 };
+    private static readonly byte[][] SyntheticPatternMasks =
+    {
+        new byte[] { 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1 },
+        new byte[] { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1 },
+        new byte[] { 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 },
+        new byte[] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 1, 1 },
+        new byte[] { 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0 }
+    };
 
     private static bool isRunning;
     private static bool shouldExitOnFinish;
     private static SmokeStage stage;
     private static double stageDeadlineAt;
     private static string finishMessage = string.Empty;
+    private static string stageObservation = string.Empty;
     private static int exitCode;
     private static bool previousEnterPlayModeOptionsEnabled;
     private static EnterPlayModeOptions previousEnterPlayModeOptions;
@@ -85,6 +99,7 @@ public static class CandyRealtimePatternVisualSmoke
         isRunning = true;
         exitCode = 1;
         finishMessage = string.Empty;
+        stageObservation = string.Empty;
         stage = SmokeStage.WaitingForPlayMode;
         stageDeadlineAt = EditorApplication.timeSinceStartup + StageTimeoutSeconds;
 
@@ -155,7 +170,9 @@ public static class CandyRealtimePatternVisualSmoke
 
         if (EditorApplication.timeSinceStartup > stageDeadlineAt)
         {
-            Fail($"stage timeout: {stage}");
+            Fail(string.IsNullOrWhiteSpace(stageObservation)
+                ? $"stage timeout: {stage}"
+                : $"stage timeout: {stage} ({stageObservation})");
             return;
         }
 
@@ -221,11 +238,23 @@ public static class CandyRealtimePatternVisualSmoke
             case SmokeStage.ValidateMatchedWin:
                 if (TryValidateMatchedVisuals(out string matchedError))
                 {
-                    Complete("near-win and matched payline visuals verified");
+                    stage = SmokeStage.ValidateSyntheticScenarios;
+                    stageDeadlineAt = EditorApplication.timeSinceStartup + StageTimeoutSeconds;
                 }
                 else if (!string.IsNullOrEmpty(matchedError))
                 {
                     Fail(matchedError);
+                }
+                break;
+
+            case SmokeStage.ValidateSyntheticScenarios:
+                if (TryValidateSyntheticPatternVisuals(out string syntheticError))
+                {
+                    Complete("near-win, matched, multi-pattern, and stacked-label visuals verified");
+                }
+                else if (!string.IsNullOrEmpty(syntheticError))
+                {
+                    Fail(syntheticError);
                 }
                 break;
         }
@@ -330,7 +359,7 @@ public static class CandyRealtimePatternVisualSmoke
         currentGame["status"] = "RUNNING";
         currentGame["entryFee"] = 8;
         currentGame["ticketsPerPlayer"] = TicketSets.Count;
-        currentGame["claims"] = new JSONArray();
+        currentGame["claims"] = BuildClaims(gameId);
 
         JSONArray drawnNumbers = new JSONArray();
         foreach (string draw in draws)
@@ -344,14 +373,27 @@ public static class CandyRealtimePatternVisualSmoke
         for (int i = 0; i < TicketSets.Count; i++)
         {
             JSONArray numbers = new JSONArray();
+            JSONArray grid = new JSONArray();
             int[] ticket = TicketSets[i];
             for (int cellIndex = 0; cellIndex < ticket.Length; cellIndex++)
             {
                 numbers.Add(ticket[cellIndex]);
             }
 
+            for (int row = 0; row < 3; row++)
+            {
+                JSONArray rowValues = new JSONArray();
+                for (int column = 0; column < 5; column++)
+                {
+                    rowValues.Add(ticket[(column * 3) + row]);
+                }
+
+                grid.Add(rowValues);
+            }
+
             JSONObject ticketNode = new JSONObject();
             ticketNode["numbers"] = numbers;
+            ticketNode["grid"] = grid;
             ticketArray.Add(ticketNode);
         }
 
@@ -359,6 +401,25 @@ public static class CandyRealtimePatternVisualSmoke
         currentGame["tickets"] = ticketsByPlayer;
         snapshot["currentGame"] = currentGame;
         return snapshot;
+    }
+
+    private static JSONArray BuildClaims(string gameId)
+    {
+        JSONArray claims = new JSONArray();
+        if (!string.Equals(gameId, "GAME-WIN", StringComparison.Ordinal))
+        {
+            return claims;
+        }
+
+        JSONObject claim = new JSONObject();
+        claim["id"] = gameId + "-claim";
+        claim["playerId"] = PlayerId;
+        claim["type"] = "LINE";
+        claim["valid"] = true;
+        claim["patternIndex"] = 0;
+        claim["winningPatternIndex"] = 0;
+        claims.Add(claim);
+        return claims;
     }
 
     private static bool TryValidateVisibleGameplayControls(UIManager uiManager, out string error)
@@ -372,7 +433,7 @@ public static class CandyRealtimePatternVisualSmoke
 
         List<string> issues = new();
         ValidateButton(uiManager.playBtn, "playBtn", issues);
-        ValidateButton(uiManager.autoPlayBtn, "autoPlayBtn", issues);
+        ValidateButton(uiManager.autoPlayBtn, "autoPlayBtn", issues, required: false);
         ValidateButton(uiManager.betUp, "betUp", issues);
         ValidateButton(uiManager.betDown, "betDown", issues);
 
@@ -385,17 +446,24 @@ public static class CandyRealtimePatternVisualSmoke
         return false;
     }
 
-    private static void ValidateButton(UnityEngine.UI.Button button, string label, List<string> issues)
+    private static void ValidateButton(UnityEngine.UI.Button button, string label, List<string> issues, bool required = true)
     {
         if (button == null)
         {
-            issues.Add($"{label}=null");
+            if (required)
+            {
+                issues.Add($"{label}=null");
+            }
             return;
         }
 
         if (!button.gameObject.activeInHierarchy)
         {
-            issues.Add($"{label} inactive");
+            if (required)
+            {
+                issues.Add($"{label} inactive");
+            }
+            return;
         }
 
         UnityEngine.UI.Image image = button.GetComponent<UnityEngine.UI.Image>();
@@ -516,24 +584,463 @@ public static class CandyRealtimePatternVisualSmoke
     {
         error = string.Empty;
 
-        TopperManager topperManager = UnityEngine.Object.FindFirstObjectByType<TopperManager>(FindObjectsInactive.Include);
+        Theme1GameplayViewRoot viewRoot = UnityEngine.Object.FindFirstObjectByType<Theme1GameplayViewRoot>(FindObjectsInactive.Include);
         NumberGenerator generator = UnityEngine.Object.FindFirstObjectByType<NumberGenerator>(FindObjectsInactive.Include);
-        if (topperManager == null || generator == null)
+        if (viewRoot == null || generator == null)
         {
-            error = "[PatternSmoke] Missing runtime objects while validating matched visuals.";
+            error = "[PatternSmoke] Missing Theme1GameplayViewRoot or NumberGenerator while validating matched visuals.";
             return false;
         }
 
-        int activeMatchedPatterns = GetPrivateCollectionCount(topperManager, "activeMatchedPatternIndexes");
-        int activeMatchedHeaders = CountActiveObjects(topperManager.matchedPatterns);
-        int activePaylines = CountActivePaylines(generator);
+        Theme1CardGridView cardView = viewRoot.Cards != null && viewRoot.Cards.Length > 0 ? viewRoot.Cards[0] : null;
+        if (cardView == null)
+        {
+            error = "[PatternSmoke] Theme1 matched-win validation missing first card view.";
+            return false;
+        }
 
-        if (activeMatchedPatterns > 0 && activeMatchedHeaders > 0 && activePaylines > 0)
+        int activeTheme1Paylines = CountActivePaylines(viewRoot);
+        int activeLegacyPaylines = CountActivePaylines(generator);
+        bool hasMatchedCells =
+            UsesCellSprite(cardView, 0, Theme1RuntimeShapeCatalog.GetHighlightCellGradientSprite()) &&
+            UsesCellSprite(cardView, 3, Theme1RuntimeShapeCatalog.GetHighlightCellGradientSprite()) &&
+            UsesCellSprite(cardView, 6, Theme1RuntimeShapeCatalog.GetHighlightCellGradientSprite()) &&
+            UsesCellSprite(cardView, 9, Theme1RuntimeShapeCatalog.GetHighlightCellGradientSprite()) &&
+            UsesCellSprite(cardView, 12, Theme1RuntimeShapeCatalog.GetPrizeCellGradientSprite());
+        bool hasPrizeLabel = GetVisiblePrizeLabels(cardView.Cells[12]).Count > 0;
+        stageObservation =
+            $"matchedCells={hasMatchedCells} prizeLabel={hasPrizeLabel} theme1Paylines={activeTheme1Paylines} legacyPaylines={activeLegacyPaylines}";
+
+        if (hasMatchedCells &&
+            hasPrizeLabel &&
+            activeLegacyPaylines == 0)
         {
             return true;
         }
 
+        if (hasMatchedCells && hasPrizeLabel && activeLegacyPaylines > 0)
+        {
+            error = $"[PatternSmoke] Legacy paylines remained visible after a matched win: legacy={activeLegacyPaylines}, theme1={activeTheme1Paylines}.";
+            return false;
+        }
+
         return false;
+    }
+
+    private static bool TryValidateSyntheticPatternVisuals(out string error)
+    {
+        error = string.Empty;
+
+        Theme1GameplayViewRoot viewRoot = UnityEngine.Object.FindFirstObjectByType<Theme1GameplayViewRoot>(FindObjectsInactive.Include);
+        if (viewRoot == null)
+        {
+            error = "[PatternSmoke] Theme1GameplayViewRoot missing while validating synthetic Theme1 scenarios.";
+            return false;
+        }
+
+        if (!TryValidateSyntheticNearScenario(viewRoot, out error))
+        {
+            return false;
+        }
+
+        if (!TryValidateSyntheticWonAndNearScenario(viewRoot, out error))
+        {
+            return false;
+        }
+
+        if (!TryValidateLegacyPaylinesAreIgnored(viewRoot, out error))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryValidateSyntheticNearScenario(Theme1GameplayViewRoot viewRoot, out string error)
+    {
+        error = string.Empty;
+        Theme1RoundRenderState state = BuildSyntheticPatternState(SyntheticNearDraws);
+        if (state.Cards == null || state.Cards.Length == 0 || state.Cards[0] == null)
+        {
+            error = "[PatternSmoke] Synthetic near scenario did not produce a card state.";
+            return false;
+        }
+
+        Theme1CardRenderState cardState = state.Cards[0];
+        if (cardState.CompletedPatterns.Length != 0)
+        {
+            error = $"[PatternSmoke] Synthetic near scenario expected 0 completed patterns, got {cardState.CompletedPatterns.Length}.";
+            return false;
+        }
+
+        if (cardState.ActiveNearPattern == null || cardState.ActiveNearPattern.RawPatternIndex != 4)
+        {
+            error = "[PatternSmoke] Synthetic near scenario did not keep pattern 4 as active near pattern.";
+            return false;
+        }
+
+        RenderSyntheticState(viewRoot, state);
+        Theme1CardGridView cardView = viewRoot.Cards != null && viewRoot.Cards.Length > 0 ? viewRoot.Cards[0] : null;
+        if (cardView == null)
+        {
+            error = "[PatternSmoke] Synthetic near scenario missing card view.";
+            return false;
+        }
+
+        int[] expectedNearHitCells = { 0, 3, 6, 9 };
+        for (int i = 0; i < expectedNearHitCells.Length; i++)
+        {
+            int cellIndex = expectedNearHitCells[i];
+            if (!UsesCellSprite(cardView, cellIndex, Theme1RuntimeShapeCatalog.GetHighlightCellGradientSprite()))
+            {
+                error = $"[PatternSmoke] Near-hit cell {cellIndex} did not render with the dark purple highlight sprite.";
+                return false;
+            }
+        }
+
+        if (!UsesCellSprite(cardView, 12, Theme1RuntimeShapeCatalog.GetPrizeCellGradientSprite()))
+        {
+            error = "[PatternSmoke] Near-target cell 12 did not render with the yellow prize sprite.";
+            return false;
+        }
+
+        List<TextMeshProUGUI> nearLabels = GetVisiblePrizeLabels(cardView.Cells[12]);
+        if (nearLabels.Count != 1 || !string.Equals((nearLabels[0].text ?? string.Empty).Trim(), "500 kr", StringComparison.Ordinal))
+        {
+            error = $"[PatternSmoke] Near-target cell expected one '500 kr' label, got [{string.Join(", ", GetPrizeLabelTexts(nearLabels))}].";
+            return false;
+        }
+
+        if (CountActivePaylines(cardView) != 0)
+        {
+            error = "[PatternSmoke] Near-only scenario activated completed-pattern overlays.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryValidateSyntheticWonAndNearScenario(Theme1GameplayViewRoot viewRoot, out string error)
+    {
+        error = string.Empty;
+        Theme1RoundRenderState state = BuildSyntheticPatternState(SyntheticWonAndNearDraws);
+        if (state.Cards == null || state.Cards.Length == 0 || state.Cards[0] == null)
+        {
+            error = "[PatternSmoke] Synthetic won+near scenario did not produce a card state.";
+            return false;
+        }
+
+        Theme1CardRenderState cardState = state.Cards[0];
+        if (cardState.CompletedPatterns == null || cardState.CompletedPatterns.Length != 4)
+        {
+            error = $"[PatternSmoke] Synthetic won+near scenario expected 4 completed patterns, got {cardState.CompletedPatterns?.Length ?? 0}.";
+            return false;
+        }
+
+        if (cardState.ActiveNearPattern == null || cardState.ActiveNearPattern.RawPatternIndex != 4)
+        {
+            error = "[PatternSmoke] Synthetic won+near scenario lost the active near pattern.";
+            return false;
+        }
+
+        RenderSyntheticState(viewRoot, state);
+        Theme1CardGridView cardView = viewRoot.Cards != null && viewRoot.Cards.Length > 0 ? viewRoot.Cards[0] : null;
+        if (cardView == null)
+        {
+            error = "[PatternSmoke] Synthetic won+near scenario missing card view.";
+            return false;
+        }
+
+        if (CountActivePaylines(cardView) != 4)
+        {
+            error = $"[PatternSmoke] Synthetic won+near scenario expected 4 active completed-pattern overlays, got {CountActivePaylines(cardView)}.";
+            return false;
+        }
+
+        int[] expectedPurpleCells = { 0, 3, 6, 9, 14 };
+        for (int i = 0; i < expectedPurpleCells.Length; i++)
+        {
+            int cellIndex = expectedPurpleCells[i];
+            if (cellIndex == 14)
+            {
+                continue;
+            }
+
+            if (!UsesCellSprite(cardView, cellIndex, Theme1RuntimeShapeCatalog.GetHighlightCellGradientSprite()))
+            {
+                error = $"[PatternSmoke] Won+near scenario cell {cellIndex} did not keep the dark purple highlight sprite.";
+                return false;
+            }
+        }
+
+        if (!UsesCellSprite(cardView, 12, Theme1RuntimeShapeCatalog.GetPrizeCellGradientSprite()))
+        {
+            error = "[PatternSmoke] Won+near scenario target cell 12 did not stay yellow.";
+            return false;
+        }
+
+        if (!UsesCellSprite(cardView, 14, Theme1RuntimeShapeCatalog.GetPrizeCellGradientSprite()))
+        {
+            error = "[PatternSmoke] Won+near scenario trigger cell 14 did not render as a prize cell.";
+            return false;
+        }
+
+        List<TextMeshProUGUI> wonLabels = GetVisiblePrizeLabels(cardView.Cells[14]);
+        string[] expectedWonLabels = { "400 kr", "300 kr", "200 kr", "100 kr" };
+        if (wonLabels.Count != expectedWonLabels.Length)
+        {
+            error = $"[PatternSmoke] Expected {expectedWonLabels.Length} stacked labels on trigger cell 14, got {wonLabels.Count}.";
+            return false;
+        }
+
+        for (int i = 0; i < expectedWonLabels.Length; i++)
+        {
+            string actual = (wonLabels[i].text ?? string.Empty).Trim();
+            if (!string.Equals(actual, expectedWonLabels[i], StringComparison.Ordinal))
+            {
+                error = $"[PatternSmoke] Trigger cell 14 label {i} expected '{expectedWonLabels[i]}' but got '{actual}'.";
+                return false;
+            }
+
+            if (i > 0 &&
+                wonLabels[i - 1].rectTransform.anchoredPosition.y <= wonLabels[i].rectTransform.anchoredPosition.y)
+            {
+                error = "[PatternSmoke] Trigger cell 14 labels were not stacked downward in deterministic order.";
+                return false;
+            }
+        }
+
+        if (!UsesBottomRightAnchor(wonLabels))
+        {
+            error = "[PatternSmoke] Trigger cell 14 labels did not preserve right-column anchoring.";
+            return false;
+        }
+
+        List<TextMeshProUGUI> nearLabels = GetVisiblePrizeLabels(cardView.Cells[12]);
+        if (nearLabels.Count != 1 || !string.Equals((nearLabels[0].text ?? string.Empty).Trim(), "500 kr", StringComparison.Ordinal))
+        {
+            error = $"[PatternSmoke] Won+near target cell expected one '500 kr' label, got [{string.Join(", ", GetPrizeLabelTexts(nearLabels))}].";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryValidateLegacyPaylinesAreIgnored(Theme1GameplayViewRoot viewRoot, out string error)
+    {
+        error = string.Empty;
+        Theme1RoundRenderState state = BuildSyntheticPatternState(Array.Empty<int>());
+        if (state.Cards == null || state.Cards.Length == 0 || state.Cards[0] == null)
+        {
+            error = "[PatternSmoke] Synthetic legacy-payline scenario did not produce a card state.";
+            return false;
+        }
+
+        Theme1CardRenderState cardState = state.Cards[0];
+        int paylineCount = viewRoot.Cards != null &&
+                           viewRoot.Cards.Length > 0 &&
+                           viewRoot.Cards[0] != null &&
+                           viewRoot.Cards[0].PaylineObjects != null
+            ? viewRoot.Cards[0].PaylineObjects.Length
+            : 0;
+        cardState.PaylinesActive = new bool[Mathf.Max(1, paylineCount)];
+        cardState.PaylinesActive[0] = true;
+        cardState.CompletedPatterns = Array.Empty<Theme1CompletedPatternRenderState>();
+
+        RenderSyntheticState(viewRoot, state);
+        Theme1CardGridView cardView = viewRoot.Cards != null && viewRoot.Cards.Length > 0 ? viewRoot.Cards[0] : null;
+        if (cardView == null)
+        {
+            error = "[PatternSmoke] Synthetic legacy-payline scenario missing card view.";
+            return false;
+        }
+
+        if (CountActivePaylines(cardView) != 0)
+        {
+            error = "[PatternSmoke] PaylinesActive still produced visible overlays without CompletedPatterns.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static Theme1RoundRenderState BuildSyntheticPatternState(IReadOnlyList<int> drawnNumbers)
+    {
+        Theme1StateBuildInput input = new Theme1StateBuildInput
+        {
+            GameId = "GAME-SYNTHETIC",
+            CardSlotCount = 1,
+            BallSlotCount = drawnNumbers != null ? drawnNumbers.Count : 0,
+            TicketSets = new[] { (int[])SyntheticTicket.Clone() },
+            DrawnNumbers = drawnNumbers != null ? ToArray(drawnNumbers) : Array.Empty<int>(),
+            ActivePatternIndexes = new[] { 0, 1, 2, 3, 4 },
+            PreferredNearPatternIndexesByCard = new[] { 4 },
+            PatternMasks = SyntheticPatternMasks,
+            CardHeaderLabels = new[] { GameManager.FormatTheme1CardHeaderLabel(0) },
+            CardBetLabels = new[] { GameManager.FormatTheme1CardStakeLabel(4) },
+            CardWinLabels = new[] { string.Empty },
+            TopperPrizeLabels = BuildSyntheticTopperPrizeLabels(),
+            TopperPayoutAmounts = (int[])SyntheticPayoutAmounts.Clone(),
+            CreditLabel = "1 000",
+            WinningsLabel = "0",
+            BetLabel = "4"
+        };
+
+        return new Theme1StateBuilder().Build(input);
+    }
+
+    private static string[] BuildSyntheticTopperPrizeLabels()
+    {
+        string[] labels = new string[SyntheticPayoutAmounts.Length];
+        for (int i = 0; i < labels.Length; i++)
+        {
+            labels[i] = GameManager.FormatKrAmount(SyntheticPayoutAmounts[i]);
+        }
+
+        return labels;
+    }
+
+    private static int[] ToArray(IReadOnlyList<int> source)
+    {
+        if (source == null || source.Count == 0)
+        {
+            return Array.Empty<int>();
+        }
+
+        int[] values = new int[source.Count];
+        for (int i = 0; i < source.Count; i++)
+        {
+            values[i] = source[i];
+        }
+
+        return values;
+    }
+
+    private static void RenderSyntheticState(Theme1GameplayViewRoot viewRoot, Theme1RoundRenderState state)
+    {
+        new Theme1RealtimePresenter().Render(viewRoot, state);
+        Canvas.ForceUpdateCanvases();
+    }
+
+    private static bool UsesCellSprite(Theme1CardGridView cardView, int cellIndex, Sprite expectedSprite)
+    {
+        if (cardView?.Cells == null ||
+            cellIndex < 0 ||
+            cellIndex >= cardView.Cells.Length ||
+            cardView.Cells[cellIndex] == null ||
+            cardView.Cells[cellIndex].Background == null)
+        {
+            return false;
+        }
+
+        return cardView.Cells[cellIndex].Background.sprite == expectedSprite;
+    }
+
+    private static int CountActivePaylines(Theme1CardGridView cardView)
+    {
+        if (cardView?.PaylineObjects == null)
+        {
+            return 0;
+        }
+
+        int active = 0;
+        for (int i = 0; i < cardView.PaylineObjects.Length; i++)
+        {
+            GameObject payline = cardView.PaylineObjects[i];
+            if (payline != null && payline.activeInHierarchy)
+            {
+                active += 1;
+            }
+        }
+
+        return active;
+    }
+
+    private static int CountActivePaylines(Theme1GameplayViewRoot viewRoot)
+    {
+        if (viewRoot?.Cards == null)
+        {
+            return 0;
+        }
+
+        int active = 0;
+        for (int cardIndex = 0; cardIndex < viewRoot.Cards.Length; cardIndex++)
+        {
+            active += CountActivePaylines(viewRoot.Cards[cardIndex]);
+        }
+
+        return active;
+    }
+
+    private static List<TextMeshProUGUI> GetVisiblePrizeLabels(Theme1CardCellView cellView)
+    {
+        List<TextMeshProUGUI> labels = new();
+        if (cellView?.CellRoot == null)
+        {
+            return labels;
+        }
+
+        TextMeshProUGUI[] texts = cellView.CellRoot.GetComponentsInChildren<TextMeshProUGUI>(true);
+        for (int i = 0; i < texts.Length; i++)
+        {
+            TextMeshProUGUI label = texts[i];
+            if (label == null ||
+                !label.gameObject.activeInHierarchy ||
+                !label.enabled ||
+                label.alpha <= 0.01f)
+            {
+                continue;
+            }
+
+            string name = label.name ?? string.Empty;
+            bool isPrizeLabel =
+                string.Equals(name, Theme1GameplayViewRepairUtils.CardCellPrizeLabelName, StringComparison.Ordinal) ||
+                name.StartsWith(Theme1GameplayViewRepairUtils.CardCellPrizeLabelName + "_", StringComparison.Ordinal);
+            if (!isPrizeLabel)
+            {
+                continue;
+            }
+
+            string text = (label.text ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            labels.Add(label);
+        }
+
+        labels.Sort((left, right) => right.rectTransform.anchoredPosition.y.CompareTo(left.rectTransform.anchoredPosition.y));
+        return labels;
+    }
+
+    private static IEnumerable<string> GetPrizeLabelTexts(IReadOnlyList<TextMeshProUGUI> labels)
+    {
+        for (int i = 0; i < labels.Count; i++)
+        {
+            yield return (labels[i].text ?? string.Empty).Trim();
+        }
+    }
+
+    private static bool UsesBottomRightAnchor(IReadOnlyList<TextMeshProUGUI> labels)
+    {
+        if (labels == null || labels.Count == 0)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < labels.Count; i++)
+        {
+            RectTransform rect = labels[i].rectTransform;
+            if (rect.anchorMin != new Vector2(1f, 0f) ||
+                rect.anchorMax != new Vector2(1f, 0f) ||
+                rect.pivot != new Vector2(1f, 0f))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static int CountActiveHeaderNearWinCells(TopperManager topperManager)

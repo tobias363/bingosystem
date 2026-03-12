@@ -1,9 +1,12 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 public class UIManager : MonoBehaviour
 {
+    public static event Action ControlStateChanged;
+
     public Button playBtn;
     public Button autoPlayBtn;
     
@@ -25,6 +28,11 @@ public class UIManager : MonoBehaviour
     private const string RealtimeRerollButtonLabel = "Bytt alle";
     private const string RealtimeSingleCardRerollButtonLabel = "Bytt tall";
     private readonly List<Button> realtimeSingleCardRerollButtons = new();
+
+    private static void NotifyControlStateChanged()
+    {
+        ControlStateChanged?.Invoke();
+    }
 
     private bool IsRealtimeMode()
     {
@@ -147,6 +155,8 @@ public class UIManager : MonoBehaviour
     private void OnEnable()
     {
         EventManager.OnAutoSpinOver += ActiveAllButtons;
+        GameManager.GameplayControlsStateChanged += HandleControlsStateChanged;
+        APIManager.RealtimeControlsStateChanged += HandleControlsStateChanged;
         EnsurePlayButtonVisible();
         if (settingsPanel != null)
         {
@@ -163,22 +173,14 @@ public class UIManager : MonoBehaviour
         ApplyPlayButtonLabel();
         ApplyAutoPlayButtonLabel();
         ResetAutoSpinHighlights();
-        EnsureRealtimeRerollButton();
-        EnsureRealtimeSingleCardRerollButtons();
-        RefreshRealtimeRerollButtonState();
-        RefreshRealtimeSingleCardRerollButtonsState();
-        RefreshRealtimeBetControlsState();
-        RefreshLegacyPlayControlsState();
-
-        if (IsRealtimeMode())
-        {
-            EnsureRealtimeStartNowButtonVisible();
-        }
+        RefreshControlState();
     }
 
     private void OnDisable()
     {
         EventManager.OnAutoSpinOver -= ActiveAllButtons;
+        GameManager.GameplayControlsStateChanged -= HandleControlsStateChanged;
+        APIManager.RealtimeControlsStateChanged -= HandleControlsStateChanged;
         if (rerollTicketBtn != null)
         {
             rerollTicketBtn.onClick.RemoveListener(OnRealtimeRerollClicked);
@@ -193,12 +195,31 @@ public class UIManager : MonoBehaviour
         }
     }
 
-    private void Update()
+    private void OnRectTransformDimensionsChange()
     {
+        RefreshControlState();
+    }
+
+    private void HandleControlsStateChanged()
+    {
+        RefreshControlState();
+    }
+
+    private void RefreshControlState()
+    {
+        EnsureRealtimeRerollButton();
+        EnsureRealtimeSingleCardRerollButtons();
         RefreshRealtimeRerollButtonState();
         RefreshRealtimeSingleCardRerollButtonsState();
         RefreshRealtimeBetControlsState();
         RefreshLegacyPlayControlsState();
+
+        if (IsRealtimeMode())
+        {
+            EnsureRealtimeStartNowButtonVisible();
+        }
+
+        NotifyControlStateChanged();
     }
 
     private void EnsureRealtimeRerollButton()
@@ -621,6 +642,7 @@ public class UIManager : MonoBehaviour
 
             APIManager.instance?.PlayRealtimeRound();
             Invoke(nameof(ActivePlayBtn), 0.5f);
+            NotifyControlStateChanged();
             return;
         }
 
@@ -628,6 +650,8 @@ public class UIManager : MonoBehaviour
         {
             playBtn.interactable = false;
         }
+
+        NotifyControlStateChanged();
 
         if (EventManager.isPlayOver)
         {
@@ -756,6 +780,7 @@ public class UIManager : MonoBehaviour
         if (IsRealtimeMode())
         {
             RefreshRealtimeBetControlsState();
+            NotifyControlStateChanged();
             return;
         }
 
@@ -765,6 +790,7 @@ public class UIManager : MonoBehaviour
         }
 
         RefreshLegacyPlayControlsState();
+        NotifyControlStateChanged();
     }
 
     public void AutoSpinOptionSelection(int index)
@@ -820,6 +846,7 @@ public class UIManager : MonoBehaviour
         if (IsRealtimeMode())
         {
             RefreshRealtimeBetControlsState();
+            NotifyControlStateChanged();
             return;
         }
 
@@ -846,6 +873,7 @@ public class UIManager : MonoBehaviour
         }
 
         RefreshLegacyPlayControlsState();
+        NotifyControlStateChanged();
     }
     
 }

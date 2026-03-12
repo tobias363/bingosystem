@@ -183,35 +183,79 @@ public static class CandyTypographySystem
         float currentSize = target.fontSize;
         bool wasAutoSizing = target.enableAutoSizing;
 
-        target.font = fontAsset;
+        bool styleChanged = false;
+        if (target.font != fontAsset)
+        {
+            target.font = fontAsset;
+            styleChanged = true;
+        }
         Material sharedMaterial = ResolveDefaultSharedMaterial(fontAsset);
-        if (sharedMaterial != null)
+        if (sharedMaterial != null && target.fontSharedMaterial != sharedMaterial)
         {
             target.fontSharedMaterial = sharedMaterial;
+            styleChanged = true;
         }
 
-        target.fontStyle = FontStyles.Normal;
-        target.fontWeight = ResolveWeight(role);
-        target.enableWordWrapping = role == CandyTypographyRole.Body && wasWrapping;
-        target.textWrappingMode = role == CandyTypographyRole.Body
+        FontWeight resolvedWeight = ResolveWeight(role);
+        if (target.fontStyle != FontStyles.Normal)
+        {
+            target.fontStyle = FontStyles.Normal;
+            styleChanged = true;
+        }
+
+        if (target.fontWeight != resolvedWeight)
+        {
+            target.fontWeight = resolvedWeight;
+            styleChanged = true;
+        }
+
+        bool enableWrapping = role == CandyTypographyRole.Body && wasWrapping;
+        if (target.enableWordWrapping != enableWrapping)
+        {
+            target.enableWordWrapping = enableWrapping;
+            styleChanged = true;
+        }
+
+        TextWrappingModes wrappingMode = role == CandyTypographyRole.Body
             ? TextWrappingModes.Normal
             : TextWrappingModes.NoWrap;
-        target.overflowMode = role == CandyTypographyRole.Body
-            ? TextOverflowModes.Overflow
-            : TextOverflowModes.Overflow;
-        target.enableAutoSizing = wasAutoSizing;
-        ApplyRoleSizeBounds(target, role, currentSize);
-
-        if (preserveColor)
+        if (target.textWrappingMode != wrappingMode)
         {
-            target.color = existingColor;
+            target.textWrappingMode = wrappingMode;
+            styleChanged = true;
         }
 
-        target.havePropertiesChanged = true;
-        target.UpdateMeshPadding();
-        target.SetVerticesDirty();
-        target.SetLayoutDirty();
-        target.ForceMeshUpdate(ignoreActiveState: true, forceTextReparsing: true);
+        TextOverflowModes overflowMode = role == CandyTypographyRole.Body
+            ? TextOverflowModes.Overflow
+            : TextOverflowModes.Overflow;
+        if (target.overflowMode != overflowMode)
+        {
+            target.overflowMode = overflowMode;
+            styleChanged = true;
+        }
+
+        if (target.enableAutoSizing != wasAutoSizing)
+        {
+            target.enableAutoSizing = wasAutoSizing;
+            styleChanged = true;
+        }
+
+        ApplyRoleSizeBounds(target, role, currentSize);
+
+        if (preserveColor && target.color != existingColor)
+        {
+            target.color = existingColor;
+            styleChanged = true;
+        }
+
+        if (styleChanged)
+        {
+            target.havePropertiesChanged = true;
+            target.UpdateMeshPadding();
+            target.SetVerticesDirty();
+            target.SetMaterialDirty();
+            target.SetLayoutDirty();
+        }
     }
 
     public static void ApplyGameplayRole(
@@ -239,37 +283,79 @@ public static class CandyTypographySystem
         float currentSize = target.fontSize;
         bool wasAutoSizing = target.enableAutoSizing;
 
+        bool styleChanged = false;
         if (!preserveExistingFont || target.font == null || !IsFontAssetUsable(target.font))
         {
-            target.font = resolvedFont;
+            if (target.font != resolvedFont)
+            {
+                target.font = resolvedFont;
+                styleChanged = true;
+            }
         }
 
         Material sharedMaterial = GetGameplaySharedMaterial(target.font != null ? target.font : resolvedFont, surface);
-        if (sharedMaterial != null)
+        if (sharedMaterial != null && target.fontSharedMaterial != sharedMaterial)
         {
             target.fontSharedMaterial = sharedMaterial;
+            styleChanged = true;
         }
 
-        target.fontStyle = FontStyles.Normal;
-        target.fontWeight = ResolveWeight(role);
-        target.enableWordWrapping = role == CandyTypographyRole.Body && wasWrapping;
-        target.textWrappingMode = role == CandyTypographyRole.Body
+        if (target.fontStyle != FontStyles.Normal)
+        {
+            target.fontStyle = FontStyles.Normal;
+            styleChanged = true;
+        }
+
+        FontWeight resolvedWeight = ResolveWeight(role);
+        if (target.fontWeight != resolvedWeight)
+        {
+            target.fontWeight = resolvedWeight;
+            styleChanged = true;
+        }
+
+        bool enableWrapping = role == CandyTypographyRole.Body && wasWrapping;
+        if (target.enableWordWrapping != enableWrapping)
+        {
+            target.enableWordWrapping = enableWrapping;
+            styleChanged = true;
+        }
+
+        TextWrappingModes wrappingMode = role == CandyTypographyRole.Body
             ? TextWrappingModes.Normal
             : TextWrappingModes.NoWrap;
-        target.overflowMode = TextOverflowModes.Overflow;
-        target.enableAutoSizing = wasAutoSizing;
-        ApplyRoleSizeBounds(target, role, currentSize);
-
-        if (preserveColor)
+        if (target.textWrappingMode != wrappingMode)
         {
-            target.color = existingColor;
+            target.textWrappingMode = wrappingMode;
+            styleChanged = true;
         }
 
-        target.havePropertiesChanged = true;
-        target.UpdateMeshPadding();
-        target.SetVerticesDirty();
-        target.SetLayoutDirty();
-        target.ForceMeshUpdate(ignoreActiveState: true, forceTextReparsing: true);
+        if (target.overflowMode != TextOverflowModes.Overflow)
+        {
+            target.overflowMode = TextOverflowModes.Overflow;
+            styleChanged = true;
+        }
+
+        if (target.enableAutoSizing != wasAutoSizing)
+        {
+            target.enableAutoSizing = wasAutoSizing;
+            styleChanged = true;
+        }
+        ApplyRoleSizeBounds(target, role, currentSize);
+
+        if (preserveColor && target.color != existingColor)
+        {
+            target.color = existingColor;
+            styleChanged = true;
+        }
+
+        if (styleChanged)
+        {
+            target.havePropertiesChanged = true;
+            target.UpdateMeshPadding();
+            target.SetVerticesDirty();
+            target.SetMaterialDirty();
+            target.SetLayoutDirty();
+        }
     }
 
     public static Material GetGameplaySharedMaterial(TMP_FontAsset fontAsset, GameplayTextSurface surface)

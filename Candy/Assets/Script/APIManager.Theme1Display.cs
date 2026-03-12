@@ -69,13 +69,12 @@ public partial class APIManager
 
     private bool TryResolveTheme1GameplayViewContract(out Theme1GameplayViewRoot viewRoot)
     {
-        viewRoot = theme1GameplayViewRoot != null ? theme1GameplayViewRoot : GetComponent<Theme1GameplayViewRoot>();
+        viewRoot = theme1GameplayViewRoot;
         if (viewRoot == null)
         {
             return false;
         }
 
-        theme1GameplayViewRoot = viewRoot;
         return viewRoot.ValidateContract(out _);
     }
 

@@ -106,6 +106,30 @@ Automatisk branch-protection kan settes via:
 bash .github/scripts/apply-branch-protection.sh
 ```
 
+## Lokal source of truth (Unity/Candy)
+
+For lokal Candy/Unity-jobbing er den faste integrasjonsmappen:
+
+- `../Bingo-source-of-truth`
+- branch: `codex/source-of-truth`
+
+Regler:
+
+- test og verifisering skjer alltid i `Bingo-source-of-truth/Candy`
+- ikke gjør større feature-endringer direkte i source-of-truth-worktreeen
+- opprett en ny worktree per oppgave/chat fra `codex/source-of-truth`
+- merge eller cherry-pick tilbake til `codex/source-of-truth`, og verifiser der etterpa
+
+Opprett ny arbeids-worktree med:
+
+```bash
+bash scripts/create-source-worktree.sh candy-fix-navn
+```
+
+Full lokal workflow er dokumentert i:
+
+- `docs/LOCAL_SOURCE_OF_TRUTH_WORKFLOW.md`
+
 ## Rask kvalitets-sjekk (backend + Unity)
 
 Kjør alle basiskontroller med:

@@ -37,6 +37,16 @@ public static class Theme1ManagedTypographyRegistry
 
     public static bool BelongsToTheme1Presentation(TMP_Text target)
     {
-        return target != null && target.GetComponentInParent<Theme1GameplayViewRoot>(true) != null;
+        if (target == null)
+        {
+            return false;
+        }
+
+        if (Contains(target))
+        {
+            return true;
+        }
+
+        return Theme1GameplayViewRoot.TryFindOwningRoot(target, out _);
     }
 }

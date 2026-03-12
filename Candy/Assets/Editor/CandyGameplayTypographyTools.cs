@@ -348,6 +348,7 @@ public static class CandyGameplayTypographyTools
     {
         int updatedCount = 0;
         updatedCount += NormalizeGameplayCanvases(scene);
+        updatedCount += RemoveLegacyTheme1Mirrors(scene);
         foreach (GameObject root in scene.GetRootGameObjects())
         {
             TMP_Text[] texts = root.GetComponentsInChildren<TMP_Text>(true);
@@ -368,6 +369,8 @@ public static class CandyGameplayTypographyTools
                 updatedCount += 1;
             }
         }
+
+        updatedCount += ApplyExplicitTheme1PresentationTypography(scene);
 
         return updatedCount;
     }
@@ -529,6 +532,114 @@ public static class CandyGameplayTypographyTools
                 errors.Add($"{scenePath} inneholder fortsatt serialisert legacy asset-reference {assetPath}");
             }
         }
+
+        if (string.Equals(scenePath, "Assets/Scenes/Theme1.unity", StringComparison.Ordinal))
+        {
+            if (sceneYaml.IndexOf(Theme1GameplayViewRepairUtils.VisibleLabelSuffix, StringComparison.Ordinal) >= 0)
+            {
+                errors.Add($"{scenePath} serialiserer legacy _Visible mirror-objekter.");
+            }
+
+            if (sceneYaml.IndexOf("Theme1VisibleTextBridge", StringComparison.Ordinal) >= 0 ||
+                sceneYaml.IndexOf("Theme1HudTextMirror", StringComparison.Ordinal) >= 0)
+            {
+                errors.Add($"{scenePath} serialiserer legacy Theme1 mirror-komponenter.");
+            }
+
+            if (sceneYaml.IndexOf("Runtime CandyFredokaMediumSDF", StringComparison.Ordinal) >= 0)
+            {
+                errors.Add($"{scenePath} serialiserer runtime-fontasset Runtime CandyFredokaMediumSDF.");
+            }
+        }
+    }
+
+    private static int RemoveLegacyTheme1Mirrors(Scene scene)
+    {
+        int removedCount = 0;
+        HashSet<int> destroyedIds = new HashSet<int>();
+
+        Theme1VisibleTextBridge[] visibleBridges = Resources.FindObjectsOfTypeAll<Theme1VisibleTextBridge>();
+        for (int i = 0; i < visibleBridges.Length; i++)
+        {
+            Theme1VisibleTextBridge bridge = visibleBridges[i];
+            if (bridge == null || bridge.gameObject.scene != scene)
+            {
+                continue;
+            }
+
+            removedCount += DestroyLegacyMirrorGameObject(bridge.gameObject, destroyedIds);
+        }
+
+        Theme1HudTextMirror[] hudMirrors = Resources.FindObjectsOfTypeAll<Theme1HudTextMirror>();
+        for (int i = 0; i < hudMirrors.Length; i++)
+        {
+            Theme1HudTextMirror mirror = hudMirrors[i];
+            if (mirror == null || mirror.gameObject.scene != scene)
+            {
+                continue;
+            }
+
+            removedCount += DestroyLegacyMirrorGameObject(mirror.gameObject, destroyedIds);
+        }
+
+        TMP_Text[] labels = Resources.FindObjectsOfTypeAll<TMP_Text>();
+        for (int i = 0; i < labels.Length; i++)
+        {
+            TMP_Text label = labels[i];
+            if (label == null || label.gameObject.scene != scene)
+            {
+                continue;
+            }
+
+            if (!label.gameObject.name.EndsWith(Theme1GameplayViewRepairUtils.VisibleLabelSuffix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            removedCount += DestroyLegacyMirrorGameObject(label.gameObject, destroyedIds);
+        }
+
+        return removedCount;
+    }
+
+    private static int DestroyLegacyMirrorGameObject(GameObject target, HashSet<int> destroyedIds)
+    {
+        if (target == null)
+        {
+            return 0;
+        }
+
+        int instanceId = target.GetInstanceID();
+        if (destroyedIds.Contains(instanceId))
+        {
+            return 0;
+        }
+
+        destroyedIds.Add(instanceId);
+        Undo.DestroyObjectImmediate(target);
+        return 1;
+    }
+
+    private static int ApplyExplicitTheme1PresentationTypography(Scene scene)
+    {
+        int updatedCount = 0;
+        Theme1GameplayViewRoot[] presentationRoots = Resources.FindObjectsOfTypeAll<Theme1GameplayViewRoot>();
+        for (int i = 0; i < presentationRoots.Length; i++)
+        {
+            Theme1GameplayViewRoot root = presentationRoots[i];
+            if (root == null || root.gameObject.scene != scene)
+            {
+                continue;
+            }
+
+            Theme1GameplayViewContractRefresher.RefreshVisibleContractFromScene(root);
+            Theme1GameplayTypographyBootstrap.RegisterManagedTextTargets(root);
+            Theme1GameplayTypographyBootstrap.ApplyTypography(root);
+            EditorUtility.SetDirty(root);
+            updatedCount += 1;
+        }
+
+        return updatedCount;
     }
 
     private static void CreateFontAssetIfMissing(string sourceFileName, CandyTypographyRole role)

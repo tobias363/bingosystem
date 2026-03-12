@@ -36,6 +36,7 @@ public sealed class CandyCardViewBinding
         matchedPatternOverlays = CopyGameObjectList(source != null ? source.matchPatternImg : null, 15);
         paylineObjects = CopyGameObjectList(source != null ? source.paylineObj : null, -1);
         winningText = ResolveWinningText(source);
+        NormalizeTheme1CellOrder();
     }
 
     public void SetDisplayTexts(TextMeshProUGUI header, TextMeshProUGUI bet, TextMeshProUGUI win)
@@ -214,6 +215,76 @@ public sealed class CandyCardViewBinding
         return null;
     }
 
+    private void NormalizeTheme1CellOrder()
+    {
+        int cellCount = Mathf.Max(
+            numberTexts != null ? numberTexts.Length : 0,
+            selectionOverlays != null ? selectionOverlays.Length : 0,
+            missingPatternOverlays != null ? missingPatternOverlays.Length : 0,
+            matchedPatternOverlays != null ? matchedPatternOverlays.Length : 0);
+        if (cellCount <= 1)
+        {
+            return;
+        }
+
+        List<CellBindingEntry> entries = new List<CellBindingEntry>(cellCount);
+        bool hasPositionedRoots = false;
+        for (int i = 0; i < cellCount; i++)
+        {
+            RectTransform cellRoot = ResolveCellRoot(
+                numberTexts != null && i < numberTexts.Length ? numberTexts[i] : null,
+                selectionOverlays != null && i < selectionOverlays.Length ? selectionOverlays[i] : null,
+                missingPatternOverlays != null && i < missingPatternOverlays.Length ? missingPatternOverlays[i] : null,
+                matchedPatternOverlays != null && i < matchedPatternOverlays.Length ? matchedPatternOverlays[i] : null);
+
+            Vector2 sortPosition = Vector2.zero;
+            if (cellRoot != null)
+            {
+                sortPosition = cellRoot.anchoredPosition;
+                hasPositionedRoots = true;
+            }
+
+            entries.Add(new CellBindingEntry
+            {
+                OriginalIndex = i,
+                NumberLabel = numberTexts != null && i < numberTexts.Length ? numberTexts[i] : null,
+                SelectionOverlay = selectionOverlays != null && i < selectionOverlays.Length ? selectionOverlays[i] : null,
+                MissingOverlay = missingPatternOverlays != null && i < missingPatternOverlays.Length ? missingPatternOverlays[i] : null,
+                MatchedOverlay = matchedPatternOverlays != null && i < matchedPatternOverlays.Length ? matchedPatternOverlays[i] : null,
+                SortPosition = sortPosition
+            });
+        }
+
+        if (!hasPositionedRoots)
+        {
+            return;
+        }
+
+        entries.Sort(CompareTheme1CellEntries);
+        for (int i = 0; i < entries.Count; i++)
+        {
+            if (numberTexts != null && i < numberTexts.Length)
+            {
+                numberTexts[i] = entries[i].NumberLabel;
+            }
+
+            if (selectionOverlays != null && i < selectionOverlays.Length)
+            {
+                selectionOverlays[i] = entries[i].SelectionOverlay;
+            }
+
+            if (missingPatternOverlays != null && i < missingPatternOverlays.Length)
+            {
+                missingPatternOverlays[i] = entries[i].MissingOverlay;
+            }
+
+            if (matchedPatternOverlays != null && i < matchedPatternOverlays.Length)
+            {
+                matchedPatternOverlays[i] = entries[i].MatchedOverlay;
+            }
+        }
+    }
+
     private static Transform ResolveCardRoot(CardClass source)
     {
         if (source?.num_text != null)
@@ -257,6 +328,52 @@ public sealed class CandyCardViewBinding
         return null;
     }
 
+    private static RectTransform ResolveCellRoot(
+        TextMeshProUGUI numberLabel,
+        GameObject selectionOverlay,
+        GameObject missingOverlay,
+        GameObject matchedOverlay)
+    {
+        if (numberLabel != null)
+        {
+            return numberLabel.transform.parent as RectTransform;
+        }
+
+        if (selectionOverlay != null)
+        {
+            return selectionOverlay.transform.parent as RectTransform;
+        }
+
+        if (missingOverlay != null)
+        {
+            return missingOverlay.transform.parent as RectTransform;
+        }
+
+        if (matchedOverlay != null)
+        {
+            return matchedOverlay.transform.parent as RectTransform;
+        }
+
+        return null;
+    }
+
+    private static int CompareTheme1CellEntries(CellBindingEntry left, CellBindingEntry right)
+    {
+        int xComparison = left.SortPosition.x.CompareTo(right.SortPosition.x);
+        if (xComparison != 0)
+        {
+            return xComparison;
+        }
+
+        int yComparison = right.SortPosition.y.CompareTo(left.SortPosition.y);
+        if (yComparison != 0)
+        {
+            return yComparison;
+        }
+
+        return left.OriginalIndex.CompareTo(right.OriginalIndex);
+    }
+
     private static GameObject[] CopyGameObjectList(List<GameObject> source, int expectedLength)
     {
         int length = expectedLength > 0 ? expectedLength : (source != null ? source.Count : 0);
@@ -273,6 +390,16 @@ public sealed class CandyCardViewBinding
         }
 
         return result;
+    }
+
+    private struct CellBindingEntry
+    {
+        public int OriginalIndex;
+        public TextMeshProUGUI NumberLabel;
+        public GameObject SelectionOverlay;
+        public GameObject MissingOverlay;
+        public GameObject MatchedOverlay;
+        public Vector2 SortPosition;
     }
 
     private static void EnsureFixedLength<T>(ref List<T> list, int expectedLength, T defaultValue)

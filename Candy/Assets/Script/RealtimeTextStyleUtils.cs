@@ -14,6 +14,42 @@ public enum GameplayTextSurface
 
 public static class RealtimeTextStyleUtils
 {
+    private readonly struct TextVisualState
+    {
+        public TextVisualState(TMP_Text target)
+        {
+            Font = target != null ? target.font : null;
+            Material = target != null ? target.fontSharedMaterial : null;
+            Color = target != null ? target.color : Color.clear;
+            FontStyle = target != null ? target.fontStyle : FontStyles.Normal;
+            FontWeight = target != null ? target.fontWeight : FontWeight.Regular;
+            WrappingMode = target != null ? target.textWrappingMode : TextWrappingModes.NoWrap;
+            OverflowMode = target != null ? target.overflowMode : TextOverflowModes.Overflow;
+            EnableAutoSizing = target != null && target.enableAutoSizing;
+            FontSize = target != null ? target.fontSize : 0f;
+            FontSizeMin = target != null ? target.fontSizeMin : 0f;
+            FontSizeMax = target != null ? target.fontSizeMax : 0f;
+            CharacterSpacing = target != null ? target.characterSpacing : 0f;
+            WordSpacing = target != null ? target.wordSpacing : 0f;
+            LineSpacing = target != null ? target.lineSpacing : 0f;
+        }
+
+        public TMP_FontAsset Font { get; }
+        public Material Material { get; }
+        public Color Color { get; }
+        public FontStyles FontStyle { get; }
+        public FontWeight FontWeight { get; }
+        public TextWrappingModes WrappingMode { get; }
+        public TextOverflowModes OverflowMode { get; }
+        public bool EnableAutoSizing { get; }
+        public float FontSize { get; }
+        public float FontSizeMin { get; }
+        public float FontSizeMax { get; }
+        public float CharacterSpacing { get; }
+        public float WordSpacing { get; }
+        public float LineSpacing { get; }
+    }
+
     private static readonly Color DefaultCardNumberColor = new Color32(184, 51, 99, 255);
     private static readonly Color DefaultBallNumberColor = Color.white;
     private static readonly Color DefaultHudTextColor = Color.white;
@@ -96,25 +132,54 @@ public static class RealtimeTextStyleUtils
             return;
         }
 
-        EnsureReasonableRect(target);
+        bool rectChanged = EnsureReasonableRect(target);
+        TextVisualState before = new(target);
+        bool activationChanged = false;
         if (Application.isPlaying)
         {
-            target.enabled = true;
+            if (!target.enabled)
+            {
+                target.enabled = true;
+                activationChanged = true;
+            }
             if (!target.gameObject.activeSelf)
             {
                 target.gameObject.SetActive(true);
+                activationChanged = true;
             }
         }
 
-        target.fontStyle = FontStyles.Normal;
-        target.textWrappingMode = TextWrappingModes.NoWrap;
-        target.overflowMode = TextOverflowModes.Overflow;
+        if (target.fontStyle != FontStyles.Normal)
+        {
+            target.fontStyle = FontStyles.Normal;
+        }
+
+        if (target.textWrappingMode != TextWrappingModes.NoWrap)
+        {
+            target.textWrappingMode = TextWrappingModes.NoWrap;
+        }
+
+        if (target.overflowMode != TextOverflowModes.Overflow)
+        {
+            target.overflowMode = TextOverflowModes.Overflow;
+        }
 
         if (surface == GameplayTextSurface.BallNumber)
         {
-            target.characterSpacing = 0f;
-            target.wordSpacing = 0f;
-            target.lineSpacing = 0f;
+            if (!Mathf.Approximately(target.characterSpacing, 0f))
+            {
+                target.characterSpacing = 0f;
+            }
+
+            if (!Mathf.Approximately(target.wordSpacing, 0f))
+            {
+                target.wordSpacing = 0f;
+            }
+
+            if (!Mathf.Approximately(target.lineSpacing, 0f))
+            {
+                target.lineSpacing = 0f;
+            }
         }
 
         CandyTypographySystem.ApplyGameplayRole(
@@ -123,7 +188,11 @@ public static class RealtimeTextStyleUtils
             surface,
             preserveColor: true,
             preserveExistingFont: preserveExistingFont);
-        ForceRefresh(target, forceTextReparsing: true);
+        TextVisualState after = new(target);
+        if (activationChanged || rectChanged || !StatesMatch(before, after))
+        {
+            ForceRefresh(target, forceTextReparsing: true, layoutChanged: rectChanged);
+        }
     }
 
     public static void ApplyCardNumber(TextMeshProUGUI target, string value, TMP_FontAsset fallbackFont = null)
@@ -216,44 +285,74 @@ public static class RealtimeTextStyleUtils
             return;
         }
 
-        EnsureReasonableRect(target);
+        bool rectChanged = EnsureReasonableRect(target);
+        bool activationChanged = false;
         if (Application.isPlaying)
         {
-            target.enabled = true;
+            if (!target.enabled)
+            {
+                target.enabled = true;
+                activationChanged = true;
+            }
             if (!target.gameObject.activeSelf)
             {
                 target.gameObject.SetActive(true);
+                activationChanged = true;
             }
         }
 
+        TextVisualState before = new(target);
         TMP_FontAsset resolvedFallback = forceStableFallback
             ? ResolveStableFallbackFont()
             : (fallbackFont != null ? fallbackFont : ResolveFallbackFont());
 
+        bool styleChanged = activationChanged || rectChanged;
         bool shouldReplaceFont = !preserveExistingFont || target.font == null;
         if (resolvedFallback != null && shouldReplaceFont)
         {
             if (target.font != resolvedFallback)
             {
                 target.font = resolvedFallback;
+                styleChanged = true;
             }
         }
-
         Color color = preferredColor;
         color.a = 1f;
-        target.color = color;
-        target.fontStyle = FontStyles.Normal;
-        target.fontWeight = FontWeight.Regular;
-        target.textWrappingMode = TextWrappingModes.NoWrap;
-        target.overflowMode = TextOverflowModes.Overflow;
+        if (target.color != color)
+        {
+            target.color = color;
+            styleChanged = true;
+        }
 
-        target.alpha = 1f;
-        target.text = value;
-        target.havePropertiesChanged = true;
-        target.SetVerticesDirty();
-        target.SetMaterialDirty();
-        target.SetLayoutDirty();
-        ForceRefresh(target, forceTextReparsing: true);
+        if (!Mathf.Approximately(target.alpha, 1f))
+        {
+            target.alpha = 1f;
+            styleChanged = true;
+        }
+
+        bool textChanged = !string.Equals(target.text, value, StringComparison.Ordinal);
+        if (textChanged)
+        {
+            target.text = value;
+            target.havePropertiesChanged = true;
+            target.SetVerticesDirty();
+        }
+
+        TextVisualState after = new(target);
+        if (!StatesMatch(before, after))
+        {
+            styleChanged = true;
+        }
+
+        if (styleChanged)
+        {
+            ForceRefresh(target, forceTextReparsing: true, layoutChanged: rectChanged);
+        }
+        else if (textChanged)
+        {
+            target.havePropertiesChanged = true;
+            target.SetVerticesDirty();
+        }
 
         if (ShouldForceStableFallback(target, value))
         {
@@ -261,7 +360,7 @@ public static class RealtimeTextStyleUtils
             if (stableFallback != null && target.font != stableFallback)
             {
                 target.font = stableFallback;
-                ForceRefresh(target, forceTextReparsing: true);
+                ForceRefresh(target, forceTextReparsing: true, layoutChanged: false);
             }
         }
     }
@@ -304,21 +403,23 @@ public static class RealtimeTextStyleUtils
             $"chars={characterCount} text='{value}'";
     }
 
-    private static void ForceRefresh(TMP_Text target, bool forceTextReparsing)
+    private static void ForceRefresh(TMP_Text target, bool forceTextReparsing, bool layoutChanged)
     {
         if (target == null)
         {
             return;
         }
 
-        target.ForceMeshUpdate(ignoreActiveState: true, forceTextReparsing: forceTextReparsing);
-        RectTransform rect = TryGetRectTransform(target);
-        if (rect != null)
+        target.havePropertiesChanged = true;
+        target.UpdateMeshPadding();
+        target.SetVerticesDirty();
+        target.SetMaterialDirty();
+        if (layoutChanged)
         {
-            LayoutRebuilder.ForceRebuildLayoutImmediate(rect);
-            Canvas.ForceUpdateCanvases();
+            target.SetLayoutDirty();
         }
 
+        target.ForceMeshUpdate(ignoreActiveState: true, forceTextReparsing: forceTextReparsing);
         target.ForceMeshUpdate(ignoreActiveState: true, forceTextReparsing: false);
     }
 
@@ -337,18 +438,18 @@ public static class RealtimeTextStyleUtils
         return true;
     }
 
-    private static void EnsureReasonableRect(TMP_Text target)
+    private static bool EnsureReasonableRect(TMP_Text target)
     {
         RectTransform rect = TryGetRectTransform(target);
         if (rect == null)
         {
-            return;
+            return false;
         }
 
         Rect currentRect = rect.rect;
         if (currentRect.width > 1f && currentRect.height > 1f)
         {
-            return;
+            return false;
         }
 
         Vector2 preferredSize = Vector2.zero;
@@ -380,8 +481,28 @@ public static class RealtimeTextStyleUtils
             preferredSize.y = 24f;
         }
 
+        bool changed = rect.sizeDelta != preferredSize || rect.localScale != Vector3.one;
         rect.sizeDelta = preferredSize;
         rect.localScale = Vector3.one;
+        return changed;
+    }
+
+    private static bool StatesMatch(TextVisualState left, TextVisualState right)
+    {
+        return left.Font == right.Font &&
+               left.Material == right.Material &&
+               left.Color == right.Color &&
+               left.FontStyle == right.FontStyle &&
+               left.FontWeight == right.FontWeight &&
+               left.WrappingMode == right.WrappingMode &&
+               left.OverflowMode == right.OverflowMode &&
+               left.EnableAutoSizing == right.EnableAutoSizing &&
+               Mathf.Approximately(left.FontSize, right.FontSize) &&
+               Mathf.Approximately(left.FontSizeMin, right.FontSizeMin) &&
+               Mathf.Approximately(left.FontSizeMax, right.FontSizeMax) &&
+               Mathf.Approximately(left.CharacterSpacing, right.CharacterSpacing) &&
+               Mathf.Approximately(left.WordSpacing, right.WordSpacing) &&
+               Mathf.Approximately(left.LineSpacing, right.LineSpacing);
     }
 
     private static RectTransform TryGetRectTransform(TMP_Text target)

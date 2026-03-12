@@ -29,10 +29,16 @@ public static class CandyTheme1BindingTools
         EditorApplication.playModeStateChanged += HandlePlayModeStateChanged;
     }
 
+    [MenuItem("Candy/Bindings/Migrate Theme1 Production Root")]
+    public static void MigrateTheme1ProductionRootMenu()
+    {
+        MigrateTheme1ProductionRoot(openSceneIfNeeded: true, saveScene: true, logSummary: true);
+    }
+
     [MenuItem("Candy/Bindings/Install Or Refresh Theme1 Bindings")]
     public static void InstallOrRefreshTheme1BindingsMenu()
     {
-        InstallOrRefreshTheme1Bindings(openSceneIfNeeded: true, saveScene: true, logSummary: true);
+        MigrateTheme1ProductionRoot(openSceneIfNeeded: true, saveScene: true, logSummary: true);
     }
 
     [MenuItem("Candy/Bindings/Validate Theme1 Bindings")]
@@ -47,7 +53,12 @@ public static class CandyTheme1BindingTools
 
     public static void InstallOrRefreshTheme1BindingsCli()
     {
-        InstallOrRefreshTheme1Bindings(openSceneIfNeeded: true, saveScene: true, logSummary: true);
+        MigrateTheme1ProductionRoot(openSceneIfNeeded: true, saveScene: true, logSummary: true);
+    }
+
+    public static void MigrateTheme1ProductionRootCli()
+    {
+        MigrateTheme1ProductionRoot(openSceneIfNeeded: true, saveScene: true, logSummary: true);
     }
 
     public static void ValidateTheme1BindingsCli()
@@ -77,17 +88,6 @@ public static class CandyTheme1BindingTools
             return;
         }
 
-        try
-        {
-            InstallOrRefreshTheme1Bindings(openSceneIfNeeded: false, saveScene: true, logSummary: false);
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError($"{ValidationPrefix} Klarte ikke auto-refreshe Theme1 før Play Mode. {ex}");
-            EditorApplication.isPlaying = false;
-            return;
-        }
-
         bool valid = ValidateTheme1Bindings(openSceneIfNeeded: false, logSummary: false, out string report);
         if (valid)
         {
@@ -105,132 +105,128 @@ public static class CandyTheme1BindingTools
 
     private static void InstallOrRefreshTheme1Bindings(bool openSceneIfNeeded, bool saveScene, bool logSummary)
     {
+        MigrateTheme1ProductionRoot(openSceneIfNeeded, saveScene, logSummary);
+    }
+
+    private static void MigrateTheme1ProductionRoot(bool openSceneIfNeeded, bool saveScene, bool logSummary)
+    {
         Scene scene = EnsureTheme1SceneLoaded(openSceneIfNeeded);
         if (!scene.IsValid())
         {
             throw new InvalidOperationException($"{ValidationPrefix} Klarte ikke laste Theme1.");
         }
 
-        NumberGenerator generator = UnityEngine.Object.FindObjectOfType<NumberGenerator>(true);
-        BallManager ballManager = UnityEngine.Object.FindObjectOfType<BallManager>(true);
-        APIManager apiManager = UnityEngine.Object.FindObjectOfType<APIManager>(true);
-        if (generator == null || ballManager == null || apiManager == null)
+        NumberGenerator generator = UnityEngine.Object.FindFirstObjectByType<NumberGenerator>(FindObjectsInactive.Include);
+        BallManager ballManager = UnityEngine.Object.FindFirstObjectByType<BallManager>(FindObjectsInactive.Include);
+        APIManager apiManager = UnityEngine.Object.FindFirstObjectByType<APIManager>(FindObjectsInactive.Include);
+        GameManager gameManager = UnityEngine.Object.FindFirstObjectByType<GameManager>(FindObjectsInactive.Include);
+        TopperManager topperManager = UnityEngine.Object.FindFirstObjectByType<TopperManager>(FindObjectsInactive.Include);
+        if (generator == null || ballManager == null || apiManager == null || gameManager == null || topperManager == null)
         {
-            throw new InvalidOperationException($"{ValidationPrefix} Fant ikke NumberGenerator, BallManager eller APIManager i Theme1.");
+            throw new InvalidOperationException($"{ValidationPrefix} Mangler NumberGenerator, BallManager, APIManager, GameManager eller TopperManager i Theme1.");
         }
-
-        GameManager gameManager = UnityEngine.Object.FindObjectOfType<GameManager>(true);
-        TopperManager topperManager = UnityEngine.Object.FindObjectOfType<TopperManager>(true);
 
         CandyCardViewBindingSet cardBindings = generator.GetComponent<CandyCardViewBindingSet>();
-        if (cardBindings == null)
-        {
-            cardBindings = Undo.AddComponent<CandyCardViewBindingSet>(generator.gameObject);
-        }
-        NormalizeCardNumberTargets(generator);
-        cardBindings.PullFrom(generator);
-        ApplyCardDisplayTextBindings(cardBindings, gameManager);
-        if (!cardBindings.TryApplyTo(generator, out string cardApplyError))
-        {
-            throw new InvalidOperationException($"{ValidationPrefix} Klarte ikke anvende card bindings: {cardApplyError}");
-        }
-
         CandyBallViewBindingSet ballBindings = ballManager.GetComponent<CandyBallViewBindingSet>();
-        if (ballBindings == null)
-        {
-            ballBindings = Undo.AddComponent<CandyBallViewBindingSet>(ballManager.gameObject);
-        }
-        NormalizeRealtimeBallLayout(ballManager);
-        NormalizeBallTextTargets(ballManager);
-        ballBindings.PullFrom(ballManager);
-        ballManager.ApplyExplicitRealtimeViewBindingsFromComponent();
-
         CandyTheme1HudBindingSet hudBindings = apiManager.GetComponent<CandyTheme1HudBindingSet>();
-        if (hudBindings == null)
+        if (cardBindings == null || ballBindings == null || hudBindings == null)
         {
-            hudBindings = Undo.AddComponent<CandyTheme1HudBindingSet>(apiManager.gameObject);
+            throw new InvalidOperationException($"{ValidationPrefix} Mangler card/ball/hud binding-sett som kreves for Theme1-produksjonsmigrering.");
         }
 
-        EnsureRealtimeRoomPlayerCountLabel(generator, apiManager);
-        NormalizeHudTargets(generator, apiManager);
-        hudBindings.PullFrom(generator, gameManager);
-        if (!hudBindings.TryApplyTo(generator, apiManager, gameManager, out string hudApplyError))
+        if (!cardBindings.Validate(out string cardBindingReport))
         {
-            throw new InvalidOperationException($"{ValidationPrefix} Klarte ikke anvende HUD bindings: {hudApplyError}");
+            throw new InvalidOperationException(cardBindingReport);
         }
 
-        NormalizeTopperPrizeTargets(topperManager, gameManager);
-
-        Theme1GameplayViewRoot dedicatedViewRoot = apiManager.GetComponent<Theme1GameplayViewRoot>();
-        if (dedicatedViewRoot == null)
+        if (!ballBindings.Validate(out string ballBindingReport))
         {
-            dedicatedViewRoot = Undo.AddComponent<Theme1GameplayViewRoot>(apiManager.gameObject);
+            throw new InvalidOperationException(ballBindingReport);
         }
 
-        dedicatedViewRoot.PullFrom(cardBindings, ballBindings, hudBindings, topperManager);
+        if (!hudBindings.Validate(out string hudBindingReport))
+        {
+            throw new InvalidOperationException(hudBindingReport);
+        }
+
+        Transform productionRootParent = ResolveProductionRootParent(hudBindings, apiManager);
+        GameObject productionRootObject = FindExistingProductionRoot(productionRootParent);
+        bool createdRoot = false;
+        if (productionRootObject == null)
+        {
+            productionRootObject = new GameObject("Theme1ProductionRoot", typeof(RectTransform));
+            createdRoot = true;
+        }
+
+        if (createdRoot)
+        {
+            Undo.RegisterCreatedObjectUndo(productionRootObject, "Create Theme1ProductionRoot");
+        }
+
+        RectTransform productionRect = productionRootObject.GetComponent<RectTransform>();
+        if (productionRootParent != null && productionRootObject.transform.parent != productionRootParent)
+        {
+            Undo.SetTransformParent(productionRootObject.transform, productionRootParent, "Move Theme1ProductionRoot");
+        }
+        productionRect.localRotation = Quaternion.identity;
+        productionRect.localPosition = Vector3.zero;
+        productionRect.localScale = Vector3.one;
+        productionRect.anchorMin = Vector2.zero;
+        productionRect.anchorMax = Vector2.one;
+        productionRect.pivot = new Vector2(0.5f, 0.5f);
+        productionRect.anchoredPosition = Vector2.zero;
+        productionRect.sizeDelta = Vector2.zero;
+        productionRootObject.SetActive(true);
+
+        Theme1GameplayViewRoot sourceViewRoot = ResolveExistingViewRoot(apiManager);
+        Theme1GameplayViewRoot productionRoot = productionRootObject.GetComponent<Theme1GameplayViewRoot>();
+        if (productionRoot == null)
+        {
+            productionRoot = Undo.AddComponent<Theme1GameplayViewRoot>(productionRootObject);
+        }
+
+        if (sourceViewRoot != null && sourceViewRoot != productionRoot)
+        {
+            EditorUtility.CopySerialized(sourceViewRoot, productionRoot);
+        }
+        else
+        {
+            productionRoot.PullFrom(cardBindings, ballBindings, hudBindings, topperManager);
+        }
+
+        Theme1LayoutController layoutController = productionRootObject.GetComponent<Theme1LayoutController>();
+        if (layoutController == null)
+        {
+            layoutController = Undo.AddComponent<Theme1LayoutController>(productionRootObject);
+        }
+
         SerializedObject serializedApiManager = new SerializedObject(apiManager);
-        SerializedProperty dedicatedViewRootProperty = serializedApiManager.FindProperty("theme1GameplayViewRoot");
-        if (dedicatedViewRootProperty != null)
-        {
-            dedicatedViewRootProperty.objectReferenceValue = dedicatedViewRoot;
-        }
-
-        SerializedProperty numberGeneratorProperty = serializedApiManager.FindProperty("theme1NumberGenerator");
-        if (numberGeneratorProperty != null)
-        {
-            numberGeneratorProperty.objectReferenceValue = generator;
-        }
-
-        SerializedProperty gameManagerProperty = serializedApiManager.FindProperty("theme1GameManager");
-        if (gameManagerProperty != null)
-        {
-            gameManagerProperty.objectReferenceValue = gameManager;
-        }
-
-        SerializedProperty topperManagerProperty = serializedApiManager.FindProperty("theme1TopperManager");
-        if (topperManagerProperty != null)
-        {
-            topperManagerProperty.objectReferenceValue = topperManager;
-        }
-
-        SerializedProperty ballManagerProperty = serializedApiManager.FindProperty("ballManager");
-        if (ballManagerProperty != null)
-        {
-            ballManagerProperty.objectReferenceValue = ballManager;
-        }
-
+        SetObjectReference(serializedApiManager, "theme1GameplayViewRoot", productionRoot);
+        SetObjectReference(serializedApiManager, "theme1NumberGenerator", generator);
+        SetObjectReference(serializedApiManager, "theme1GameManager", gameManager);
+        SetObjectReference(serializedApiManager, "theme1TopperManager", topperManager);
+        SetObjectReference(serializedApiManager, "ballManager", ballManager);
         SerializedProperty renderModeProperty = serializedApiManager.FindProperty("theme1RealtimeViewMode");
         if (renderModeProperty != null)
         {
             renderModeProperty.enumValueIndex = 1;
         }
         serializedApiManager.ApplyModifiedPropertiesWithoutUndo();
-        if (gameManager != null)
+
+        if (sourceViewRoot != null &&
+            sourceViewRoot != productionRoot &&
+            sourceViewRoot.gameObject == apiManager.gameObject)
         {
-            SerializedObject serializedGameManager = new SerializedObject(gameManager);
-            SerializedProperty increaseSpeed = serializedGameManager.FindProperty("increaseGameSpeedInTesting");
-            SerializedProperty speedMultiplier = serializedGameManager.FindProperty("testingSpeedMultiplier");
-            if (increaseSpeed != null)
-            {
-                increaseSpeed.boolValue = false;
-            }
-            if (speedMultiplier != null)
-            {
-                speedMultiplier.floatValue = 1f;
-            }
-            SerializedProperty hidePerCardWinLabels = serializedGameManager.FindProperty("hidePerCardWinLabels");
-            if (hidePerCardWinLabels != null)
-            {
-                hidePerCardWinLabels.boolValue = false;
-            }
-            serializedGameManager.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(gameManager);
+            Undo.DestroyObjectImmediate(sourceViewRoot);
         }
 
-        EditorUtility.SetDirty(cardBindings);
-        EditorUtility.SetDirty(ballBindings);
-        EditorUtility.SetDirty(hudBindings);
-        EditorUtility.SetDirty(dedicatedViewRoot);
+        ApplyTheme1SceneCanvasPolicy(scene);
+        Theme1SceneScaleNormalizer.ApplyPolicy(scene, productionRoot, logSummary);
+        Theme1AssetImportAudit.ApplyTheme1AssetImportPolicyCli();
+
+        EditorUtility.SetDirty(productionRootObject);
+        EditorUtility.SetDirty(productionRoot);
+        EditorUtility.SetDirty(layoutController);
         EditorUtility.SetDirty(apiManager);
         EditorSceneManager.MarkSceneDirty(scene);
 
@@ -248,7 +244,7 @@ public static class CandyTheme1BindingTools
 
         if (logSummary)
         {
-            Debug.Log($"{ValidationPrefix} Theme1 bindings oppdatert og validert.");
+            Debug.Log($"{ValidationPrefix} Theme1ProductionRoot migrert og validert.");
         }
     }
 
@@ -261,114 +257,7 @@ public static class CandyTheme1BindingTools
             return false;
         }
 
-        NumberGenerator generator = UnityEngine.Object.FindObjectOfType<NumberGenerator>(true);
-        BallManager ballManager = UnityEngine.Object.FindObjectOfType<BallManager>(true);
-        APIManager apiManager = UnityEngine.Object.FindObjectOfType<APIManager>(true);
-        if (generator == null || ballManager == null || apiManager == null)
-        {
-            report = $"{ValidationPrefix} Mangler NumberGenerator, BallManager eller APIManager i Theme1.";
-            return false;
-        }
-
-        StringBuilder builder = new StringBuilder();
-        bool isValid = true;
-
-        if (!CandyBallVisualCatalog.TryValidateComplete(out string ballCatalogError))
-        {
-            builder.AppendLine(ballCatalogError);
-            isValid = false;
-        }
-
-        CandyCardViewBindingSet cardBindings = generator.GetComponent<CandyCardViewBindingSet>();
-        if (cardBindings == null)
-        {
-            builder.AppendLine("CandyCardViewBindingSet mangler på NumberGenerator.");
-            isValid = false;
-        }
-        else if (!cardBindings.Validate(out string cardReport))
-        {
-            isValid = false;
-            builder.AppendLine(cardReport);
-        }
-
-        CandyBallViewBindingSet ballBindings = ballManager.GetComponent<CandyBallViewBindingSet>();
-        if (ballBindings == null)
-        {
-            builder.AppendLine("CandyBallViewBindingSet mangler på BallManager.");
-            isValid = false;
-        }
-        else if (!ballBindings.Validate(out string ballReport))
-        {
-            isValid = false;
-            builder.AppendLine(ballReport);
-        }
-
-        CandyTheme1HudBindingSet hudBindings = apiManager.GetComponent<CandyTheme1HudBindingSet>();
-        if (hudBindings == null)
-        {
-            builder.AppendLine("CandyTheme1HudBindingSet mangler på APIManager.");
-            isValid = false;
-        }
-        else if (!hudBindings.Validate(out string hudReport))
-        {
-            isValid = false;
-            builder.AppendLine(hudReport);
-        }
-
-        if (apiManager.UseRealtimeBackend && apiManager.enabled)
-        {
-            if (cardBindings != null && cardBindings.CountValidNumberTargets() != 60)
-            {
-                builder.AppendLine($"Card bindings har ikke 60 gyldige tallfelt. Fikk {cardBindings.CountValidNumberTargets()}.");
-                isValid = false;
-            }
-
-            if (ballBindings != null)
-            {
-                int validBallTextTargets = ballBindings.CountValidBallTextTargets();
-                if (validBallTextTargets != 0 && validBallTextTargets != 30)
-                {
-                    builder.AppendLine($"Ball bindings har ugyldig antall gyldige tallfelt. Forventet 0 eller 30. Fikk {validBallTextTargets}.");
-                    isValid = false;
-                }
-            }
-
-            if (generator.autoSpinRemainingPlayText == null)
-            {
-                builder.AppendLine("NumberGenerator.autoSpinRemainingPlayText mangler.");
-                isValid = false;
-            }
-        }
-
-        Theme1GameplayViewRoot dedicatedViewRoot = apiManager.GetComponent<Theme1GameplayViewRoot>();
-        if (dedicatedViewRoot == null)
-        {
-            builder.AppendLine("Theme1GameplayViewRoot mangler på APIManager.");
-            isValid = false;
-        }
-        else if (!dedicatedViewRoot.ValidateContract(out string dedicatedViewReport))
-        {
-            isValid = false;
-            builder.AppendLine(dedicatedViewReport);
-        }
-
-        report = builder.Length == 0
-            ? $"{ValidationPrefix} OK"
-            : $"{ValidationPrefix}{Environment.NewLine}{builder}";
-
-        if (logSummary)
-        {
-            if (isValid)
-            {
-                Debug.Log(report);
-            }
-            else
-            {
-                Debug.LogError(report);
-            }
-        }
-
-        return isValid;
+        return Theme1ProductionGuardrails.ValidateOpenTheme1Scene(logSummary, out report);
     }
 
     private static Scene EnsureTheme1SceneLoaded(bool openSceneIfNeeded)
@@ -385,6 +274,104 @@ public static class CandyTheme1BindingTools
         }
 
         return EditorSceneManager.OpenScene(Theme1ScenePath, OpenSceneMode.Single);
+    }
+
+    private static Transform ResolveProductionRootParent(CandyTheme1HudBindingSet hudBindings, APIManager apiManager)
+    {
+        Canvas rootCanvas = hudBindings?.CountdownText != null
+            ? hudBindings.CountdownText.canvas?.rootCanvas
+            : null;
+        if (rootCanvas == null)
+        {
+            rootCanvas = UnityEngine.Object.FindFirstObjectByType<Canvas>(FindObjectsInactive.Include);
+        }
+
+        return rootCanvas != null ? rootCanvas.transform : apiManager.transform.parent;
+    }
+
+    private static GameObject FindExistingProductionRoot(Transform parent)
+    {
+        if (parent == null)
+        {
+            return GameObject.Find("Theme1ProductionRoot");
+        }
+
+        Transform child = parent.Find("Theme1ProductionRoot");
+        return child != null ? child.gameObject : null;
+    }
+
+    private static Theme1GameplayViewRoot ResolveExistingViewRoot(APIManager apiManager)
+    {
+        if (apiManager == null)
+        {
+            return null;
+        }
+
+        SerializedObject serializedApiManager = new SerializedObject(apiManager);
+        SerializedProperty viewRootProperty = serializedApiManager.FindProperty("theme1GameplayViewRoot");
+        Theme1GameplayViewRoot serializedRoot = viewRootProperty != null
+            ? viewRootProperty.objectReferenceValue as Theme1GameplayViewRoot
+            : null;
+        return serializedRoot != null
+            ? serializedRoot
+            : apiManager.GetComponent<Theme1GameplayViewRoot>();
+    }
+
+    private static void SetObjectReference(SerializedObject serializedObject, string propertyName, UnityEngine.Object value)
+    {
+        SerializedProperty property = serializedObject.FindProperty(propertyName);
+        if (property != null)
+        {
+            property.objectReferenceValue = value;
+        }
+    }
+
+    private static void ApplyTheme1SceneCanvasPolicy(Scene scene)
+    {
+        CanvasScaler[] scalers = UnityEngine.Object.FindObjectsByType<CanvasScaler>(
+            FindObjectsInactive.Include,
+            FindObjectsSortMode.None);
+        for (int i = 0; i < scalers.Length; i++)
+        {
+            CanvasScaler scaler = scalers[i];
+            if (scaler == null || scaler.gameObject.scene != scene)
+            {
+                continue;
+            }
+
+            Undo.RecordObject(scaler, "Normalize Theme1 CanvasScaler");
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920f, 1080f);
+            scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+            scaler.matchWidthOrHeight = 0.5f;
+            if (scaler.dynamicPixelsPerUnit < CandyTypographySystem.MinimumGameplayCameraCanvasDynamicPixelsPerUnit)
+            {
+                scaler.dynamicPixelsPerUnit = CandyTypographySystem.MinimumGameplayCameraCanvasDynamicPixelsPerUnit;
+            }
+
+            EditorUtility.SetDirty(scaler);
+        }
+
+        Canvas[] canvases = UnityEngine.Object.FindObjectsByType<Canvas>(
+            FindObjectsInactive.Include,
+            FindObjectsSortMode.None);
+        for (int i = 0; i < canvases.Length; i++)
+        {
+            Canvas canvas = canvases[i];
+            if (canvas == null || canvas.gameObject.scene != scene)
+            {
+                continue;
+            }
+
+            if (!canvas.pixelPerfect)
+            {
+                continue;
+            }
+
+            Undo.RecordObject(canvas, "Disable Theme1 PixelPerfect Canvas");
+            canvas.pixelPerfect = false;
+            EditorUtility.SetDirty(canvas);
+        }
     }
 
     private static void ApplyCardDisplayTextBindings(CandyCardViewBindingSet cardBindings, GameManager gameManager)

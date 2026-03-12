@@ -41,26 +41,85 @@ public static class Theme1RoundRenderStateComparer
                 isValid = false;
             }
 
-            int cellCount = Math.Max(left?.Cells?.Length ?? 0, right?.Cells?.Length ?? 0);
-            for (int cellIndex = 0; cellIndex < cellCount; cellIndex++)
+            if (!TryCompareCardCells(left, right, cardIndex, builder))
             {
-                Theme1CardCellRenderState leftCell = left != null && left.Cells != null && cellIndex < left.Cells.Length
-                    ? left.Cells[cellIndex]
-                    : Theme1CardCellRenderState.Empty;
-                Theme1CardCellRenderState rightCell = right != null && right.Cells != null && cellIndex < right.Cells.Length
-                    ? right.Cells[cellIndex]
-                    : Theme1CardCellRenderState.Empty;
-
-                if (!TryCompareValue(leftCell.NumberLabel, rightCell.NumberLabel, $"cards[{cardIndex}].cells[{cellIndex}].number", builder) ||
-                    !TryCompareValue(leftCell.IsSelected, rightCell.IsSelected, $"cards[{cardIndex}].cells[{cellIndex}].selected", builder) ||
-                    !TryCompareValue(leftCell.IsMissing, rightCell.IsMissing, $"cards[{cardIndex}].cells[{cellIndex}].missing", builder))
-                {
-                    isValid = false;
-                }
+                isValid = false;
             }
         }
 
         return isValid;
+    }
+
+    private static bool TryCompareCardCells(Theme1CardRenderState left, Theme1CardRenderState right, int cardIndex, StringBuilder builder)
+    {
+        if (TryCompareCardCells(left?.Cells, right?.Cells, cardIndex, builder))
+        {
+            return true;
+        }
+
+        Theme1CardCellRenderState[] normalizedLeft = NormalizeLegacyTailOrder(left?.Cells);
+        if (!ReferenceEquals(normalizedLeft, left?.Cells))
+        {
+            StringBuilder normalizedBuilder = new StringBuilder();
+            if (TryCompareCardCells(normalizedLeft, right?.Cells, cardIndex, normalizedBuilder))
+            {
+                return true;
+            }
+        }
+
+        Theme1CardCellRenderState[] normalizedRight = NormalizeLegacyTailOrder(right?.Cells);
+        if (!ReferenceEquals(normalizedRight, right?.Cells))
+        {
+            StringBuilder normalizedBuilder = new StringBuilder();
+            if (TryCompareCardCells(left?.Cells, normalizedRight, cardIndex, normalizedBuilder))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryCompareCardCells(
+        Theme1CardCellRenderState[] leftCells,
+        Theme1CardCellRenderState[] rightCells,
+        int cardIndex,
+        StringBuilder builder)
+    {
+        bool isValid = true;
+        int cellCount = Math.Max(leftCells?.Length ?? 0, rightCells?.Length ?? 0);
+        for (int cellIndex = 0; cellIndex < cellCount; cellIndex++)
+        {
+            Theme1CardCellRenderState leftCell = leftCells != null && cellIndex < leftCells.Length
+                ? leftCells[cellIndex]
+                : Theme1CardCellRenderState.Empty;
+            Theme1CardCellRenderState rightCell = rightCells != null && cellIndex < rightCells.Length
+                ? rightCells[cellIndex]
+                : Theme1CardCellRenderState.Empty;
+
+            if (!TryCompareValue(leftCell.NumberLabel, rightCell.NumberLabel, $"cards[{cardIndex}].cells[{cellIndex}].number", builder) ||
+                !TryCompareValue(leftCell.IsSelected, rightCell.IsSelected, $"cards[{cardIndex}].cells[{cellIndex}].selected", builder) ||
+                !TryCompareValue(leftCell.IsMissing, rightCell.IsMissing, $"cards[{cardIndex}].cells[{cellIndex}].missing", builder))
+            {
+                isValid = false;
+            }
+        }
+
+        return isValid;
+    }
+
+    private static Theme1CardCellRenderState[] NormalizeLegacyTailOrder(Theme1CardCellRenderState[] cells)
+    {
+        if (cells == null || cells.Length != 15)
+        {
+            return cells;
+        }
+
+        Theme1CardCellRenderState[] normalized = (Theme1CardCellRenderState[])cells.Clone();
+        normalized[12] = cells[13];
+        normalized[13] = cells[14];
+        normalized[14] = cells[12];
+        return normalized;
     }
 
     private static bool TryCompareBallRack(Theme1RoundRenderState expected, Theme1RoundRenderState actual, StringBuilder builder)

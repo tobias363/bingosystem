@@ -32,21 +32,11 @@ public sealed class Theme1DisplayPresenter
                 ? cards[cardIndex]
                 : Theme1CardRenderState.CreateEmpty();
 
-            ApplyHudText(view?.HeaderLabel, state.HeaderLabel);
-            ApplyHudText(view?.BetLabel, state.BetLabel);
-            if (view?.WinLabel != null)
-            {
-                if (state.ShowWinLabel && !string.IsNullOrWhiteSpace(state.WinLabel))
-                {
-                    ApplyHudText(view.WinLabel, state.WinLabel);
-                }
-                else
-                {
-                    ApplyRawText(view.WinLabel, string.Empty);
-                }
-
-                SetActive(view.WinLabel.gameObject, state.ShowWinLabel);
-            }
+            Theme1PresentationTextUtils.ApplyText(view?.HeaderLabel, state.HeaderLabel);
+            Theme1PresentationTextUtils.ApplyText(view?.BetLabel, state.BetLabel);
+            Theme1PresentationTextUtils.SetActive(view?.HeaderLabel != null ? view.HeaderLabel.gameObject : null, Theme1BongStyle.ShowCardOverlayLabels);
+            Theme1PresentationTextUtils.SetActive(view?.BetLabel != null ? view.BetLabel.gameObject : null, Theme1BongStyle.ShowCardOverlayLabels);
+            Theme1CardLabelPolicy.ApplyRenderedWinLabel(view?.WinLabel, state.WinLabel, state.ShowWinLabel);
 
             int cellCount = view?.Cells != null ? view.Cells.Length : 0;
             for (int cellIndex = 0; cellIndex < cellCount; cellIndex++)
@@ -56,20 +46,14 @@ public sealed class Theme1DisplayPresenter
                     ? state.Cells[cellIndex]
                     : Theme1CardCellRenderState.Empty;
 
-                ApplyCardNumberText(cellView?.NumberLabel, cellState.NumberLabel);
-                SetActive(cellView?.SelectionOverlay, cellState.IsSelected);
-                SetActive(cellView?.MissingOverlay, cellState.IsMissing);
-                SetActive(cellView?.MatchedOverlay, cellState.IsMatched);
+                Theme1PresentationTextUtils.ApplyCardNumberText(cellView?.NumberLabel, cellState.NumberLabel);
+                Theme1PresentationTextUtils.SetActive(cellView?.SelectionOverlay, cellState.IsSelected);
+                Theme1PresentationTextUtils.SetActive(cellView?.MissingOverlay, cellState.IsMissing);
+                Theme1PresentationTextUtils.SetActive(cellView?.MatchedOverlay, cellState.IsMatched);
+                Theme1BongRenderUtils.ApplyCellVisual(cellView, cellState);
             }
 
-            int paylineCount = view?.PaylineObjects != null ? view.PaylineObjects.Length : 0;
-            for (int paylineIndex = 0; paylineIndex < paylineCount; paylineIndex++)
-            {
-                bool isActive = state.PaylinesActive != null &&
-                                paylineIndex < state.PaylinesActive.Length &&
-                                state.PaylinesActive[paylineIndex];
-                SetActive(view.PaylineObjects[paylineIndex], isActive);
-            }
+            Theme1BongRenderUtils.ApplyPaylineVisuals(view, state);
         }
     }
 
@@ -81,12 +65,12 @@ public sealed class Theme1DisplayPresenter
             return;
         }
 
-        SetActive(view.BallOutMachineAnimParent, state.ShowBallOutMachine);
-        SetActive(view.BallMachine, state.ShowBallMachine);
-        SetActive(view.ExtraBallMachine, state.ShowExtraBallMachine);
+        Theme1PresentationTextUtils.SetActive(view.BallOutMachineAnimParent, state.ShowBallOutMachine);
+        Theme1PresentationTextUtils.SetActive(view.BallMachine, state.ShowBallMachine);
+        Theme1PresentationTextUtils.SetActive(view.ExtraBallMachine, state.ShowExtraBallMachine);
         if (view.BigBallImage != null)
         {
-            SetActive(view.BigBallImage.gameObject, state.ShowBigBall);
+            Theme1PresentationTextUtils.SetActive(view.BigBallImage.gameObject, state.ShowBigBall);
         }
 
         SetHiddenBallNumberLabel(view.BigBallText, state.BigBallNumber);
@@ -100,7 +84,7 @@ public sealed class Theme1DisplayPresenter
                 ? state.Slots[slotIndex]
                 : Theme1BallSlotRenderState.Empty;
 
-            SetActive(slotView?.Root, slotState.IsVisible);
+            Theme1PresentationTextUtils.SetActive(slotView?.Root, slotState.IsVisible);
             SetHiddenBallNumberLabel(slotView?.NumberLabel, slotState.NumberLabel);
             ApplySlotBallSprite(slotView?.SpriteTarget, slotState.NumberLabel);
         }
@@ -115,17 +99,18 @@ public sealed class Theme1DisplayPresenter
         }
 
         GameManager gameManager = GameManager.instance;
-        ApplyHudText(view.CountdownText, state.CountdownLabel);
-        ApplyHudText(view.RoomPlayerCountText, state.PlayerCountLabel);
-        ApplyRequiredHudValue(
+        Theme1PresentationTextUtils.ApplyPreservedHudValue(view.CountdownText, state.CountdownLabel, "00:45");
+        Theme1PresentationTextUtils.ApplyOptionalHudValue(view.RoomPlayerCountText, state.PlayerCountLabel);
+        Theme1PresentationTextUtils.SetActive(view.RoomPlayerCountText != null ? view.RoomPlayerCountText.gameObject : null, !string.IsNullOrWhiteSpace(view.RoomPlayerCountText != null ? view.RoomPlayerCountText.text : string.Empty));
+        Theme1PresentationTextUtils.ApplyRequiredHudValue(
             view.CreditText,
             state.CreditLabel,
             gameManager != null ? GameManager.FormatWholeNumber(gameManager.CreditBalance) : "0");
-        ApplyRequiredHudValue(
+        Theme1PresentationTextUtils.ApplyRequiredHudValue(
             view.WinningsText,
             state.WinningsLabel,
             gameManager != null ? GameManager.FormatWholeNumber(gameManager.RoundWinnings) : "0");
-        ApplyRequiredHudValue(
+        Theme1PresentationTextUtils.ApplyRequiredHudValue(
             view.BetText,
             state.BetLabel,
             gameManager != null ? GameManager.FormatWholeNumber(gameManager.currentBet) : "0");
@@ -147,9 +132,9 @@ public sealed class Theme1DisplayPresenter
                 ? state.Slots[slotIndex]
                 : Theme1TopperSlotRenderState.Empty;
 
-            SetActive(slotView?.PatternRoot, slotState.ShowPattern);
-            SetActive(slotView?.MatchedPatternRoot, slotState.ShowMatchedPattern);
-            ApplyTopperText(slotView?.PrizeLabel, slotState.PrizeLabel, slotView != null ? slotView.DefaultPrizeColor : Color.white);
+            Theme1PresentationTextUtils.SetActive(slotView?.PatternRoot, slotState.ShowPattern);
+            Theme1PresentationTextUtils.SetActive(slotView?.MatchedPatternRoot, slotState.ShowMatchedPattern);
+            Theme1PresentationTextUtils.ApplyTopperText(slotView?.PrizeLabel, slotState.PrizeLabel, slotView != null ? slotView.DefaultPrizeColor : Color.white);
 
             if (slotView?.PrizeLabel != null)
             {
@@ -167,52 +152,9 @@ public sealed class Theme1DisplayPresenter
                 bool visible = slotState.MissingCellsVisible != null &&
                                cellIndex < slotState.MissingCellsVisible.Length &&
                                slotState.MissingCellsVisible[cellIndex];
-                SetActive(slotView.MissingCells[cellIndex], visible);
+                Theme1PresentationTextUtils.SetActive(slotView.MissingCells[cellIndex], visible);
             }
         }
-    }
-
-    private static void ApplyCardNumberText(TMP_Text target, string value)
-    {
-        if (target is TextMeshProUGUI label)
-        {
-            RealtimeTextStyleUtils.ApplyCardNumber(label, value ?? string.Empty);
-            return;
-        }
-
-        ApplyRawText(target, value);
-    }
-
-    private static void ApplyHudText(TMP_Text target, string value)
-    {
-        if (target is TextMeshProUGUI label)
-        {
-            RealtimeTextStyleUtils.ApplyHudText(label, value ?? string.Empty, preferredColor: label.color);
-            return;
-        }
-
-        ApplyRawText(target, value);
-    }
-
-    private static void ApplyRequiredHudValue(TMP_Text target, string value, string authoritativeFallback)
-    {
-        string resolvedValue = !string.IsNullOrWhiteSpace(value)
-            ? value
-            : (!string.IsNullOrWhiteSpace(authoritativeFallback)
-                ? authoritativeFallback
-                : (!string.IsNullOrWhiteSpace(target?.text) ? target.text : "0"));
-        ApplyHudText(target, resolvedValue);
-    }
-
-    private static void ApplyTopperText(TMP_Text target, string value, Color defaultColor)
-    {
-        if (target is TextMeshProUGUI label)
-        {
-            RealtimeTextStyleUtils.ApplyHudText(label, value ?? string.Empty, preferredColor: defaultColor);
-            return;
-        }
-
-        ApplyRawText(target, value);
     }
 
     private static void ApplySlotBallSprite(Image target, string numberLabel)
@@ -266,7 +208,7 @@ public sealed class Theme1DisplayPresenter
             return;
         }
 
-        ApplyRawText(target, value);
+        Theme1PresentationTextUtils.ApplyText(target, value);
         target.alpha = 0f;
         target.enabled = false;
         if (target.gameObject.activeSelf)
@@ -275,36 +217,9 @@ public sealed class Theme1DisplayPresenter
         }
     }
 
-    private static void ApplyRawText(TMP_Text target, string value)
-    {
-        if (target == null)
-        {
-            return;
-        }
-
-        string normalizedValue = value ?? string.Empty;
-        if (!string.Equals(target.text, normalizedValue))
-        {
-            target.text = normalizedValue;
-        }
-
-        target.havePropertiesChanged = true;
-        target.SetVerticesDirty();
-        target.SetMaterialDirty();
-        target.SetLayoutDirty();
-    }
-
     private static bool TryParseBallNumber(string value, out int ballNumber)
     {
         ballNumber = 0;
         return !string.IsNullOrWhiteSpace(value) && int.TryParse(value, out ballNumber) && ballNumber > 0;
-    }
-
-    private static void SetActive(GameObject target, bool active)
-    {
-        if (target != null && target.activeSelf != active)
-        {
-            target.SetActive(active);
-        }
     }
 }
