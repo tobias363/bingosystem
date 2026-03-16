@@ -146,8 +146,10 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 const projectDir = path.resolve(__dirname, "../..");
 const legacyFrontendDir = path.resolve(projectDir, "frontend");
 const candyWebFrontendDir = path.resolve(projectDir, "candy-web/dist");
-const frontendDir = fs.existsSync(path.join(candyWebFrontendDir, "index.html")) ? candyWebFrontendDir : legacyFrontendDir;
+const hasCandyWebFrontend = fs.existsSync(path.join(candyWebFrontendDir, "index.html"));
+const frontendDir = legacyFrontendDir;
 const frontendIndexFile = path.resolve(frontendDir, "index.html");
+const candyFrontendIndexFile = path.resolve(candyWebFrontendDir, "index.html");
 const adminFrontendFile = path.resolve(legacyFrontendDir, "admin/index.html");
 const adminFrontendDir = path.resolve(legacyFrontendDir, "admin");
 
@@ -169,6 +171,21 @@ app.use(
   })
 );
 app.use(express.static(frontendDir));
+if (hasCandyWebFrontend) {
+  app.use(
+    "/candy",
+    express.static(candyWebFrontendDir, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html") || filePath.endsWith(".js")) {
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+          res.setHeader("Surrogate-Control", "no-store");
+        }
+      }
+    })
+  );
+}
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -560,6 +577,9 @@ function sanitizeCandyLaunchUrlForRuntime(launchUrl: string): string {
   try {
     const parsed = new URL(launchUrl);
     parsed.searchParams.delete("v");
+    if (parsed.pathname === "/" || parsed.pathname.trim() === "") {
+      parsed.pathname = "/candy/";
+    }
     return parsed.toString();
   } catch {
     return launchUrl;
@@ -3935,6 +3955,17 @@ app.get("*", (_req, res) => {
     res.setHeader("Expires", "0");
     res.setHeader("Surrogate-Control", "no-store");
     res.sendFile(adminFrontendFile);
+    return;
+  }
+  if (
+    hasCandyWebFrontend &&
+    (_req.path === "/candy" || _req.path === "/candy/" || _req.path.startsWith("/candy/"))
+  ) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Surrogate-Control", "no-store");
+    res.sendFile(candyFrontendIndexFile);
     return;
   }
   res.sendFile(frontendIndexFile);

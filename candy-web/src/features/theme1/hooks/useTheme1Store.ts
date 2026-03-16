@@ -210,6 +210,15 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
     });
 
     if (!session.roomCode && !canAutoCreateRoom(session)) {
+      if (
+        shouldAutoBootstrapDefaultLiveSession(session, {
+          hasLaunchToken: readLaunchTokenFromLocation().length > 0,
+        })
+      ) {
+        await get().startLocalLiveSession();
+        return;
+      }
+
       set({
         mode: "mock",
         connection: {
@@ -544,8 +553,9 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
     const currentState = get();
     const baseUrl = normalizeSession({
       ...currentState.session,
-      baseUrl: currentState.session.baseUrl || "http://127.0.0.1:4000",
+      baseUrl: currentState.session.baseUrl || DEFAULT_BACKEND_URL,
     }).baseUrl;
+    const isLocalBackend = isLocalTheme1RuntimeHost(resolveHostnameFromBaseUrl(baseUrl));
 
     clearPendingDrawTimer();
     clearCelebrationTimer();
@@ -558,7 +568,9 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
       connection: {
         phase: "connecting",
         label: "Kobler til",
-        message: "Oppretter lokal live-testbruker og verifiserer KYC...",
+        message: isLocalBackend
+          ? "Oppretter lokal live-bruker og verifiserer KYC..."
+          : "Oppretter standard live-visning og verifiserer KYC...",
       },
     });
 
@@ -618,7 +630,9 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
         connection: {
           phase: "connecting",
           label: "Kobler til",
-          message: "Lokal live-testbruker er klar. Oppretter Candy-rom og henter nedtelling...",
+          message: isLocalBackend
+            ? "Lokal live-bruker er klar. Oppretter Candy-rom og henter nedtelling..."
+            : "Live-visning er klar. Kobler til standard Candy-rom og henter nedtelling...",
         },
       });
 
@@ -1308,6 +1322,47 @@ function resolveDefaultBackendUrl(): string {
   }
 
   return "https://bingosystem-staging.onrender.com";
+}
+
+export function isLocalTheme1RuntimeHost(hostname: string): boolean {
+  const normalizedHostname = hostname.trim().toLowerCase();
+  return normalizedHostname === "127.0.0.1" || normalizedHostname === "localhost";
+}
+
+export function shouldAutoBootstrapDefaultLiveSession(
+  session: RealtimeSession,
+  options: {
+    hostname?: string;
+    hasLaunchToken?: boolean;
+  } = {},
+): boolean {
+  const normalizedSession = normalizeSession(session);
+  const hostname =
+    options.hostname ??
+    (typeof window !== "undefined" ? window.location.hostname : "");
+
+  if (isLocalTheme1RuntimeHost(hostname)) {
+    return false;
+  }
+
+  if (options.hasLaunchToken) {
+    return false;
+  }
+
+  return (
+    normalizedSession.roomCode.length === 0 &&
+    normalizedSession.playerId.length === 0 &&
+    (normalizedSession.accessToken.length === 0 ||
+      normalizedSession.hallId.length === 0)
+  );
+}
+
+function resolveHostnameFromBaseUrl(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    return "";
+  }
 }
 
 function readLaunchTokenFromLocation(): string {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   clampStakeAmount,
+  isLocalTheme1RuntimeHost,
   resolveAdjustedStakeAmount,
   resolveStakeAmountBeforeArming,
+  shouldAutoBootstrapDefaultLiveSession,
 } from "@/features/theme1/hooks/useTheme1Store";
 
 describe("theme1 stake controls", () => {
@@ -33,5 +35,79 @@ describe("theme1 stake controls", () => {
     expect(resolveStakeAmountBeforeArming(0)).toBe(4);
     expect(resolveStakeAmountBeforeArming(4)).toBe(4);
     expect(resolveStakeAmountBeforeArming(12)).toBe(12);
+  });
+
+  it("treats localhost hosts as local runtime hosts", () => {
+    expect(isLocalTheme1RuntimeHost("127.0.0.1")).toBe(true);
+    expect(isLocalTheme1RuntimeHost("localhost")).toBe(true);
+    expect(isLocalTheme1RuntimeHost("bingosystem-staging.onrender.com")).toBe(false);
+  });
+
+  it("auto-bootstraps default live session on staging when the session is empty", () => {
+    expect(
+      shouldAutoBootstrapDefaultLiveSession(
+        {
+          baseUrl: "https://bingosystem-staging.onrender.com",
+          roomCode: "",
+          playerId: "",
+          accessToken: "",
+          hallId: "",
+        },
+        {
+          hostname: "bingosystem-staging.onrender.com",
+          hasLaunchToken: false,
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("does not auto-bootstrap when there is an explicit launch token or existing session", () => {
+    expect(
+      shouldAutoBootstrapDefaultLiveSession(
+        {
+          baseUrl: "https://bingosystem-staging.onrender.com",
+          roomCode: "",
+          playerId: "",
+          accessToken: "",
+          hallId: "",
+        },
+        {
+          hostname: "bingosystem-staging.onrender.com",
+          hasLaunchToken: true,
+        },
+      ),
+    ).toBe(false);
+
+    expect(
+      shouldAutoBootstrapDefaultLiveSession(
+        {
+          baseUrl: "https://bingosystem-staging.onrender.com",
+          roomCode: "ABC123",
+          playerId: "",
+          accessToken: "",
+          hallId: "",
+        },
+        {
+          hostname: "bingosystem-staging.onrender.com",
+        },
+      ),
+    ).toBe(false);
+  });
+
+  it("auto-bootstraps when a non-local session is incomplete", () => {
+    expect(
+      shouldAutoBootstrapDefaultLiveSession(
+        {
+          baseUrl: "https://bingosystem-staging.onrender.com",
+          roomCode: "",
+          playerId: "",
+          accessToken: "stale-token",
+          hallId: "",
+        },
+        {
+          hostname: "bingosystem-staging.onrender.com",
+        },
+      ),
+    ).toBe(true);
   });
 });
