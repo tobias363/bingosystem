@@ -3632,9 +3632,11 @@ export class BingoEngine {
       gameType,
       amount: requestedPayout
     });
-    // Candy pattern payouts follow the fixed per-ticket payout table. The
-    // round-level fields still track depletion for telemetry, but the actual
-    // claim amount is controlled by the payout table and single-prize policy.
+    // Candy pattern payouts follow the fixed per-ticket payout table and
+    // should not be hard-capped to the current round's remaining RTP budget.
+    // The round-level fields still track depletion for telemetry, but the
+    // actual claim amount is controlled by the payout table and single-prize
+    // policy so larger wins remain possible.
     const payout = this.roundCurrency(Math.max(0, cappedPatternPayout.cappedAmount));
 
     if (payout > 0) {
