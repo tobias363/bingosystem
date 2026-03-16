@@ -138,7 +138,9 @@ export function mapRoomSnapshotToTheme1(
   snapshot: RoomSnapshot | RoomSnapshotWithScheduler,
   options: Theme1RoomSnapshotMapperOptions = {},
 ): Theme1MappedRoomSnapshot {
-  const playerContext = resolvePlayerContext(snapshot, options.playerId);
+  const preferredPlayerId =
+    options.playerId?.trim() || options.session?.playerId?.trim() || undefined;
+  const playerContext = resolvePlayerContext(snapshot, preferredPlayerId);
   const selectedPlayerId = playerContext.playerId;
   const currentGame = snapshot.currentGame;
   const currentTicketPage = Math.max(0, options.currentTicketPage ?? 0);

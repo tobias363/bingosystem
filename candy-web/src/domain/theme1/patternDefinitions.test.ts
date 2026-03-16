@@ -398,6 +398,62 @@ describe("theme1 pattern definitions", () => {
     expect(result.model.hud.gevinst).toBe("75 kr");
   });
 
+  it("uses session.playerId as the authoritative live player binding for saldo and gevinst", () => {
+    const snapshot = createSnapshotForPattern([1, 2, 3]);
+    snapshot.players.push({
+      id: "player-2",
+      name: "Guest",
+      walletId: "wallet-2",
+      balance: 840,
+    });
+    snapshot.currentGame!.tickets["player-2"] = [
+      {
+        numbers: Array.from({ length: 15 }, (_, index) => index + 16),
+        grid: [
+          [16, 17, 18, 19, 20],
+          [21, 22, 23, 24, 25],
+          [26, 27, 28, 29, 30],
+        ],
+      },
+    ];
+    snapshot.currentGame!.marks["player-2"] = [];
+    snapshot.currentGame!.claims = [
+      {
+        id: "claim-1",
+        playerId: "player-1",
+        type: "PATTERN",
+        valid: true,
+        payoutAmount: 60,
+        createdAt: "2026-03-13T10:00:20.000Z",
+      },
+      {
+        id: "claim-2",
+        playerId: "player-2",
+        type: "PATTERN",
+        valid: true,
+        payoutAmount: 25,
+        createdAt: "2026-03-13T10:00:25.000Z",
+      },
+    ];
+
+    const result = mapRoomSnapshotToTheme1(snapshot, {
+      session: {
+        baseUrl: "https://example.com",
+        roomCode: "ROOM42",
+        playerId: "player-2",
+        accessToken: "token-2",
+        hallId: "hall-1",
+      },
+      cardSlotCount: 1,
+      activePatternIndexes: [],
+      patternMasks: THEME1_DEFAULT_PATTERN_MASKS,
+    });
+
+    expect(result.resolvedPlayerId).toBe("player-2");
+    expect(result.model.hud.saldo).toBe("840 kr");
+    expect(result.model.hud.gevinst).toBe("25 kr");
+  });
+
   it("moves winnings into saldo on the next round by clearing gevinst when the new game has no claims", () => {
     const snapshot = createSnapshotForPattern([]);
     snapshot.players[0]!.balance = 1075;
