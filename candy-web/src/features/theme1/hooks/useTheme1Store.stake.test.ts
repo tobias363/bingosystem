@@ -172,12 +172,12 @@ describe("theme1 stake controls", () => {
 
     expect(seed.accessTokenSource).toBe("portal-storage");
     expect(seed.session.accessToken).toBe("fresh-portal-token");
-    expect(seed.session.roomCode).toBe("");
+    expect(seed.session.roomCode).toBe("CANDY1");
     expect(seed.session.playerId).toBe("");
     expect(seed.session.hallId).toBe("default-hall");
   });
 
-  it("keeps the stored room binding when portal auth matches the saved candy session", () => {
+  it("forces the canonical candy room code on non-local hosts even when portal auth matches", () => {
     const seed = resolveTheme1InitialSessionSeed({
       storedSession: {
         baseUrl: "https://bingosystem-staging.onrender.com",
@@ -192,8 +192,26 @@ describe("theme1 stake controls", () => {
     });
 
     expect(seed.accessTokenSource).toBe("portal-storage");
-    expect(seed.session.roomCode).toBe("ROOM42");
-    expect(seed.session.playerId).toBe("player-42");
+    expect(seed.session.roomCode).toBe("CANDY1");
+    expect(seed.session.playerId).toBe("");
     expect(seed.session.hallId).toBe("default-hall");
+  });
+
+  it("keeps a stored player binding only when it already belongs to the canonical candy room", () => {
+    const seed = resolveTheme1InitialSessionSeed({
+      storedSession: {
+        baseUrl: "https://bingosystem-staging.onrender.com",
+        roomCode: "CANDY1",
+        playerId: "player-42",
+        accessToken: "shared-token",
+        hallId: "default-hall",
+      },
+      search: "",
+      hostname: "bingosystem-staging.onrender.com",
+      portalAuthAccessToken: "shared-token",
+    });
+
+    expect(seed.session.roomCode).toBe("CANDY1");
+    expect(seed.session.playerId).toBe("player-42");
   });
 });

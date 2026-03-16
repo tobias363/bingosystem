@@ -142,6 +142,7 @@ const STORAGE_KEY = "candy-web.realtime-session";
 const PORTAL_AUTH_STORAGE_KEY = "bingo.portal.auth";
 const DEFAULT_BACKEND_URL = resolveDefaultBackendUrl();
 const DEFAULT_CANDY_HALL_ID = "default-hall";
+const DEFAULT_CANDY_ROOM_CODE = "CANDY1";
 const LOCAL_LIVE_DEMO_HALL_ID = DEFAULT_CANDY_HALL_ID;
 const INITIAL_SESSION_SEED = readInitialSessionSeed();
 export const THEME1_STAKE_STEP_KR = 4;
@@ -1233,9 +1234,16 @@ export function resolveTheme1InitialSessionSeed(input: {
   const portalAccessToken = (input.portalAuthAccessToken || "").trim();
   const isLocalRuntimeHost = isLocalTheme1RuntimeHost(input.hostname);
   const fallbackHallId = isLocalRuntimeHost ? "" : DEFAULT_CANDY_HALL_ID;
+  const fallbackRoomCode = isLocalRuntimeHost ? "" : DEFAULT_CANDY_ROOM_CODE;
   const shouldUsePortalSession = !isLocalRuntimeHost && portalAccessToken.length > 0;
   const shouldResetStoredRoomBinding =
     shouldUsePortalSession && storedAccessToken !== portalAccessToken;
+  const normalizedStoredRoomCode =
+    typeof input.storedSession.roomCode === "string"
+      ? input.storedSession.roomCode.trim().toUpperCase()
+      : "";
+  const canReuseStoredPlayerId =
+    isLocalRuntimeHost || normalizedStoredRoomCode === DEFAULT_CANDY_ROOM_CODE;
   const resolvedAccessToken =
     urlAccessToken ||
     (shouldUsePortalSession ? portalAccessToken : storedAccessToken || portalAccessToken);
@@ -1244,10 +1252,16 @@ export function resolveTheme1InitialSessionSeed(input: {
     baseUrl: params.get("backendUrl") || input.storedSession.baseUrl || DEFAULT_BACKEND_URL,
     roomCode:
       params.get("roomCode") ||
-      (shouldResetStoredRoomBinding ? "" : input.storedSession.roomCode || ""),
+      (shouldResetStoredRoomBinding
+        ? fallbackRoomCode
+        : isLocalRuntimeHost
+          ? input.storedSession.roomCode || ""
+          : fallbackRoomCode),
     playerId:
       params.get("playerId") ||
-      (shouldResetStoredRoomBinding ? "" : input.storedSession.playerId || ""),
+      (shouldResetStoredRoomBinding || !canReuseStoredPlayerId
+        ? ""
+        : input.storedSession.playerId || ""),
     accessToken: resolvedAccessToken,
     hallId:
       params.get("hallId") ||
