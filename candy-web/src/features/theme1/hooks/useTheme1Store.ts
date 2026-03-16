@@ -163,6 +163,36 @@ const THEME1_TOPPER_NEAR_PULSE_MS = 950;
 const THEME1_TOPPER_WIN_PULSE_MS = 1600;
 const topperPulseTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
+export function shouldRedirectTheme1ToPortalOnLiveHost(input: {
+  hostname: string;
+  accessToken: string;
+}): boolean {
+  if (isLocalTheme1RuntimeHost(input.hostname)) {
+    return false;
+  }
+
+  return input.accessToken.trim().length === 0;
+}
+
+function resolveTheme1PortalUrl(): string {
+  if (typeof window === "undefined") {
+    return "/";
+  }
+
+  return new URL("/", window.location.href).toString();
+}
+
+function redirectTheme1ToPortal(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const targetUrl = resolveTheme1PortalUrl();
+  if (window.location.href !== targetUrl) {
+    window.location.replace(targetUrl);
+  }
+}
+
 function resolveTheme1LiveConnectionErrorMessage(message: string, hostname: string): string {
   if (isLocalTheme1RuntimeHost(hostname)) {
     return message;
@@ -237,6 +267,17 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
     }).session;
     const hydrated = await hydrateSessionFromLaunchToken(rehydratedSession, set);
     const session = hydrated.session;
+
+    if (
+      shouldRedirectTheme1ToPortalOnLiveHost({
+        hostname: currentHostname,
+        accessToken: session.accessToken,
+      })
+    ) {
+      redirectTheme1ToPortal();
+      return;
+    }
+
     writeSession(session);
     set({
       session,
@@ -750,6 +791,10 @@ function getBoundRealtimeSocket(
     onConnectError: (message) => {
       const hostname =
         typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
+      if (shouldRedirectTheme1ToPortalOnLiveHost({ hostname, accessToken: get().session.accessToken })) {
+        redirectTheme1ToPortal();
+        return;
+      }
       set({
         connection: {
           phase: "error",
@@ -899,6 +944,10 @@ async function syncLiveSnapshot(
       }
       const hostname =
         typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
+      if (shouldRedirectTheme1ToPortalOnLiveHost({ hostname, accessToken: session.accessToken })) {
+        redirectTheme1ToPortal();
+        return;
+      }
       set({
         connection: {
           phase: "error",
@@ -941,6 +990,10 @@ async function syncLiveSnapshot(
   } catch (error) {
     const hostname =
       typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
+    if (shouldRedirectTheme1ToPortalOnLiveHost({ hostname, accessToken: session.accessToken })) {
+      redirectTheme1ToPortal();
+      return;
+    }
     const message =
       error instanceof Error ? error.message : "Ukjent feil under live sync.";
     set({

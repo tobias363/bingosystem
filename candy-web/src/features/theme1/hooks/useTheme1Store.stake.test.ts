@@ -5,6 +5,7 @@ import {
   resolveAdjustedStakeAmount,
   resolveStakeAmountBeforeArming,
   resolveTheme1InitialSessionSeed,
+  shouldRedirectTheme1ToPortalOnLiveHost,
   shouldAutoBootstrapDefaultLiveSession,
   shouldAttemptLiveRoomRecoveryFromSyncFailure,
 } from "@/features/theme1/hooks/useTheme1Store";
@@ -43,6 +44,29 @@ describe("theme1 stake controls", () => {
     expect(isLocalTheme1RuntimeHost("127.0.0.1")).toBe(true);
     expect(isLocalTheme1RuntimeHost("localhost")).toBe(true);
     expect(isLocalTheme1RuntimeHost("bingosystem-staging.onrender.com")).toBe(false);
+  });
+
+  it("redirects non-local candy hosts back to the portal when portal auth is missing", () => {
+    expect(
+      shouldRedirectTheme1ToPortalOnLiveHost({
+        hostname: "bingosystem-staging.onrender.com",
+        accessToken: "",
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldRedirectTheme1ToPortalOnLiveHost({
+        hostname: "bingosystem-staging.onrender.com",
+        accessToken: "portal-token",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldRedirectTheme1ToPortalOnLiveHost({
+        hostname: "127.0.0.1",
+        accessToken: "",
+      }),
+    ).toBe(false);
   });
 
   it("does not auto-bootstrap a synthetic live session on staging", () => {
