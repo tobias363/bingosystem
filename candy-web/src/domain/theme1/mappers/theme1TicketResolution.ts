@@ -19,11 +19,17 @@ export function resolvePlayerContext(
 ): Theme1ResolvedPlayerContext {
   const gameTicketMap = snapshot.currentGame?.tickets ?? {};
   const preRoundTicketMap = snapshot.preRoundTickets ?? {};
+  const currentGameStatus = snapshot.currentGame?.status;
+  const shouldUseCurrentGameTickets = currentGameStatus === "RUNNING";
   const normalizedPreferredPlayerId = preferredPlayerId?.trim();
 
   if (normalizedPreferredPlayerId) {
     const gameTickets = gameTicketMap[normalizedPreferredPlayerId];
-    if (Array.isArray(gameTickets) && gameTickets.length > 0) {
+    if (
+      shouldUseCurrentGameTickets &&
+      Array.isArray(gameTickets) &&
+      gameTickets.length > 0
+    ) {
       return {
         playerId: normalizedPreferredPlayerId,
         player: snapshot.players.find((player) => player.id === normalizedPreferredPlayerId),
@@ -63,7 +69,11 @@ export function resolvePlayerContext(
 
   for (const playerId of candidatePlayerIds) {
     const gameTickets = gameTicketMap[playerId];
-    if (Array.isArray(gameTickets) && gameTickets.length > 0) {
+    if (
+      shouldUseCurrentGameTickets &&
+      Array.isArray(gameTickets) &&
+      gameTickets.length > 0
+    ) {
       return {
         playerId,
         player: snapshot.players.find((player) => player.id === playerId),

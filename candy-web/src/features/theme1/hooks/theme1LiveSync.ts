@@ -46,7 +46,7 @@ export function shouldPreservePreviousViewOnTicketGap(input: {
     input.syncSource === "room:update" &&
     input.resultTicketSource === "empty" &&
     input.currentMode === "live" &&
-    input.lastTicketSource !== "empty" &&
+    input.lastTicketSource === "preRoundTickets" &&
     input.gameStatus !== "RUNNING"
   );
 }

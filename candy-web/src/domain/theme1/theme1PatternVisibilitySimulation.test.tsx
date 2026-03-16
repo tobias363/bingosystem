@@ -25,6 +25,7 @@ interface SimulationSummary {
   totalTurnoverKr: number;
   boardsWithNearState: number;
   renderedNearLineLeaks: number;
+  falseNearStateLeaks: number;
   prematureCompletedPatternLeaks: number;
 }
 
@@ -126,6 +127,7 @@ function runSimulation(rounds: number): SimulationSummary {
   const random = createMulberry32(20260315);
   let boardsWithNearState = 0;
   let renderedNearLineLeaks = 0;
+  let falseNearStateLeaks = 0;
   let prematureCompletedPatternLeaks = 0;
 
   for (let roundIndex = 0; roundIndex < rounds; roundIndex += 1) {
@@ -157,6 +159,19 @@ function runSimulation(rounds: number): SimulationSummary {
           }
         }
 
+        for (const nearPattern of card.activeNearPatterns) {
+          const matchedCount = nearPattern.cellIndices.filter((cellIndex) =>
+            drawnSet.has(ticket.numbers[cellIndex] ?? -1),
+          ).length;
+          const targetNumber = ticket.numbers[nearPattern.targetCellIndex] ?? -1;
+          if (
+            drawnSet.has(targetNumber) ||
+            matchedCount !== nearPattern.cellIndices.length - 1
+          ) {
+            falseNearStateLeaks += 1;
+          }
+        }
+
         for (const pattern of card.completedPatterns) {
           const isComplete = pattern.cellIndices.every((cellIndex) =>
             drawnSet.has(ticket.numbers[cellIndex] ?? -1),
@@ -174,6 +189,7 @@ function runSimulation(rounds: number): SimulationSummary {
     totalTurnoverKr: rounds * TOTAL_BET_KR,
     boardsWithNearState,
     renderedNearLineLeaks,
+    falseNearStateLeaks,
     prematureCompletedPatternLeaks,
   };
 }
@@ -190,6 +206,7 @@ describe("theme1 pattern visibility simulation", () => {
       expect(summary.totalTurnoverKr).toBe(ROUND_COUNT * TOTAL_BET_KR);
       expect(summary.boardsWithNearState).toBeGreaterThan(0);
       expect(summary.renderedNearLineLeaks).toBe(0);
+      expect(summary.falseNearStateLeaks).toBe(0);
       expect(summary.prematureCompletedPatternLeaks).toBe(0);
     },
     60_000,

@@ -569,6 +569,55 @@ describe("theme1 pattern definitions", () => {
     expect(result.model.boards[0]?.completedPatterns).toEqual([]);
   });
 
+  it("does not leak ended-round one-to-go states when the same player already has new pre-round tickets", () => {
+    const snapshot = createSnapshotForPattern([31, 43, 51, 60, 54, 50, 38, 27, 48, 30, 10, 36, 15, 33, 1, 2, 40, 13, 59, 8, 45, 49, 46, 3, 42, 55, 22, 52, 25, 53]);
+    snapshot.currentGame!.status = "ENDED";
+    snapshot.currentGame!.endedAt = "2026-03-13T10:02:00.000Z";
+    snapshot.currentGame!.tickets["player-1"] = [
+      {
+        numbers: [6, 38, 18, 58, 36, 14, 49, 31, 11, 48, 27, 8, 47, 23, 59],
+        grid: [
+          [6, 38, 18, 58, 36],
+          [14, 49, 31, 11, 48],
+          [27, 8, 47, 23, 59],
+        ],
+      },
+    ];
+    snapshot.preRoundTickets = {
+      "player-1": [
+        {
+          numbers: [1, 43, 16, 50, 30, 14, 49, 29, 8, 48, 27, 6, 44, 19, 54],
+          grid: [
+            [1, 43, 16, 50, 30],
+            [14, 49, 29, 8, 48],
+            [27, 6, 44, 19, 54],
+          ],
+        },
+      ],
+    };
+    snapshot.scheduler!.armedPlayerIds = [];
+    snapshot.scheduler!.armedPlayerCount = 0;
+
+    const result = mapRoomSnapshotToTheme1(snapshot, {
+      session: {
+        baseUrl: "https://example.com",
+        roomCode: "ROOM42",
+        playerId: "player-1",
+        accessToken: "token-1",
+        hallId: "hall-1",
+      },
+      cardSlotCount: 1,
+      patternMasks: THEME1_DEFAULT_PATTERN_MASKS,
+    });
+
+    expect(result.ticketSource).toBe("preRoundTickets");
+    expect(result.model.recentBalls).toHaveLength(30);
+    expect(result.model.boards[0]?.cells.some((cell) => cell.tone !== "idle")).toBe(false);
+    expect(result.model.boards[0]?.cells.find((cell) => cell.value === 14)?.tone).toBe("idle");
+    expect(result.model.boards[0]?.activeNearPatterns).toEqual([]);
+    expect(result.model.boards[0]?.completedPatterns).toEqual([]);
+  });
+
   it("falls back to stake-based topper prizes during countdown when snapshot payouts are zeroed", () => {
     const snapshot = createSnapshotForPattern([]);
     snapshot.currentGame!.status = "WAITING";

@@ -58,4 +58,31 @@ describe("resolvePlayerContext", () => {
     expect(result.source).toBe("empty");
     expect(result.tickets).toEqual([]);
   });
+
+  it("prefers pre-round tickets over ended current-game tickets for the same player", () => {
+    const snapshot = createSnapshot();
+    snapshot.currentGame!.status = "ENDED";
+    snapshot.currentGame!.tickets["player-2"] = [
+      {
+        numbers: [21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35],
+        grid: [],
+      },
+    ];
+    snapshot.preRoundTickets!["player-2"] = [
+      {
+        numbers: [41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55],
+        grid: [],
+      },
+    ];
+
+    const result = resolvePlayerContext(snapshot, "player-2");
+
+    expect(result.playerId).toBe("player-2");
+    expect(result.source).toBe("preRoundTickets");
+    expect(result.tickets[0]?.numbers).toEqual([
+      41, 42, 43, 44, 45,
+      46, 47, 48, 49, 50,
+      51, 52, 53, 54, 55,
+    ]);
+  });
 });

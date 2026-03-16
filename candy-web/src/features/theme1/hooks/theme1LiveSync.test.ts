@@ -177,6 +177,16 @@ describe("theme1LiveSync", () => {
 
     expect(
       shouldPreservePreviousViewOnTicketGap({
+        syncSource: "room:update",
+        resultTicketSource: "empty",
+        currentMode: "live",
+        lastTicketSource: "currentGame",
+        gameStatus: "WAITING",
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldPreservePreviousViewOnTicketGap({
         syncSource: "room:state",
         resultTicketSource: "empty",
         currentMode: "live",
