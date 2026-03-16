@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: bingosystem-staging
+    runtime: node
+    branch: staging
+    rootDir: .
+    buildCommand: npm --prefix backend run build
+    startCommand: npm --prefix backend run start
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - backend/**
+        - candy-web/**
+        - frontend/**
+        - package.json
+        - backend/package.json
+        - backend/package-lock.json
+        - backend/tsconfig.json
+        - candy-web/package.json
+        - candy-web/package-lock.json
+        - candy-web/tsconfig.json
+        - candy-web/tsconfig.app.json
+        - candy-web/vite.config.ts
+        - render.yaml
