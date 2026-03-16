@@ -163,6 +163,23 @@ const THEME1_TOPPER_NEAR_PULSE_MS = 950;
 const THEME1_TOPPER_WIN_PULSE_MS = 1600;
 const topperPulseTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
+function resolveTheme1LiveConnectionErrorMessage(message: string, hostname: string): string {
+  if (isLocalTheme1RuntimeHost(hostname)) {
+    return message;
+  }
+
+  const normalized = message.trim().toLowerCase();
+  if (
+    normalized.includes("accesstoken") ||
+    normalized.includes("authorization") ||
+    normalized.includes("unauthorized")
+  ) {
+    return "Logg inn i portalen for å åpne Candy.";
+  }
+
+  return message;
+}
+
 export const useTheme1Store = create<Theme1State>((set, get) => ({
   mode: "mock",
   snapshot: theme1MockSnapshot,
@@ -731,11 +748,13 @@ function getBoundRealtimeSocket(
       void syncLiveSnapshot(set, get, "socket-connect");
     },
     onConnectError: (message) => {
+      const hostname =
+        typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
       set({
         connection: {
           phase: "error",
           label: "Feil",
-          message: `Socket-feil: ${message}`,
+          message: `Socket-feil: ${resolveTheme1LiveConnectionErrorMessage(message, hostname)}`,
         },
         runtime: {
           ...get().runtime,
@@ -878,13 +897,16 @@ async function syncLiveSnapshot(
       if (recovered) {
         return;
       }
+      const hostname =
+        typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
       set({
         connection: {
           phase: "error",
           label: "Feil",
-          message:
-            response.error?.message ||
-            "Klarte ikke hente room state fra backend.",
+          message: resolveTheme1LiveConnectionErrorMessage(
+            response.error?.message || "Klarte ikke hente room state fra backend.",
+            hostname,
+          ),
         },
         runtime: {
           ...get().runtime,
@@ -917,13 +939,15 @@ async function syncLiveSnapshot(
 
     applyLiveSnapshot(validatedSnapshot.value, syncSource, set, get);
   } catch (error) {
+    const hostname =
+      typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
     const message =
       error instanceof Error ? error.message : "Ukjent feil under live sync.";
     set({
       connection: {
         phase: "error",
         label: "Feil",
-        message,
+        message: resolveTheme1LiveConnectionErrorMessage(message, hostname),
       },
       runtime: {
         ...get().runtime,
