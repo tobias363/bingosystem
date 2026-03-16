@@ -89,3 +89,9 @@ jobs:
           fi
 
           gh pr merge "${pr_number}" --auto --squash
+
+      - name: Promotion summary
+        if: ${{ steps.token_check.outputs.available == 'true' }}
+        run: |
+          echo "Staging -> main PR er opprettet eller gjenbrukt og satt til auto-merge."
+          echo "Når PR-en merges til main, trigger deploy-production.yml automatisk Render production deploy."
