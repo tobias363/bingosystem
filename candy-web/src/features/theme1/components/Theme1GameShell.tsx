@@ -113,6 +113,8 @@ export function Theme1GameShell() {
   const selectBonusSlot = useTheme1Store((state) => state.selectBonusSlot);
   const resetBonusTest = useTheme1Store((state) => state.resetBonusTest);
   const closeBonusTest = useTheme1Store((state) => state.closeBonusTest);
+  const hostname =
+    typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
   const [stageScale, setStageScale] = useState(() => resolveTheme1StageScale());
   const [displayedRecentBalls, setDisplayedRecentBalls] = useState<number[]>(snapshot.recentBalls);
@@ -123,8 +125,6 @@ export function Theme1GameShell() {
   const handledBonusSearchRef = useRef<string>("");
   const previousGameStatusRef = useRef(snapshot.meta.gameStatus);
   const isBonusActive = bonus.status !== "idle";
-  const hostname =
-    typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
   const shouldDeferChrome = shouldDeferTheme1LiveChrome({
     hostname,
     mode,
