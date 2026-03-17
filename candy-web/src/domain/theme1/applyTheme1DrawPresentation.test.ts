@@ -44,6 +44,24 @@ describe("applyTheme1DrawPresentation", () => {
     expect(result.boards[0]?.cells.find((cell) => cell.value === 21)?.tone).toBe("matched");
   });
 
+  it("keeps bong cells idle during pending draw presentation when board marking is disabled", () => {
+    const baseModel = {
+      ...theme1MockSnapshot,
+      featuredBallNumber: 41,
+      featuredBallIsPending: false,
+      recentBalls: [3, 11, 18],
+    };
+
+    const result = applyTheme1DrawPresentation(baseModel, 18, {
+      markBoards: false,
+    });
+
+    expect(result.featuredBallNumber).toBe(18);
+    expect(result.featuredBallIsPending).toBe(true);
+    expect(result.recentBalls).toEqual([3, 11, 18]);
+    expect(result.boards[0]?.cells.find((cell) => cell.value === 18)?.tone).toBe("idle");
+  });
+
   it("falls back to the latest snapshot ball when there is no pending draw", () => {
     const baseModel = {
       ...theme1MockSnapshot,

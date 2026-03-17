@@ -1068,6 +1068,9 @@ function applyLiveSnapshot(
   const nextModelWithPendingDraw = applyTheme1DrawPresentation(
     result.model,
     nextPendingDrawNumber,
+    {
+      markBoards: result.ticketSource === "currentGame",
+    },
   );
   const shouldFreezeBoards =
     result.ticketSource === "currentGame" &&

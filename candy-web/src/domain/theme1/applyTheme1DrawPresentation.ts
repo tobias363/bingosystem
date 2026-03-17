@@ -3,7 +3,11 @@ import type { Theme1RoundRenderModel } from "@/domain/theme1/renderModel";
 export function applyTheme1DrawPresentation(
   model: Theme1RoundRenderModel,
   pendingDrawNumber: number | null,
+  options?: {
+    markBoards?: boolean;
+  },
 ): Theme1RoundRenderModel {
+  const shouldMarkBoards = options?.markBoards ?? true;
   const normalizedPending =
     typeof pendingDrawNumber === "number" &&
     Number.isFinite(pendingDrawNumber) &&
@@ -18,7 +22,7 @@ export function applyTheme1DrawPresentation(
       values.indexOf(value) === index,
   );
   const boards =
-    normalizedPending === null
+    normalizedPending === null || !shouldMarkBoards
       ? model.boards
       : model.boards.map((board) => ({
           ...board,
