@@ -1072,13 +1072,11 @@ function applyLiveSnapshot(
       markBoards: result.ticketSource === "currentGame",
     },
   );
-  const shouldFreezeBoards =
-    result.ticketSource === "currentGame" &&
-    shouldFreezeBoardsForUnarmedPlayer({
-      previousModel: currentState.snapshot,
-      snapshot,
-      playerId: nextSession.playerId,
-    });
+  const shouldFreezeBoards = shouldFreezeBoardsForUnarmedPlayer({
+    previousModel: currentState.snapshot,
+    snapshot,
+    playerId: nextSession.playerId,
+  });
   const nextModel = shouldHoldPendingVisuals
     ? preservePendingPresentationVisuals(currentState.snapshot, nextModelWithPendingDraw)
     : shouldFreezeBoards

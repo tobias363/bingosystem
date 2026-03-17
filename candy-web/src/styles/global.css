@@ -618,10 +618,11 @@ img {
 }
 
 .board__pattern-layer--celebrate svg {
-  animation: boardPatternCelebrateBlink 0.98s ease-in-out 3;
+  animation: boardPatternCelebrateBlink 0.82s ease-in-out 4;
   filter:
-    drop-shadow(0 0 8px rgba(180, 221, 191, 0.42))
-    drop-shadow(0 2px 4px rgba(112, 161, 126, 0.2));
+    drop-shadow(0 0 10px rgba(180, 221, 191, 0.68))
+    drop-shadow(0 0 18px rgba(210, 255, 221, 0.44))
+    drop-shadow(0 3px 6px rgba(112, 161, 126, 0.3));
 }
 
 .board__prize-stack {
@@ -669,7 +670,7 @@ img {
 }
 
 .board__prize-chip--celebrate {
-  animation: boardPrizeCelebrateBlink 1.08s ease-in-out 3;
+  animation: boardPrizeCelebrateBlink 0.86s ease-in-out 4;
 }
 
 @keyframes boardCellPulse {
@@ -720,14 +721,14 @@ img {
 
   18%,
   58% {
-    opacity: 0.36;
-    transform: scale(0.992);
+    opacity: 0.14;
+    transform: scale(0.974);
   }
 
   34%,
   74% {
     opacity: 1;
-    transform: scale(1.012);
+    transform: scale(1.032);
   }
 }
 
@@ -741,18 +742,18 @@ img {
 
   24%,
   64% {
-    opacity: 0.44;
-    transform: translateY(-1px) scale(0.98);
+    opacity: 0.16;
+    transform: translateY(-1px) scale(0.95);
     text-shadow: 0 0 0 rgba(255, 255, 255, 0);
   }
 
   38%,
   78% {
     opacity: 1;
-    transform: translateY(0) scale(1.04);
+    transform: translateY(0) scale(1.08);
     text-shadow:
-      0 0 12px rgba(255, 255, 255, 0.65),
-      0 0 18px rgba(255, 118, 214, 0.42);
+      0 0 16px rgba(255, 255, 255, 0.85),
+      0 0 24px rgba(255, 118, 214, 0.58);
   }
 }
 
@@ -1453,7 +1454,9 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.36),
     inset 0 -1px 0 rgba(174, 126, 17, 0.34),
     0 0 0 1px rgba(214, 168, 57, 0.58);
-  animation: boardCellScale 0.92s ease-in-out infinite;
+  animation:
+    boardCellScale 0.92s ease-in-out infinite,
+    topperMissingCellBlink 0.72s steps(1, end) infinite;
 }
 
 .generated-topper__grid-cell--missing::after {
@@ -1469,7 +1472,9 @@ body {
   );
   opacity: 0.82;
   pointer-events: none;
-  animation: boardCellPulse 0.92s ease-in-out infinite;
+  animation:
+    boardCellPulse 0.92s ease-in-out infinite,
+    topperMissingGlowBlink 0.72s steps(1, end) infinite;
 }
 
 .generated-topper__grid-cell:nth-child(5n) {
@@ -1556,6 +1561,45 @@ body {
   100% {
     transform: translateZ(0) scale(1);
     filter: brightness(1);
+  }
+}
+
+@keyframes topperMissingCellBlink {
+  0%,
+  49% {
+    background: linear-gradient(
+      180deg,
+      rgb(240, 231, 118) 0%,
+      rgb(233, 224, 112) 48%,
+      rgb(228, 214, 91) 100%
+    );
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.36),
+      inset 0 -1px 0 rgba(174, 126, 17, 0.34),
+      0 0 0 1px rgba(214, 168, 57, 0.58),
+      0 0 12px rgba(255, 231, 101, 0.46);
+  }
+
+  50%,
+  100% {
+    background: linear-gradient(180deg, rgb(40, 33, 39) 0%, rgb(17, 12, 20) 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.38),
+      0 0 0 1px rgba(255, 226, 105, 0.46),
+      0 0 16px rgba(255, 231, 101, 0.28);
+  }
+}
+
+@keyframes topperMissingGlowBlink {
+  0%,
+  49% {
+    opacity: 0.82;
+  }
+
+  50%,
+  100% {
+    opacity: 0.12;
   }
 }
 
@@ -3346,9 +3390,9 @@ body {
 .board-card--spotlight-win .board-card__shell-image {
   filter:
     drop-shadow(0 22px 24px rgba(91, 7, 60, 0.22))
-    drop-shadow(0 0 22px rgba(255, 242, 249, 0.5))
-    drop-shadow(0 0 20px rgba(255, 84, 188, 0.4));
-  animation: boardCardSpotlightWin 1400ms ease-out;
+    drop-shadow(0 0 26px rgba(255, 242, 249, 0.74))
+    drop-shadow(0 0 30px rgba(255, 84, 188, 0.58));
+  animation: boardCardSpotlightWin 1650ms ease-out;
 }
 
 .board-card__shell {
@@ -3401,7 +3445,7 @@ body {
   max-width: 46%;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: clamp(0.5275rem, 0.48vw + 0.1875rem, 0.8075rem);
+  font-size: clamp(0.84rem, 0.48vw + 0.5rem, 1.12rem);
   line-height: 1;
   font-family: "FredokaCandy", "Segoe UI", sans-serif;
   font-weight: 500;
@@ -3410,7 +3454,7 @@ body {
 }
 
 .board-card__topline-label--celebrate {
-  animation: boardPrizeCelebrateBlink 1.08s ease-in-out 3;
+  animation: boardPrizeCelebrateBlink 0.86s ease-in-out 4;
 }
 
 .board-card__topline--single .board-card__topline-label {

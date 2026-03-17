@@ -18,6 +18,8 @@ export interface Theme1LiveRuntimeState {
   inFlightSyncRequestId: number | null;
 }
 
+const THEME1_UNARMED_BOARD_FREEZE_DRAW_THRESHOLD = 15;
+
 export function buildTheme1SessionKey(session: RealtimeSession): string {
   return [
     session.baseUrl.trim(),
@@ -113,7 +115,7 @@ export function shouldFreezeBoardsForUnarmedPlayer(input: {
     return false;
   }
 
-  if (input.previousModel.meta.gameStatus !== "ENDED") {
+  if (!hasAnyBoardActivity(input.previousModel)) {
     return false;
   }
 
@@ -122,7 +124,13 @@ export function shouldFreezeBoardsForUnarmedPlayer(input: {
     return false;
   }
 
-  return hasAnyBoardActivity(input.previousModel);
+  const currentGameStatus = input.snapshot.currentGame?.status;
+  if (currentGameStatus !== "RUNNING") {
+    return true;
+  }
+
+  const drawCount = input.snapshot.currentGame?.drawnNumbers?.length ?? 0;
+  return drawCount < THEME1_UNARMED_BOARD_FREEZE_DRAW_THRESHOLD;
 }
 
 export function freezeBoardsFromPreviousModel(

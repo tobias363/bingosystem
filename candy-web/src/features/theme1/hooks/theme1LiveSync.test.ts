@@ -351,6 +351,81 @@ describe("theme1LiveSync", () => {
     expect(frozen.boards).toEqual(previousModel.boards);
   });
 
+  it("keeps previous winning boards visible during countdown when the player is not armed", () => {
+    const previousModel = createModel();
+    const snapshot = createRoomSnapshot({
+      currentGame: {
+        ...createRoomSnapshot().currentGame!,
+        id: "game-2",
+        status: "ENDED",
+        drawnNumbers: [12, 18, 41],
+        remainingNumbers: 57,
+      },
+      scheduler: {
+        ...createRoomSnapshot().scheduler!,
+        armedPlayerIds: [],
+      },
+    });
+
+    expect(
+      shouldFreezeBoardsForUnarmedPlayer({
+        previousModel,
+        snapshot,
+        playerId: "player-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps previous winning boards visible in the first half of the next round when the player is not armed", () => {
+    const previousModel = createModel();
+    const snapshot = createRoomSnapshot({
+      currentGame: {
+        ...createRoomSnapshot().currentGame!,
+        id: "game-3",
+        status: "RUNNING",
+        drawnNumbers: [1, 2, 3, 4, 5, 6, 7],
+        remainingNumbers: 53,
+      },
+      scheduler: {
+        ...createRoomSnapshot().scheduler!,
+        armedPlayerIds: [],
+      },
+    });
+
+    expect(
+      shouldFreezeBoardsForUnarmedPlayer({
+        previousModel,
+        snapshot,
+        playerId: "player-1",
+      }),
+    ).toBe(true);
+  });
+
+  it("releases previous boards halfway into the next round when the player is still not armed", () => {
+    const previousModel = createModel();
+    const snapshot = createRoomSnapshot({
+      currentGame: {
+        ...createRoomSnapshot().currentGame!,
+        id: "game-3",
+        status: "RUNNING",
+        drawnNumbers: Array.from({ length: 15 }, (_, index) => index + 1),
+        remainingNumbers: 45,
+      },
+      scheduler: {
+        ...createRoomSnapshot().scheduler!,
+        armedPlayerIds: [],
+      },
+    });
+
+    expect(
+      shouldFreezeBoardsForUnarmedPlayer({
+        previousModel,
+        snapshot,
+        playerId: "player-1",
+      }),
+    ).toBe(false);
+  });
+
   it("preserves pending draw visuals until the presentation window closes", () => {
     const previousModel = createModel();
     const nextModel: Theme1RoundRenderModel = {
