@@ -8,6 +8,7 @@ import {
   shouldRedirectTheme1ToPortalOnLiveHost,
   shouldAutoBootstrapDefaultLiveSession,
   shouldAttemptLiveRoomRecoveryFromSyncFailure,
+  canonicalizeTheme1LiveSession,
 } from "@/features/theme1/hooks/useTheme1Store";
 
 describe("theme1 stake controls", () => {
@@ -255,6 +256,27 @@ describe("theme1 stake controls", () => {
 
     expect(seed.session.roomCode).toBe("CANDY1");
     expect(seed.session.playerId).toBe("");
+  });
+
+  it("canonicalizes live-host sessions to fixed Candy room and clears player binding", () => {
+    expect(
+      canonicalizeTheme1LiveSession(
+        {
+          baseUrl: "https://bingosystem-staging.onrender.com",
+          roomCode: "",
+          playerId: "stale-player",
+          accessToken: "portal-token",
+          hallId: "",
+        },
+        "bingosystem-staging.onrender.com",
+      ),
+    ).toEqual({
+      baseUrl: "https://bingosystem-staging.onrender.com",
+      roomCode: "CANDY1",
+      playerId: "",
+      accessToken: "portal-token",
+      hallId: "default-hall",
+    });
   });
 
   it("ignores a stale stored candy token on non-local hosts when portal auth is missing", () => {

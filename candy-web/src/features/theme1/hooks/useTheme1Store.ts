@@ -174,6 +174,23 @@ export function shouldRedirectTheme1ToPortalOnLiveHost(input: {
   return input.accessToken.trim().length === 0;
 }
 
+export function canonicalizeTheme1LiveSession(
+  session: RealtimeSession,
+  hostname: string,
+): RealtimeSession {
+  const normalizedSession = normalizeSession(session);
+  if (isLocalTheme1RuntimeHost(hostname)) {
+    return normalizedSession;
+  }
+
+  return normalizeSession({
+    ...normalizedSession,
+    roomCode: DEFAULT_CANDY_ROOM_CODE,
+    playerId: "",
+    hallId: normalizedSession.hallId || DEFAULT_CANDY_HALL_ID,
+  });
+}
+
 function resolveTheme1PortalUrl(): string {
   if (typeof window === "undefined") {
     return "/";
@@ -266,7 +283,7 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
       portalAuthAccessToken: readPortalAuthAccessToken(),
     }).session;
     const hydrated = await hydrateSessionFromLaunchToken(rehydratedSession, set);
-    const session = hydrated.session;
+    const session = canonicalizeTheme1LiveSession(hydrated.session, currentHostname);
 
     if (
       shouldRedirectTheme1ToPortalOnLiveHost({
@@ -318,6 +335,8 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
               "Room code mangler og ingen launch-session ble funnet. Fortsetter i mock-modus til du starter fra portalen eller fyller inn room code.",
           },
         });
+      } else {
+        redirectTheme1ToPortal();
       }
       return;
     }
@@ -1335,7 +1354,7 @@ export function resolveTheme1InitialSessionSeed(input: {
     ? urlAccessToken || storedAccessToken || portalAccessToken
     : urlAccessToken || portalAccessToken;
 
-  const session = normalizeSession(
+  const session = canonicalizeTheme1LiveSession(
     isLocalRuntimeHost
       ? {
           baseUrl: params.get("backendUrl") || input.storedSession.baseUrl || DEFAULT_BACKEND_URL,
@@ -1354,6 +1373,7 @@ export function resolveTheme1InitialSessionSeed(input: {
           accessToken: resolvedAccessToken,
           hallId: params.get("hallId") || fallbackHallId,
         },
+    input.hostname,
   );
 
   if (urlAccessToken) {
@@ -1461,11 +1481,13 @@ async function attemptLiveRoomRecovery(
     return false;
   }
 
-  const recoverySession = normalizeSession({
+  const currentHostname =
+    typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
+  const recoverySession = canonicalizeTheme1LiveSession({
     ...session,
     roomCode: "",
     playerId: "",
-  });
+  }, currentHostname);
 
   clearPendingDrawTimer();
   clearCelebrationTimer();
@@ -1549,6 +1571,12 @@ async function autoCreateLiveRoom(
 
     applyLiveSnapshot(validatedSnapshot.value, "room:resume", set, get);
   } catch (error) {
+    const hostname =
+      typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
+    if (!isLocalTheme1RuntimeHost(hostname)) {
+      redirectTheme1ToPortal();
+      return;
+    }
     const message =
       error instanceof Error
         ? error.message
