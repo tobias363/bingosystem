@@ -20,8 +20,10 @@ describe("resolveRailFlightDurationMs", () => {
     expect(resolveRailFlightVisibleScale(1, 1, 0.22, 0.2)).toBeCloseTo(0.2, 6);
   });
 
-  it("keeps the flying ball clearly visible from the opening", () => {
-    expect(resolveRailFlightOpacity(0)).toBeCloseTo(1, 6);
+  it("fades in during emergence and reaches full opacity", () => {
+    expect(resolveRailFlightOpacity(0)).toBeCloseTo(0, 6);
+    expect(resolveRailFlightOpacity(0.15)).toBeCloseTo(0.5, 6);
+    expect(resolveRailFlightOpacity(0.3)).toBeCloseTo(1, 6);
     expect(resolveRailFlightOpacity(1)).toBeCloseTo(1, 6);
   });
 
@@ -33,10 +35,10 @@ describe("resolveRailFlightDurationMs", () => {
         { left: 400, top: 260, width: 58, height: 58 } as DOMRect,
       ),
     ).toEqual({
-      startX: 104,
-      startY: 230,
-      deltaX: 325,
-      deltaY: 59,
+      startX: 129,
+      startY: 236,
+      deltaX: 300,
+      deltaY: 53,
     });
   });
 });

@@ -50,6 +50,7 @@ interface Theme1PlayfieldProps {
 
 interface Theme1FlyingRailBallState {
   number: number;
+  targetIndex: number;
   startX: number;
   startY: number;
   deltaX: number;
@@ -74,7 +75,8 @@ interface Theme1RailFlightGeometry {
 
 const THEME1_RAIL_FLIGHT_HOLD_MS = 750;
 const THEME1_RAIL_FLIGHT_DURATION_MS = 2400;
-const THEME1_RAIL_FLIGHT_START_OFFSET_X_PX = -26;
+const THEME1_RAIL_FLIGHT_START_OFFSET_X_PX = -1;
+const THEME1_RAIL_FLIGHT_START_OFFSET_Y_PX = 6;
 const THEME1_RAIL_FLIGHT_OUTPUT_OVERLAP_MS = 0;
 const THEME1_RAIL_FLIGHT_LANDING_OVERLAP_MS = 90;
 
@@ -245,30 +247,39 @@ export function Theme1Playfield({
         return;
       }
 
+      // The stage uses CSS transform: scale(...) to fit the viewport.
+      // getBoundingClientRect() returns post-scale (viewport) coordinates,
+      // but position:absolute left/top and translate3d operate in the
+      // pre-scale (local) coordinate space. Dividing by the scale factor
+      // converts viewport measurements to local coordinates.
+      const scale = playfieldRect.width / (playfieldElement.offsetWidth || playfieldRect.width) || 1;
+
       const geometry = resolveRailFlightGeometry(
         playfieldRect,
         outputBallRect,
         targetBallRect,
+        scale,
       );
 
-      outputSuppressedForActiveFlightRef.current = false;
-      setSuppressedOutputBallNumber(null);
+      outputSuppressedForActiveFlightRef.current = true;
+      setSuppressedOutputBallNumber(queuedFlightBallNumber);
       setFlyingRailBall({
         number: queuedFlightBallNumber,
+        targetIndex: queuedFlightTargetIndex,
         startX: geometry.startX,
         startY: geometry.startY,
         deltaX: geometry.deltaX,
         deltaY: geometry.deltaY,
-        startSize: outputBallRect.width,
+        startSize: outputBallRect.width / scale,
         startScale: 0.22,
         endScale: targetBallRect.width / outputBallRect.width,
       });
     };
 
-    measureFlightFrameRef.current = window.requestAnimationFrame(() => {
-      measureFlightFrameRef.current = null;
-      measureFlight();
-    });
+    // Try measuring synchronously in the layout effect (before the browser
+    // paints) to avoid a single visible frame where the output ball is still
+    // shown.  Fall back to rAF only when the DOM elements aren't ready yet.
+    measureFlight();
 
     return () => {
       if (measureFlightFrameRef.current !== null) {
@@ -315,8 +326,12 @@ export function Theme1Playfield({
         flyingRailBall.startScale,
         flyingRailBall.endScale,
       );
+      // During emergence (hold phase) the ball drifts downward to simulate
+      // dropping out of the machine hole.  The drift peaks at ~30 px when
+      // emergence completes and then blends into the normal travel path.
+      const emergenceDriftY = emergenceProgress * (1 - easedTravelProgress) * 90;
       const x = flyingRailBall.deltaX * easedTravelProgress;
-      const y = (flyingRailBall.deltaY * easedTravelProgress) - arcLift;
+      const y = (flyingRailBall.deltaY * easedTravelProgress) - arcLift + emergenceDriftY;
 
       if (
         !outputSuppressedForActiveFlightRef.current &&
@@ -334,8 +349,24 @@ export function Theme1Playfield({
         return;
       }
 
-      flyingElement.style.opacity = "1";
-      flyingElement.style.transform = `translate(-50%, -50%) translate3d(${flyingRailBall.deltaX}px, ${flyingRailBall.deltaY}px, 0) scale(${flyingRailBall.endScale})`;
+      // Re-measure target position at landing for pixel-perfect alignment
+      // across all browsers (different engines round sub-pixel grid values differently).
+      // Divide by the stage scale factor to convert viewport → local coordinates.
+      const playfieldElement = playfieldRef.current;
+      const targetElement = compactSlotRefsRef.current.get(flyingRailBall.targetIndex);
+      if (playfieldElement && targetElement) {
+        const pRect = playfieldElement.getBoundingClientRect();
+        const tRect = targetElement.getBoundingClientRect();
+        const landingScale = pRect.width / (playfieldElement.offsetWidth || pRect.width) || 1;
+        const freshDeltaX = ((tRect.left - pRect.left) + (tRect.width * 0.5)) / landingScale - flyingRailBall.startX;
+        const freshDeltaY = ((tRect.top - pRect.top) + (tRect.height * 0.5)) / landingScale - flyingRailBall.startY;
+        flyingElement.style.opacity = "1";
+        flyingElement.style.transform = `translate(-50%, -50%) translate3d(${freshDeltaX}px, ${freshDeltaY}px, 0) scale(${flyingRailBall.endScale})`;
+      } else {
+        flyingElement.style.opacity = "1";
+        flyingElement.style.transform = `translate(-50%, -50%) translate3d(${flyingRailBall.deltaX}px, ${flyingRailBall.deltaY}px, 0) scale(${flyingRailBall.endScale})`;
+      }
+
       const resolvedBalls = queuedFlightResolvedBallsRef.current ?? previousRecentBallsRef.current;
       queuedFlightResolvedBallsRef.current = null;
       const settledBallNumber = flyingRailBall.number;
@@ -707,8 +738,10 @@ export function resolveRailFlightEmergenceProgress(
 }
 
 export function resolveRailFlightOpacity(emergenceProgress: number) {
-  void emergenceProgress;
-  return 1;
+  // Fade in during the first 30% of emergence to avoid a visible "blink"
+  // when the flying ball first appears as a tiny dot.
+  if (emergenceProgress >= 0.3) return 1;
+  return clamp01(emergenceProgress / 0.3);
 }
 
 export function resolveRailPresentationState(
@@ -735,20 +768,26 @@ export function resolveRailFlightGeometry(
   playfieldRect: Pick<DOMRect, "left" | "top">,
   outputBallRect: Pick<DOMRect, "left" | "top" | "width" | "height">,
   targetBallRect: Pick<DOMRect, "left" | "top" | "width" | "height">,
+  scale = 1,
 ): Theme1RailFlightGeometry {
+  // All DOMRect values are in viewport (post-scale) space.
+  // Dividing by scale converts them to local (pre-scale) coordinates
+  // so that position:absolute left/top and translate3d work correctly.
+  // The start offset is a design constant already in local space.
   const startX =
-    (outputBallRect.left - playfieldRect.left) +
-    (outputBallRect.width * 0.5) +
+    ((outputBallRect.left - playfieldRect.left) +
+    (outputBallRect.width * 0.5)) / scale +
     THEME1_RAIL_FLIGHT_START_OFFSET_X_PX;
   const startY =
-    (outputBallRect.top - playfieldRect.top) +
-    (outputBallRect.height * 0.5);
+    ((outputBallRect.top - playfieldRect.top) +
+    (outputBallRect.height * 0.5)) / scale +
+    THEME1_RAIL_FLIGHT_START_OFFSET_Y_PX;
   const targetCenterX =
-    (targetBallRect.left - playfieldRect.left) +
-    (targetBallRect.width * 0.5);
+    ((targetBallRect.left - playfieldRect.left) +
+    (targetBallRect.width * 0.5)) / scale;
   const targetCenterY =
-    (targetBallRect.top - playfieldRect.top) +
-    (targetBallRect.height * 0.5);
+    ((targetBallRect.top - playfieldRect.top) +
+    (targetBallRect.height * 0.5)) / scale;
 
   return {
     startX,
