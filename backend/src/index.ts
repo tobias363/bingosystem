@@ -2150,6 +2150,14 @@ async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummari
     }
 
     await withRoomDrawLock(roomCode, async () => {
+      // Re-check timing inside the lock: other draws may have completed
+      // while we were waiting for the mutex, making this draw too early.
+      const lockedNow = Date.now();
+      const lockedLastDraw = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
+      if (lockedNow - lockedLastDraw < runtimeCandyManiaSettings.autoDrawIntervalMs) {
+        return;
+      }
+
       const drawStart = Date.now();
       try {
         const number = await engine.drawNextNumber({
@@ -2165,7 +2173,7 @@ async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummari
           throw error;
         }
       } finally {
-        lastAutoDrawAtByRoom.set(roomCode, currentNow);
+        lastAutoDrawAtByRoom.set(roomCode, Date.now());
       }
     });
 

@@ -168,10 +168,13 @@ describe("30-ball draw sequence simulation", () => {
  * invariant that the Playfield flight animation depends on.
  */
 function appendOnlyMerge(clientBalls: number[], serverBalls: number[]): number[] {
-  // New round detection
+  // New round detection: server has no balls OR no overlap with client
+  if (serverBalls.length === 0) {
+    return serverBalls;
+  }
   const serverSet = new Set(serverBalls);
   const hasOverlap = clientBalls.some((b) => serverSet.has(b));
-  if (serverBalls.length > 0 && !hasOverlap) {
+  if (!hasOverlap) {
     return serverBalls;
   }
   const clientSet = new Set(clientBalls);
@@ -191,6 +194,11 @@ describe("recentBalls append-only merge logic", () => {
   it("uses server list when client has completely different balls (new round)", () => {
     const merged = appendOnlyMerge([51, 52, 53], [1, 2, 3]);
     expect(merged).toEqual([1, 2, 3]);
+  });
+
+  it("clears client balls when server has empty list (new round WAITING)", () => {
+    const merged = appendOnlyMerge([1, 2, 3, 4, 5, 6, 7], []);
+    expect(merged).toEqual([]);
   });
 
   it("preserves client ordering exactly when server has same balls", () => {

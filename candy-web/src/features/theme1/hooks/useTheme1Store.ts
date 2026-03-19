@@ -1155,10 +1155,14 @@ function applyLiveSnapshot(
     const clientBalls = currentState.snapshot.recentBalls;
     const serverBalls = nextModelWithPendingDraw.recentBalls;
 
-    // Detect new game round: if server has balls but NONE overlap with client
+    // Detect new game round: server has no balls (WAITING/new round started)
+    // or server has balls with ZERO overlap with client's list.
+    if (serverBalls.length === 0) {
+      return nextModelWithPendingDraw;
+    }
     const serverSet = new Set(serverBalls);
     const hasOverlap = clientBalls.some((b) => serverSet.has(b));
-    if (serverBalls.length > 0 && !hasOverlap) {
+    if (!hasOverlap) {
       return nextModelWithPendingDraw;
     }
 
