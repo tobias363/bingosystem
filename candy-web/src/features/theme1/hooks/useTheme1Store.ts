@@ -1148,21 +1148,31 @@ function applyLiveSnapshot(
   // (resolveSingleAppendedBall). Adding multiple balls at once from a
   // room:update snapshot bypasses the flight animation entirely.
   //
-  // Exception: when server has no drawn balls (new round), clear the list.
-  // When client has no balls yet (initial load), use server's list.
+  // Exceptions (use server's list):
+  //   1. Not a room:update (initial sync)
+  //   2. Client has no balls yet (initial load)
+  //   3. Game ID changed (new round started)
+  //   4. Server has no drawn balls (game ended / waiting)
   const nextModelWithBallRailGuard = (() => {
     if (syncSource !== "room:update") {
       return nextModelWithPendingDraw;
     }
     const clientBalls = currentState.snapshot.recentBalls;
     const serverBalls = nextModelWithPendingDraw.recentBalls;
+    const currentGameId = snapshot.currentGame?.id ?? "";
+    const previousGameId = currentState.runtime.activeGameId;
 
     // Initial load: client has no balls, use server's list
     if (clientBalls.length === 0) {
       return nextModelWithPendingDraw;
     }
 
-    // New round: server has no balls, clear client's list
+    // New round: game ID changed — use server's list (clears old balls)
+    if (currentGameId !== previousGameId && previousGameId.length > 0) {
+      return nextModelWithPendingDraw;
+    }
+
+    // Game ended / waiting: server has no balls, clear client's list
     if (serverBalls.length === 0) {
       return { ...nextModelWithPendingDraw, recentBalls: [] };
     }
