@@ -1167,8 +1167,13 @@ function applyLiveSnapshot(
       return nextModelWithPendingDraw;
     }
 
-    // New round: game ID changed — use server's list (clears old balls)
-    if (currentGameId !== previousGameId && previousGameId.length > 0) {
+    // New round detection:
+    // 1. Game ID changed (and we had a previous game ID)
+    // 2. Server has significantly fewer balls than client (round reset)
+    const isNewRound =
+      (currentGameId !== previousGameId && previousGameId.length > 0) ||
+      (serverBalls.length < clientBalls.length && serverBalls.length <= 5);
+    if (isNewRound) {
       return nextModelWithPendingDraw;
     }
 
