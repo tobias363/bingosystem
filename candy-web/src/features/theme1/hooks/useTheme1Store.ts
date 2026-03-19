@@ -1162,8 +1162,17 @@ function applyLiveSnapshot(
     const currentGameId = snapshot.currentGame?.id ?? "";
     const previousGameId = currentState.runtime.activeGameId;
 
+    console.debug("[ball-guard]", {
+      clientBallCount: clientBalls.length,
+      serverBallCount: serverBalls.length,
+      currentGameId: currentGameId.slice(0, 8),
+      previousGameId: previousGameId.slice(0, 8),
+      gameStatus: snapshot.currentGame?.status,
+    });
+
     // Initial load: client has no balls, use server's list
     if (clientBalls.length === 0) {
+      console.debug("[ball-guard] → initial load, use server");
       return nextModelWithPendingDraw;
     }
 
@@ -1174,15 +1183,18 @@ function applyLiveSnapshot(
       (currentGameId !== previousGameId && previousGameId.length > 0) ||
       (serverBalls.length < clientBalls.length && serverBalls.length <= 5);
     if (isNewRound) {
+      console.debug("[ball-guard] → NEW ROUND detected, use server");
       return nextModelWithPendingDraw;
     }
 
     // Game ended / waiting: server has no balls, clear client's list
     if (serverBalls.length === 0) {
+      console.debug("[ball-guard] → server empty, clear");
       return { ...nextModelWithPendingDraw, recentBalls: [] };
     }
 
     // During active round: keep client's list exactly as-is
+    console.debug("[ball-guard] → keep client balls");
     return { ...nextModelWithPendingDraw, recentBalls: clientBalls };
   })();
   const nextModel = shouldHoldPendingVisuals
