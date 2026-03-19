@@ -103,45 +103,6 @@ export function buildCandySettingsDefinition(context: CandySettingsCatalogContex
           lockReason
         },
         {
-          key: "autoRoundMinPlayers",
-          path: "autoRoundMinPlayers",
-          label: "Min spillere",
-          description: "Minimum antall spillere før ny runde kan starte.",
-          type: "integer",
-          min: context.minPlayersToStart,
-          max: 999,
-          step: 1,
-          defaultValue: context.minPlayersToStart,
-          isLocked: context.runningRoundLockActive,
-          lockReason
-        },
-        {
-          key: "autoRoundTicketsPerPlayer",
-          path: "autoRoundTicketsPerPlayer",
-          label: "Bonger per spiller",
-          description: "Antall bonger tildelt hver spiller ved auto-start.",
-          type: "integer",
-          min: 1,
-          max: context.maxTicketsPerPlayer,
-          step: 1,
-          defaultValue: 1,
-          isLocked: context.runningRoundLockActive,
-          lockReason
-        },
-        {
-          key: "autoRoundEntryFee",
-          path: "autoRoundEntryFee",
-          label: "Innsats per runde",
-          description: "Innsats (NOK) per runde for auto-start.",
-          type: "number",
-          min: 0,
-          step: 0.01,
-          unit: "NOK",
-          defaultValue: 0,
-          isLocked: context.runningRoundLockActive,
-          lockReason
-        },
-        {
           key: "payoutPercent",
           path: "payoutPercent",
           label: "Utbetaling (%)",
@@ -184,10 +145,41 @@ export function buildCandySettingsDefinition(context: CandySettingsCatalogContex
           min: 250,
           step: 50,
           unit: "ms",
-          defaultValue: 1200,
+          defaultValue: 2000,
           isLocked: context.runningRoundLockActive,
           lockReason
         }
+      ]
+    },
+    {
+      id: "openingHours",
+      label: "Åpningstider",
+      description: "Begrens når spillet kjører. Pågående runder fullføres alltid.",
+      fields: [
+        {
+          key: "openingHoursEnabled",
+          path: "openingHoursEnabled",
+          label: "Bruk åpningstider",
+          description: "Når av kjører spillet 24/7. Når på startes nye runder kun innenfor åpningstid.",
+          type: "boolean",
+          defaultValue: false,
+        },
+        {
+          key: "openingHoursSchedule",
+          path: "openingHoursSchedule",
+          label: "Ukeplan",
+          description: "Åpnings- og stengetid per ukedag (HH:MM, 24-timers format).",
+          type: "json",
+          defaultValue: {
+            monday:    { open: "08:00", close: "22:00", enabled: true },
+            tuesday:   { open: "08:00", close: "22:00", enabled: true },
+            wednesday: { open: "08:00", close: "22:00", enabled: true },
+            thursday:  { open: "08:00", close: "22:00", enabled: true },
+            friday:    { open: "08:00", close: "22:00", enabled: true },
+            saturday:  { open: "10:00", close: "20:00", enabled: true },
+            sunday:    { open: "00:00", close: "00:00", enabled: false },
+          },
+        },
       ]
     }
   ];

@@ -624,61 +624,85 @@
             <button id="candySaveGameBtn">Lagre Candy-spill</button>
           </div>
           <pre id="candyGameStatus" class="status">Ingen Candy-spilldata lastet.</pre>
-          <h3>Candy drift og RTP</h3>
+          <h3>Candy – Innstillinger</h3>
           <p class="muted">
-            Backend-styring for auto-trekning og realtime-runder. Endringer lagres i Candy settings og brukes uten redeploy.
+            Driftsinnstillinger for Candy. Endringer lagres uten redeploy.
           </p>
           <div class="grid">
             <div class="field">
-              <label for="candyAutoRoundStartEnabled">Auto start runder</label>
+              <label for="candyAutoRoundStartEnabled">Auto-start runder</label>
               <select id="candyAutoRoundStartEnabled">
                 <option value="true">Ja</option>
                 <option value="false">Nei</option>
               </select>
             </div>
             <div class="field">
-              <label for="candyAutoRoundStartIntervalSeconds">Trekning hvert (sekunder)</label>
+              <label for="candyAutoRoundStartIntervalSeconds">Tid mellom runder (sek)</label>
               <input id="candyAutoRoundStartIntervalSeconds" type="number" min="30" step="1" />
             </div>
             <div class="field">
-              <label for="candyAutoRoundMinPlayers">Min spillere for auto-start</label>
-              <input id="candyAutoRoundMinPlayers" type="number" min="1" step="1" />
-            </div>
-            <div class="field">
-              <label for="candyAutoRoundTicketsPerPlayer">Bonger per spiller (auto)</label>
-              <input id="candyAutoRoundTicketsPerPlayer" type="number" min="1" max="5" step="1" value="4" />
-            </div>
-            <div class="field">
-              <label for="candyAutoRoundEntryFee">Default innsats per runde</label>
-              <input id="candyAutoRoundEntryFee" type="number" min="0" step="0.01" />
-            </div>
-            <div class="field">
-              <label for="candyPayoutPercent">RTP / utbetaling (%)</label>
-              <input id="candyPayoutPercent" type="number" min="0" max="100" step="0.01" />
-            </div>
-            <div class="field">
-              <label for="candyEffectiveFrom">Aktiver fra (valgfri)</label>
-              <input id="candyEffectiveFrom" type="datetime-local" step="1" />
-            </div>
-            <div class="field">
-              <label for="candyAutoDrawEnabled">Auto trekk i aktiv runde</label>
+              <label for="candyAutoDrawEnabled">Auto-trekk</label>
               <select id="candyAutoDrawEnabled">
                 <option value="true">Ja</option>
                 <option value="false">Nei</option>
               </select>
             </div>
             <div class="field">
-              <label for="candyAutoDrawIntervalSeconds">Trekk-intervall (sekunder)</label>
+              <label for="candyAutoDrawIntervalSeconds">Tid per ball (sek)</label>
               <input id="candyAutoDrawIntervalSeconds" type="number" min="0.25" step="0.05" />
             </div>
             <div class="field">
-              <label for="candySchedulerTickMs">Scheduler tick (ms, readonly)</label>
-              <input id="candySchedulerTickMs" type="number" readonly />
+              <label for="candyPayoutPercent">Utbetalingsprosent (%)</label>
+              <input id="candyPayoutPercent" type="number" min="0" max="100" step="0.01" />
+            </div>
+            <div class="field">
+              <label for="candyEffectiveFrom">Aktiver fra (valgfri)</label>
+              <input id="candyEffectiveFrom" type="datetime-local" step="1" />
             </div>
           </div>
+
+          <h3>Åpningstider</h3>
+          <p class="muted">
+            Når aktivert startes nye runder kun innenfor åpningstid. Pågående runder fullføres alltid.
+          </p>
+          <div class="grid">
+            <div class="field">
+              <label for="candyOpeningHoursEnabled">Bruk åpningstider</label>
+              <select id="candyOpeningHoursEnabled">
+                <option value="false">Nei (24/7)</option>
+                <option value="true">Ja</option>
+              </select>
+            </div>
+          </div>
+          <table id="candyOpeningHoursTable" class="opening-hours-table" style="width:100%;border-collapse:collapse;margin:0.5rem 0 1rem;">
+            <thead>
+              <tr>
+                <th style="text-align:left;padding:0.4rem 0.6rem;">Dag</th>
+                <th style="text-align:left;padding:0.4rem 0.6rem;">Aktiv</th>
+                <th style="text-align:left;padding:0.4rem 0.6rem;">Åpner</th>
+                <th style="text-align:left;padding:0.4rem 0.6rem;">Stenger</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td>Mandag</td><td><input type="checkbox" data-day="monday" class="oh-enabled" checked /></td><td><input type="time" data-day="monday" class="oh-open" value="08:00" /></td><td><input type="time" data-day="monday" class="oh-close" value="22:00" /></td></tr>
+              <tr><td>Tirsdag</td><td><input type="checkbox" data-day="tuesday" class="oh-enabled" checked /></td><td><input type="time" data-day="tuesday" class="oh-open" value="08:00" /></td><td><input type="time" data-day="tuesday" class="oh-close" value="22:00" /></td></tr>
+              <tr><td>Onsdag</td><td><input type="checkbox" data-day="wednesday" class="oh-enabled" checked /></td><td><input type="time" data-day="wednesday" class="oh-open" value="08:00" /></td><td><input type="time" data-day="wednesday" class="oh-close" value="22:00" /></td></tr>
+              <tr><td>Torsdag</td><td><input type="checkbox" data-day="thursday" class="oh-enabled" checked /></td><td><input type="time" data-day="thursday" class="oh-open" value="08:00" /></td><td><input type="time" data-day="thursday" class="oh-close" value="22:00" /></td></tr>
+              <tr><td>Fredag</td><td><input type="checkbox" data-day="friday" class="oh-enabled" checked /></td><td><input type="time" data-day="friday" class="oh-open" value="08:00" /></td><td><input type="time" data-day="friday" class="oh-close" value="22:00" /></td></tr>
+              <tr><td>Lørdag</td><td><input type="checkbox" data-day="saturday" class="oh-enabled" checked /></td><td><input type="time" data-day="saturday" class="oh-open" value="10:00" /></td><td><input type="time" data-day="saturday" class="oh-close" value="20:00" /></td></tr>
+              <tr><td>Søndag</td><td><input type="checkbox" data-day="sunday" class="oh-enabled" /></td><td><input type="time" data-day="sunday" class="oh-open" value="00:00" /></td><td><input type="time" data-day="sunday" class="oh-close" value="00:00" /></td></tr>
+            </tbody>
+          </table>
+
+          <!-- Hidden fields kept for backward compatibility -->
+          <input id="candyAutoRoundMinPlayers" type="hidden" value="1" />
+          <input id="candyAutoRoundTicketsPerPlayer" type="hidden" value="4" />
+          <input id="candyAutoRoundEntryFee" type="hidden" value="0" />
+          <input id="candySchedulerTickMs" type="hidden" />
+
           <div class="toolbar">
             <button id="candyLoadSettingsBtn" class="secondary">Last fra backend</button>
-            <button id="candySaveSettingsBtn">Lagre Candy-drift</button>
+            <button id="candySaveSettingsBtn">Lagre innstillinger</button>
           </div>
           <h3>Candy spillkontroll (alt på ett sted)</h3>
           <p class="muted">

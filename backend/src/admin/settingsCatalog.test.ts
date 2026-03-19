@@ -30,7 +30,11 @@ test("candy settings-katalog setter lock når runde kjører", () => {
   });
 
   assert.ok(definition.fields.length > 0);
-  for (const field of definition.fields) {
+  const lockableFields = definition.fields.filter(
+    (field) => field.isLocked !== undefined
+  );
+  assert.ok(lockableFields.length > 0, "ingen felt med lock");
+  for (const field of lockableFields) {
     assert.equal(field.isLocked, true, `${field.path} mangler lock`);
     assert.ok(field.lockReason, `${field.path} mangler lockReason`);
   }

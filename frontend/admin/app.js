@@ -1972,6 +1972,26 @@ function applyCandyManiaSettingsToForm(settings) {
   elements.candyQuickTicketsPerPlayer.value = Number.isFinite(settings.autoRoundTicketsPerPlayer)
     ? String(settings.autoRoundTicketsPerPlayer)
     : "4";
+
+  // Opening hours
+  const ohEnabled = document.getElementById("candyOpeningHoursEnabled");
+  if (ohEnabled) {
+    ohEnabled.value = asBooleanString(Boolean(settings.openingHoursEnabled));
+  }
+  const schedule = settings.openingHoursSchedule;
+  if (schedule) {
+    const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+    for (const day of days) {
+      const dayData = schedule[day];
+      if (!dayData) continue;
+      const enabledEl = document.querySelector(`.oh-enabled[data-day="${day}"]`);
+      const openEl = document.querySelector(`.oh-open[data-day="${day}"]`);
+      const closeEl = document.querySelector(`.oh-close[data-day="${day}"]`);
+      if (enabledEl) enabledEl.checked = dayData.enabled;
+      if (openEl) openEl.value = dayData.open || "08:00";
+      if (closeEl) closeEl.value = dayData.close || "22:00";
+    }
+  }
 }
 
 function formatCandyManiaSettings(settings) {
@@ -2033,25 +2053,6 @@ function buildCandyManiaPayload() {
     throw new Error(`Trekning hvert må være minst ${minRoundIntervalMs / 1000} sekunder.`);
   }
 
-  const autoRoundMinPlayers = Number.parseInt(elements.candyAutoRoundMinPlayers.value || "", 10);
-  if (!Number.isInteger(autoRoundMinPlayers) || autoRoundMinPlayers < minPlayersToStart) {
-    throw new Error(`Min spillere må være et heltall >= ${minPlayersToStart}.`);
-  }
-
-  const autoRoundTicketsPerPlayer = Number.parseInt(elements.candyAutoRoundTicketsPerPlayer.value || "", 10);
-  if (
-    !Number.isInteger(autoRoundTicketsPerPlayer) ||
-    autoRoundTicketsPerPlayer < 1 ||
-    autoRoundTicketsPerPlayer > maxTicketsPerPlayer
-  ) {
-    throw new Error(`Bonger per spiller må være mellom 1 og ${maxTicketsPerPlayer}.`);
-  }
-
-  const autoRoundEntryFee = Number(elements.candyAutoRoundEntryFee.value || 0);
-  if (!Number.isFinite(autoRoundEntryFee) || autoRoundEntryFee < 0) {
-    throw new Error("Default innsats må være et tall som er 0 eller høyere.");
-  }
-
   const payoutPercent = Number(elements.candyPayoutPercent.value || 0);
   if (
     !Number.isFinite(payoutPercent) ||
@@ -2068,15 +2069,30 @@ function buildCandyManiaPayload() {
 
   const effectiveFrom = datetimeLocalToIso(elements.candyEffectiveFrom.value, "Aktiver fra");
 
+  // Build opening hours schedule from form
+  const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+  const openingHoursSchedule = {};
+  for (const day of days) {
+    const enabledEl = document.querySelector(`.oh-enabled[data-day="${day}"]`);
+    const openEl = document.querySelector(`.oh-open[data-day="${day}"]`);
+    const closeEl = document.querySelector(`.oh-close[data-day="${day}"]`);
+    openingHoursSchedule[day] = {
+      enabled: enabledEl ? enabledEl.checked : true,
+      open: openEl ? openEl.value : "08:00",
+      close: closeEl ? closeEl.value : "22:00",
+    };
+  }
+  const ohEnabledEl = document.getElementById("candyOpeningHoursEnabled");
+  const openingHoursEnabled = ohEnabledEl ? ohEnabledEl.value === "true" : false;
+
   return {
     autoRoundStartEnabled: elements.candyAutoRoundStartEnabled.value === "true",
     autoRoundStartIntervalMs,
-    autoRoundMinPlayers,
-    autoRoundTicketsPerPlayer,
-    autoRoundEntryFee,
     payoutPercent: Math.round(payoutPercent * 100) / 100,
     autoDrawEnabled: elements.candyAutoDrawEnabled.value === "true",
     autoDrawIntervalMs,
+    openingHoursEnabled,
+    openingHoursSchedule,
     ...(effectiveFrom ? { effectiveFrom } : {})
   };
 }

@@ -105,6 +105,22 @@ interface ExtraDrawPayload extends RoomActionPayload {
   packageId?: string;
 }
 
+interface CandyOpeningHoursDaySchedule {
+  open: string;
+  close: string;
+  enabled: boolean;
+}
+
+interface CandyOpeningHoursSchedule {
+  monday: CandyOpeningHoursDaySchedule;
+  tuesday: CandyOpeningHoursDaySchedule;
+  wednesday: CandyOpeningHoursDaySchedule;
+  thursday: CandyOpeningHoursDaySchedule;
+  friday: CandyOpeningHoursDaySchedule;
+  saturday: CandyOpeningHoursDaySchedule;
+  sunday: CandyOpeningHoursDaySchedule;
+}
+
 interface CandyManiaSchedulerSettings {
   autoRoundStartEnabled: boolean;
   autoRoundStartIntervalMs: number;
@@ -114,6 +130,8 @@ interface CandyManiaSchedulerSettings {
   payoutPercent: number;
   autoDrawEnabled: boolean;
   autoDrawIntervalMs: number;
+  openingHoursEnabled: boolean;
+  openingHoursSchedule: CandyOpeningHoursSchedule;
 }
 
 interface PendingCandyManiaSettingsUpdate {
@@ -323,7 +341,17 @@ const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
     Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 75))) * 100
   ) / 100,
   autoDrawEnabled: forceCandyAutoDraw ? true : autoplayAllowed ? requestedAutoDrawEnabled : false,
-  autoDrawIntervalMs: parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 2000)
+  autoDrawIntervalMs: parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 2000),
+  openingHoursEnabled: false,
+  openingHoursSchedule: {
+    monday:    { open: "08:00", close: "22:00", enabled: true },
+    tuesday:   { open: "08:00", close: "22:00", enabled: true },
+    wednesday: { open: "08:00", close: "22:00", enabled: true },
+    thursday:  { open: "08:00", close: "22:00", enabled: true },
+    friday:    { open: "08:00", close: "22:00", enabled: true },
+    saturday:  { open: "10:00", close: "20:00", enabled: true },
+    sunday:    { open: "00:00", close: "00:00", enabled: false },
+  },
 };
 let candyManiaSettingsEffectiveFromMs = Date.now();
 let pendingCandyManiaSettingsUpdate: PendingCandyManiaSettingsUpdate | null = null;
@@ -776,6 +804,18 @@ function parseCandyManiaSettingsPatch(value: unknown): Partial<CandyManiaSchedul
     patch.autoDrawIntervalMs = autoDrawIntervalMs;
   }
 
+  const openingHoursEnabled = parseOptionalBooleanInput(payload.openingHoursEnabled, "openingHoursEnabled");
+  if (openingHoursEnabled !== undefined) {
+    patch.openingHoursEnabled = openingHoursEnabled;
+  }
+
+  if (payload.openingHoursSchedule !== undefined && payload.openingHoursSchedule !== null) {
+    if (typeof payload.openingHoursSchedule !== "object" || Array.isArray(payload.openingHoursSchedule)) {
+      throw new DomainError("INVALID_INPUT", "openingHoursSchedule må være et objekt.");
+    }
+    patch.openingHoursSchedule = payload.openingHoursSchedule as CandyOpeningHoursSchedule;
+  }
+
   return patch;
 }
 
@@ -803,7 +843,11 @@ function normalizeCandyManiaSchedulerSettings(
     payoutPercent: patch.payoutPercent !== undefined ? patch.payoutPercent : current.payoutPercent,
     autoDrawEnabled: patch.autoDrawEnabled !== undefined ? patch.autoDrawEnabled : current.autoDrawEnabled,
     autoDrawIntervalMs:
-      patch.autoDrawIntervalMs !== undefined ? patch.autoDrawIntervalMs : current.autoDrawIntervalMs
+      patch.autoDrawIntervalMs !== undefined ? patch.autoDrawIntervalMs : current.autoDrawIntervalMs,
+    openingHoursEnabled:
+      patch.openingHoursEnabled !== undefined ? patch.openingHoursEnabled : current.openingHoursEnabled,
+    openingHoursSchedule:
+      patch.openingHoursSchedule !== undefined ? patch.openingHoursSchedule : current.openingHoursSchedule,
   };
 
   next.autoRoundStartIntervalMs = Math.max(
@@ -844,7 +888,9 @@ function candyManiaSettingsCoreToRecord(settings: CandyManiaSchedulerSettings): 
     autoRoundEntryFee: settings.autoRoundEntryFee,
     payoutPercent: settings.payoutPercent,
     autoDrawEnabled: settings.autoDrawEnabled,
-    autoDrawIntervalMs: settings.autoDrawIntervalMs
+    autoDrawIntervalMs: settings.autoDrawIntervalMs,
+    openingHoursEnabled: settings.openingHoursEnabled,
+    openingHoursSchedule: settings.openingHoursSchedule,
   };
 }
 
@@ -1042,6 +1088,12 @@ async function hydrateCandyManiaSettingsFromCatalog(): Promise<void> {
     const candyGame = await platformService.getGame("candy");
     const patch = readCandyManiaSettingsFromRecord(candyGame.settings);
     const normalized = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+    // ENV always wins for autoDrawIntervalMs so deploys take effect
+    // regardless of persisted database value
+    const envDrawInterval = process.env.AUTO_DRAW_INTERVAL_MS;
+    if (envDrawInterval) {
+      normalized.autoDrawIntervalMs = Math.max(250, Math.floor(Number(envDrawInterval) || 2000));
+    }
     Object.assign(runtimeCandyManiaSettings, normalized);
     const currentEffectiveFromMs = parseOptionalIsoTimestampMs(
       (candyGame.settings as Record<string, unknown> | undefined)?.schedulerCurrentEffectiveFrom,
@@ -1814,10 +1866,38 @@ async function processEndedRoundCleanup(
   return handled;
 }
 
+function isWithinOpeningHours(settings: CandyManiaSchedulerSettings, now: Date = new Date()): boolean {
+  if (!settings.openingHoursEnabled) {
+    return true;
+  }
+  const dayNames: (keyof CandyOpeningHoursSchedule)[] = [
+    "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+  ];
+  const dayKey = dayNames[now.getDay()];
+  const daySchedule = settings.openingHoursSchedule[dayKey];
+  if (!daySchedule.enabled) {
+    return false;
+  }
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const [openH, openM] = daySchedule.open.split(":").map(Number);
+  const [closeH, closeM] = daySchedule.close.split(":").map(Number);
+  const openMinutes = (openH || 0) * 60 + (openM || 0);
+  const closeMinutes = (closeH || 0) * 60 + (closeM || 0);
+  if (closeMinutes <= openMinutes) {
+    return false;
+  }
+  return currentMinutes >= openMinutes && currentMinutes < closeMinutes;
+}
+
 async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummaries>[number], now: number): Promise<void> {
   const roomCode = summary.code;
   if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
     nextAutoStartAtByRoom.delete(roomCode);
+    return;
+  }
+
+  // Don't start new rounds outside opening hours (but let running rounds finish)
+  if (!isWithinOpeningHours(runtimeCandyManiaSettings) && summary.gameStatus !== "RUNNING") {
     return;
   }
 
