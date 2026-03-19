@@ -161,111 +161,110 @@ describe("30-ball draw sequence simulation", () => {
   });
 });
 
-describe("recentBalls merge logic", () => {
-  it("merges server balls that client hasn't seen via draw:new", () => {
-    const clientBalls = [1, 2, 3, 4, 5];
-    const serverBalls = [1, 2, 3, 4, 5, 6, 7, 8];
+/**
+ * Append-only merge: mirrors the logic in applyLiveSnapshot for room:update.
+ * Never removes or reorders client balls — only appends server balls the
+ * client hasn't seen via draw:new. This preserves the sharesBallPrefix()
+ * invariant that the Playfield flight animation depends on.
+ */
+function appendOnlyMerge(clientBalls: number[], serverBalls: number[]): number[] {
+  // New round detection
+  const serverSet = new Set(serverBalls);
+  const hasOverlap = clientBalls.some((b) => serverSet.has(b));
+  if (serverBalls.length > 0 && !hasOverlap) {
+    return serverBalls;
+  }
+  const clientSet = new Set(clientBalls);
+  const missingFromClient = serverBalls.filter((b) => !clientSet.has(b));
+  if (missingFromClient.length === 0) {
+    return clientBalls;
+  }
+  return [...clientBalls, ...missingFromClient];
+}
 
-    const clientSet = new Set(clientBalls);
-    const serverSet = new Set(serverBalls);
-    const clientValid = clientBalls.filter((b) => serverSet.has(b));
-    const missingFromClient = serverBalls.filter((b) => !clientSet.has(b));
-    const merged =
-      clientValid.length === 0 && missingFromClient.length > 0
-        ? serverBalls
-        : [...clientValid, ...missingFromClient];
-
+describe("recentBalls append-only merge logic", () => {
+  it("appends server balls that client hasn't seen via draw:new", () => {
+    const merged = appendOnlyMerge([1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6, 7, 8]);
     expect(merged).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it("uses server list when client has completely different balls (new round)", () => {
-    const clientBalls = [51, 52, 53]; // from previous round
-    const serverBalls = [1, 2, 3]; // new round
-
-    const clientSet = new Set(clientBalls);
-    const serverSet = new Set(serverBalls);
-    const clientValid = clientBalls.filter((b) => serverSet.has(b));
-    const missingFromClient = serverBalls.filter((b) => !clientSet.has(b));
-    const merged =
-      clientValid.length === 0 && missingFromClient.length > 0
-        ? serverBalls
-        : [...clientValid, ...missingFromClient];
-
-    // Should be server's list since no overlap
+    const merged = appendOnlyMerge([51, 52, 53], [1, 2, 3]);
     expect(merged).toEqual([1, 2, 3]);
   });
 
-  it("preserves client ordering when server has same balls", () => {
-    const clientBalls = [5, 3, 1, 4, 2]; // client's draw order
-    const serverBalls = [1, 2, 3, 4, 5]; // server's sorted order
-
-    const clientSet = new Set(clientBalls);
-    const serverSet = new Set(serverBalls);
-    const clientValid = clientBalls.filter((b) => serverSet.has(b));
-    const missingFromClient = serverBalls.filter((b) => !clientSet.has(b));
-    const merged =
-      clientValid.length === 0 && missingFromClient.length > 0
-        ? serverBalls
-        : [...clientValid, ...missingFromClient];
-
-    // Client order preserved, no missing balls
+  it("preserves client ordering exactly when server has same balls", () => {
+    const merged = appendOnlyMerge([5, 3, 1, 4, 2], [1, 2, 3, 4, 5]);
     expect(merged).toEqual([5, 3, 1, 4, 2]);
   });
 
-  it("never produces duplicates", () => {
-    const clientBalls = [1, 2, 3, 4, 5];
-    const serverBalls = [3, 4, 5, 6, 7]; // partial overlap
-
-    const clientSet = new Set(clientBalls);
-    const serverSet = new Set(serverBalls);
-    const clientValid = clientBalls.filter((b) => serverSet.has(b));
-    const missingFromClient = serverBalls.filter((b) => !clientSet.has(b));
-    const merged =
-      clientValid.length === 0 && missingFromClient.length > 0
-        ? serverBalls
-        : [...clientValid, ...missingFromClient];
-
-    expect(merged).toEqual([3, 4, 5, 6, 7]);
-    const unique = new Set(merged);
-    expect(unique.size).toBe(merged.length);
+  it("never removes client balls even if server has fewer (timing lag)", () => {
+    // Client got draw:new for ball 15 but server snapshot only has 1-14
+    const clientBalls = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    const serverBalls = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+    const merged = appendOnlyMerge(clientBalls, serverBalls);
+    // Client's ball 15 must NOT be removed
+    expect(merged).toEqual(clientBalls);
   });
 
-  it("simulates 30-ball round with room:update arriving every 5 draws", () => {
+  it("never produces duplicates", () => {
+    const merged = appendOnlyMerge([1, 2, 3, 4, 5], [3, 4, 5, 6, 7]);
+    const unique = new Set(merged);
+    expect(unique.size).toBe(merged.length);
+    // Client prefix preserved, missing appended
+    expect(merged).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("preserves sharesBallPrefix invariant through entire 30-ball round", () => {
     const totalBalls = 30;
     const violations: string[] = [];
     let clientRecentBalls: number[] = [];
 
     for (let i = 1; i <= totalBalls; i++) {
-      // draw:new adds ball to client
+      const previousBalls = [...clientRecentBalls];
+
+      // draw:new adds ball to client (simulates applyTheme1DrawPresentation)
       if (!clientRecentBalls.includes(i)) {
         clientRecentBalls = [...clientRecentBalls, i];
       }
 
-      // Every 5th ball, room:update arrives with all drawn numbers
-      if (i % 5 === 0) {
-        const serverBalls = Array.from({ length: i }, (_, j) => j + 1);
-        const clientSet = new Set(clientRecentBalls);
-        const serverSet = new Set(serverBalls);
-        const clientValid = clientRecentBalls.filter((b) => serverSet.has(b));
-        const missingFromClient = serverBalls.filter((b) => !clientSet.has(b));
-        const merged =
-          clientValid.length === 0 && missingFromClient.length > 0
-            ? serverBalls
-            : [...clientValid, ...missingFromClient];
+      // INVARIANT: new list must share prefix with previous
+      const prefixOk = previousBalls.every(
+        (ball, index) => clientRecentBalls[index] === ball,
+      );
+      if (!prefixOk) {
+        violations.push(`Ball ${i}: draw:new broke prefix invariant`);
+      }
 
-        // Verify no balls lost
+      // Every 2nd ball, room:update arrives (simulates real socket timing)
+      if (i % 2 === 0) {
+        const previousBeforeMerge = [...clientRecentBalls];
+        const serverBalls = Array.from({ length: i }, (_, j) => j + 1);
+        clientRecentBalls = appendOnlyMerge(clientRecentBalls, serverBalls);
+
+        // INVARIANT: merge must preserve prefix
+        const mergedPrefixOk = previousBeforeMerge.every(
+          (ball, index) => clientRecentBalls[index] === ball,
+        );
+        if (!mergedPrefixOk) {
+          violations.push(
+            `Ball ${i}: room:update merge broke prefix invariant. ` +
+            `Before: [${previousBeforeMerge.join(",")}] After: [${clientRecentBalls.join(",")}]`,
+          );
+        }
+
+        // INVARIANT: no balls lost
         for (let j = 1; j <= i; j++) {
-          if (!merged.includes(j)) {
-            violations.push(`After room:update at ball ${i}: ball ${j} missing from merged`);
+          if (!clientRecentBalls.includes(j)) {
+            violations.push(`Ball ${i}: ball ${j} missing after merge`);
           }
         }
-        // Verify no duplicates
-        const unique = new Set(merged);
-        if (unique.size !== merged.length) {
-          violations.push(`After room:update at ball ${i}: duplicates in merged`);
-        }
 
-        clientRecentBalls = merged;
+        // INVARIANT: no duplicates
+        const unique = new Set(clientRecentBalls);
+        if (unique.size !== clientRecentBalls.length) {
+          violations.push(`Ball ${i}: duplicates after merge`);
+        }
       }
     }
 
