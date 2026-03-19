@@ -296,6 +296,8 @@ export function Theme1GameShell() {
   useEffect(() => {
     if (shouldClearRailForNextRound) {
       setDisplayedRecentBalls([]);
+      // Clear frozen balls so they never reappear when the next round starts.
+      setFrozenRoundBalls([]);
       return;
     }
 
