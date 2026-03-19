@@ -749,18 +749,31 @@ export function resolveRailPresentationState(
   currentBalls: readonly number[],
 ): Theme1RailPresentationState {
   const appendedBall = resolveSingleAppendedBall(previousBalls, currentBalls);
-  if (appendedBall === null) {
+  if (appendedBall !== null) {
+    // Single ball appended — animate it, show previous balls immediately
     return {
-      renderedBalls: [...currentBalls],
-      queuedBallNumber: null,
-      queuedTargetIndex: null,
+      renderedBalls: [...previousBalls],
+      queuedBallNumber: appendedBall,
+      queuedTargetIndex: Math.min(currentBalls.length, 30) - 1,
+    };
+  }
+
+  // Multiple balls added (resync). Animate the last new ball if there is
+  // one, and render the rest immediately so we never skip animation entirely.
+  if (currentBalls.length > previousBalls.length && currentBalls.length > 0) {
+    const lastBall = currentBalls[currentBalls.length - 1]!;
+    const renderedWithoutLast = currentBalls.slice(0, -1);
+    return {
+      renderedBalls: [...renderedWithoutLast],
+      queuedBallNumber: lastBall,
+      queuedTargetIndex: Math.min(currentBalls.length, 30) - 1,
     };
   }
 
   return {
-    renderedBalls: [...previousBalls],
-    queuedBallNumber: appendedBall,
-    queuedTargetIndex: Math.min(currentBalls.length, 30) - 1,
+    renderedBalls: [...currentBalls],
+    queuedBallNumber: null,
+    queuedTargetIndex: null,
   };
 }
 

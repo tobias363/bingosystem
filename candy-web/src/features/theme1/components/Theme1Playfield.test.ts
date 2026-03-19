@@ -76,11 +76,11 @@ describe("resolveRailPresentationState", () => {
     });
   });
 
-  it("renders the full rail immediately after a multi-ball resync instead of faking queued flights", () => {
+  it("animates the last ball and renders the rest immediately after a multi-ball resync", () => {
     expect(resolveRailPresentationState([34], [34, 47, 12])).toEqual({
-      renderedBalls: [34, 47, 12],
-      queuedBallNumber: null,
-      queuedTargetIndex: null,
+      renderedBalls: [34, 47],
+      queuedBallNumber: 12,
+      queuedTargetIndex: 2,
     });
   });
 });
