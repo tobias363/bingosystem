@@ -1142,11 +1142,20 @@ function applyLiveSnapshot(
     snapshot,
     playerId: nextSession.playerId,
   });
+  // For room:update events, preserve the current recentBalls so that balls
+  // only enter the rail through the draw:new → flight animation pipeline.
+  // Without this, a room:update snapshot containing multiple new draws would
+  // dump them all into the rail at once, bypassing the sequential animation.
+  const shouldPreserveRecentBalls =
+    syncSource === "room:update" && currentState.snapshot.recentBalls.length > 0;
+  const nextModelWithBallRailGuard = shouldPreserveRecentBalls
+    ? { ...nextModelWithPendingDraw, recentBalls: currentState.snapshot.recentBalls }
+    : nextModelWithPendingDraw;
   const nextModel = shouldHoldPendingVisuals
-    ? preservePendingPresentationVisuals(currentState.snapshot, nextModelWithPendingDraw)
+    ? preservePendingPresentationVisuals(currentState.snapshot, nextModelWithBallRailGuard)
     : shouldFreezeBoards
-      ? freezeBoardsFromPreviousModel(currentState.snapshot, nextModelWithPendingDraw)
-      : nextModelWithPendingDraw;
+      ? freezeBoardsFromPreviousModel(currentState.snapshot, nextModelWithBallRailGuard)
+      : nextModelWithBallRailGuard;
   const nearCallouts =
     syncSource === "room:update" && !shouldFreezeBoards
       ? extractNewTheme1NearCallouts({
@@ -1839,9 +1848,18 @@ function applyPendingDrawPresentation(
 
       writeSession(nextSession);
 
+      // Preserve the current recentBalls to prevent balls that haven't
+      // gone through draw:new → flight animation from appearing in the
+      // rail all at once.  The server's full drawnNumbers will be
+      // applied when the corresponding room:update arrives.
       set({
         session: nextSession,
-        snapshot: result.model,
+        snapshot: {
+          ...result.model,
+          recentBalls: latestState.snapshot.recentBalls,
+          featuredBallNumber: null,
+          featuredBallIsPending: false,
+        },
         runtime: {
           ...latestState.runtime,
           pendingDrawNumber: null,
