@@ -118,6 +118,7 @@ export function Theme1GameShell() {
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
   const [stageScale, setStageScale] = useState(() => resolveTheme1StageScale());
   const [displayedRecentBalls, setDisplayedRecentBalls] = useState<number[]>(snapshot.recentBalls);
+  const [frozenRoundBalls, setFrozenRoundBalls] = useState<number[]>([]);
   const [countdownHiddenUntilMs, setCountdownHiddenUntilMs] = useState(0);
   const [liveChromeSettleComplete, setLiveChromeSettleComplete] = useState(
     () => isLocalTheme1RuntimeHost(hostname),
@@ -202,8 +203,12 @@ export function Theme1GameShell() {
 
     if (previousGameStatus === "RUNNING" && currentGameStatus !== "RUNNING") {
       setCountdownHiddenUntilMs(Date.now() + THEME1_POST_ROUND_COUNTDOWN_DELAY_MS);
+      // Freeze the balls from the finished round so they stay visible
+      // until we actively clear the rail (4s before next round).
+      setFrozenRoundBalls(snapshot.recentBalls.length > 0 ? [...snapshot.recentBalls] : frozenRoundBalls);
     } else if (currentGameStatus === "RUNNING") {
       setCountdownHiddenUntilMs(0);
+      setFrozenRoundBalls([]);
     }
 
     previousGameStatusRef.current = currentGameStatus;
@@ -276,10 +281,17 @@ export function Theme1GameShell() {
 
   // Memoize so clearing doesn't create a new [] reference on every render
   // (countdownNowMs updates every 250ms while clearing is active).
-  const playfieldRecentBalls = useMemo(
-    () => shouldClearRailForNextRound ? [] as number[] : snapshot.recentBalls,
-    [shouldClearRailForNextRound, snapshot.recentBalls],
-  );
+  // Between rounds snapshot.recentBalls may be empty (store resets for the
+  // next game), so fall back to the frozen balls from the finished round.
+  const playfieldRecentBalls = useMemo(() => {
+    if (shouldClearRailForNextRound) {
+      return [] as number[];
+    }
+    if (snapshot.recentBalls.length > 0) {
+      return snapshot.recentBalls;
+    }
+    return frozenRoundBalls;
+  }, [shouldClearRailForNextRound, snapshot.recentBalls, frozenRoundBalls]);
 
   useEffect(() => {
     if (shouldClearRailForNextRound) {
