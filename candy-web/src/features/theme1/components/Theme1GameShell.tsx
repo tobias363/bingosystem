@@ -271,7 +271,8 @@ export function Theme1GameShell() {
   const shouldClearRailForNextRound =
     snapshot.meta.gameStatus !== "RUNNING" &&
     schedulerTargetMs !== null &&
-    schedulerTargetMs - countdownNowMs <= 4000;
+    schedulerTargetMs - countdownNowMs <= 4000 &&
+    countdownLabel.length > 0;
 
   // Memoize so clearing doesn't create a new [] reference on every render
   // (countdownNowMs updates every 250ms while clearing is active).
