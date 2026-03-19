@@ -15,6 +15,15 @@ import type { ClaimType, RoomSnapshot, RoomSummary, Ticket } from "./game/types.
 import { GameCheckpointStore } from "./game/GameCheckpointStore.js";
 import { logger } from "./logger.js";
 import {
+  parseSocketPayload,
+  drawNextSchema,
+  claimSchema,
+  betArmSchema,
+  ticketRerollSchema,
+  configureRoomSchema,
+  extraDrawSchema,
+} from "./socketSchemas.js";
+import {
   metricsRegistry,
   drawsTotal,
   claimsTotal,
@@ -2017,6 +2026,7 @@ async function processEndedRoundCleanup(
     }
 
     if (engine.archiveEndedGameIfReady(roomCode, now, candyEndedRoundCleanupDelayMs)) {
+      gamesEndedTotal.inc({ room_code: roomCode });
       await emitRoomUpdate(roomCode);
     }
   });
@@ -2091,6 +2101,7 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
         participantPlayerIds: armedPlayerIds,
         allowEmptyRound: true
       });
+      gamesStartedTotal.inc({ room_code: roomCode });
     } catch (error) {
       if (
         error instanceof DomainError &&
@@ -4227,14 +4238,18 @@ io.on("connection", (socket: Socket) => {
 
   socket.on("draw:next", async (payload: RoomActionPayload, callback: (response: AckResponse<{ number: number; snapshot: RoomSnapshot }>) => void) => {
     try {
-      const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      const validated = parseSocketPayload(drawNextSchema, payload, "draw:next");
+      const { roomCode, playerId } = await requireAuthenticatedPlayerAction(validated);
       assertCanonicalCandyRoomForGameplay(roomCode);
       const result = await withRoomDrawLock(roomCode, async () => {
+        const drawStart = Date.now();
         const number = await engine.drawNextNumber({
           roomCode,
           actorPlayerId: playerId,
           autoSettleClaims: true
         });
+        drawDurationMs.observe(Date.now() - drawStart);
+        drawsTotal.inc({ room_code: roomCode, source: "manual" });
         io.to(roomCode).emit("draw:new", { number });
         const snapshot = await emitRoomUpdate(roomCode, playerId);
         return { number, snapshot };
@@ -4333,19 +4348,20 @@ io.on("connection", (socket: Socket) => {
 
   socket.on("claim:submit", async (payload: ClaimPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
-      const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      const validated = parseSocketPayload(claimSchema, payload, "claim:submit");
+      const { roomCode, playerId } = await requireAuthenticatedPlayerAction(validated);
       assertCanonicalCandyRoomForGameplay(roomCode);
-      if (payload?.type !== "LINE" && payload?.type !== "BINGO") {
-        throw new DomainError("INVALID_INPUT", "type må være LINE eller BINGO.");
-      }
+      const claimStart = Date.now();
       // Serialize claims per room to prevent double LINE payouts from concurrent requests
       await withRoomClaimLock(roomCode, async () => {
         await engine.submitClaim({
           roomCode,
           playerId,
-          type: payload.type
+          type: validated.type
         });
       });
+      claimDurationMs.observe(Date.now() - claimStart);
+      claimsTotal.inc({ room_code: roomCode, type: validated.type });
       const snapshot = await emitRoomUpdate(roomCode, playerId);
       checkpointGame(roomCode);
       ackSuccess(callback, { snapshot });
