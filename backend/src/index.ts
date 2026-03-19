@@ -911,7 +911,11 @@ function normalizeCandyManiaSchedulerSettings(
   next.autoRoundTicketsPerPlayer = Math.min(5, Math.max(1, Math.floor(next.autoRoundTicketsPerPlayer)));
   next.autoRoundEntryFee = Math.max(0, Math.round(next.autoRoundEntryFee * 100) / 100);
   next.payoutPercent = Math.min(100, Math.max(0, Math.round(next.payoutPercent * 100) / 100));
-  next.autoDrawIntervalMs = Math.max(250, Math.floor(next.autoDrawIntervalMs));
+  // When AUTO_DRAW_INTERVAL_MS env is set, allow any value ≥250ms.
+  // Otherwise enforce a 2 000ms floor so db/admin values never
+  // silently speed up draws below the intended 2-second cadence.
+  const drawIntervalFloor = process.env.AUTO_DRAW_INTERVAL_MS ? 250 : 2000;
+  next.autoDrawIntervalMs = Math.max(drawIntervalFloor, Math.floor(next.autoDrawIntervalMs));
 
   if (
     !autoplayAllowed &&
@@ -1136,14 +1140,10 @@ async function hydrateCandyManiaSettingsFromCatalog(): Promise<void> {
     const patch = readCandyManiaSettingsFromRecord(candyGame.settings);
     const normalized = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
     // ENV always wins for autoDrawIntervalMs so deploys take effect
-    // regardless of persisted database value.  When no ENV is set,
-    // enforce a 2 000 ms floor so the draw interval never silently
-    // drops below 2 seconds (e.g. from a stale database value).
+    // regardless of persisted database value.
     const envDrawInterval = process.env.AUTO_DRAW_INTERVAL_MS;
     if (envDrawInterval) {
       normalized.autoDrawIntervalMs = Math.max(250, Math.floor(Number(envDrawInterval) || 2000));
-    } else {
-      normalized.autoDrawIntervalMs = Math.max(2000, normalized.autoDrawIntervalMs);
     }
     Object.assign(runtimeCandyManiaSettings, normalized);
     const currentEffectiveFromMs = parseOptionalIsoTimestampMs(
