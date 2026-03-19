@@ -79,6 +79,10 @@ const THEME1_RAIL_FLIGHT_START_OFFSET_X_PX = -1;
 const THEME1_RAIL_FLIGHT_START_OFFSET_Y_PX = 6;
 const THEME1_RAIL_FLIGHT_OUTPUT_OVERLAP_MS = 0;
 const THEME1_RAIL_FLIGHT_LANDING_OVERLAP_MS = 90;
+/** Safety ceiling: force-land any flight that exceeds this duration. */
+const THEME1_RAIL_FLIGHT_MAX_TOTAL_MS =
+  THEME1_RAIL_FLIGHT_HOLD_MS + THEME1_RAIL_FLIGHT_DURATION_MS + 500;
+const THEME1_ANIMATION_QUEUE_MAX_SIZE = 5;
 
 export function Theme1Playfield({
   bonusActive,
@@ -123,13 +127,18 @@ export function Theme1Playfield({
   const measureFlightFrameRef = useRef<number | null>(null);
   const flightAnimationFrameRef = useRef<number | null>(null);
   const landingSettleTimeoutRef = useRef<number | null>(null);
+  const flightSafetyTimeoutRef = useRef<number | null>(null);
   const outputSuppressedForActiveFlightRef = useRef(false);
+  const onRailFlightSettledRef = useRef(onRailFlightSettled);
   const [hiddenRailBallIndex, setHiddenRailBallIndex] = useState<number | null>(null);
   const [queuedFlightBallNumber, setQueuedFlightBallNumber] = useState<number | null>(null);
   const [queuedFlightTargetIndex, setQueuedFlightTargetIndex] = useState<number | null>(null);
   const [suppressedOutputBallNumber, setSuppressedOutputBallNumber] = useState<number | null>(null);
   const [flyingRailBall, setFlyingRailBall] = useState<Theme1FlyingRailBallState | null>(null);
   const [renderedRecentBalls, setRenderedRecentBalls] = useState<number[]>(displayedRecentBalls);
+
+  // Keep the settled callback ref in sync without re-triggering effects.
+  onRailFlightSettledRef.current = onRailFlightSettled;
 
   useEffect(() => {
     return () => {
@@ -141,6 +150,9 @@ export function Theme1Playfield({
       }
       if (landingSettleTimeoutRef.current !== null) {
         window.clearTimeout(landingSettleTimeoutRef.current);
+      }
+      if (flightSafetyTimeoutRef.current !== null) {
+        window.clearTimeout(flightSafetyTimeoutRef.current);
       }
     };
   }, []);
@@ -223,6 +235,20 @@ export function Theme1Playfield({
     previousRecentBallsRef.current = nextQueuedSnapshot;
   }, [flyingRailBall, queuedFlightBallNumber]);
 
+  /** Commit the queued flight ball directly into the rail without animating.
+   *  Used as a fallback when DOM measurement fails so the ball is never lost. */
+  function commitFlightBallWithoutAnimation() {
+    const resolvedBalls = queuedFlightResolvedBallsRef.current ?? previousRecentBallsRef.current;
+    queuedFlightResolvedBallsRef.current = null;
+    outputSuppressedForActiveFlightRef.current = false;
+    setRenderedRecentBalls(resolvedBalls);
+    setHiddenRailBallIndex(null);
+    setQueuedFlightBallNumber(null);
+    setQueuedFlightTargetIndex(null);
+    setSuppressedOutputBallNumber(null);
+    setFlyingRailBall(null);
+  }
+
   useLayoutEffect(() => {
     if (
       bonusActive ||
@@ -247,10 +273,9 @@ export function Theme1Playfield({
           return;
         }
 
-        setHiddenRailBallIndex(null);
-        setQueuedFlightBallNumber(null);
-        setQueuedFlightTargetIndex(null);
-        setSuppressedOutputBallNumber(null);
+        // Measurement failed — commit ball to rail without animation
+        // so it is never lost.
+        commitFlightBallWithoutAnimation();
         return;
       }
 
@@ -267,10 +292,7 @@ export function Theme1Playfield({
           return;
         }
 
-        setHiddenRailBallIndex(null);
-        setQueuedFlightBallNumber(null);
-        setQueuedFlightTargetIndex(null);
-        setSuppressedOutputBallNumber(null);
+        commitFlightBallWithoutAnimation();
         return;
       }
 
@@ -317,7 +339,14 @@ export function Theme1Playfield({
   }, [bonusActive, flyingRailBall, queuedFlightBallNumber, queuedFlightTargetIndex]);
 
   useEffect(() => {
-    if (!flyingRailBall || !flyingBallRef.current) {
+    if (!flyingRailBall) {
+      return;
+    }
+
+    // If the flying-ball DOM element isn't available (extremely rare),
+    // force-land immediately so the animation system never gets stuck.
+    if (!flyingBallRef.current) {
+      commitFlightBallWithoutAnimation();
       return;
     }
 
@@ -326,11 +355,46 @@ export function Theme1Playfield({
     const flightDurationMs = resolveRailFlightDurationMs(travelDistance);
     const totalDurationMs = THEME1_RAIL_FLIGHT_HOLD_MS + flightDurationMs;
     let startTimeMs: number | null = null;
+    let landed = false;
+
+    const land = () => {
+      if (landed) return;
+      landed = true;
+
+      if (flightSafetyTimeoutRef.current !== null) {
+        window.clearTimeout(flightSafetyTimeoutRef.current);
+        flightSafetyTimeoutRef.current = null;
+      }
+
+      const resolvedBalls = queuedFlightResolvedBallsRef.current ?? previousRecentBallsRef.current;
+      queuedFlightResolvedBallsRef.current = null;
+      const settledBallNumber = flyingRailBall.number;
+      outputSuppressedForActiveFlightRef.current = false;
+      landingSettleTimeoutRef.current = window.setTimeout(() => {
+        landingSettleTimeoutRef.current = null;
+        setRenderedRecentBalls(resolvedBalls);
+        setHiddenRailBallIndex(null);
+        setFlyingRailBall(null);
+        setQueuedFlightBallNumber(null);
+        setQueuedFlightTargetIndex(null);
+        setSuppressedOutputBallNumber(null);
+        onRailFlightSettledRef.current?.(settledBallNumber);
+      }, THEME1_RAIL_FLIGHT_LANDING_OVERLAP_MS);
+    };
 
     flyingElement.style.opacity = String(resolveRailFlightOpacity(0));
     flyingElement.style.transform = `translate(-50%, -50%) translate3d(0px, 0px, 0) scale(${flyingRailBall.startScale})`;
 
+    // Safety timeout: if the normal animation loop never completes
+    // (e.g. tab backgrounded, rAF paused), force-land after a ceiling.
+    flightSafetyTimeoutRef.current = window.setTimeout(() => {
+      flightSafetyTimeoutRef.current = null;
+      land();
+    }, THEME1_RAIL_FLIGHT_MAX_TOTAL_MS);
+
     const animate = (nowMs: number) => {
+      if (landed) return;
+
       if (startTimeMs === null) {
         startTimeMs = nowMs;
       }
@@ -353,9 +417,6 @@ export function Theme1Playfield({
         flyingRailBall.startScale,
         flyingRailBall.endScale,
       );
-      // During emergence (hold phase) the ball drifts downward to simulate
-      // dropping out of the machine hole.  The drift peaks at ~30 px when
-      // emergence completes and then blends into the normal travel path.
       const emergenceDriftY = emergenceProgress * (1 - easedTravelProgress) * 40;
       const x = flyingRailBall.deltaX * easedTravelProgress;
       const y = (flyingRailBall.deltaY * easedTravelProgress) - arcLift + emergenceDriftY;
@@ -376,9 +437,7 @@ export function Theme1Playfield({
         return;
       }
 
-      // Re-measure target position at landing for pixel-perfect alignment
-      // across all browsers (different engines round sub-pixel grid values differently).
-      // Divide by the stage scale factor to convert viewport → local coordinates.
+      // Re-measure target position at landing for pixel-perfect alignment.
       const playfieldElement = playfieldRef.current;
       const targetElement = compactSlotRefsRef.current.get(flyingRailBall.targetIndex);
       if (playfieldElement && targetElement) {
@@ -394,19 +453,7 @@ export function Theme1Playfield({
         flyingElement.style.transform = `translate(-50%, -50%) translate3d(${flyingRailBall.deltaX}px, ${flyingRailBall.deltaY}px, 0) scale(${flyingRailBall.endScale})`;
       }
 
-      const resolvedBalls = queuedFlightResolvedBallsRef.current ?? previousRecentBallsRef.current;
-      queuedFlightResolvedBallsRef.current = null;
-      const settledBallNumber = flyingRailBall.number;
-      landingSettleTimeoutRef.current = window.setTimeout(() => {
-        landingSettleTimeoutRef.current = null;
-        setRenderedRecentBalls(resolvedBalls);
-        setHiddenRailBallIndex(null);
-        setFlyingRailBall(null);
-        setQueuedFlightBallNumber(null);
-        setQueuedFlightTargetIndex(null);
-        setSuppressedOutputBallNumber(null);
-        onRailFlightSettled?.(settledBallNumber);
-      }, THEME1_RAIL_FLIGHT_LANDING_OVERLAP_MS);
+      land();
     };
 
     flightAnimationFrameRef.current = window.requestAnimationFrame(animate);
@@ -416,12 +463,10 @@ export function Theme1Playfield({
         window.cancelAnimationFrame(flightAnimationFrameRef.current);
         flightAnimationFrameRef.current = null;
       }
-      if (landingSettleTimeoutRef.current !== null) {
-        window.clearTimeout(landingSettleTimeoutRef.current);
-        landingSettleTimeoutRef.current = null;
-      }
+      // On cleanup (effect re-fire), force-land so the ball is never lost.
+      land();
     };
-  }, [flyingRailBall, onRailFlightSettled]);
+  }, [flyingRailBall]);
 
   function registerCompactSlotRef(index: number, element: HTMLDivElement | null) {
     if (element) {
@@ -659,6 +704,12 @@ function queueRecentBallsSnapshot(queue: number[][], nextSnapshot: readonly numb
   const previousQueuedSnapshot = queue[queue.length - 1];
   if (previousQueuedSnapshot && areBallArraysEqual(previousQueuedSnapshot, nextSnapshot)) {
     return;
+  }
+
+  // Cap the queue so it never grows unbounded during network bursts.
+  // Keep only the most recent entries — older ones are stale anyway.
+  while (queue.length >= THEME1_ANIMATION_QUEUE_MAX_SIZE) {
+    queue.shift();
   }
 
   queue.push([...nextSnapshot]);
