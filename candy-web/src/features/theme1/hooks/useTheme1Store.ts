@@ -1764,6 +1764,9 @@ function applyPendingDrawPresentation(
     snapshot: applyTheme1DrawPresentation(
       currentState.snapshot,
       nextPendingDrawNumber,
+      {
+        markBoards: currentState.runtime.lastTicketSource === "currentGame",
+      },
     ),
     runtime: {
       ...currentState.runtime,
