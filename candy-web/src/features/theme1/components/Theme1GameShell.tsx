@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTheme1Store } from "@/features/theme1/hooks/useTheme1Store";
 import { isLocalTheme1RuntimeHost } from "@/features/theme1/hooks/useTheme1Store";
 import { Theme1ConnectionPanel } from "@/features/theme1/components/Theme1ConnectionPanel";
@@ -260,7 +260,25 @@ export function Theme1GameShell() {
     snapshot.meta.gameStatus,
   ]);
 
+  // Clear the ball rail 5 seconds before the next round starts.
+  const schedulerTargetMs = useMemo(() => {
+    const scheduler = roomSnapshot?.scheduler;
+    if (!scheduler?.enabled || !scheduler.nextStartAt) return null;
+    const parsed = Date.parse(scheduler.nextStartAt);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [roomSnapshot?.scheduler?.nextStartAt, roomSnapshot?.scheduler?.enabled]);
+
+  const shouldClearRailForNextRound =
+    snapshot.meta.gameStatus !== "RUNNING" &&
+    schedulerTargetMs !== null &&
+    schedulerTargetMs - countdownNowMs <= 5000;
+
   useEffect(() => {
+    if (shouldClearRailForNextRound) {
+      setDisplayedRecentBalls([]);
+      return;
+    }
+
     if (snapshot.meta.gameStatus === "RUNNING" && snapshot.meta.drawCount === 0) {
       setDisplayedRecentBalls([]);
       return;
@@ -270,6 +288,7 @@ export function Theme1GameShell() {
       resolveVisibleRecentBalls(snapshot.recentBalls, snapshot.featuredBallNumber, snapshot.featuredBallIsPending),
     );
   }, [
+    shouldClearRailForNextRound,
     snapshot.meta.drawCount,
     snapshot.meta.gameStatus,
     snapshot.recentBalls,
