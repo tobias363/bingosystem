@@ -172,7 +172,15 @@ const adminFrontendFile = path.resolve(legacyFrontendDir, "admin/index.html");
 const adminFrontendDir = path.resolve(legacyFrontendDir, "admin");
 
 const app = express();
-app.use(cors());
+const allowedCorsOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+app.use(cors(
+  allowedCorsOrigins.length > 0
+    ? { origin: allowedCorsOrigins, credentials: true }
+    : undefined
+));
 app.use(express.json());
 app.use(
   "/admin",
@@ -207,9 +215,10 @@ if (hasCandyWebFrontend) {
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: "*"
-  }
+  cors: allowedCorsOrigins.length > 0
+    ? { origin: allowedCorsOrigins, credentials: true }
+    : { origin: "*" },
+  maxHttpBufferSize: 64 * 1024, // 64KB max payload per message
 });
 
 const walletRuntime = createWalletAdapter(projectDir);
@@ -1335,6 +1344,25 @@ const lastAutoDrawAtByRoom = new Map<string, number>();
 const roomConfiguredEntryFeeByRoom = new Map<string, number>();
 const armedPlayersByRoom = new Map<string, Set<string>>();
 const roomSchedulerLocks = new Set<string>();
+
+// Per-room claim mutex: queues concurrent claims so LINE can't be double-awarded.
+const roomClaimQueues = new Map<string, Promise<void>>();
+
+async function withRoomClaimLock<T>(roomCode: string, work: () => Promise<T>): Promise<T> {
+  const previous = roomClaimQueues.get(roomCode) ?? Promise.resolve();
+  let resolve: () => void;
+  const next = new Promise<void>((r) => { resolve = r; });
+  roomClaimQueues.set(roomCode, next);
+  await previous;
+  try {
+    return await work();
+  } finally {
+    resolve!();
+    if (roomClaimQueues.get(roomCode) === next) {
+      roomClaimQueues.delete(roomCode);
+    }
+  }
+}
 let schedulerTickInProgress = false;
 
 function getOrCreateArmedPlayers(roomCode: string): Set<string> {
@@ -3679,6 +3707,49 @@ app.post("/api/wallets/transfer", async (req, res) => {
 });
 
 io.on("connection", (socket: Socket) => {
+  // Per-socket rate limiter: max events per sliding window
+  const RATE_LIMIT_WINDOW_MS = 2000;
+  const RATE_LIMIT_MAX_EVENTS = 10;
+  const socketEventTimestamps: number[] = [];
+
+  function checkSocketRateLimit(): boolean {
+    const now = Date.now();
+    // Remove timestamps outside window
+    while (socketEventTimestamps.length > 0 && socketEventTimestamps[0] < now - RATE_LIMIT_WINDOW_MS) {
+      socketEventTimestamps.shift();
+    }
+    if (socketEventTimestamps.length >= RATE_LIMIT_MAX_EVENTS) {
+      return false;
+    }
+    socketEventTimestamps.push(now);
+    return true;
+  }
+
+  // Wrap socket.on to inject rate limiting on player-action events
+  const originalOn = socket.on.bind(socket);
+  const rateLimitedEvents = new Set([
+    "bet:arm", "claim:submit", "ticket:reroll", "room:configure",
+    "draw:next", "draw:extra:purchase", "ticket:mark",
+  ]);
+  socket.on = ((event: string, handler: (...args: unknown[]) => void) => {
+    if (rateLimitedEvents.has(event)) {
+      return originalOn(event, (...args: unknown[]) => {
+        if (!checkSocketRateLimit()) {
+          const callback = args[args.length - 1];
+          if (typeof callback === "function") {
+            (callback as (r: unknown) => void)({
+              ok: false,
+              error: { code: "RATE_LIMITED", message: "For mange forespørsler. Vent litt." },
+            });
+          }
+          return;
+        }
+        handler(...args);
+      });
+    }
+    return originalOn(event, handler);
+  }) as typeof socket.on;
+
   async function resolveIdentityFromPayload(payload: CreateRoomPayload): Promise<{
     playerName: string;
     walletId: string;
@@ -4079,10 +4150,13 @@ io.on("connection", (socket: Socket) => {
       if (payload?.type !== "LINE" && payload?.type !== "BINGO") {
         throw new DomainError("INVALID_INPUT", "type må være LINE eller BINGO.");
       }
-      await engine.submitClaim({
-        roomCode,
-        playerId,
-        type: payload.type
+      // Serialize claims per room to prevent double LINE payouts from concurrent requests
+      await withRoomClaimLock(roomCode, async () => {
+        await engine.submitClaim({
+          roomCode,
+          playerId,
+          type: payload.type
+        });
       });
       const snapshot = await emitRoomUpdate(roomCode, playerId);
       ackSuccess(callback, { snapshot });
@@ -4135,6 +4209,17 @@ app.get("*", (_req, res) => {
     return;
   }
   res.sendFile(frontendIndexFile);
+});
+
+// ---------------------------------------------------------------------------
+// Global error handlers — prevent silent crashes in a 24/7 system
+// ---------------------------------------------------------------------------
+process.on("uncaughtException", (error) => {
+  console.error("[FATAL] Uncaught exception — prosessen fortsetter, men tilstanden kan være korrupt:", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL] Unhandled promise rejection:", reason);
 });
 
 const PORT = Number(process.env.PORT ?? 4000);
