@@ -153,7 +153,6 @@ interface CandyManiaSchedulerSettings {
   autoRoundEntryFee: number;
   payoutPercent: number;
   autoDrawEnabled: boolean;
-  autoDrawIntervalMs: number;
   openingHoursEnabled: boolean;
   openingHoursSchedule: CandyOpeningHoursSchedule;
 }
@@ -379,7 +378,6 @@ const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
     Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 75))) * 100
   ) / 100,
   autoDrawEnabled: forceCandyAutoDraw ? true : autoplayAllowed ? requestedAutoDrawEnabled : false,
-  autoDrawIntervalMs: parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 2000),
   openingHoursEnabled: false,
   openingHoursSchedule: {
     monday:    { open: "08:00", close: "22:00", enabled: true },
@@ -391,6 +389,8 @@ const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
     sunday:    { open: "00:00", close: "00:00", enabled: false },
   },
 };
+/** Hardcoded interval between each ball draw — 2 seconds. */
+const CANDY_AUTO_DRAW_INTERVAL_MS = 2000;
 let candyManiaSettingsEffectiveFromMs = Date.now();
 let pendingCandyManiaSettingsUpdate: PendingCandyManiaSettingsUpdate | null = null;
 const schedulerTickMs = parsePositiveIntEnv(process.env.AUTO_ROUND_SCHEDULER_TICK_MS, 250);
@@ -846,11 +846,6 @@ function parseCandyManiaSettingsPatch(value: unknown): Partial<CandyManiaSchedul
     patch.autoDrawEnabled = autoDrawEnabled;
   }
 
-  const autoDrawIntervalMs = parseOptionalPositiveInteger(payload.autoDrawIntervalMs, "autoDrawIntervalMs");
-  if (autoDrawIntervalMs !== undefined) {
-    patch.autoDrawIntervalMs = autoDrawIntervalMs;
-  }
-
   const openingHoursEnabled = parseOptionalBooleanInput(payload.openingHoursEnabled, "openingHoursEnabled");
   if (openingHoursEnabled !== undefined) {
     patch.openingHoursEnabled = openingHoursEnabled;
@@ -889,8 +884,6 @@ function normalizeCandyManiaSchedulerSettings(
       patch.autoRoundEntryFee !== undefined ? patch.autoRoundEntryFee : current.autoRoundEntryFee,
     payoutPercent: patch.payoutPercent !== undefined ? patch.payoutPercent : current.payoutPercent,
     autoDrawEnabled: patch.autoDrawEnabled !== undefined ? patch.autoDrawEnabled : current.autoDrawEnabled,
-    autoDrawIntervalMs:
-      patch.autoDrawIntervalMs !== undefined ? patch.autoDrawIntervalMs : current.autoDrawIntervalMs,
     openingHoursEnabled:
       patch.openingHoursEnabled !== undefined ? patch.openingHoursEnabled : current.openingHoursEnabled,
     openingHoursSchedule:
@@ -911,12 +904,6 @@ function normalizeCandyManiaSchedulerSettings(
   next.autoRoundTicketsPerPlayer = Math.min(5, Math.max(1, Math.floor(next.autoRoundTicketsPerPlayer)));
   next.autoRoundEntryFee = Math.max(0, Math.round(next.autoRoundEntryFee * 100) / 100);
   next.payoutPercent = Math.min(100, Math.max(0, Math.round(next.payoutPercent * 100) / 100));
-  // When AUTO_DRAW_INTERVAL_MS env is set, allow any value ≥250ms.
-  // Otherwise enforce a 2 000ms floor so db/admin values never
-  // silently speed up draws below the intended 2-second cadence.
-  const drawIntervalFloor = process.env.AUTO_DRAW_INTERVAL_MS ? 250 : 2000;
-  next.autoDrawIntervalMs = Math.max(drawIntervalFloor, Math.floor(next.autoDrawIntervalMs));
-
   if (
     !autoplayAllowed &&
     ((next.autoRoundStartEnabled && !forceCandyAutoStart) || (next.autoDrawEnabled && !forceCandyAutoDraw))
@@ -939,7 +926,6 @@ function candyManiaSettingsCoreToRecord(settings: CandyManiaSchedulerSettings): 
     autoRoundEntryFee: settings.autoRoundEntryFee,
     payoutPercent: settings.payoutPercent,
     autoDrawEnabled: settings.autoDrawEnabled,
-    autoDrawIntervalMs: settings.autoDrawIntervalMs,
     openingHoursEnabled: settings.openingHoursEnabled,
     openingHoursSchedule: settings.openingHoursSchedule,
   };
@@ -1139,12 +1125,6 @@ async function hydrateCandyManiaSettingsFromCatalog(): Promise<void> {
     const candyGame = await platformService.getGame("candy");
     const patch = readCandyManiaSettingsFromRecord(candyGame.settings);
     const normalized = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
-    // ENV always wins for autoDrawIntervalMs so deploys take effect
-    // regardless of persisted database value.
-    const envDrawInterval = process.env.AUTO_DRAW_INTERVAL_MS;
-    if (envDrawInterval) {
-      normalized.autoDrawIntervalMs = Math.max(250, Math.floor(Number(envDrawInterval) || 2000));
-    }
     Object.assign(runtimeCandyManiaSettings, normalized);
     const currentEffectiveFromMs = parseOptionalIsoTimestampMs(
       (candyGame.settings as Record<string, unknown> | undefined)?.schedulerCurrentEffectiveFrom,
@@ -2136,7 +2116,7 @@ async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummari
   }
 
   const lastDrawAt = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
-  if (now - lastDrawAt < runtimeCandyManiaSettings.autoDrawIntervalMs) {
+  if (now - lastDrawAt < CANDY_AUTO_DRAW_INTERVAL_MS) {
     return;
   }
 
@@ -2149,7 +2129,7 @@ async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummari
 
     const refreshedLastDrawAt = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
     const currentNow = Date.now();
-    if (currentNow - refreshedLastDrawAt < runtimeCandyManiaSettings.autoDrawIntervalMs) {
+    if (currentNow - refreshedLastDrawAt < CANDY_AUTO_DRAW_INTERVAL_MS) {
       return;
     }
 
@@ -2158,7 +2138,7 @@ async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummari
       // while we were waiting for the mutex, making this draw too early.
       const lockedNow = Date.now();
       const lockedLastDraw = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
-      if (lockedNow - lockedLastDraw < runtimeCandyManiaSettings.autoDrawIntervalMs) {
+      if (lockedNow - lockedLastDraw < CANDY_AUTO_DRAW_INTERVAL_MS) {
         return;
       }
 
@@ -4575,7 +4555,7 @@ hydrateCandyManiaSettingsFromCatalog()
         `[scheduler] autoStart=${runtimeCandyManiaSettings.autoRoundStartEnabled} autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} forceAutoStart=${forceCandyAutoStart} forceAutoDraw=${forceCandyAutoDraw} autoAllowedInProd=${allowAutoplayInProduction} singleGlobalRoom=${enforceSingleCandyGlobalRoom} interval=${runtimeCandyManiaSettings.autoRoundStartIntervalMs}ms minPlayers=${runtimeCandyManiaSettings.autoRoundMinPlayers} ticketsPerPlayer=${runtimeCandyManiaSettings.autoRoundTicketsPerPlayer} entryFee=${runtimeCandyManiaSettings.autoRoundEntryFee} payoutPercent=${runtimeCandyManiaSettings.payoutPercent}`
       );
       console.log(
-        `[scheduler] autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} interval=${runtimeCandyManiaSettings.autoDrawIntervalMs}ms tick=${schedulerTickMs}ms`
+        `[scheduler] autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} interval=${CANDY_AUTO_DRAW_INTERVAL_MS}ms tick=${schedulerTickMs}ms`
       );
       ensureCanonicalCandyRoomExists("startup").catch((error) => {
         console.error("[scheduler] klarte ikke bootstrappe canonical Candy-rom ved oppstart", error);

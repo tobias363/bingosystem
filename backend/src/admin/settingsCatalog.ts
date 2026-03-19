@@ -135,19 +135,6 @@ export function buildCandySettingsDefinition(context: CandySettingsCatalogContex
           lockReason: context.forceAutoDraw
             ? "Tvunget av driftsregel (force auto-draw)."
             : lockReason
-        },
-        {
-          key: "autoDrawIntervalMs",
-          path: "autoDrawIntervalMs",
-          label: "Trekkintervall",
-          description: "Tid mellom hvert trekk i millisekunder.",
-          type: "integer",
-          min: 250,
-          step: 50,
-          unit: "ms",
-          defaultValue: 2000,
-          isLocked: context.runningRoundLockActive,
-          lockReason
         }
       ]
     },
