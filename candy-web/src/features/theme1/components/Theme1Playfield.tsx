@@ -160,6 +160,11 @@ export function Theme1Playfield({
       return;
     }
 
+    // The current recentBalls prop is the authoritative latest state.
+    // Clear the queue so the queue-drain effect doesn't process stale
+    // snapshots that would go *backwards* (fewer balls than current).
+    pendingDisplayedRecentBallsQueueRef.current.length = 0;
+
     applyRecentBallsSnapshot(
       previousRecentBallsRef.current,
       recentBalls,
@@ -181,8 +186,24 @@ export function Theme1Playfield({
       return;
     }
 
+    // Skip stale queue entries that are behind the current state.
+    // This prevents the rail from going "backwards" (showing fewer
+    // balls) when many draws arrived during a flight animation.
+    while (pendingDisplayedRecentBallsQueueRef.current.length > 0) {
+      const peeked = pendingDisplayedRecentBallsQueueRef.current[0]!;
+      if (peeked.length <= (previousRecentBallsRef.current?.length ?? 0)) {
+        pendingDisplayedRecentBallsQueueRef.current.shift();
+        continue;
+      }
+      if (areBallArraysEqual(peeked, previousRecentBallsRef.current)) {
+        pendingDisplayedRecentBallsQueueRef.current.shift();
+        continue;
+      }
+      break;
+    }
+
     const nextQueuedSnapshot = pendingDisplayedRecentBallsQueueRef.current.shift();
-    if (!nextQueuedSnapshot || areBallArraysEqual(nextQueuedSnapshot, previousRecentBallsRef.current)) {
+    if (!nextQueuedSnapshot) {
       return;
     }
 
