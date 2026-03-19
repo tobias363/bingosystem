@@ -314,6 +314,11 @@ export class PlatformService {
     await this.pool.end();
   }
 
+  async isReady(): Promise<boolean> {
+    const result = await this.pool.query("SELECT 1");
+    return result.rowCount === 1;
+  }
+
   async register(input: {
     email: string;
     password: string;

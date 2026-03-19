@@ -274,7 +274,7 @@ interface ComplianceLedgerEntry {
   metadata?: Record<string, unknown>;
 }
 
-interface PayoutAuditEvent {
+export interface PayoutAuditEvent {
   id: string;
   createdAt: string;
   claimId?: string;
@@ -419,6 +419,7 @@ export class BingoEngine {
   private readonly dailyReportArchive = new Map<string, DailyComplianceReport>();
   private readonly overskuddBatches = new Map<string, OverskuddDistributionBatch>();
   private lastPayoutAuditHash = "GENESIS";
+  private onPayoutAuditEventCallback: ((event: PayoutAuditEvent) => void) | null = null;
 
   private readonly minRoundIntervalMs: number;
   private readonly minPlayersToStart: number;
@@ -1318,6 +1319,10 @@ export class BingoEngine {
 
   getAllRoomCodes(): string[] {
     return [...this.rooms.keys()];
+  }
+
+  onPayoutAuditEvent(callback: (event: PayoutAuditEvent) => void): void {
+    this.onPayoutAuditEventCallback = callback;
   }
 
   /**
@@ -3225,6 +3230,11 @@ export class BingoEngine {
     this.lastPayoutAuditHash = eventHash;
     if (this.payoutAuditTrail.length > 10_000) {
       this.payoutAuditTrail.length = 10_000;
+    }
+    try {
+      this.onPayoutAuditEventCallback?.(event);
+    } catch {
+      // fire-and-forget — don't let persistence failure break the game
     }
   }
 

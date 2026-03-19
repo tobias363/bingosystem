@@ -94,6 +94,26 @@ export class GameCheckpointStore {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           PRIMARY KEY (room_code, game_id)
         );
+
+        CREATE TABLE IF NOT EXISTS candy_payout_audit (
+          id TEXT PRIMARY KEY,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          claim_id TEXT,
+          game_id TEXT,
+          room_code TEXT,
+          hall_id TEXT NOT NULL,
+          policy_version TEXT,
+          amount NUMERIC(12,2) NOT NULL,
+          currency TEXT NOT NULL DEFAULT 'NOK',
+          wallet_id TEXT NOT NULL,
+          player_id TEXT,
+          source_account_id TEXT,
+          tx_ids TEXT[] NOT NULL DEFAULT '{}',
+          kind TEXT NOT NULL,
+          chain_index INTEGER NOT NULL,
+          previous_hash TEXT NOT NULL,
+          event_hash TEXT NOT NULL
+        );
       `);
       this.initialized = true;
       console.log("[checkpoint] Schema created/verified.");
@@ -225,6 +245,51 @@ export class GameCheckpointStore {
   // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // Payout audit trail persistence
+  // -------------------------------------------------------------------------
+
+  async persistPayoutAuditEvent(event: {
+    id: string;
+    createdAt: string;
+    claimId?: string;
+    gameId?: string;
+    roomCode?: string;
+    hallId: string;
+    policyVersion?: string;
+    amount: number;
+    currency: string;
+    walletId: string;
+    playerId?: string;
+    sourceAccountId?: string;
+    txIds: string[];
+    kind: string;
+    chainIndex: number;
+    previousHash: string;
+    eventHash: string;
+  }): Promise<void> {
+    try {
+      await this.pool.query(
+        `INSERT INTO candy_payout_audit (
+          id, created_at, claim_id, game_id, room_code, hall_id,
+          policy_version, amount, currency, wallet_id, player_id,
+          source_account_id, tx_ids, kind, chain_index, previous_hash, event_hash
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        ON CONFLICT (id) DO NOTHING`,
+        [
+          event.id, event.createdAt, event.claimId ?? null,
+          event.gameId ?? null, event.roomCode ?? null, event.hallId,
+          event.policyVersion ?? null, event.amount, event.currency,
+          event.walletId, event.playerId ?? null,
+          event.sourceAccountId ?? null, event.txIds,
+          event.kind, event.chainIndex, event.previousHash, event.eventHash,
+        ],
+      );
+    } catch (error) {
+      console.error("[audit] Failed to persist payout audit event:", error);
+    }
+  }
 
   async cleanupEndedGames(olderThanHours = 24): Promise<number> {
     try {

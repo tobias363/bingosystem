@@ -405,6 +405,13 @@ const engine = new BingoEngine(new LocalBingoSystemAdapter(), walletAdapter, {
   nearMissCalibrationFactor: bingoNearMissCalibrationFactor
 });
 
+// Persist payout audit events to database (fire-and-forget)
+engine.onPayoutAuditEvent((event) => {
+  gameCheckpointStore.persistPayoutAuditEvent(event).catch((error) => {
+    console.error("[audit] Failed to persist payout event:", error);
+  });
+});
+
 const platformService = new PlatformService(walletAdapter, {
   connectionString: platformConnectionString,
   schema: process.env.APP_PG_SCHEMA?.trim() || process.env.WALLET_PG_SCHEMA?.trim() || "public",
@@ -3633,6 +3640,15 @@ app.post("/api/payments/swedbank/callback", async (req, res) => {
       ok: false,
       error: toPublicError(error)
     });
+  }
+});
+
+app.get("/readiness", async (_req, res) => {
+  try {
+    await platformService.isReady();
+    res.status(200).json({ ok: true, timestamp: new Date().toISOString() });
+  } catch {
+    res.status(503).json({ ok: false, message: "Database not ready" });
   }
 });
 
