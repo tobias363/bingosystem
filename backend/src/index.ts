@@ -1136,10 +1136,14 @@ async function hydrateCandyManiaSettingsFromCatalog(): Promise<void> {
     const patch = readCandyManiaSettingsFromRecord(candyGame.settings);
     const normalized = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
     // ENV always wins for autoDrawIntervalMs so deploys take effect
-    // regardless of persisted database value
+    // regardless of persisted database value.  When no ENV is set,
+    // enforce a 2 000 ms floor so the draw interval never silently
+    // drops below 2 seconds (e.g. from a stale database value).
     const envDrawInterval = process.env.AUTO_DRAW_INTERVAL_MS;
     if (envDrawInterval) {
       normalized.autoDrawIntervalMs = Math.max(250, Math.floor(Number(envDrawInterval) || 2000));
+    } else {
+      normalized.autoDrawIntervalMs = Math.max(2000, normalized.autoDrawIntervalMs);
     }
     Object.assign(runtimeCandyManiaSettings, normalized);
     const currentEffectiveFromMs = parseOptionalIsoTimestampMs(
