@@ -5,7 +5,17 @@ var dateFormat = require('dateformat');
 const fcm = require('fcm-notification');
 const { ConsoleTransportOptions } = require('winston/lib/winston/transports');
 const { compareSync } = require('bcryptjs');
-const FCM = new fcm('spillorama-214ee-firebase-adminsdk-p37do-a798378568.json');
+let FCM = null;
+try {
+  const fs = require('fs');
+  if (fs.existsSync('spillorama-214ee-firebase-adminsdk-p37do-a798378568.json')) {
+    FCM = new fcm('spillorama-214ee-firebase-adminsdk-p37do-a798378568.json');
+  } else {
+    console.warn('Firebase credentials file not found, FCM notifications disabled');
+  }
+} catch(e) {
+  console.warn('Firebase init failed:', e.message);
+}
 var token = 'AAAAvrnsIbc:APA91bHcrNe3mF_YC5u7rIfdbe_zfDXx9DFioj0teSnHrvEt50qmyHG2DGBNY5yb8YJnbIU3qgN0qxGLZKJQvxVsJWxnjFZJDhpKtH-X7RLf7zDuN48xuzOYvnIPREOXWshmGLpHtCdc';
 
 const path = require('path');

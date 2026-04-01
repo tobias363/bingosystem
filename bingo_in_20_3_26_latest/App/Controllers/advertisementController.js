@@ -4,12 +4,25 @@ const { getSingleTraslateData } = require('../../Helper/bingo');
 const { sendPushNotificationMultiple } = require('../../Helper/gameHelper');
 const config = Sys.Config.App[Sys.Config.Database.connectionType];
 
-const admin = require("firebase-admin");
-const serviceAccount = require("../../spillorama-214ee-firebase-adminsdk-p37do-a798378568.json");
-admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: process.env.FIREBASE_ADMIN_DB_URL
-});
+let admin = null;
+try {
+  admin = require("firebase-admin");
+  const fs = require('fs');
+  const credPath = require('path').resolve(__dirname, "../../spillorama-214ee-firebase-adminsdk-p37do-a798378568.json");
+  if (fs.existsSync(credPath)) {
+    const serviceAccount = require(credPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      databaseURL: process.env.FIREBASE_ADMIN_DB_URL
+    });
+  } else {
+    console.warn('Firebase credentials not found, Firebase admin disabled');
+    admin = null;
+  }
+} catch(e) {
+  console.warn('Firebase admin init failed:', e.message);
+  admin = null;
+}
 
 module.exports = {
     view: async (req, res) => {
