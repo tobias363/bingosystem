@@ -7,16 +7,16 @@ const { ConsoleTransportOptions } = require('winston/lib/winston/transports');
 const { compareSync } = require('bcryptjs');
 let FCM = null;
 try {
-  const fs = require('fs');
-  if (fs.existsSync('spillorama-214ee-firebase-adminsdk-p37do-a798378568.json')) {
-    FCM = new fcm('spillorama-214ee-firebase-adminsdk-p37do-a798378568.json');
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    FCM = new fcm(serviceAccount);
   } else {
-    console.warn('Firebase credentials file not found, FCM notifications disabled');
+    console.warn('FIREBASE_SERVICE_ACCOUNT_JSON not set — FCM push notifications disabled');
   }
-} catch(e) {
-  console.warn('Firebase init failed:', e.message);
+} catch (err) {
+  console.error('Failed to initialize FCM:', err.message);
 }
-var token = 'AAAAvrnsIbc:APA91bHcrNe3mF_YC5u7rIfdbe_zfDXx9DFioj0teSnHrvEt50qmyHG2DGBNY5yb8YJnbIU3qgN0qxGLZKJQvxVsJWxnjFZJDhpKtH-X7RLf7zDuN48xuzOYvnIPREOXWshmGLpHtCdc';
+var token = process.env.FCM_SERVER_KEY || '';
 
 const path = require('path');
 const fs = require('fs').promises;
@@ -2718,6 +2718,7 @@ module.exports = {
 
     sendWinnersNotifications: async function (message) {
         try {
+            if (!FCM) { console.warn('FCM not initialized — skipping winner notification'); return; }
             console.log("---players, send notifications for the game winners sendWinnersNotifications---", message)
             FCM.send(message, function (err, response) {
                 if (err) {
@@ -4344,6 +4345,7 @@ module.exports = {
     },
     
     sendPushNotificationMultiple: async function (message, tokens) {
+        if (!FCM) { console.warn('FCM not initialized — skipping push notification'); return; }
         return new Promise((resolve, reject) => {
             try {
                 FCM.sendToMultipleToken(message, tokens, function (err, response) {

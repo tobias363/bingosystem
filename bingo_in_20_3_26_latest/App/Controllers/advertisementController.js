@@ -4,24 +4,24 @@ const { getSingleTraslateData } = require('../../Helper/bingo');
 const { sendPushNotificationMultiple } = require('../../Helper/gameHelper');
 const config = Sys.Config.App[Sys.Config.Database.connectionType];
 
-let admin = null;
+const admin = require("firebase-admin");
+
+let firebaseInitialized = false;
 try {
-  admin = require("firebase-admin");
-  const fs = require('fs');
-  const credPath = require('path').resolve(__dirname, "../../spillorama-214ee-firebase-adminsdk-p37do-a798378568.json");
-  if (fs.existsSync(credPath)) {
-    const serviceAccount = require(credPath);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      databaseURL: process.env.FIREBASE_ADMIN_DB_URL
-    });
-  } else {
-    console.warn('Firebase credentials not found, Firebase admin disabled');
-    admin = null;
-  }
-} catch(e) {
-  console.warn('Firebase admin init failed:', e.message);
-  admin = null;
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+        if (!admin.apps.length) {
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount),
+                databaseURL: process.env.FIREBASE_ADMIN_DB_URL
+            });
+        }
+        firebaseInitialized = true;
+    } else {
+        console.warn('FIREBASE_SERVICE_ACCOUNT_JSON not set — Firebase Realtime Database notifications disabled');
+    }
+} catch (err) {
+    console.error('Failed to initialize Firebase Admin:', err.message);
 }
 
 module.exports = {
@@ -380,11 +380,15 @@ module.exports = {
                 timestamp: Date.now()
             };
 
-            windowsTokens.forEach(userId => {
-                admin.database().ref(`notifications/${userId}`).push(payload)
-                  .then(() => console.log(`Notification sent to ${userId}`))
-                  .catch(err => console.error(`Error sending to ${userId}:`, err));
-            });
+            if (firebaseInitialized) {
+                windowsTokens.forEach(userId => {
+                    admin.database().ref(`notifications/${userId}`).push(payload)
+                      .then(() => console.log(`Notification sent to ${userId}`))
+                      .catch(err => console.error(`Error sending to ${userId}:`, err));
+                });
+            } else {
+                console.warn('Firebase not initialized — skipping Windows toast notifications');
+            }
               
         } catch (error) {
             console.error("Error sending windows toast notification:", error);
