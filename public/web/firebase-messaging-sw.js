@@ -19,7 +19,7 @@ messaging.onBackgroundMessage(payload => {
   const title = payload.notification?.title || 'Notification';
   const body = payload.notification?.body || '';
   const icon = '/TemplateData/favicon.ico';
-  const staticURL = 'https://spillorama.aistechnolabs.info/web/';
+  const staticURL = self.location.origin + '/web/';
 
   const options = {
     body,

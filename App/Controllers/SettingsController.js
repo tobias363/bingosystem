@@ -730,10 +730,18 @@ module.exports = {
       })
 
       Sys.Setting = await Sys.App.Services.SettingsServices.getSettingsData({});
+
+      const ssBaseUrl = (process.env.RENDER_EXTERNAL_URL ||
+        Sys.Config.App[Sys.Config.Database.connectionType].url).replace(/\/+$/, '');
+      const absoluteImageData = (imageData || []).map(item => ({
+        ...item,
+        image: item.image && !item.image.startsWith('http') ? ssBaseUrl + item.image : item.image
+      }));
+
       Sys.Io.emit('updateScreenSaver', {
         screenSaver: screenSaver,
         screenSaverTime: screenSaverTime,
-        imageTime: imageData
+        imageTime: absoluteImageData
       });
 
       req.flash('success', await Sys.Helper.bingo.getSingleTraslateData(["screen_saver_data_update_successfully"], req.session.details.language)) //'Screen saver data update successfully');

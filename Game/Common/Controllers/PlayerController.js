@@ -391,9 +391,17 @@ module.exports = {
             const canPlayGames = player?.isAlreadyApproved || isVerifiedByBankID || isVerifiedByHall;
             
             const approvedHalls = await getAvailableHallLimit({ playerId: player._id, approvedHalls: updatedPlayer?.approvedHalls, selectedHallId: currentHall.id });
-           
+
+            // Prefix relative image paths with the current base URL
+            const loginBaseUrl = (process.env.RENDER_EXTERNAL_URL ||
+                Sys.Config.App[Sys.Config.Database.connectionType].url).replace(/\/+$/, '');
+            const loginImageTime = (Sys.Setting.imageTime || []).map(item => ({
+                ...item,
+                image: item.image && !item.image.startsWith('http') ? loginBaseUrl + item.image : item.image
+            }));
+
             // Return success response
-            return createSuccessResponse({ storeUrl: "", message: "", disable_store_link: true, playerId: player._id.toString(), hall: currentHall.id, hallName: currentHall.name, points: player.points, realMoney: player.walletAmount.toFixed(2), selectedLanguage: player.selectedLanguage, screenSaver: Sys.Setting.screenSaver, screenSaverTime: Sys.Setting.screenSaverTime, imageTime: Sys.Setting.imageTime, authToken, refreshAuthToken, canPlayGames: canPlayGames, isVerifiedByBankID: isVerifiedByBankID, isVerifiedByHall: isVerifiedByHall, approvedHalls: approvedHalls, isSoundOn: 0, isVoiceOn: 0, selectedVoiceLanguage: 0 }, "Player Successfully Login!", language, false,);
+            return createSuccessResponse({ storeUrl: "", message: "", disable_store_link: true, playerId: player._id.toString(), hall: currentHall.id, hallName: currentHall.name, points: player.points, realMoney: player.walletAmount.toFixed(2), selectedLanguage: player.selectedLanguage, screenSaver: Sys.Setting.screenSaver, screenSaverTime: Sys.Setting.screenSaverTime, imageTime: loginImageTime, authToken, refreshAuthToken, canPlayGames: canPlayGames, isVerifiedByBankID: isVerifiedByBankID, isVerifiedByHall: isVerifiedByHall, approvedHalls: approvedHalls, isSoundOn: 0, isVoiceOn: 0, selectedVoiceLanguage: 0 }, "Player Successfully Login!", language, false,);
 
         } catch (error) {
             console.error('Login Error:', error);
@@ -4481,9 +4489,18 @@ module.exports = {
 
     ScreenSaver: async function (socket, data) {
         try {
+            const baseUrl = (process.env.RENDER_EXTERNAL_URL ||
+                Sys.Config.App[Sys.Config.Database.connectionType].url).replace(/\/+$/, '');
+
+            // Prefix relative image paths with the current base URL
+            const imageTime = (Sys.Setting.imageTime || []).map(item => ({
+                ...item,
+                image: item.image && !item.image.startsWith('http') ? baseUrl + item.image : item.image
+            }));
+
             return {
                 status: 'success',
-                result: { screenSaver: Sys.Setting.screenSaver, screenSaverTime: Sys.Setting.screenSaverTime, imageTime: Sys.Setting.imageTime },
+                result: { screenSaver: Sys.Setting.screenSaver, screenSaverTime: Sys.Setting.screenSaverTime, imageTime },
                 message: 'Screen saver response'
             }
         } catch (error) {

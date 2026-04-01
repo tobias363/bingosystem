@@ -186,7 +186,7 @@ module.exports = {
             redirectUrl: 'https://spillorama.aistechnolabs.info/payment/deposit/response/',
             transactionUrl: 'https://emea.gsc.verifone.cloud/oidc/api/v2/transaction'
         },
-        url: "https://spillorama.aistechnolabs.info/",
+        url: (process.env.RENDER_EXTERNAL_URL ? process.env.RENDER_EXTERNAL_URL + '/' : "https://spillorama.aistechnolabs.info/"),
         metroniaApiURL: process.env.METRONIA_API_URL,
         metroniaApiToken: process.env.METRONIA_API_TOKEN_TEST,
         idkollan_url: process.env.IDKOLLEN_URL,
