@@ -123,3 +123,47 @@ services:
         value: file
       - key: INTEGRATION_ENABLED
         value: "false"
+
+  # ── BIN-121: Staging candy-backend with integration enabled ──────
+  - type: web
+    name: candy-backend-staging
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: staging
+    rootDir: .
+    buildCommand: npm --prefix backend run build
+    startCommand: npm --prefix backend run start
+    envVars:
+      - key: NODE_ENV
+        value: staging
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: WALLET_PROVIDER
+        value: external
+      - key: INTEGRATION_ENABLED
+        value: "true"
+      - key: WALLET_API_BASE_URL
+        sync: false
+      - key: WALLET_API_KEY
+        sync: false
+      - key: WALLET_API_TIMEOUT_MS
+        value: "5000"
+      - key: ALLOWED_EMBED_ORIGINS
+        sync: false
+      - key: INTEGRATION_WEBHOOK_URL
+        sync: false
+      - key: INTEGRATION_WEBHOOK_SECRET
+        sync: false
+      - key: INTEGRATION_API_KEY
+        sync: false
+      - key: INTEGRATION_DEFAULT_HALL_ID
+        value: hall-default
+      - key: INTEGRATION_CANDY_FRONTEND_URL
+        sync: false
+      - key: INTEGRATION_CANDY_API_BASE_URL
+        sync: false

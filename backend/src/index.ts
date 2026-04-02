@@ -2080,6 +2080,53 @@ app.get("/api/admin/integration/reconciliation/latest", async (req, res) => {
   }
 });
 
+// ── BIN-120: Integration health-check endpoint ─────────────────────────
+app.get("/api/integration/health", async (req, res) => {
+  try {
+    if (!integrationLaunchHandler) {
+      throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+    }
+    integrationLaunchHandler.validateApiKey(req.headers["x-api-key"] as string | undefined);
+
+    const health: Record<string, unknown> = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      integration: { enabled: true },
+      wallet: {
+        provider: walletRuntime.provider,
+        status: "unknown" as string,
+      },
+      webhook: {
+        configured: !!webhookService,
+        recentDeliveries: webhookService ? webhookService.getRecentDeliveries(5).length : 0,
+      },
+      reconciliation: {
+        configured: !!reconciliationService,
+        latestReport: reconciliationService ? reconciliationService.getLatestReport()?.status ?? "no_reports" : "disabled",
+      },
+    };
+
+    // Probe wallet health by fetching a dummy balance (catches circuit breaker state).
+    if (walletRuntime.provider === "external") {
+      try {
+        await walletAdapter.getBalance("__health-check__");
+        (health.wallet as Record<string, unknown>).status = "ok";
+      } catch (err) {
+        const walletErr = err as { code?: string; message?: string };
+        (health.wallet as Record<string, unknown>).status = "degraded";
+        (health.wallet as Record<string, unknown>).error = walletErr.code ?? walletErr.message;
+        health.status = "degraded";
+      }
+    } else {
+      (health.wallet as Record<string, unknown>).status = "ok";
+    }
+
+    apiSuccess(res, health);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.get("/api/admin/games", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "GAME_CATALOG_READ");
