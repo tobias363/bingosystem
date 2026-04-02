@@ -2,6 +2,7 @@ var Sys = require('../../Boot/Sys');
 var bcrypt = require('bcryptjs');
 const moment = require('moment');
 const pm2 = require('pm2');
+const { uploadToCloudinary } = require('../../Helper/cloudinaryUpload');
 
 module.exports = {
   settings: async function (req, res) {
@@ -697,9 +698,8 @@ module.exports = {
 
           let image = req.files && req.files["image" + element]
           if (image) {
-            let fileName = Date.now() + image.name
-            imageUpload(image, fileName)
-            newobj.image = "/admin/images/" + fileName
+            const { url } = await uploadToCloudinary(image, 'admin-images');
+            newobj.image = url;
           }
           imageData.push(newobj)
         }
@@ -714,9 +714,8 @@ module.exports = {
 
         let image = req.files && req.files["image" + imageId]
         if (image) {
-          let fileName = Date.now() + image.name
-          imageUpload(image, fileName)
-          newobj.image = "/admin/images/" + fileName
+          const { url } = await uploadToCloudinary(image, 'admin-images');
+          newobj.image = url;
         }
         imageData.push(newobj)
       }
