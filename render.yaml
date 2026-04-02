@@ -106,9 +106,10 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    rootDir: backend
-    buildCommand: npm install && npm run build
-    startCommand: node dist/index.js
+    branch: staging
+    rootDir: .
+    buildCommand: npm --prefix backend run build
+    startCommand: npm --prefix backend run start
     envVars:
       - key: NODE_ENV
         value: production
