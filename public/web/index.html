@@ -14,6 +14,71 @@
       overflow: hidden;
       background: url('TemplateData/bg.png') center / cover no-repeat fixed;
     }
+
+    /* ── CandyMania iframe overlay (BIN-101, BIN-105) ──────────────── */
+    #candy-iframe-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(0, 0, 0, 0.88);
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+    #candy-iframe-overlay.active {
+      display: flex;
+    }
+    #candy-iframe {
+      width: 96%;
+      max-width: 1400px;
+      height: 90vh;
+      border: none;
+      border-radius: 12px;
+      background: #1a0a2e;
+    }
+    #candy-close-btn {
+      position: absolute;
+      top: 12px;
+      right: 20px;
+      z-index: 10000;
+      padding: 8px 20px;
+      border: none;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      font-size: 15px;
+      font-family: Arial, sans-serif;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      transition: background 0.2s;
+    }
+    #candy-close-btn:hover {
+      background: rgba(255, 255, 255, 0.28);
+    }
+    /* Responsivt: tablet */
+    @media (max-width: 1024px) {
+      #candy-iframe {
+        width: 100%;
+        max-width: none;
+        height: 88vh;
+        border-radius: 0;
+      }
+    }
+    /* Responsivt: mobil */
+    @media (max-width: 600px) {
+      #candy-iframe {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 0;
+      }
+      #candy-close-btn {
+        top: 6px;
+        right: 8px;
+        padding: 6px 14px;
+        font-size: 13px;
+      }
+    }
   </style>
 
   <!-- Firebase SDKs -->
@@ -202,7 +267,33 @@
 
     let existingTab = null;
 
+    // ── BIN-100: Iframe-overlay for CandyMania ─────────────────────
+    function OpenCandyInIframe(url) {
+      var overlay = document.getElementById('candy-iframe-overlay');
+      var iframe = document.getElementById('candy-iframe');
+      iframe.src = url;
+      overlay.classList.add('active');
+    }
+
+    function closeCandyOverlay() {
+      var overlay = document.getElementById('candy-iframe-overlay');
+      var iframe = document.getElementById('candy-iframe');
+      // Send host:closeGame to CandyWeb so it disconnects cleanly.
+      try {
+        iframe.contentWindow.postMessage({ type: 'host:closeGame', payload: {} }, '*');
+      } catch (e) { /* cross-origin — ignore */ }
+      setTimeout(function() {
+        overlay.classList.remove('active');
+        iframe.src = '';
+      }, 300);
+    }
+
+    // BIN-100: Route candy URLs to iframe, keep window.open for bingo games.
     function OpenUrlInSameTab(url) {
+      if (url && (url.indexOf('/candy') !== -1 || url.indexOf('candy-game') !== -1)) {
+        OpenCandyInIframe(url);
+        return;
+      }
       if (existingTab && !existingTab.closed) {
         existingTab.focus();
       } else {
@@ -210,18 +301,50 @@
       }
     }
 
-    // function ShowBrowserNotification(title, body) {
-    //   if (Notification.permission === "granted") {
-    //     new Notification(title, { body: body });
-    //   } else if (Notification.permission !== "denied") {
-    //     Notification.requestPermission().then(function (permission) {
-    //       if (permission === "granted") {
-    //         new Notification(title, { body: body });
-    //       }
-    //     });
-    //   }
-    // }
+    // ── BIN-103: PostMessage-lytter for iframe ↔ lobby ─────────────
+    window.addEventListener('message', function(event) {
+      var data = event.data;
+      if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
+      if (!data.type.startsWith('candy:')) return;
+
+      switch (data.type) {
+        case 'candy:ready':
+          console.log('[Spillorama] CandyWeb iframe ready');
+          break;
+        case 'candy:error':
+          console.error('[Spillorama] CandyWeb error:', data.payload);
+          break;
+        case 'candy:resize':
+          // Optional: adjust iframe dimensions from CandyWeb request.
+          break;
+        case 'candy:balanceChanged':
+          // Provider integration: forward balance changes if needed.
+          break;
+        case 'candy:gameStarted':
+          console.log('[Spillorama] CandyWeb game started:', data.payload);
+          break;
+        case 'candy:gameEnded':
+          console.log('[Spillorama] CandyWeb game ended:', data.payload);
+          break;
+      }
+    });
+
+    // Close overlay on Escape key.
+    document.addEventListener('keydown', function(event) {
+      if (event.key === 'Escape') {
+        var overlay = document.getElementById('candy-iframe-overlay');
+        if (overlay.classList.contains('active')) {
+          closeCandyOverlay();
+        }
+      }
+    });
   </script>
+
+  <!-- BIN-101: CandyMania iframe overlay container -->
+  <div id="candy-iframe-overlay">
+    <button id="candy-close-btn" onclick="closeCandyOverlay()">&#10005; Tilbake til lobby</button>
+    <iframe id="candy-iframe" allow="autoplay"></iframe>
+  </div>
 </body>
 
 </html>

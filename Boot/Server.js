@@ -62,6 +62,8 @@ const allowedOrigins = [
     'https://bingoadmin.aistechnolabs.in',
     'http://localhost:3007',
     'https://social-sincerely-tapir.ngrok-free.app',
+    // BIN-104: CandyWeb backend for iframe embedding.
+    'https://candy-backend-ldvg.onrender.com',
     ...(process.env.RENDER_EXTERNAL_URL ? [process.env.RENDER_EXTERNAL_URL] : []),
     ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : []),
 ];

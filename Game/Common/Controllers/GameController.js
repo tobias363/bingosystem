@@ -268,7 +268,7 @@ module.exports = {
             // Get game types with minimal projection
             const gameTypes = await Sys.Game.Common.Services.GameServices.getListData(
                 {}, // query
-                { name: 1, photo: 1, _id: 0 } // projection - only get needed fields
+                { name: 1, photo: 1, externalUrl: 1, _id: 0 } // projection - include externalUrl for iframe games
             );
 
             if (!gameTypes?.length) {
@@ -280,10 +280,17 @@ module.exports = {
                 process.env.RENDER_EXTERNAL_URL ||
                 Sys.Config.App[Sys.Config.Database.connectionType].url;
 
-            const gameList = gameTypes.map(({ name, photo }) => ({
-                name,
-                img: resolveImageUrl(photo, baseUrl)
-            }));
+            const gameList = gameTypes.map(({ name, photo, externalUrl }) => {
+                const entry = {
+                    name,
+                    img: resolveImageUrl(photo, baseUrl)
+                };
+                // BIN-102: Include externalUrl for iframe-based games (e.g. CandyMania).
+                if (externalUrl) {
+                    entry.externalUrl = externalUrl;
+                }
+                return entry;
+            });
 
             return createSuccessResponse(
                 { gameList },

@@ -39,6 +39,13 @@ const gameType = new Schema({
     rangeMax: {
         type: 'string'
     },
+    // BIN-102: External URL for iframe-based games (e.g. CandyMania).
+    // When set, the Unity lobby opens the game in an iframe overlay
+    // instead of navigating to a new tab.
+    externalUrl: {
+        type: 'string',
+        default: ''
+    },
     updatedAt: { type: Date, default: Date.now() },
     createdAt: { type: Date, default: Date.now() }
 }, { collection: 'gameType' });
