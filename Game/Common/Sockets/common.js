@@ -56,7 +56,13 @@ module.exports = function (Socket) {
         Socket.on("LoginPlayer", async function (data, responce) {
             try {
                 console.log("LoginPlayer called: ", data);
-                responce(await Sys.Game.Common.Controllers.PlayerController.playerLogin(Socket, data));
+                const result = await Sys.Game.Common.Controllers.PlayerController.playerLogin(Socket, data);
+                // v3: Emit authToken separately so the lobby page can capture it
+                // for the CandyMania wallet bridge (SetPlayerToken)
+                if (result && result.status === 'success' && result.result && result.result.authToken) {
+                    Socket.emit('_playerToken', { token: result.result.authToken });
+                }
+                responce(result);
             } catch (error) {
                 console.log("Error in LoginPlayer:", error);
                 if (responce) return responce({ status: "error", message: error.message });

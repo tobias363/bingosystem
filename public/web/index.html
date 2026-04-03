@@ -308,6 +308,27 @@
       console.log('[Spillorama] Player token set for wallet bridge');
     }
 
+    // v3: Intercept Socket.IO to capture authToken after login.
+    // Unity creates the socket inside WASM; we monkey-patch io() to
+    // listen for the _playerToken event emitted by the server after login.
+    (function() {
+      var _origIo = window.io;
+      if (!_origIo) return;
+      window.io = function() {
+        var socket = _origIo.apply(this, arguments);
+        socket.on('_playerToken', function(data) {
+          if (data && data.token) {
+            SetPlayerToken(data.token);
+          }
+        });
+        return socket;
+      };
+      // Preserve io.* properties (connect, Manager, etc.)
+      Object.keys(_origIo).forEach(function(key) {
+        window.io[key] = _origIo[key];
+      });
+    })();
+
     // ── BIN-103 + v3: PostMessage-lytter for iframe ↔ lobby ───────
     window.addEventListener('message', function(event) {
       var data = event.data;
