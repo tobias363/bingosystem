@@ -278,6 +278,90 @@
       backBtn.style.display = 'none';
     }
 
+    // ─── Wallet-bro: PostMessage mellom iframe-spill og bingo-backend ──────
+    // Candy-iframen sender meldinger som { type: 'candy:getBalance', requestId: '...' }
+    // Lobbyen videresender til /api/integration/wallet/* og returnerer svar
+    var _playerToken = null; // Settes av Unity via SetPlayerToken()
+
+    function SetPlayerToken(token) {
+      _playerToken = token;
+    }
+
+    window.addEventListener('message', async function(event) {
+      // Sjekk at meldingen kommer fra vår egen iframe
+      if (event.origin !== window.location.origin) return;
+      var msg = event.data;
+      if (!msg || !msg.type || !msg.type.startsWith('candy:')) return;
+
+      var iframe = document.querySelector('#game-overlay iframe');
+      if (!iframe) return;
+
+      // Svar-hjelper
+      function reply(type, data) {
+        iframe.contentWindow.postMessage({ type: type, requestId: msg.requestId, data: data }, '*');
+      }
+
+      try {
+        switch (msg.type) {
+          case 'candy:ready':
+            // Spillet er klart — send spillertoken så candy kan vise saldo
+            reply('host:init', { token: _playerToken });
+            break;
+
+          case 'candy:getBalance':
+            var balRes = await fetch('/api/integration/wallet/balance', {
+              headers: { 'Authorization': 'Bearer ' + _playerToken }
+            });
+            var balData = await balRes.json();
+            reply('host:balance', balData.success ? balData.data : { error: balData.error });
+            break;
+
+          case 'candy:debit':
+            var debRes = await fetch('/api/integration/wallet/debit', {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer ' + _playerToken,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                amount: msg.amount,
+                gameId: msg.gameId,
+                idempotencyKey: msg.idempotencyKey,
+                description: msg.description || 'CandyMania Bet'
+              })
+            });
+            var debData = await debRes.json();
+            reply('host:debitResult', debData.success ? debData.data : { error: debData.error });
+            break;
+
+          case 'candy:credit':
+            var credRes = await fetch('/api/integration/wallet/credit', {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer ' + _playerToken,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                amount: msg.amount,
+                gameId: msg.gameId,
+                idempotencyKey: msg.idempotencyKey,
+                description: msg.description || 'CandyMania Win'
+              })
+            });
+            var credData = await credRes.json();
+            reply('host:creditResult', credData.success ? credData.data : { error: credData.error });
+            break;
+
+          case 'candy:close':
+            closeGameOverlay();
+            break;
+        }
+      } catch (err) {
+        console.error('Wallet bridge error:', err);
+        reply('host:error', { error: err.message });
+      }
+    });
+
     function OpenUrlInSameTab(url) {
       // Sjekk om dette er et spill som skal vises i iframe
       if (isIframeGame(url)) {
