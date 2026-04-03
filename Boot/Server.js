@@ -427,10 +427,13 @@ fs.readdirSync(path.join(__dirname, '../', './Game'))
 Sys.Log.info('Loading... Router');
 // Load Router
 fs.readdirSync(join(__dirname, '../App/Routes'))
-    .filter(file => ~file.search(/^[^\.].*\.js$/))
+    .filter(file => ~file.search(/^[^\.].*\.js$/) && file !== 'integration.js')
     .forEach(function (file) {
         Sys.App.use('/', require(join(join(__dirname, '../App/Routes'), file))); // Register Router to app.use
     });
+
+// v3: Mount wallet-bridge integration routes at /api/integration/wallet
+Sys.App.use('/api/integration/wallet', require(join(__dirname, '../App/Routes/integration.js')));
 
 Sys.Log.info('Initializing Variables');
 Sys.Timers = [];

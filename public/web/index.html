@@ -301,30 +301,91 @@
       }
     }
 
-    // ── BIN-103: PostMessage-lytter for iframe ↔ lobby ─────────────
+    // ── v3: Player auth token for wallet bridge ─────────────────────
+    var playerAuthToken = null;
+    function SetPlayerToken(token) {
+      playerAuthToken = token;
+      console.log('[Spillorama] Player token set for wallet bridge');
+    }
+
+    // ── BIN-103 + v3: PostMessage-lytter for iframe ↔ lobby ───────
     window.addEventListener('message', function(event) {
       var data = event.data;
       if (!data || typeof data !== 'object' || typeof data.type !== 'string') return;
       if (!data.type.startsWith('candy:')) return;
 
+      var iframe = document.getElementById('candy-iframe');
+
       switch (data.type) {
         case 'candy:ready':
           console.log('[Spillorama] CandyWeb iframe ready');
+          // v3: Send auth token to CandyWeb so it can call wallet API directly
+          if (playerAuthToken && iframe && iframe.contentWindow) {
+            try {
+              iframe.contentWindow.postMessage({
+                type: 'wallet:token',
+                payload: {
+                  token: playerAuthToken,
+                  apiBaseUrl: window.location.origin
+                }
+              }, '*');
+            } catch (e) { /* cross-origin */ }
+          }
+          break;
+        case 'candy:close':
+          closeCandyOverlay();
           break;
         case 'candy:error':
           console.error('[Spillorama] CandyWeb error:', data.payload);
           break;
         case 'candy:resize':
-          // Optional: adjust iframe dimensions from CandyWeb request.
           break;
         case 'candy:balanceChanged':
-          // Provider integration: forward balance changes if needed.
           break;
         case 'candy:gameStarted':
           console.log('[Spillorama] CandyWeb game started:', data.payload);
           break;
         case 'candy:gameEnded':
           console.log('[Spillorama] CandyWeb game ended:', data.payload);
+          break;
+
+        // v3: Wallet bridge — proxy requests from CandyWeb to REST API
+        case 'candy:getBalance':
+        case 'candy:debit':
+        case 'candy:credit':
+          (async function() {
+            var reqId = data.requestId;
+            try {
+              if (!playerAuthToken) throw new Error('NO_AUTH_TOKEN');
+              var method = data.type === 'candy:getBalance' ? 'GET' : 'POST';
+              var path = data.type === 'candy:getBalance' ? '/balance'
+                       : data.type === 'candy:debit' ? '/debit' : '/credit';
+              var opts = {
+                method: method,
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer ' + playerAuthToken
+                }
+              };
+              if (method === 'POST') {
+                opts.body = JSON.stringify(data.payload);
+              }
+              var resp = await fetch('/api/integration/wallet' + path, opts);
+              var json = await resp.json();
+              if (!resp.ok) throw new Error(json.error || 'API_ERROR');
+              iframe.contentWindow.postMessage({
+                type: 'wallet:response',
+                requestId: reqId,
+                payload: json
+              }, '*');
+            } catch (err) {
+              iframe.contentWindow.postMessage({
+                type: 'wallet:response',
+                requestId: reqId,
+                error: err.message
+              }, '*');
+            }
+          })();
           break;
       }
     });

@@ -114,6 +114,8 @@ const ChipsSchema = new Schema({
     shiftId: { type: 'string' },
     paymentBy: { type: 'string' },  // Card/Cash
     otherData: {type : Schema.Types.Mixed, default : {}},
+    // BIN-45/v3: Idempotency key for wallet-bridge debit/credit — prevents duplicate transactions
+    idempotencyKey: { type: 'string', default: '', index: true },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
 }, { collection: 'transactions' });
