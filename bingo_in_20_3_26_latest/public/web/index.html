@@ -247,29 +247,29 @@
 
     let existingTab = null;
 
-    // ─── BIN-134: Auth-beacon — egen socket som lytter på login-broadcast ──────
+    // ─── BIN-134: Auth-beacon via HTTP-polling ────────────────────────────────
     // Unity sin Socket.IO kjører internt i WASM og er utilgjengelig fra JS.
-    // Vi laster socket.io-klienten fra serveren, oppretter en lettvekts-socket,
-    // og lytter på '_playerAuthenticated' som serveren broadcaster etter login.
+    // Vi poller /api/integration/auth-beacon hvert 3. sekund for å oppdage
+    // at en spiller er innlogget, og kaller SetPlayerToken() når den er det.
     (function() {
-      var sioScript = document.createElement('script');
-      sioScript.src = '/socket.io/socket.io.js';
-      sioScript.onload = function() {
-        var authSocket = io({ query: { role: 'authBeacon' }, transports: ['websocket'] });
-        authSocket.on('_playerAuthenticated', function(data) {
-          if (data && data.token && !_playerToken) {
-            SetPlayerToken(data.token);
-            console.log('BIN-134: playerToken mottatt via auth-beacon etter login');
-          }
-        });
-        authSocket.on('connect', function() {
-          console.log('BIN-134: auth-beacon tilkoblet');
-        });
-      };
-      sioScript.onerror = function() {
-        console.warn('BIN-134: socket.io-klient utilgjengelig — auth-beacon deaktivert');
-      };
-      document.head.appendChild(sioScript);
+      var pollInterval = setInterval(function() {
+        if (_playerToken) {
+          clearInterval(pollInterval);
+          console.log('BIN-134: auth-beacon polling stoppet — allerede autentisert');
+          return;
+        }
+        fetch('/api/integration/auth-beacon')
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (data && data.authenticated && data.token && !_playerToken) {
+              SetPlayerToken(data.token);
+              clearInterval(pollInterval);
+              console.log('BIN-134: playerToken mottatt via HTTP-polling');
+            }
+          })
+          .catch(function() { /* stille feil — prøver igjen om 3s */ });
+      }, 3000);
+      console.log('BIN-134: auth-beacon HTTP-polling startet');
     })();
 
     // URL-er som skal åpnes i iframe-overlay istedenfor ny fane

@@ -36,6 +36,34 @@ router.get('/api/integration/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
+// ─── GET /api/integration/auth-beacon ───────────────────────────────────────
+// BIN-134: HTTP-polling fallback for auth-beacon.
+// Sjekker om noen socket i default namespace har playerId + authToken.
+// Returnerer { authenticated: true, token } eller { authenticated: false }.
+// Ingen JWT-verifisering — brukes kun for å oppdage at EN spiller er innlogget.
+router.get('/api/integration/auth-beacon', (req, res) => {
+  try {
+    if (!Sys || !Sys.Io) {
+      return res.json({ authenticated: false });
+    }
+    const sockets = Sys.Io.sockets.connected || Sys.Io.sockets.sockets || {};
+    const entries = (sockets instanceof Map) ? Array.from(sockets.values()) : Object.values(sockets);
+    for (let i = 0; i < entries.length; i++) {
+      if (entries[i].playerId && entries[i].authToken) {
+        return res.json({
+          authenticated: true,
+          playerId: entries[i].playerId,
+          token: entries[i].authToken
+        });
+      }
+    }
+    return res.json({ authenticated: false });
+  } catch (err) {
+    console.error('auth-beacon endpoint error:', err.message);
+    return res.json({ authenticated: false });
+  }
+});
+
 // ─── GET /api/integration/wallet/balance ─────────────────────────────────────
 // Henter spillerens nåværende saldo
 router.get('/api/integration/wallet/balance', verifyIntegrationToken, async (req, res) => {
