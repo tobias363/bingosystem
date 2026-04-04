@@ -57,13 +57,19 @@ module.exports = function (Socket) {
             try {
                 console.log("LoginPlayer called: ", data);
                 const result = await Sys.Game.Common.Controllers.PlayerController.playerLogin(Socket, data);
-                // BIN-134: Sett authToken tilgjengelig for lobby-JS
+                // BIN-134: Lagre auth-info slik at HTTP auth-beacon kan finne den
                 if (result && result.status === 'success' && result.result && result.result.authToken) {
-                    // Lagre på socket-objektet slik at auth-beacon kan finne det ved tilkobling
                     Socket.playerId = result.result.playerId;
                     Socket.authToken = result.result.authToken;
+                    // Lagre i global auth-store (brukes av GET /api/integration/auth-beacon)
+                    if (!Sys._authStore) Sys._authStore = {};
+                    Sys._authStore[result.result.playerId] = {
+                        playerId: result.result.playerId,
+                        token: result.result.authToken,
+                        timestamp: Date.now()
+                    };
+                    console.log('[BIN-134] LoginPlayer: auth lagret i _authStore for', result.result.playerId);
                     Socket.emit('_playerToken', { token: result.result.authToken });
-                    // Broadcast til alle sockets — lobby auth-beacon plukker det opp
                     if (Sys.Io) {
                         Sys.Io.emit('_playerAuthenticated', {
                             playerId: result.result.playerId,
@@ -102,6 +108,14 @@ module.exports = function (Socket) {
                     if (token) {
                         Socket.playerId = data.playerId;
                         Socket.authToken = token;
+                        // Lagre i global auth-store
+                        if (!Sys._authStore) Sys._authStore = {};
+                        Sys._authStore[data.playerId] = {
+                            playerId: data.playerId,
+                            token: token,
+                            timestamp: Date.now()
+                        };
+                        console.log('[BIN-134] PlayerDetails: auth lagret i _authStore for', data.playerId);
                         Sys.Io.emit('_playerAuthenticated', {
                             playerId: data.playerId,
                             token: token
@@ -179,6 +193,14 @@ module.exports = function (Socket) {
                     if (token) {
                         Socket.playerId = data.playerId;
                         Socket.authToken = token;
+                        // Lagre i global auth-store
+                        if (!Sys._authStore) Sys._authStore = {};
+                        Sys._authStore[data.playerId] = {
+                            playerId: data.playerId,
+                            token: token,
+                            timestamp: Date.now()
+                        };
+                        console.log('[BIN-134] ReconnectPlayer: auth lagret i _authStore for', data.playerId);
                         Sys.Io.emit('_playerAuthenticated', {
                             playerId: data.playerId,
                             token: token

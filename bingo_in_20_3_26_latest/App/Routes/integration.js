@@ -37,50 +37,38 @@ router.get('/api/integration/health', (req, res) => {
 });
 
 // ─── GET /api/integration/auth-beacon ───────────────────────────────────────
-// BIN-134: HTTP-polling fallback for auth-beacon.
-// Sjekker om noen socket i default namespace har playerId + authToken.
+// BIN-134: HTTP-polling for auth-beacon.
+// Leser fra Sys._authStore (satt av LoginPlayer/PlayerDetails/ReconnectPlayer).
 // Returnerer { authenticated: true, token } eller { authenticated: false }.
 // Ingen JWT-verifisering — brukes kun for å oppdage at EN spiller er innlogget.
 router.get('/api/integration/auth-beacon', (req, res) => {
   try {
-    if (!Sys || !Sys.Io) {
-      return res.json({ authenticated: false, debug: 'no Sys.Io' });
+    const store = Sys._authStore;
+    if (!store) {
+      return res.json({ authenticated: false, reason: 'no-auth-store' });
     }
-    const connected = Sys.Io.sockets.connected;
-    const sockets = connected || Sys.Io.sockets.sockets || {};
-    const entries = (sockets instanceof Map) ? Array.from(sockets.values()) : Object.values(sockets);
-    // Debug: samle info om alle sockets
-    const socketDebug = entries.map(function(s) {
-      return {
-        id: s.id,
-        hasPlayerId: !!s.playerId,
-        hasAuthToken: !!s.authToken,
-        playerId: s.playerId || null,
-        nsp: s.nsp ? s.nsp.name : 'unknown',
-        query: s.handshake ? s.handshake.query : {}
-      };
-    });
-    for (let i = 0; i < entries.length; i++) {
-      if (entries[i].playerId && entries[i].authToken) {
+    // Finn nyeste autentiserte spiller (innen siste 24 timer)
+    const maxAge = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const playerIds = Object.keys(store);
+    for (let i = 0; i < playerIds.length; i++) {
+      const entry = store[playerIds[i]];
+      if (entry && entry.token && (now - entry.timestamp) < maxAge) {
         return res.json({
           authenticated: true,
-          playerId: entries[i].playerId,
-          token: entries[i].authToken,
-          debug: { totalSockets: entries.length, sockets: socketDebug }
+          playerId: entry.playerId,
+          token: entry.token
         });
       }
     }
     return res.json({
       authenticated: false,
-      debug: {
-        totalSockets: entries.length,
-        connectedType: typeof connected,
-        sockets: socketDebug
-      }
+      reason: 'no-recent-auth',
+      storeSize: playerIds.length
     });
   } catch (err) {
     console.error('auth-beacon endpoint error:', err.message);
-    return res.json({ authenticated: false, debug: 'error: ' + err.message });
+    return res.json({ authenticated: false, reason: 'error: ' + err.message });
   }
 });
 
