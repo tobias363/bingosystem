@@ -56,7 +56,19 @@ module.exports = function (Socket) {
         Socket.on("LoginPlayer", async function (data, responce) {
             try {
                 console.log("LoginPlayer called: ", data);
-                responce(await Sys.Game.Common.Controllers.PlayerController.playerLogin(Socket, data));
+                const result = await Sys.Game.Common.Controllers.PlayerController.playerLogin(Socket, data);
+                // BIN-134: Sett authToken tilgjengelig for lobby-JS
+                if (result && result.status === 'success' && result.result && result.result.authToken) {
+                    Socket.emit('_playerToken', { token: result.result.authToken });
+                    // Broadcast til alle sockets — lobby auth-beacon plukker det opp
+                    if (Sys.IO) {
+                        Sys.IO.emit('_playerAuthenticated', {
+                            playerId: result.result.playerId,
+                            token: result.result.authToken
+                        });
+                    }
+                }
+                responce(result);
             } catch (error) {
                 console.log("Error in LoginPlayer:", error);
                 if (responce) return responce({ status: "error", message: error.message });

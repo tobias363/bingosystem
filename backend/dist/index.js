@@ -1,0 +1,3191 @@
+import dotenv from "dotenv";
+import cors from "cors";
+import express from "express";
+import fs from "node:fs";
+import http from "node:http";
+import path from "node:path";
+import { URL, fileURLToPath } from "node:url";
+import { Server } from "socket.io";
+import { createWalletAdapter } from "./adapters/createWalletAdapter.js";
+import { LocalBingoSystemAdapter } from "./adapters/LocalBingoSystemAdapter.js";
+import { LocalKycAdapter } from "./adapters/LocalKycAdapter.js";
+import { assertTicketsPerPlayerWithinHallLimit } from "./game/compliance.js";
+import { BingoEngine, DomainError, toPublicError } from "./game/BingoEngine.js";
+import { CandyLaunchTokenStore } from "./launch/CandyLaunchTokenStore.js";
+import { ADMIN_ACCESS_POLICY, assertAdminPermission, canAccessAdminPermission, getAdminPermissionMap, listAdminPermissionsForRole } from "./platform/AdminAccessPolicy.js";
+import { APP_USER_ROLES, PlatformService } from "./platform/PlatformService.js";
+import { SwedbankPayService } from "./payments/SwedbankPayService.js";
+import { Pool as PgPool } from "pg";
+import { IntegrationLaunchHandler } from "./integration/IntegrationLaunchHandler.js";
+import { ReconciliationService } from "./integration/ReconciliationService.js";
+import { WebhookService } from "./integration/WebhookService.js";
+import { IntegrationBingoSystemAdapter } from "./integration/IntegrationBingoSystemAdapter.js";
+import { buildCandySettingsDefinition, buildDefaultGameSettingsDefinition } from "./admin/settingsCatalog.js";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+const frontendDir = path.resolve(__dirname, "../../frontend");
+const publicDir = path.resolve(__dirname, "../public");
+const adminFrontendFile = path.resolve(frontendDir, "admin/index.html");
+// CandyWeb: prefer backend/public/web (standalone deploy) over ../../frontend/web (monorepo)
+const candyWebDir = fs.existsSync(path.resolve(publicDir, "web/index.html"))
+    ? path.resolve(publicDir, "web")
+    : path.resolve(frontendDir, "web");
+const candyWebIndexFile = path.resolve(candyWebDir, "index.html");
+const projectDir = path.resolve(__dirname, "../..");
+const app = express();
+// BIN-49: CORS — require explicit origins in production, never allow wildcard "*"
+const corsAllowedOriginsRaw = (process.env.CORS_ALLOWED_ORIGINS ?? "").trim();
+const isProduction = (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
+if (isProduction && !corsAllowedOriginsRaw) {
+    console.error("FATAL: CORS_ALLOWED_ORIGINS must be set in production. Refusing to start with wildcard CORS.");
+    process.exit(1);
+}
+const corsOrigins = corsAllowedOriginsRaw
+    ? corsAllowedOriginsRaw.split(",").map((o) => o.trim()).filter(Boolean)
+    : "*";
+app.use(cors({ origin: corsOrigins, credentials: true }));
+app.use(express.json());
+app.use(express.static(frontendDir));
+app.use(express.static(publicDir));
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: corsOrigins,
+        credentials: true
+    }
+});
+const walletRuntime = createWalletAdapter(projectDir);
+const walletAdapter = walletRuntime.adapter;
+const platformConnectionString = process.env.APP_PG_CONNECTION_STRING?.trim() || process.env.WALLET_PG_CONNECTION_STRING?.trim();
+if (!platformConnectionString) {
+    throw new DomainError("INVALID_CONFIG", "Mangler APP_PG_CONNECTION_STRING (eller WALLET_PG_CONNECTION_STRING) for auth/plattform.");
+}
+function parseBooleanEnv(value, fallback) {
+    if (value === undefined || value.trim().length === 0) {
+        return fallback;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+        return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+        return false;
+    }
+    return fallback;
+}
+function parsePositiveIntEnv(value, fallback) {
+    if (value === undefined || value.trim().length === 0) {
+        return fallback;
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return fallback;
+    }
+    return Math.floor(parsed);
+}
+function parseNonNegativeNumberEnv(value, fallback) {
+    if (value === undefined || value.trim().length === 0) {
+        return fallback;
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return fallback;
+    }
+    return parsed;
+}
+const bingoMinRoundIntervalMs = Math.max(30000, parsePositiveIntEnv(process.env.BINGO_MIN_ROUND_INTERVAL_MS, 30000));
+const bingoDailyLossLimit = parseNonNegativeNumberEnv(process.env.BINGO_DAILY_LOSS_LIMIT, 900);
+const bingoMonthlyLossLimit = parseNonNegativeNumberEnv(process.env.BINGO_MONTHLY_LOSS_LIMIT, 4400);
+const bingoPlaySessionLimitMs = parsePositiveIntEnv(process.env.BINGO_PLAY_SESSION_LIMIT_MS, 60 * 60 * 1000);
+const bingoPauseDurationMs = parsePositiveIntEnv(process.env.BINGO_PAUSE_DURATION_MS, 5 * 60 * 1000);
+const bingoSelfExclusionMinMs = Math.max(365 * 24 * 60 * 60 * 1000, parsePositiveIntEnv(process.env.BINGO_SELF_EXCLUSION_MIN_MS, 365 * 24 * 60 * 60 * 1000));
+const bingoMaxDrawsPerRound = Math.min(75, Math.max(1, parsePositiveIntEnv(process.env.BINGO_MAX_DRAWS_PER_ROUND, 30)));
+const isProductionRuntime = (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
+const minPlayersFloor = 1;
+const bingoMinPlayersToStart = minPlayersFloor;
+const requestedAutoRoundStartEnabled = parseBooleanEnv(process.env.AUTO_ROUND_START_ENABLED, true);
+const requestedAutoDrawEnabled = parseBooleanEnv(process.env.AUTO_DRAW_ENABLED, true);
+// BIN-47: Default to false in production — autoplay must be explicitly enabled
+const allowAutoplayInProduction = parseBooleanEnv(process.env.BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION, false);
+// BIN-47: Never force autostart — respect the autoplayAllowed guard
+const forceCandyAutoStart = false;
+const forceCandyAutoDraw = false;
+if (isProductionRuntime && !allowAutoplayInProduction && requestedAutoRoundStartEnabled) {
+    console.warn("WARNING: AUTO_ROUND_START_ENABLED=true ignored in production. Set BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION=true to override.");
+}
+const enforceSingleCandyRoomPerHall = parseBooleanEnv(process.env.CANDY_SINGLE_ACTIVE_ROOM_PER_HALL, true);
+const autoplayAllowed = !isProductionRuntime || allowAutoplayInProduction;
+const runtimeCandyManiaSettings = {
+    autoRoundStartEnabled: forceCandyAutoStart
+        ? true
+        : autoplayAllowed
+            ? requestedAutoRoundStartEnabled
+            : false,
+    autoRoundStartIntervalMs: Math.max(bingoMinRoundIntervalMs, parsePositiveIntEnv(process.env.AUTO_ROUND_START_INTERVAL_MS, 3 * 60 * 1000)),
+    autoRoundEntryFee: parseNonNegativeNumberEnv(process.env.AUTO_ROUND_ENTRY_FEE, 0),
+    autoRoundMinPlayers: Math.max(bingoMinPlayersToStart, parsePositiveIntEnv(process.env.AUTO_ROUND_MIN_PLAYERS, bingoMinPlayersToStart)),
+    autoRoundTicketsPerPlayer: Math.min(5, Math.max(1, parsePositiveIntEnv(process.env.AUTO_ROUND_TICKETS_PER_PLAYER, 4))),
+    payoutPercent: Math.round(Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 100))) * 100) / 100,
+    autoDrawEnabled: forceCandyAutoDraw ? true : autoplayAllowed ? requestedAutoDrawEnabled : false,
+    autoDrawIntervalMs: parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 1200)
+};
+let candyManiaSettingsEffectiveFromMs = Date.now();
+let pendingCandyManiaSettingsUpdate = null;
+const schedulerTickMs = parsePositiveIntEnv(process.env.AUTO_ROUND_SCHEDULER_TICK_MS, 250);
+const dailyReportJobEnabled = parseBooleanEnv(process.env.DAILY_REPORT_JOB_ENABLED, true);
+const dailyReportJobIntervalMs = Math.max(60_000, parsePositiveIntEnv(process.env.DAILY_REPORT_JOB_INTERVAL_MS, 60 * 60 * 1000));
+const candyLaunchTokenTtlMs = Math.max(15_000, parsePositiveIntEnv(process.env.CANDY_LAUNCH_TOKEN_TTL_SECONDS, 120) * 1000);
+if (isProductionRuntime && !autoplayAllowed && (requestedAutoRoundStartEnabled || requestedAutoDrawEnabled)) {
+    console.warn("[scheduler] Autoplay er deaktivert i production (sett BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION=true for aa tillate AUTO_ROUND_START_ENABLED/AUTO_DRAW_ENABLED).");
+}
+// Integration: WebhookService + decorated BingoSystemAdapter.
+const integrationEnabledEarly = parseBooleanEnv(process.env.INTEGRATION_ENABLED, false);
+const integrationPool = integrationEnabledEarly
+    ? new PgPool({ connectionString: platformConnectionString })
+    : null;
+const webhookService = integrationEnabledEarly && process.env.INTEGRATION_WEBHOOK_URL?.trim()
+    ? new WebhookService({
+        gameResultWebhookUrl: process.env.INTEGRATION_WEBHOOK_URL.trim(),
+        complianceWebhookUrl: process.env.INTEGRATION_COMPLIANCE_WEBHOOK_URL?.trim() || process.env.INTEGRATION_WEBHOOK_URL.trim(),
+        webhookSecret: process.env.INTEGRATION_WEBHOOK_SECRET?.trim() || "",
+        timeoutMs: 10_000,
+        maxRetries: 5
+    })
+    : null;
+const localBingoAdapter = new LocalBingoSystemAdapter();
+const integrationSchema = process.env.APP_PG_SCHEMA?.trim() || process.env.WALLET_PG_SCHEMA?.trim() || "public";
+const bingoSystemAdapter = webhookService && integrationPool
+    ? new IntegrationBingoSystemAdapter({
+        inner: localBingoAdapter,
+        webhookService,
+        currency: process.env.WALLET_CURRENCY?.trim() || "NOK",
+        resolveExternalPlayerId: async (internalPlayerId) => {
+            const { rows } = await integrationPool.query(`SELECT external_player_id FROM "${integrationSchema}".external_player_mapping WHERE internal_player_id = $1 LIMIT 1`, [internalPlayerId]);
+            return rows[0]?.external_player_id ?? null;
+        }
+    })
+    : localBingoAdapter;
+const engine = new BingoEngine(bingoSystemAdapter, walletAdapter, {
+    minRoundIntervalMs: bingoMinRoundIntervalMs,
+    minPlayersToStart: bingoMinPlayersToStart,
+    dailyLossLimit: bingoDailyLossLimit,
+    monthlyLossLimit: bingoMonthlyLossLimit,
+    playSessionLimitMs: bingoPlaySessionLimitMs,
+    pauseDurationMs: bingoPauseDurationMs,
+    selfExclusionMinMs: bingoSelfExclusionMinMs,
+    maxDrawsPerRound: bingoMaxDrawsPerRound
+});
+const platformService = new PlatformService(walletAdapter, {
+    connectionString: platformConnectionString,
+    schema: process.env.APP_PG_SCHEMA?.trim() || process.env.WALLET_PG_SCHEMA?.trim() || "public",
+    sessionTtlHours: parsePositiveIntEnv(process.env.AUTH_SESSION_TTL_HOURS, 24 * 7),
+    minAgeYears: Math.max(18, parsePositiveIntEnv(process.env.KYC_MIN_AGE_YEARS, 18)),
+    kycAdapter: new LocalKycAdapter({
+        minAgeYears: Math.max(18, parsePositiveIntEnv(process.env.KYC_MIN_AGE_YEARS, 18))
+    })
+});
+const swedbankPayService = new SwedbankPayService(walletAdapter, {
+    connectionString: platformConnectionString,
+    schema: process.env.APP_PG_SCHEMA?.trim() || process.env.WALLET_PG_SCHEMA?.trim() || "public",
+    apiBaseUrl: process.env.SWEDBANK_PAY_API_BASE_URL,
+    accessToken: process.env.SWEDBANK_PAY_ACCESS_TOKEN,
+    payeeId: process.env.SWEDBANK_PAY_PAYEE_ID,
+    payeeName: process.env.SWEDBANK_PAY_PAYEE_NAME,
+    productName: process.env.SWEDBANK_PAY_PRODUCT_NAME,
+    currency: process.env.SWEDBANK_PAY_CURRENCY,
+    language: process.env.SWEDBANK_PAY_LANGUAGE,
+    merchantBaseUrl: process.env.SWEDBANK_PAY_MERCHANT_BASE_URL,
+    callbackUrl: process.env.SWEDBANK_PAY_CALLBACK_URL,
+    completeUrl: process.env.SWEDBANK_PAY_COMPLETE_URL,
+    cancelUrl: process.env.SWEDBANK_PAY_CANCEL_URL,
+    termsOfServiceUrl: process.env.SWEDBANK_PAY_TERMS_URL,
+    requestTimeoutMs: parsePositiveIntEnv(process.env.SWEDBANK_PAY_REQUEST_TIMEOUT_MS, 10000)
+});
+const candyLaunchTokenStore = new CandyLaunchTokenStore({
+    ttlMs: candyLaunchTokenTtlMs
+});
+const integrationEnabled = integrationEnabledEarly;
+const integrationLaunchHandler = integrationEnabled
+    ? new IntegrationLaunchHandler({
+        pool: integrationPool,
+        schema: integrationSchema,
+        walletAdapter,
+        launchTokenStore: candyLaunchTokenStore,
+        providerApiKey: process.env.INTEGRATION_API_KEY?.trim() || "",
+        defaultHallId: process.env.INTEGRATION_DEFAULT_HALL_ID?.trim() || "hall-default",
+        candyFrontendBaseUrl: process.env.INTEGRATION_CANDY_FRONTEND_URL?.trim() || "https://candy.example.com",
+        candyApiBaseUrl: process.env.INTEGRATION_CANDY_API_BASE_URL?.trim() || `http://localhost:${process.env.PORT || "4000"}`
+    })
+    : null;
+const reconciliationService = integrationEnabled && walletRuntime.provider === "external"
+    ? new ReconciliationService({
+        walletAdapter: walletAdapter,
+        alarmThreshold: 1,
+        onAlarm: (report) => {
+            console.error(`[RECONCILIATION ALARM] ${report.discrepancies.length} avvik funnet i perioden ${report.periodStart} — ${report.periodEnd}`);
+        }
+    })
+    : null;
+// Embed headers: allow iframe embedding from provider origins when integration is enabled.
+if (integrationEnabled) {
+    const allowedEmbedOrigins = (process.env.ALLOWED_EMBED_ORIGINS?.trim() || "")
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean);
+    if (allowedEmbedOrigins.length > 0) {
+        app.use((_req, res, next) => {
+            res.setHeader("Content-Security-Policy", `frame-ancestors 'self' ${allowedEmbedOrigins.join(" ")}`);
+            next();
+        });
+    }
+}
+// Helper: send compliance webhook to provider (non-blocking).
+function sendComplianceWebhook(event, internalPlayerId, details) {
+    if (!webhookService || !integrationPool)
+        return;
+    integrationPool.query(`SELECT external_player_id FROM "${integrationSchema}".external_player_mapping WHERE internal_player_id = $1 LIMIT 1`, [internalPlayerId]).then(({ rows }) => {
+        const externalId = rows[0]?.external_player_id;
+        if (!externalId)
+            return;
+        const payload = webhookService.buildCompliancePayload(event, externalId, details);
+        webhookService.sendComplianceEvent(payload).catch((err) => {
+            console.error(`[compliance-webhook] Failed to send ${event} for ${externalId}:`, err);
+        });
+    }).catch((err) => {
+        console.error(`[compliance-webhook] Failed to resolve external player for ${internalPlayerId}:`, err);
+    });
+}
+function ackSuccess(callback, data) {
+    callback({ ok: true, data });
+}
+function ackFailure(callback, error) {
+    callback({
+        ok: false,
+        error: toPublicError(error)
+    });
+}
+function mustBeNonEmptyString(value, fieldName) {
+    if (typeof value !== "string" || value.trim().length === 0) {
+        throw new DomainError("INVALID_INPUT", `${fieldName} mangler.`);
+    }
+    return value.trim();
+}
+function mustBePositiveAmount(value, fieldName = "amount") {
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount <= 0) {
+        throw new DomainError("INVALID_INPUT", `${fieldName} må være større enn 0.`);
+    }
+    return amount;
+}
+function parseOptionalNonNegativeAmount(value, fallback) {
+    if (value === undefined || value === null || value === "") {
+        return fallback;
+    }
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount < 0) {
+        throw new DomainError("INVALID_INPUT", "initialBalance må være 0 eller større.");
+    }
+    return amount;
+}
+function parseOptionalNonNegativeNumber(value, fieldName) {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new DomainError("INVALID_INPUT", `${fieldName} må være 0 eller større.`);
+    }
+    return parsed;
+}
+function parseOptionalInteger(value, fieldName) {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+        throw new DomainError("INVALID_INPUT", `${fieldName} må være et heltall.`);
+    }
+    return parsed;
+}
+function parseOptionalPositiveInteger(value, fieldName) {
+    const parsed = parseOptionalInteger(value, fieldName);
+    if (parsed === undefined) {
+        return undefined;
+    }
+    if (parsed <= 0) {
+        throw new DomainError("INVALID_INPUT", `${fieldName} må være større enn 0.`);
+    }
+    return parsed;
+}
+function parseOptionalLedgerGameType(value) {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+    if (typeof value !== "string") {
+        throw new DomainError("INVALID_INPUT", "gameType må være MAIN_GAME eller DATABINGO.");
+    }
+    const normalized = value.trim().toUpperCase();
+    if (normalized !== "MAIN_GAME" && normalized !== "DATABINGO") {
+        throw new DomainError("INVALID_INPUT", "gameType må være MAIN_GAME eller DATABINGO.");
+    }
+    return normalized;
+}
+function parseOptionalLedgerChannel(value) {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+    if (typeof value !== "string") {
+        throw new DomainError("INVALID_INPUT", "channel må være HALL eller INTERNET.");
+    }
+    const normalized = value.trim().toUpperCase();
+    if (normalized !== "HALL" && normalized !== "INTERNET") {
+        throw new DomainError("INVALID_INPUT", "channel må være HALL eller INTERNET.");
+    }
+    return normalized;
+}
+function parseBooleanQueryValue(value, fallback) {
+    if (typeof value !== "string") {
+        return fallback;
+    }
+    return parseBooleanEnv(value, fallback);
+}
+function parseLimit(value, fallback = 100) {
+    if (value === undefined || value === null || value === "") {
+        return fallback;
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new DomainError("INVALID_INPUT", "limit må være et positivt tall.");
+    }
+    return Math.min(500, Math.floor(parsed));
+}
+function parseTicketsPerPlayerInput(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed < 1 || parsed > 5) {
+        throw new DomainError("INVALID_TICKETS_PER_PLAYER", "ticketsPerPlayer må være et heltall mellom 1 og 5.");
+    }
+    return parsed;
+}
+function normalizeAbsoluteHttpUrl(rawValue, fieldName, errorCode) {
+    const candidate = rawValue.trim();
+    let parsed;
+    try {
+        parsed = new URL(candidate);
+    }
+    catch {
+        throw new DomainError(errorCode, `${fieldName} må være en gyldig http/https URL.`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        throw new DomainError(errorCode, `${fieldName} må starte med http:// eller https://.`);
+    }
+    return parsed.toString();
+}
+function parseOptionalAbsoluteHttpUrl(value, fieldName, errorCode) {
+    if (value === undefined || value === null) {
+        return undefined;
+    }
+    if (typeof value !== "string") {
+        throw new DomainError(errorCode, `${fieldName} må være tekst.`);
+    }
+    if (!value.trim()) {
+        return undefined;
+    }
+    return normalizeAbsoluteHttpUrl(value, fieldName, errorCode);
+}
+function readCandyLaunchSettings(settings, options) {
+    // Accept both absolute URLs and relative paths (e.g. "/web/").
+    const rawLaunchUrl = typeof settings.launchUrl === "string" ? settings.launchUrl.trim() : "";
+    const launchUrl = rawLaunchUrl.startsWith("/")
+        ? rawLaunchUrl
+        : parseOptionalAbsoluteHttpUrl(settings.launchUrl, "launchUrl", "INVALID_CANDY_LAUNCH_URL");
+    const apiBaseUrl = parseOptionalAbsoluteHttpUrl(settings.apiBaseUrl, "apiBaseUrl", "INVALID_CANDY_API_BASE_URL");
+    if (options.requireLaunchUrl && !launchUrl) {
+        throw new DomainError("INVALID_CANDY_LAUNCH_URL", "Candy launchUrl må settes og være en gyldig http/https URL.");
+    }
+    return {
+        launchUrl,
+        apiBaseUrl
+    };
+}
+function normalizeGameSettingsForUpdate(gameSlug, settings, options = {}) {
+    if (!settings) {
+        return undefined;
+    }
+    const normalizedSlug = gameSlug.trim().toLowerCase();
+    if (normalizedSlug !== "candy") {
+        return settings;
+    }
+    const nextSettings = { ...settings };
+    const launchSettings = readCandyLaunchSettings(nextSettings, {
+        requireLaunchUrl: options.requireCandyLaunchUrl === true
+    });
+    if (launchSettings.launchUrl) {
+        nextSettings.launchUrl = launchSettings.launchUrl;
+    }
+    else {
+        delete nextSettings.launchUrl;
+    }
+    if (launchSettings.apiBaseUrl) {
+        nextSettings.apiBaseUrl = launchSettings.apiBaseUrl;
+    }
+    else {
+        delete nextSettings.apiBaseUrl;
+    }
+    const payoutRaw = nextSettings.payoutPercent;
+    if (payoutRaw === undefined || payoutRaw === null || payoutRaw === "") {
+        return nextSettings;
+    }
+    const payoutPercent = Number(payoutRaw);
+    if (!Number.isFinite(payoutPercent) || payoutPercent < 0 || payoutPercent > 100) {
+        throw new DomainError("INVALID_PAYOUT_PERCENT", "Candy utbetaling (%) må være mellom 0 og 100.");
+    }
+    nextSettings.payoutPercent = Math.round(payoutPercent * 100) / 100;
+    return nextSettings;
+}
+function parseOptionalBooleanInput(value, fieldName) {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+    if (typeof value === "boolean") {
+        return value;
+    }
+    if (typeof value === "string") {
+        const normalized = value.trim().toLowerCase();
+        if (["1", "true", "yes", "on"].includes(normalized)) {
+            return true;
+        }
+        if (["0", "false", "no", "off"].includes(normalized)) {
+            return false;
+        }
+    }
+    throw new DomainError("INVALID_INPUT", `${fieldName} må være true/false.`);
+}
+function parseOptionalIsoTimestampMs(value, fieldName) {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+    if (typeof value !== "string") {
+        throw new DomainError("INVALID_INPUT", `${fieldName} må være en ISO-8601 dato/tid.`);
+    }
+    const parsed = Date.parse(value.trim());
+    if (!Number.isFinite(parsed)) {
+        throw new DomainError("INVALID_INPUT", `${fieldName} må være en ISO-8601 dato/tid.`);
+    }
+    return parsed;
+}
+function parseCandyManiaSettingsPatch(value) {
+    if (value === undefined || value === null) {
+        return {};
+    }
+    if (typeof value !== "object" || Array.isArray(value)) {
+        throw new DomainError("INVALID_INPUT", "Payload må være et objekt.");
+    }
+    const payload = value;
+    const patch = {};
+    const autoRoundStartEnabled = parseOptionalBooleanInput(payload.autoRoundStartEnabled, "autoRoundStartEnabled");
+    if (autoRoundStartEnabled !== undefined) {
+        patch.autoRoundStartEnabled = autoRoundStartEnabled;
+    }
+    const autoRoundStartIntervalMs = parseOptionalPositiveInteger(payload.autoRoundStartIntervalMs, "autoRoundStartIntervalMs");
+    if (autoRoundStartIntervalMs !== undefined) {
+        patch.autoRoundStartIntervalMs = autoRoundStartIntervalMs;
+    }
+    const autoRoundMinPlayers = parseOptionalPositiveInteger(payload.autoRoundMinPlayers, "autoRoundMinPlayers");
+    if (autoRoundMinPlayers !== undefined) {
+        patch.autoRoundMinPlayers = autoRoundMinPlayers;
+    }
+    const autoRoundTicketsPerPlayer = parseOptionalPositiveInteger(payload.autoRoundTicketsPerPlayer, "autoRoundTicketsPerPlayer");
+    if (autoRoundTicketsPerPlayer !== undefined) {
+        patch.autoRoundTicketsPerPlayer = autoRoundTicketsPerPlayer;
+    }
+    const autoRoundEntryFee = parseOptionalNonNegativeNumber(payload.autoRoundEntryFee, "autoRoundEntryFee");
+    if (autoRoundEntryFee !== undefined) {
+        patch.autoRoundEntryFee = autoRoundEntryFee;
+    }
+    const payoutPercent = parseOptionalNonNegativeNumber(payload.payoutPercent, "payoutPercent");
+    if (payoutPercent !== undefined) {
+        if (payoutPercent > 100) {
+            throw new DomainError("INVALID_INPUT", "payoutPercent må være mellom 0 og 100.");
+        }
+        patch.payoutPercent = payoutPercent;
+    }
+    const autoDrawEnabled = parseOptionalBooleanInput(payload.autoDrawEnabled, "autoDrawEnabled");
+    if (autoDrawEnabled !== undefined) {
+        patch.autoDrawEnabled = autoDrawEnabled;
+    }
+    const autoDrawIntervalMs = parseOptionalPositiveInteger(payload.autoDrawIntervalMs, "autoDrawIntervalMs");
+    if (autoDrawIntervalMs !== undefined) {
+        patch.autoDrawIntervalMs = autoDrawIntervalMs;
+    }
+    return patch;
+}
+function normalizeCandyManiaSchedulerSettings(current, patch) {
+    const next = {
+        autoRoundStartEnabled: patch.autoRoundStartEnabled !== undefined
+            ? patch.autoRoundStartEnabled
+            : current.autoRoundStartEnabled,
+        autoRoundStartIntervalMs: patch.autoRoundStartIntervalMs !== undefined
+            ? patch.autoRoundStartIntervalMs
+            : current.autoRoundStartIntervalMs,
+        autoRoundMinPlayers: patch.autoRoundMinPlayers !== undefined ? patch.autoRoundMinPlayers : current.autoRoundMinPlayers,
+        autoRoundTicketsPerPlayer: patch.autoRoundTicketsPerPlayer !== undefined
+            ? patch.autoRoundTicketsPerPlayer
+            : current.autoRoundTicketsPerPlayer,
+        autoRoundEntryFee: patch.autoRoundEntryFee !== undefined ? patch.autoRoundEntryFee : current.autoRoundEntryFee,
+        payoutPercent: patch.payoutPercent !== undefined ? patch.payoutPercent : current.payoutPercent,
+        autoDrawEnabled: patch.autoDrawEnabled !== undefined ? patch.autoDrawEnabled : current.autoDrawEnabled,
+        autoDrawIntervalMs: patch.autoDrawIntervalMs !== undefined ? patch.autoDrawIntervalMs : current.autoDrawIntervalMs
+    };
+    next.autoRoundStartIntervalMs = Math.max(bingoMinRoundIntervalMs, Math.floor(next.autoRoundStartIntervalMs));
+    if (forceCandyAutoStart) {
+        next.autoRoundStartEnabled = true;
+    }
+    if (forceCandyAutoDraw) {
+        next.autoDrawEnabled = true;
+    }
+    next.autoRoundMinPlayers = Math.max(bingoMinPlayersToStart, Math.floor(next.autoRoundMinPlayers));
+    next.autoRoundTicketsPerPlayer = Math.min(5, Math.max(1, Math.floor(next.autoRoundTicketsPerPlayer)));
+    next.autoRoundEntryFee = Math.max(0, Math.round(next.autoRoundEntryFee * 100) / 100);
+    next.payoutPercent = Math.min(100, Math.max(0, Math.round(next.payoutPercent * 100) / 100));
+    next.autoDrawIntervalMs = Math.max(250, Math.floor(next.autoDrawIntervalMs));
+    if (!autoplayAllowed &&
+        ((next.autoRoundStartEnabled && !forceCandyAutoStart) || (next.autoDrawEnabled && !forceCandyAutoDraw))) {
+        throw new DomainError("INVALID_INPUT", "Autoplay er deaktivert i production. Sett BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION=true for aa aktivere autoStart/autoDraw.");
+    }
+    return next;
+}
+function candyManiaSettingsCoreToRecord(settings) {
+    return {
+        autoRoundStartEnabled: settings.autoRoundStartEnabled,
+        autoRoundStartIntervalMs: settings.autoRoundStartIntervalMs,
+        autoRoundMinPlayers: settings.autoRoundMinPlayers,
+        autoRoundTicketsPerPlayer: settings.autoRoundTicketsPerPlayer,
+        autoRoundEntryFee: settings.autoRoundEntryFee,
+        payoutPercent: settings.payoutPercent,
+        autoDrawEnabled: settings.autoDrawEnabled,
+        autoDrawIntervalMs: settings.autoDrawIntervalMs
+    };
+}
+function candyManiaSettingsToRecord() {
+    return {
+        ...candyManiaSettingsCoreToRecord(runtimeCandyManiaSettings),
+        schedulerCurrentEffectiveFrom: new Date(candyManiaSettingsEffectiveFromMs).toISOString(),
+        schedulerPending: pendingCandyManiaSettingsUpdate
+            ? {
+                effectiveFrom: new Date(pendingCandyManiaSettingsUpdate.effectiveFromMs).toISOString(),
+                settings: candyManiaSettingsCoreToRecord(pendingCandyManiaSettingsUpdate.settings)
+            }
+            : null
+    };
+}
+function readCandyManiaSettingsFromRecord(settings) {
+    if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+        return {};
+    }
+    return parseCandyManiaSettingsPatch(settings);
+}
+function readPendingCandyManiaSettingsFromRecord(settings) {
+    if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+        return null;
+    }
+    const pendingRaw = settings.schedulerPending;
+    if (pendingRaw === undefined || pendingRaw === null) {
+        return null;
+    }
+    if (typeof pendingRaw !== "object" || Array.isArray(pendingRaw)) {
+        throw new DomainError("INVALID_INPUT", "Ugyldig schedulerPending i Candy settings.");
+    }
+    const pending = pendingRaw;
+    const effectiveFromMs = parseOptionalIsoTimestampMs(pending.effectiveFrom, "schedulerPending.effectiveFrom");
+    if (effectiveFromMs === undefined) {
+        return null;
+    }
+    const patch = parseCandyManiaSettingsPatch(pending.settings);
+    const normalizedSettings = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+    return {
+        effectiveFromMs,
+        settings: normalizedSettings
+    };
+}
+function hasAnyRunningCandyManiaRound(summaries) {
+    const roomSummaries = summaries ?? engine.listRoomSummaries();
+    return roomSummaries.some((summary) => summary.gameStatus === "RUNNING");
+}
+function getCandyManiaAdminSettingsResponse() {
+    const lockActive = hasAnyRunningCandyManiaRound();
+    return {
+        ...runtimeCandyManiaSettings,
+        effectiveFrom: new Date(candyManiaSettingsEffectiveFromMs).toISOString(),
+        pendingUpdate: pendingCandyManiaSettingsUpdate
+            ? {
+                effectiveFrom: new Date(pendingCandyManiaSettingsUpdate.effectiveFromMs).toISOString(),
+                settings: { ...pendingCandyManiaSettingsUpdate.settings }
+            }
+            : null,
+        schedulerTickMs,
+        constraints: {
+            runtime: isProductionRuntime ? "production" : "non-production",
+            autoplayAllowed,
+            allowAutoplayInProduction,
+            forceCandyAutoStart,
+            forceCandyAutoDraw,
+            minRoundIntervalMs: bingoMinRoundIntervalMs,
+            minPlayersToStart: bingoMinPlayersToStart,
+            maxDrawsPerRound: bingoMaxDrawsPerRound,
+            maxTicketsPerPlayer: 5,
+            minPayoutPercent: 0,
+            maxPayoutPercent: 100,
+            runningRoundLockActive: lockActive
+        },
+        locks: {
+            runningRoundLockActive: lockActive
+        }
+    };
+}
+function isRecordObject(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function extractAdminGameSettingsPayload(body) {
+    if (!isRecordObject(body)) {
+        throw new DomainError("INVALID_INPUT", "Payload må være et objekt.");
+    }
+    const effectiveFromMs = parseOptionalIsoTimestampMs(body.effectiveFrom, "effectiveFrom");
+    if (body.settings !== undefined) {
+        if (!isRecordObject(body.settings)) {
+            throw new DomainError("INVALID_INPUT", "settings må være et objekt.");
+        }
+        return {
+            settings: body.settings,
+            effectiveFromMs
+        };
+    }
+    const { effectiveFrom: _ignoredEffectiveFrom, ...directSettings } = body;
+    return {
+        settings: directSettings,
+        effectiveFromMs
+    };
+}
+function buildAdminSettingsDefinitionForGame(game) {
+    if (game.slug === "candy") {
+        return buildCandySettingsDefinition({
+            minRoundIntervalMs: bingoMinRoundIntervalMs,
+            minPlayersToStart: bingoMinPlayersToStart,
+            maxTicketsPerPlayer: 5,
+            forceAutoStart: forceCandyAutoStart,
+            forceAutoDraw: forceCandyAutoDraw,
+            runningRoundLockActive: hasAnyRunningCandyManiaRound()
+        });
+    }
+    return buildDefaultGameSettingsDefinition(game);
+}
+function buildAdminSettingsCatalogResponse(games) {
+    return {
+        generatedAt: new Date().toISOString(),
+        games: games.map((game) => buildAdminSettingsDefinitionForGame(game))
+    };
+}
+function buildAdminGameSettingsResponse(game) {
+    if (game.slug !== "candy") {
+        return {
+            slug: game.slug,
+            title: game.title,
+            description: game.description,
+            updatedAt: game.updatedAt,
+            settings: { ...(game.settings ?? {}) },
+            locks: {
+                runningRoundLockActive: false
+            }
+        };
+    }
+    const candySettings = getCandyManiaAdminSettingsResponse();
+    const { effectiveFrom, pendingUpdate, constraints, locks, schedulerTickMs, ...typedSettings } = candySettings;
+    return {
+        slug: game.slug,
+        title: game.title,
+        description: game.description,
+        updatedAt: game.updatedAt,
+        settings: typedSettings,
+        effectiveFrom,
+        pendingUpdate,
+        schedulerTickMs,
+        constraints,
+        locks
+    };
+}
+async function persistCandyManiaSettingsToCatalog(options) {
+    const candyGame = await platformService.getGame("candy");
+    const nextSettings = normalizeGameSettingsForUpdate("candy", {
+        ...(candyGame.settings ?? {}),
+        ...candyManiaSettingsToRecord()
+    });
+    await platformService.updateGame("candy", {
+        settings: nextSettings
+    }, {
+        changedBy: options?.changedBy,
+        source: options?.source ?? "CANDY_SETTINGS_SYNC",
+        effectiveFrom: options?.effectiveFromMs !== undefined
+            ? new Date(options.effectiveFromMs).toISOString()
+            : new Date(candyManiaSettingsEffectiveFromMs).toISOString()
+    });
+}
+async function hydrateCandyManiaSettingsFromCatalog() {
+    try {
+        const candyGame = await platformService.getGame("candy");
+        const patch = readCandyManiaSettingsFromRecord(candyGame.settings);
+        const normalized = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+        Object.assign(runtimeCandyManiaSettings, normalized);
+        const currentEffectiveFromMs = parseOptionalIsoTimestampMs(candyGame.settings?.schedulerCurrentEffectiveFrom, "schedulerCurrentEffectiveFrom");
+        if (currentEffectiveFromMs !== undefined) {
+            candyManiaSettingsEffectiveFromMs = currentEffectiveFromMs;
+        }
+        pendingCandyManiaSettingsUpdate = readPendingCandyManiaSettingsFromRecord(candyGame.settings);
+    }
+    catch (error) {
+        console.warn("[candy-mania] Klarte ikke laste scheduler settings fra game-catalog. Bruker env/default.", error);
+    }
+}
+function readForwardedHeaderValue(value) {
+    if (Array.isArray(value)) {
+        return value.length > 0 ? value[0] : "";
+    }
+    return typeof value === "string" ? value.split(",")[0].trim() : "";
+}
+function deriveRequestApiBaseUrl(req) {
+    const forwardedProto = readForwardedHeaderValue(req.headers["x-forwarded-proto"]);
+    const forwardedHost = readForwardedHeaderValue(req.headers["x-forwarded-host"]);
+    const protocolCandidate = (forwardedProto || req.protocol || "https").trim().toLowerCase();
+    const protocol = protocolCandidate === "http" || protocolCandidate === "https" ? protocolCandidate : "https";
+    const host = (forwardedHost || req.get("host") || "").trim();
+    if (!host) {
+        throw new DomainError("INVALID_CONFIG", "Kunne ikke utlede apiBaseUrl fra request.");
+    }
+    return normalizeAbsoluteHttpUrl(`${protocol}://${host}`, "apiBaseUrl", "INVALID_CANDY_API_BASE_URL");
+}
+async function resolveCandyLaunchHallId(inputHallId) {
+    if (typeof inputHallId === "string" && inputHallId.trim()) {
+        const hall = await platformService.requireActiveHall(inputHallId);
+        return hall.id;
+    }
+    const halls = await platformService.listHalls({ includeInactive: false });
+    if (halls.length === 0) {
+        throw new DomainError("HALL_NOT_FOUND", "Fant ingen aktiv hall for Candy-launch.");
+    }
+    return halls[0].id;
+}
+async function getCandyLaunchSettingsForRuntime(requireLaunchUrl = true) {
+    const candyGame = await platformService.getGame("candy");
+    const settings = normalizeGameSettingsForUpdate("candy", candyGame.settings ?? {}, {
+        requireCandyLaunchUrl: requireLaunchUrl
+    });
+    if (!settings) {
+        throw new DomainError("INVALID_CANDY_LAUNCH_URL", "Candy settings mangler.");
+    }
+    return readCandyLaunchSettings(settings, { requireLaunchUrl });
+}
+function getAccessTokenFromRequest(req) {
+    const header = req.headers.authorization;
+    if (!header) {
+        throw new DomainError("UNAUTHORIZED", "Mangler Authorization-header.");
+    }
+    const [scheme, token] = header.split(" ");
+    if (scheme !== "Bearer" || !token?.trim()) {
+        throw new DomainError("UNAUTHORIZED", "Authorization må være Bearer token.");
+    }
+    return token.trim();
+}
+function getAccessTokenFromSocketPayload(payload) {
+    const token = typeof payload?.accessToken === "string" ? payload.accessToken.trim() : "";
+    if (!token) {
+        throw new DomainError("UNAUTHORIZED", "Mangler accessToken i socket-payload.");
+    }
+    return token;
+}
+async function getAuthenticatedUser(req) {
+    const accessToken = getAccessTokenFromRequest(req);
+    return platformService.getUserFromAccessToken(accessToken);
+}
+async function getAuthenticatedSocketUser(payload) {
+    const accessToken = getAccessTokenFromSocketPayload(payload);
+    return platformService.getUserFromAccessToken(accessToken);
+}
+async function requireAdminPermissionUser(req, permission, message) {
+    const user = await getAuthenticatedUser(req);
+    assertAdminPermission(user.role, permission, message);
+    return user;
+}
+async function requireAdminPanelUser(req, message) {
+    const user = await getAuthenticatedUser(req);
+    assertAdminPermission(user.role, "ADMIN_PANEL_ACCESS", message);
+    return user;
+}
+function buildAdminPermissionResponse(user) {
+    return {
+        role: user.role,
+        permissions: listAdminPermissionsForRole(user.role),
+        permissionMap: getAdminPermissionMap(user.role),
+        policy: ADMIN_ACCESS_POLICY
+    };
+}
+function parseUserRoleInput(value) {
+    const role = mustBeNonEmptyString(value, "role").toUpperCase();
+    if (!APP_USER_ROLES.includes(role)) {
+        throw new DomainError("INVALID_INPUT", `role må være en av: ${APP_USER_ROLES.join(", ")}.`);
+    }
+    return role;
+}
+function parseOptionalTicketsPerPlayerInput(value) {
+    if (value === undefined || value === null || value === "") {
+        return undefined;
+    }
+    return parseTicketsPerPlayerInput(value);
+}
+function assertUserCanAccessRoom(user, roomCode) {
+    if (user.role === "ADMIN") {
+        return;
+    }
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    const inRoom = snapshot.players.some((player) => player.walletId === user.walletId);
+    if (!inRoom) {
+        throw new DomainError("FORBIDDEN", "Du har ikke tilgang til dette rommet.");
+    }
+}
+function assertUserCanActAsPlayer(user, roomCode, playerId) {
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    const player = snapshot.players.find((entry) => entry.id === playerId);
+    if (!player) {
+        throw new DomainError("PLAYER_NOT_FOUND", "Spiller finnes ikke i rommet.");
+    }
+    if (user.role === "ADMIN") {
+        return;
+    }
+    if (player.walletId !== user.walletId) {
+        throw new DomainError("FORBIDDEN", "Du kan bare utføre handlinger for egen spiller.");
+    }
+}
+async function requireAuthenticatedPlayerAction(payload) {
+    const user = await getAuthenticatedSocketUser(payload);
+    platformService.assertUserEligibleForGameplay(user);
+    engine.assertWalletAllowedForGameplay(user.walletId);
+    const roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
+    // BIN-46: Derive playerId from token, NOT from client payload.
+    // The player's walletId from the authenticated token is the source of truth.
+    // We find the player in the room by matching walletId, preventing spoofing.
+    if (user.role !== "ADMIN") {
+        const snapshot = engine.getRoomSnapshot(roomCode);
+        const player = snapshot.players.find((p) => p.walletId === user.walletId);
+        if (!player) {
+            throw new DomainError("PLAYER_NOT_FOUND", "Du er ikke med i dette rommet.");
+        }
+        // Warn if client sent a mismatching playerId (potential spoofing attempt)
+        const clientPlayerId = typeof payload?.playerId === "string" ? payload.playerId.trim() : "";
+        if (clientPlayerId && clientPlayerId !== player.id) {
+            console.warn(`SECURITY: playerId mismatch — client sent "${clientPlayerId}" but token resolves to "${player.id}" (user ${user.id}, room ${roomCode})`);
+        }
+        return { roomCode, playerId: player.id };
+    }
+    // Admin: still accept payload playerId but verify it exists
+    const playerId = mustBeNonEmptyString(payload?.playerId, "playerId");
+    assertUserCanActAsPlayer(user, roomCode, playerId);
+    return { roomCode, playerId };
+}
+async function requireActiveHallIdFromInput(input) {
+    const hallReference = mustBeNonEmptyString(input, "hallId");
+    const hall = await platformService.requireActiveHall(hallReference);
+    return hall.id;
+}
+async function resolveBingoHallGameConfigForRoom(roomCode) {
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    const configs = await platformService.listHallGameConfigs({
+        hallId: snapshot.hallId,
+        includeDisabled: true
+    });
+    const bingoConfig = configs.find((config) => config.gameSlug === "bingo");
+    if (!bingoConfig) {
+        return {
+            hallId: snapshot.hallId,
+            maxTicketsPerPlayer: 5
+        };
+    }
+    if (!bingoConfig.isEnabled) {
+        throw new DomainError("GAME_DISABLED_FOR_HALL", "Bingo er deaktivert for valgt hall.");
+    }
+    return {
+        hallId: snapshot.hallId,
+        maxTicketsPerPlayer: bingoConfig.maxTicketsPerPlayer
+    };
+}
+function apiSuccess(res, data) {
+    res.json({ ok: true, data });
+}
+function apiFailure(res, error) {
+    const publicError = toPublicError(error);
+    res.status(400).json({ ok: false, error: publicError });
+}
+async function emitRoomUpdate(roomCode) {
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    const payload = buildRoomUpdatePayload(snapshot);
+    io.to(roomCode).emit("room:update", payload);
+    return payload;
+}
+async function emitManyRoomUpdates(roomCodes) {
+    for (const roomCode of roomCodes) {
+        await emitRoomUpdate(roomCode);
+    }
+}
+async function emitWalletRoomUpdates(walletIds) {
+    const affectedRooms = new Set();
+    for (const walletId of walletIds) {
+        const roomCodes = await engine.refreshPlayerBalancesForWallet(walletId);
+        for (const roomCode of roomCodes) {
+            affectedRooms.add(roomCode);
+        }
+    }
+    await emitManyRoomUpdates(affectedRooms);
+}
+const nextAutoStartAtByRoom = new Map();
+const lastAutoDrawAtByRoom = new Map();
+const roomConfiguredEntryFeeByRoom = new Map();
+const roomSchedulerLocks = new Set();
+let schedulerTickInProgress = false;
+function compareCandyRoomPriority(a, b) {
+    const runningScoreA = a.gameStatus === "RUNNING" ? 1 : 0;
+    const runningScoreB = b.gameStatus === "RUNNING" ? 1 : 0;
+    if (runningScoreA !== runningScoreB) {
+        return runningScoreB - runningScoreA;
+    }
+    if (a.playerCount !== b.playerCount) {
+        return b.playerCount - a.playerCount;
+    }
+    const createdAtA = Date.parse(a.createdAt);
+    const createdAtB = Date.parse(b.createdAt);
+    const normalizedCreatedAtA = Number.isFinite(createdAtA) ? createdAtA : Number.MAX_SAFE_INTEGER;
+    const normalizedCreatedAtB = Number.isFinite(createdAtB) ? createdAtB : Number.MAX_SAFE_INTEGER;
+    if (normalizedCreatedAtA !== normalizedCreatedAtB) {
+        return normalizedCreatedAtA - normalizedCreatedAtB;
+    }
+    return a.code.localeCompare(b.code);
+}
+function selectCanonicalCandyRoomSummariesByHall(summaries) {
+    if (!enforceSingleCandyRoomPerHall) {
+        return summaries;
+    }
+    const canonicalByHall = new Map();
+    for (const summary of summaries) {
+        const existing = canonicalByHall.get(summary.hallId);
+        if (!existing || compareCandyRoomPriority(summary, existing) < 0) {
+            canonicalByHall.set(summary.hallId, summary);
+        }
+    }
+    return [...canonicalByHall.values()].sort((a, b) => a.code.localeCompare(b.code));
+}
+function getCanonicalCandyRoomForHall(hallId, summaries = engine.listRoomSummaries()) {
+    const hallSummaries = summaries.filter((summary) => summary.hallId === hallId);
+    if (hallSummaries.length === 0) {
+        return null;
+    }
+    hallSummaries.sort(compareCandyRoomPriority);
+    return hallSummaries[0];
+}
+function findPlayerInRoomByWallet(snapshot, walletId) {
+    const normalizedWalletId = walletId.trim();
+    if (!normalizedWalletId) {
+        return null;
+    }
+    return snapshot.players.find((player) => player.walletId === normalizedWalletId) ?? null;
+}
+function getNextRoundBoundaryMs(nowMs) {
+    return (Math.ceil(nowMs / runtimeCandyManiaSettings.autoRoundStartIntervalMs) *
+        runtimeCandyManiaSettings.autoRoundStartIntervalMs);
+}
+function normalizeRoomNextAutoStartAt(roomCode, nowMs) {
+    if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
+        nextAutoStartAtByRoom.delete(roomCode);
+        return nowMs;
+    }
+    const fallbackNextStartAt = getNextRoundBoundaryMs(nowMs);
+    const existing = nextAutoStartAtByRoom.get(roomCode);
+    const staleToleranceMs = Math.max(1500, schedulerTickMs * 4);
+    if (existing === undefined || !Number.isFinite(existing)) {
+        nextAutoStartAtByRoom.set(roomCode, fallbackNextStartAt);
+        return fallbackNextStartAt;
+    }
+    if (existing < nowMs - staleToleranceMs) {
+        nextAutoStartAtByRoom.set(roomCode, fallbackNextStartAt);
+        return fallbackNextStartAt;
+    }
+    return existing;
+}
+function setNextRoundForRoom(roomCode, nowMs) {
+    const nextStartAt = getNextRoundBoundaryMs(nowMs + 1);
+    nextAutoStartAtByRoom.set(roomCode, nextStartAt);
+    return nextStartAt;
+}
+function getRoomConfiguredEntryFee(roomCode) {
+    const configured = roomConfiguredEntryFeeByRoom.get(roomCode);
+    if (configured === undefined || !Number.isFinite(configured)) {
+        return runtimeCandyManiaSettings.autoRoundEntryFee;
+    }
+    return configured;
+}
+function setRoomConfiguredEntryFee(roomCode, entryFee) {
+    const normalized = Math.max(0, Math.round(entryFee * 100) / 100);
+    roomConfiguredEntryFeeByRoom.set(roomCode, normalized);
+    return normalized;
+}
+function buildRoomSchedulerState(snapshot, nowMs) {
+    const nextStartAtMs = runtimeCandyManiaSettings.autoRoundStartEnabled
+        ? normalizeRoomNextAutoStartAt(snapshot.code, nowMs)
+        : null;
+    const millisUntilNextStart = nextStartAtMs === null ? null : Math.max(0, nextStartAtMs - nowMs);
+    const canStartNow = runtimeCandyManiaSettings.autoRoundStartEnabled &&
+        snapshot.currentGame?.status !== "RUNNING" &&
+        snapshot.players.length >= runtimeCandyManiaSettings.autoRoundMinPlayers &&
+        millisUntilNextStart !== null &&
+        millisUntilNextStart <= Math.max(1000, schedulerTickMs * 2);
+    return {
+        enabled: runtimeCandyManiaSettings.autoRoundStartEnabled,
+        intervalMs: runtimeCandyManiaSettings.autoRoundStartIntervalMs,
+        minPlayers: runtimeCandyManiaSettings.autoRoundMinPlayers,
+        playerCount: snapshot.players.length,
+        entryFee: getRoomConfiguredEntryFee(snapshot.code),
+        payoutPercent: runtimeCandyManiaSettings.payoutPercent,
+        nextStartAt: nextStartAtMs === null ? null : new Date(nextStartAtMs).toISOString(),
+        millisUntilNextStart,
+        canStartNow,
+        serverTime: new Date(nowMs).toISOString()
+    };
+}
+function buildRoomUpdatePayload(snapshot, nowMs = Date.now()) {
+    return {
+        ...snapshot,
+        scheduler: buildRoomSchedulerState(snapshot, nowMs)
+    };
+}
+async function withRoomSchedulerLock(roomCode, work) {
+    if (roomSchedulerLocks.has(roomCode)) {
+        return;
+    }
+    roomSchedulerLocks.add(roomCode);
+    try {
+        await work();
+    }
+    finally {
+        roomSchedulerLocks.delete(roomCode);
+    }
+}
+function cleanupSchedulerState(activeRoomCodes) {
+    for (const roomCode of nextAutoStartAtByRoom.keys()) {
+        if (!activeRoomCodes.has(roomCode)) {
+            nextAutoStartAtByRoom.delete(roomCode);
+        }
+    }
+    for (const roomCode of lastAutoDrawAtByRoom.keys()) {
+        if (!activeRoomCodes.has(roomCode)) {
+            lastAutoDrawAtByRoom.delete(roomCode);
+        }
+    }
+    for (const roomCode of roomConfiguredEntryFeeByRoom.keys()) {
+        if (!activeRoomCodes.has(roomCode)) {
+            roomConfiguredEntryFeeByRoom.delete(roomCode);
+        }
+    }
+}
+function syncSchedulerStateAfterCandySettingsChange(previous) {
+    const autoStartToggled = previous.autoRoundStartEnabled !== runtimeCandyManiaSettings.autoRoundStartEnabled;
+    const roundIntervalChanged = previous.autoRoundStartIntervalMs !== runtimeCandyManiaSettings.autoRoundStartIntervalMs;
+    const autoDrawToggled = previous.autoDrawEnabled !== runtimeCandyManiaSettings.autoDrawEnabled;
+    if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
+        nextAutoStartAtByRoom.clear();
+    }
+    if (!runtimeCandyManiaSettings.autoDrawEnabled) {
+        lastAutoDrawAtByRoom.clear();
+    }
+    if (runtimeCandyManiaSettings.autoRoundStartEnabled && (autoStartToggled || roundIntervalChanged)) {
+        const nowMs = Date.now();
+        for (const roomCode of engine.getAllRoomCodes()) {
+            setNextRoundForRoom(roomCode, nowMs);
+        }
+    }
+    if (autoDrawToggled && runtimeCandyManiaSettings.autoDrawEnabled) {
+        lastAutoDrawAtByRoom.clear();
+    }
+}
+async function applyPendingCandyManiaSettingsIfDue(nowMs, summaries) {
+    if (!pendingCandyManiaSettingsUpdate) {
+        return false;
+    }
+    if (pendingCandyManiaSettingsUpdate.effectiveFromMs > nowMs) {
+        return false;
+    }
+    if (hasAnyRunningCandyManiaRound(summaries)) {
+        return false;
+    }
+    const previous = { ...runtimeCandyManiaSettings };
+    const previousEffectiveFromMs = candyManiaSettingsEffectiveFromMs;
+    const pendingToApply = {
+        effectiveFromMs: pendingCandyManiaSettingsUpdate.effectiveFromMs,
+        settings: { ...pendingCandyManiaSettingsUpdate.settings }
+    };
+    pendingCandyManiaSettingsUpdate = null;
+    Object.assign(runtimeCandyManiaSettings, pendingToApply.settings);
+    candyManiaSettingsEffectiveFromMs = pendingToApply.effectiveFromMs;
+    syncSchedulerStateAfterCandySettingsChange(previous);
+    try {
+        await persistCandyManiaSettingsToCatalog({
+            source: "CANDY_SETTINGS_AUTO_APPLY",
+            effectiveFromMs: pendingToApply.effectiveFromMs
+        });
+    }
+    catch (error) {
+        Object.assign(runtimeCandyManiaSettings, previous);
+        candyManiaSettingsEffectiveFromMs = previousEffectiveFromMs;
+        pendingCandyManiaSettingsUpdate = pendingToApply;
+        syncSchedulerStateAfterCandySettingsChange(pendingToApply.settings);
+        throw error;
+    }
+    await emitManyRoomUpdates(engine.getAllRoomCodes());
+    return true;
+}
+async function processAutoStart(summary, now) {
+    const roomCode = summary.code;
+    if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
+        nextAutoStartAtByRoom.delete(roomCode);
+        return;
+    }
+    const scheduledStartAt = normalizeRoomNextAutoStartAt(roomCode, now);
+    if (summary.gameStatus === "RUNNING") {
+        if (scheduledStartAt <= now) {
+            setNextRoundForRoom(roomCode, now);
+        }
+        return;
+    }
+    if (summary.playerCount < runtimeCandyManiaSettings.autoRoundMinPlayers) {
+        if (scheduledStartAt <= now) {
+            setNextRoundForRoom(roomCode, now);
+        }
+        return;
+    }
+    if (now < scheduledStartAt) {
+        return;
+    }
+    await withRoomSchedulerLock(roomCode, async () => {
+        const latestSnapshot = engine.getRoomSnapshot(roomCode);
+        if (latestSnapshot.currentGame?.status === "RUNNING") {
+            setNextRoundForRoom(roomCode, Date.now());
+            return;
+        }
+        if (latestSnapshot.players.length < runtimeCandyManiaSettings.autoRoundMinPlayers) {
+            setNextRoundForRoom(roomCode, Date.now());
+            return;
+        }
+        try {
+            await engine.startGame({
+                roomCode,
+                actorPlayerId: latestSnapshot.hostPlayerId,
+                entryFee: getRoomConfiguredEntryFee(roomCode),
+                ticketsPerPlayer: runtimeCandyManiaSettings.autoRoundTicketsPerPlayer,
+                payoutPercent: runtimeCandyManiaSettings.payoutPercent
+            });
+        }
+        catch (error) {
+            if (error instanceof DomainError &&
+                (error.code === "PLAYER_ALREADY_IN_RUNNING_GAME" ||
+                    error.code === "ROUND_START_TOO_SOON" ||
+                    error.code === "NOT_ENOUGH_PLAYERS")) {
+                setNextRoundForRoom(roomCode, Date.now());
+                return;
+            }
+            throw error;
+        }
+        setNextRoundForRoom(roomCode, Date.now());
+        lastAutoDrawAtByRoom.delete(roomCode);
+        await emitRoomUpdate(roomCode);
+    });
+}
+async function processAutoDraw(summary, now) {
+    const roomCode = summary.code;
+    if (!runtimeCandyManiaSettings.autoDrawEnabled || summary.gameStatus !== "RUNNING") {
+        lastAutoDrawAtByRoom.delete(roomCode);
+        return;
+    }
+    const lastDrawAt = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
+    if (now - lastDrawAt < runtimeCandyManiaSettings.autoDrawIntervalMs) {
+        return;
+    }
+    await withRoomSchedulerLock(roomCode, async () => {
+        const latestSnapshot = engine.getRoomSnapshot(roomCode);
+        if (latestSnapshot.currentGame?.status !== "RUNNING") {
+            lastAutoDrawAtByRoom.delete(roomCode);
+            return;
+        }
+        const refreshedLastDrawAt = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
+        const currentNow = Date.now();
+        if (currentNow - refreshedLastDrawAt < runtimeCandyManiaSettings.autoDrawIntervalMs) {
+            return;
+        }
+        try {
+            const number = await engine.drawNextNumber({
+                roomCode,
+                actorPlayerId: latestSnapshot.hostPlayerId
+            });
+            io.to(roomCode).emit("draw:new", { number, source: "auto" });
+        }
+        catch (error) {
+            if (!(error instanceof DomainError) || error.code !== "NO_MORE_NUMBERS") {
+                throw error;
+            }
+        }
+        finally {
+            lastAutoDrawAtByRoom.set(roomCode, currentNow);
+        }
+        await emitRoomUpdate(roomCode);
+    });
+}
+async function runSchedulerTick() {
+    if (schedulerTickInProgress) {
+        return;
+    }
+    schedulerTickInProgress = true;
+    try {
+        const now = Date.now();
+        let summaries = engine.listRoomSummaries();
+        if (await applyPendingCandyManiaSettingsIfDue(now, summaries)) {
+            summaries = engine.listRoomSummaries();
+        }
+        const schedulerSummaries = selectCanonicalCandyRoomSummariesByHall(summaries);
+        cleanupSchedulerState(new Set(schedulerSummaries.map((summary) => summary.code)));
+        for (const summary of schedulerSummaries) {
+            try {
+                await processAutoStart(summary, now);
+                await processAutoDraw(summary, now);
+            }
+            catch (error) {
+                console.error(`[scheduler] room ${summary.code} feilet`, error);
+            }
+        }
+    }
+    finally {
+        schedulerTickInProgress = false;
+    }
+}
+const scheduler = setInterval(() => {
+    runSchedulerTick().catch((error) => {
+        console.error("[scheduler] uventet feil", error);
+    });
+}, schedulerTickMs);
+scheduler.unref();
+function formatDateKeyLocal(reference) {
+    const year = reference.getFullYear();
+    const month = String(reference.getMonth() + 1).padStart(2, "0");
+    const day = String(reference.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+}
+function yesterdayDateKeyLocal(nowMs) {
+    const now = new Date(nowMs);
+    const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    return formatDateKeyLocal(yesterday);
+}
+let lastDailyReportDateKey = "";
+async function runDailyReportSchedulerTick(nowMs) {
+    const dateKey = yesterdayDateKeyLocal(nowMs);
+    if (dateKey === lastDailyReportDateKey) {
+        return;
+    }
+    const report = engine.runDailyReportJob({ date: dateKey });
+    lastDailyReportDateKey = dateKey;
+    console.log(`[daily-report] generated date=${report.date} rows=${report.rows.length} turnover=${report.totals.grossTurnover} prizes=${report.totals.prizesPaid}`);
+}
+if (dailyReportJobEnabled) {
+    runDailyReportSchedulerTick(Date.now()).catch((error) => {
+        console.error("[daily-report] initial run feilet", error);
+    });
+    const reportScheduler = setInterval(() => {
+        runDailyReportSchedulerTick(Date.now()).catch((error) => {
+            console.error("[daily-report] scheduler feilet", error);
+        });
+    }, dailyReportJobIntervalMs);
+    reportScheduler.unref();
+}
+app.post("/api/auth/register", async (req, res) => {
+    try {
+        const email = mustBeNonEmptyString(req.body?.email, "email");
+        const password = mustBeNonEmptyString(req.body?.password, "password");
+        const displayName = mustBeNonEmptyString(req.body?.displayName, "displayName");
+        const session = await platformService.register({
+            email,
+            password,
+            displayName
+        });
+        apiSuccess(res, session);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/auth/login", async (req, res) => {
+    try {
+        const email = mustBeNonEmptyString(req.body?.email, "email");
+        const password = mustBeNonEmptyString(req.body?.password, "password");
+        const session = await platformService.login({
+            email,
+            password
+        });
+        apiSuccess(res, session);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/auth/login", async (req, res) => {
+    try {
+        const email = mustBeNonEmptyString(req.body?.email, "email");
+        const password = mustBeNonEmptyString(req.body?.password, "password");
+        const session = await platformService.login({
+            email,
+            password
+        });
+        if (!canAccessAdminPermission(session.user.role, "ADMIN_PANEL_ACCESS")) {
+            await platformService.logout(session.accessToken);
+            throw new DomainError("FORBIDDEN", `Rollen ${session.user.role} har ikke tilgang til admin-panelet.`);
+        }
+        apiSuccess(res, session);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/auth/logout", async (req, res) => {
+    try {
+        const accessToken = getAccessTokenFromRequest(req);
+        await platformService.logout(accessToken);
+        apiSuccess(res, { loggedOut: true });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/auth/logout", async (req, res) => {
+    try {
+        await requireAdminPanelUser(req);
+        const accessToken = getAccessTokenFromRequest(req);
+        await platformService.logout(accessToken);
+        apiSuccess(res, { loggedOut: true });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/auth/me", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        apiSuccess(res, user);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/auth/me", async (req, res) => {
+    try {
+        const user = await requireAdminPanelUser(req);
+        apiSuccess(res, user);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/permissions", async (req, res) => {
+    try {
+        const user = await requireAdminPanelUser(req);
+        apiSuccess(res, buildAdminPermissionResponse(user));
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/users/:userId/role", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "USER_ROLE_WRITE");
+        const userId = mustBeNonEmptyString(req.params.userId, "userId");
+        const role = parseUserRoleInput(req.body?.role);
+        const updated = await platformService.updateUserRole(userId, role);
+        apiSuccess(res, updated);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/kyc/me", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        apiSuccess(res, {
+            userId: user.id,
+            status: user.kycStatus,
+            birthDate: user.birthDate,
+            verifiedAt: user.kycVerifiedAt,
+            providerReference: user.kycProviderRef
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/kyc/verify", async (req, res) => {
+    try {
+        const accessToken = getAccessTokenFromRequest(req);
+        const user = await platformService.getUserFromAccessToken(accessToken);
+        await platformService.submitKycVerification({
+            userId: user.id,
+            birthDate: mustBeNonEmptyString(req.body?.birthDate, "birthDate"),
+            nationalId: typeof req.body?.nationalId === "string" ? req.body.nationalId : undefined
+        });
+        const refreshedUser = await platformService.getUserFromAccessToken(accessToken);
+        apiSuccess(res, {
+            user: refreshedUser
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/games", async (req, res) => {
+    try {
+        await getAuthenticatedUser(req);
+        const games = await platformService.listGames({ includeDisabled: false });
+        apiSuccess(res, games);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/games/candy/launch-token", async (req, res) => {
+    try {
+        const accessToken = getAccessTokenFromRequest(req);
+        const user = await platformService.getUserFromAccessToken(accessToken);
+        platformService.assertUserEligibleForGameplay(user);
+        engine.assertWalletAllowedForGameplay(user.walletId);
+        const launchSettings = await getCandyLaunchSettingsForRuntime(true);
+        const hallId = await resolveCandyLaunchHallId(req.body?.hallId);
+        const apiBaseUrl = launchSettings.apiBaseUrl || deriveRequestApiBaseUrl(req);
+        const issued = candyLaunchTokenStore.issue({
+            accessToken,
+            hallId,
+            playerName: user.displayName,
+            walletId: user.walletId,
+            apiBaseUrl
+        });
+        apiSuccess(res, {
+            launchToken: issued.launchToken,
+            issuedAt: issued.issuedAt,
+            expiresAt: issued.expiresAt,
+            launchUrl: launchSettings.launchUrl
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/games/candy/launch-resolve", async (req, res) => {
+    try {
+        const launchToken = mustBeNonEmptyString(req.body?.launchToken, "launchToken");
+        const resolved = candyLaunchTokenStore.consume(launchToken);
+        if (!resolved) {
+            throw new DomainError("INVALID_LAUNCH_TOKEN", "Launch-token er ugyldig eller utløpt. Start spillet på nytt fra portalen.");
+        }
+        apiSuccess(res, resolved);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+// ── Integration launch (provider → CandyWeb) ──────────────────────────
+app.post("/api/integration/launch", async (req, res) => {
+    try {
+        if (!integrationLaunchHandler) {
+            throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+        }
+        integrationLaunchHandler.validateApiKey(req.headers["x-api-key"]);
+        const result = await integrationLaunchHandler.launch(req.body ?? {});
+        apiSuccess(res, result);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+// ── Integration: session lifecycle (BIN-29) ─────────────────────────────
+app.post("/api/integration/session/kill", async (req, res) => {
+    try {
+        if (!integrationLaunchHandler) {
+            throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+        }
+        integrationLaunchHandler.validateApiKey(req.headers["x-api-key"]);
+        const { playerId, provider } = req.body ?? {};
+        if (!playerId || typeof playerId !== "string") {
+            throw new DomainError("INVALID_INPUT", "playerId mangler.");
+        }
+        const result = await integrationLaunchHandler.killSession(playerId, provider);
+        apiSuccess(res, result);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/integration/session/refresh", async (req, res) => {
+    try {
+        if (!integrationLaunchHandler) {
+            throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+        }
+        integrationLaunchHandler.validateApiKey(req.headers["x-api-key"]);
+        const { playerId, extensionMinutes, provider } = req.body ?? {};
+        if (!playerId || typeof playerId !== "string") {
+            throw new DomainError("INVALID_INPUT", "playerId mangler.");
+        }
+        const result = await integrationLaunchHandler.refreshSession(playerId, extensionMinutes, provider);
+        apiSuccess(res, result);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+// ── Integration admin: active sessions (BIN-29) ────────────────────────
+app.get("/api/admin/integration/sessions", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "INTEGRATION_READ");
+        if (!integrationLaunchHandler) {
+            throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+        }
+        const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+        const offset = parseInt(req.query.offset, 10) || 0;
+        const result = await integrationLaunchHandler.listActiveSessions({ limit, offset });
+        apiSuccess(res, result);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+// ── Integration admin: player mappings (BIN-30) ────────────────────────
+app.get("/api/admin/integration/mappings", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "INTEGRATION_READ");
+        if (!integrationLaunchHandler) {
+            throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+        }
+        const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+        const offset = parseInt(req.query.offset, 10) || 0;
+        const provider = req.query.provider?.trim() || undefined;
+        const result = await integrationLaunchHandler.listMappings({ limit, offset, provider });
+        apiSuccess(res, result);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/integration/mappings/:provider/:externalPlayerId", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "INTEGRATION_READ");
+        if (!integrationLaunchHandler) {
+            throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+        }
+        const mapping = await integrationLaunchHandler.getMapping(req.params.provider, req.params.externalPlayerId);
+        if (!mapping) {
+            throw new DomainError("NOT_FOUND", "Spillerkobling ikke funnet.");
+        }
+        apiSuccess(res, mapping);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+// ── Integration: provider statistics API (BIN-36) ──────────────────────
+app.get("/api/integration/statistics", async (req, res) => {
+    try {
+        if (!integrationLaunchHandler) {
+            throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+        }
+        integrationLaunchHandler.validateApiKey(req.headers["x-api-key"]);
+        const date = typeof req.query.date === "string" ? req.query.date.trim() : new Date().toISOString().slice(0, 10);
+        const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+        const report = engine.generateDailyReport({ date, hallId });
+        const rtp = report.totals.grossTurnover > 0
+            ? (report.totals.prizesPaid / report.totals.grossTurnover) * 100
+            : 0;
+        apiSuccess(res, {
+            date: report.date,
+            generatedAt: report.generatedAt,
+            summary: {
+                grossTurnover: report.totals.grossTurnover,
+                prizesPaid: report.totals.prizesPaid,
+                netRevenue: report.totals.net,
+                rtpPercent: Math.round(rtp * 100) / 100,
+                totalRounds: report.totals.stakeCount,
+                prizeEvents: report.totals.prizeCount
+            },
+            breakdown: report.rows.map((row) => ({
+                hallId: row.hallId,
+                gameType: row.gameType,
+                channel: row.channel,
+                grossTurnover: row.grossTurnover,
+                prizesPaid: row.prizesPaid,
+                netRevenue: row.net,
+                rtpPercent: row.grossTurnover > 0
+                    ? Math.round((row.prizesPaid / row.grossTurnover) * 10000) / 100
+                    : 0,
+                roundCount: row.stakeCount,
+                prizeCount: row.prizeCount
+            }))
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+// ── Integration admin: webhook delivery log (BIN-34) ───────────────────
+app.get("/api/admin/integration/webhooks", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "INTEGRATION_READ");
+        if (!webhookService) {
+            throw new DomainError("INTEGRATION_DISABLED", "Webhook-service er ikke aktivert.");
+        }
+        const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+        apiSuccess(res, { deliveries: webhookService.getRecentDeliveries(limit) });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+// ── Integration admin: reconciliation (BIN-27) ─────────────────────────
+app.post("/api/admin/integration/reconciliation/run", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "INTEGRATION_READ");
+        if (!reconciliationService) {
+            throw new DomainError("INTEGRATION_DISABLED", "Reconciliation er ikke tilgjengelig.");
+        }
+        const hours = Math.min(parseInt(req.body?.hours, 10) || 24, 168);
+        const report = await reconciliationService.reconcileLastHours(hours);
+        apiSuccess(res, report);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/integration/reconciliation/reports", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "INTEGRATION_READ");
+        if (!reconciliationService) {
+            throw new DomainError("INTEGRATION_DISABLED", "Reconciliation er ikke tilgjengelig.");
+        }
+        apiSuccess(res, { reports: reconciliationService.getReports() });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/integration/reconciliation/latest", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "INTEGRATION_READ");
+        if (!reconciliationService) {
+            throw new DomainError("INTEGRATION_DISABLED", "Reconciliation er ikke tilgjengelig.");
+        }
+        const report = reconciliationService.getLatestReport();
+        if (!report) {
+            throw new DomainError("NOT_FOUND", "Ingen reconciliation-rapport funnet. Kjør en rapport først.");
+        }
+        apiSuccess(res, report);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+// ── BIN-120: Integration health-check endpoint ─────────────────────────
+app.get("/api/integration/health", async (req, res) => {
+    try {
+        if (!integrationLaunchHandler) {
+            throw new DomainError("INTEGRATION_DISABLED", "Integrasjonsmodus er ikke aktivert.");
+        }
+        integrationLaunchHandler.validateApiKey(req.headers["x-api-key"]);
+        const health = {
+            status: "ok",
+            timestamp: new Date().toISOString(),
+            integration: { enabled: true },
+            wallet: {
+                provider: walletRuntime.provider,
+                status: "unknown",
+            },
+            webhook: {
+                configured: !!webhookService,
+                recentDeliveries: webhookService ? webhookService.getRecentDeliveries(5).length : 0,
+            },
+            reconciliation: {
+                configured: !!reconciliationService,
+                latestReport: reconciliationService ? reconciliationService.getLatestReport()?.status ?? "no_reports" : "disabled",
+            },
+        };
+        // Probe wallet health by fetching a dummy balance (catches circuit breaker state).
+        if (walletRuntime.provider === "external") {
+            try {
+                await walletAdapter.getBalance("__health-check__");
+                health.wallet.status = "ok";
+            }
+            catch (err) {
+                const walletErr = err;
+                health.wallet.status = "degraded";
+                health.wallet.error = walletErr.code ?? walletErr.message;
+                health.status = "degraded";
+            }
+        }
+        else {
+            health.wallet.status = "ok";
+        }
+        apiSuccess(res, health);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/games", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "GAME_CATALOG_READ");
+        const games = await platformService.listGames({ includeDisabled: true });
+        apiSuccess(res, games);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/settings/catalog", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "GAME_CATALOG_READ");
+        const games = await platformService.listGames({ includeDisabled: true });
+        apiSuccess(res, buildAdminSettingsCatalogResponse(games));
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/settings/games/:slug", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "GAME_CATALOG_READ");
+        const slug = mustBeNonEmptyString(req.params.slug, "slug");
+        const game = await platformService.getGame(slug);
+        apiSuccess(res, buildAdminGameSettingsResponse(game));
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/settings/games/:slug", async (req, res) => {
+    try {
+        const adminUser = await requireAdminPermissionUser(req, "GAME_CATALOG_WRITE");
+        const slug = mustBeNonEmptyString(req.params.slug, "slug");
+        const normalizedSlug = slug.trim().toLowerCase();
+        const { settings, effectiveFromMs } = extractAdminGameSettingsPayload(req.body);
+        if (normalizedSlug !== "candy") {
+            const updated = await platformService.updateGame(slug, {
+                settings: normalizeGameSettingsForUpdate(slug, settings)
+            }, {
+                changedBy: {
+                    userId: adminUser.id,
+                    displayName: adminUser.displayName,
+                    role: adminUser.role
+                },
+                source: "ADMIN_TYPED_GAME_SETTINGS_WRITE",
+                effectiveFrom: effectiveFromMs !== undefined
+                    ? new Date(effectiveFromMs).toISOString()
+                    : new Date().toISOString()
+            });
+            apiSuccess(res, buildAdminGameSettingsResponse(updated));
+            return;
+        }
+        const patch = parseCandyManiaSettingsPatch(settings);
+        const nowMs = Date.now();
+        const wantsFutureActivation = effectiveFromMs !== undefined && effectiveFromMs > nowMs;
+        if (wantsFutureActivation) {
+            const baseSettings = pendingCandyManiaSettingsUpdate?.settings ?? runtimeCandyManiaSettings;
+            const scheduledSettings = normalizeCandyManiaSchedulerSettings(baseSettings, patch);
+            pendingCandyManiaSettingsUpdate = {
+                effectiveFromMs,
+                settings: scheduledSettings
+            };
+            await persistCandyManiaSettingsToCatalog({
+                changedBy: {
+                    userId: adminUser.id,
+                    displayName: adminUser.displayName,
+                    role: adminUser.role
+                },
+                source: "ADMIN_TYPED_CANDY_SETTINGS_SCHEDULED",
+                effectiveFromMs
+            });
+            const refreshed = await platformService.getGame("candy");
+            apiSuccess(res, buildAdminGameSettingsResponse(refreshed));
+            return;
+        }
+        const runningSummaries = engine.listRoomSummaries();
+        if (Object.keys(patch).length > 0 && hasAnyRunningCandyManiaRound(runningSummaries)) {
+            throw new DomainError("CANDY_SETTINGS_LOCKED_DURING_RUNNING_GAME", "Kan ikke endre Candy-innstillinger mens en runde kjører. Bruk effectiveFrom for planlagt aktivering.");
+        }
+        const previous = { ...runtimeCandyManiaSettings };
+        const previousEffectiveFromMs = candyManiaSettingsEffectiveFromMs;
+        const previousPending = pendingCandyManiaSettingsUpdate
+            ? { ...pendingCandyManiaSettingsUpdate, settings: { ...pendingCandyManiaSettingsUpdate.settings } }
+            : null;
+        const next = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+        pendingCandyManiaSettingsUpdate = null;
+        Object.assign(runtimeCandyManiaSettings, next);
+        candyManiaSettingsEffectiveFromMs = effectiveFromMs ?? nowMs;
+        syncSchedulerStateAfterCandySettingsChange(previous);
+        try {
+            await persistCandyManiaSettingsToCatalog({
+                changedBy: {
+                    userId: adminUser.id,
+                    displayName: adminUser.displayName,
+                    role: adminUser.role
+                },
+                source: "ADMIN_TYPED_CANDY_SETTINGS_APPLIED",
+                effectiveFromMs: candyManiaSettingsEffectiveFromMs
+            });
+        }
+        catch (error) {
+            Object.assign(runtimeCandyManiaSettings, previous);
+            candyManiaSettingsEffectiveFromMs = previousEffectiveFromMs;
+            pendingCandyManiaSettingsUpdate = previousPending;
+            syncSchedulerStateAfterCandySettingsChange(next);
+            throw error;
+        }
+        await emitManyRoomUpdates(engine.getAllRoomCodes());
+        const refreshed = await platformService.getGame("candy");
+        apiSuccess(res, buildAdminGameSettingsResponse(refreshed));
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/game-settings/change-log", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "GAME_SETTINGS_CHANGELOG_READ");
+        const gameSlug = typeof req.query.gameSlug === "string" ? req.query.gameSlug.trim() : undefined;
+        const limit = parseLimit(req.query.limit, 50);
+        const log = await platformService.listGameSettingsChangeLog({
+            gameSlug: gameSlug || undefined,
+            limit
+        });
+        apiSuccess(res, log);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/games/:slug", async (req, res) => {
+    try {
+        const adminUser = await requireAdminPermissionUser(req, "GAME_CATALOG_WRITE");
+        const slug = mustBeNonEmptyString(req.params.slug, "slug");
+        const normalizedSlug = slug.trim().toLowerCase();
+        const rawSettings = req.body?.settings && typeof req.body.settings === "object" && !Array.isArray(req.body.settings)
+            ? req.body.settings
+            : undefined;
+        if (normalizedSlug === "candy" && rawSettings) {
+            const candySettingsPatch = parseCandyManiaSettingsPatch(rawSettings);
+            if (Object.keys(candySettingsPatch).length > 0 && hasAnyRunningCandyManiaRound()) {
+                throw new DomainError("CANDY_SETTINGS_LOCKED_DURING_RUNNING_GAME", "Kan ikke endre Candy-innstillinger mens en runde kjører. Bruk Candy Mania-panelet med effectiveFrom.");
+            }
+        }
+        const updated = await platformService.updateGame(slug, {
+            title: typeof req.body?.title === "string" ? req.body.title : undefined,
+            description: typeof req.body?.description === "string" ? req.body.description : undefined,
+            route: typeof req.body?.route === "string" ? req.body.route : undefined,
+            isEnabled: typeof req.body?.isEnabled === "boolean" ? req.body.isEnabled : undefined,
+            sortOrder: Number.isFinite(req.body?.sortOrder) ? Number(req.body.sortOrder) : undefined,
+            settings: normalizeGameSettingsForUpdate(slug, rawSettings, {
+                requireCandyLaunchUrl: normalizedSlug === "candy"
+            })
+        }, {
+            changedBy: {
+                userId: adminUser.id,
+                displayName: adminUser.displayName,
+                role: adminUser.role
+            },
+            source: "ADMIN_GAME_CATALOG_WRITE",
+            effectiveFrom: new Date().toISOString()
+        });
+        if (normalizedSlug === "candy") {
+            const previous = { ...runtimeCandyManiaSettings };
+            const patch = readCandyManiaSettingsFromRecord(updated.settings);
+            const next = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+            pendingCandyManiaSettingsUpdate = null;
+            Object.assign(runtimeCandyManiaSettings, next);
+            candyManiaSettingsEffectiveFromMs = Date.now();
+            syncSchedulerStateAfterCandySettingsChange(previous);
+            await persistCandyManiaSettingsToCatalog({
+                changedBy: {
+                    userId: adminUser.id,
+                    displayName: adminUser.displayName,
+                    role: adminUser.role
+                },
+                source: "ADMIN_CANDY_SYNC_AFTER_GAME_WRITE",
+                effectiveFromMs: candyManiaSettingsEffectiveFromMs
+            });
+        }
+        apiSuccess(res, updated);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/halls", async (req, res) => {
+    try {
+        await getAuthenticatedUser(req);
+        const halls = await platformService.listHalls({ includeInactive: false });
+        apiSuccess(res, halls);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/halls", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "HALL_READ");
+        const includeInactive = parseBooleanQueryValue(req.query.includeInactive, true);
+        const halls = await platformService.listHalls({ includeInactive });
+        apiSuccess(res, halls);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/halls", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "HALL_WRITE");
+        const hall = await platformService.createHall({
+            slug: mustBeNonEmptyString(req.body?.slug, "slug"),
+            name: mustBeNonEmptyString(req.body?.name, "name"),
+            region: typeof req.body?.region === "string" ? req.body.region : undefined,
+            address: typeof req.body?.address === "string" ? req.body.address : undefined,
+            isActive: typeof req.body?.isActive === "boolean" ? req.body.isActive : undefined
+        });
+        apiSuccess(res, hall);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/halls/:hallId", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "HALL_WRITE");
+        const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+        const hall = await platformService.updateHall(hallId, {
+            slug: typeof req.body?.slug === "string" ? req.body.slug : undefined,
+            name: typeof req.body?.name === "string" ? req.body.name : undefined,
+            region: typeof req.body?.region === "string" ? req.body.region : undefined,
+            address: typeof req.body?.address === "string" ? req.body.address : undefined,
+            isActive: typeof req.body?.isActive === "boolean" ? req.body.isActive : undefined
+        });
+        apiSuccess(res, hall);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/terminals", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "TERMINAL_READ");
+        const includeInactive = parseBooleanQueryValue(req.query.includeInactive, true);
+        const hallId = typeof req.query.hallId === "string" ? req.query.hallId : undefined;
+        const terminals = await platformService.listTerminals({
+            hallId,
+            includeInactive
+        });
+        apiSuccess(res, terminals);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/terminals", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "TERMINAL_WRITE");
+        const terminalCode = mustBeNonEmptyString(req.body?.terminalCode, "terminalCode");
+        const displayName = typeof req.body?.displayName === "string" && req.body.displayName.trim()
+            ? req.body.displayName
+            : terminalCode;
+        const terminal = await platformService.createTerminal({
+            hallId: mustBeNonEmptyString(req.body?.hallId, "hallId"),
+            terminalCode,
+            displayName,
+            isActive: typeof req.body?.isActive === "boolean" ? req.body.isActive : undefined
+        });
+        apiSuccess(res, terminal);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/terminals/:terminalId", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "TERMINAL_WRITE");
+        const terminalId = mustBeNonEmptyString(req.params.terminalId, "terminalId");
+        const terminal = await platformService.updateTerminal(terminalId, {
+            terminalCode: typeof req.body?.terminalCode === "string" ? req.body.terminalCode : undefined,
+            displayName: typeof req.body?.displayName === "string" ? req.body.displayName : undefined,
+            isActive: typeof req.body?.isActive === "boolean" ? req.body.isActive : undefined,
+            lastSeenAt: typeof req.body?.lastSeenAt === "string" ? req.body.lastSeenAt : undefined
+        });
+        apiSuccess(res, terminal);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/halls/:hallId/game-config", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "HALL_GAME_CONFIG_READ");
+        const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+        const includeDisabled = parseBooleanQueryValue(req.query.includeDisabled, true);
+        const configs = await platformService.listHallGameConfigs({
+            hallId,
+            includeDisabled
+        });
+        apiSuccess(res, configs);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/halls/:hallId/game-config/:gameSlug", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "HALL_GAME_CONFIG_WRITE");
+        const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+        const gameSlug = mustBeNonEmptyString(req.params.gameSlug, "gameSlug");
+        const maxTicketsPerPlayer = parseOptionalInteger(req.body?.maxTicketsPerPlayer, "maxTicketsPerPlayer");
+        const minRoundIntervalMs = parseOptionalInteger(req.body?.minRoundIntervalMs, "minRoundIntervalMs");
+        const config = await platformService.upsertHallGameConfig({
+            hallId,
+            gameSlug,
+            isEnabled: typeof req.body?.isEnabled === "boolean" ? req.body.isEnabled : undefined,
+            maxTicketsPerPlayer: maxTicketsPerPlayer !== undefined ? Number(maxTicketsPerPlayer) : undefined,
+            minRoundIntervalMs: minRoundIntervalMs !== undefined ? Number(minRoundIntervalMs) : undefined
+        });
+        apiSuccess(res, config);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/candy-mania/settings", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
+        apiSuccess(res, getCandyManiaAdminSettingsResponse());
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/candy-mania/settings", async (req, res) => {
+    try {
+        const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+        const patch = parseCandyManiaSettingsPatch(req.body);
+        const effectiveFromMs = parseOptionalIsoTimestampMs(req.body?.effectiveFrom, "effectiveFrom");
+        const nowMs = Date.now();
+        const wantsFutureActivation = effectiveFromMs !== undefined && effectiveFromMs > nowMs;
+        if (wantsFutureActivation) {
+            const baseSettings = pendingCandyManiaSettingsUpdate?.settings ?? runtimeCandyManiaSettings;
+            const scheduledSettings = normalizeCandyManiaSchedulerSettings(baseSettings, patch);
+            pendingCandyManiaSettingsUpdate = {
+                effectiveFromMs,
+                settings: scheduledSettings
+            };
+            await persistCandyManiaSettingsToCatalog({
+                changedBy: {
+                    userId: adminUser.id,
+                    displayName: adminUser.displayName,
+                    role: adminUser.role
+                },
+                source: "ADMIN_CANDY_SETTINGS_SCHEDULED",
+                effectiveFromMs
+            });
+            apiSuccess(res, getCandyManiaAdminSettingsResponse());
+            return;
+        }
+        const runningSummaries = engine.listRoomSummaries();
+        if (hasAnyRunningCandyManiaRound(runningSummaries)) {
+            throw new DomainError("CANDY_SETTINGS_LOCKED_DURING_RUNNING_GAME", "Kan ikke endre Candy-innstillinger mens en runde kjører. Sett effectiveFrom i fremtiden.");
+        }
+        const previous = { ...runtimeCandyManiaSettings };
+        const previousEffectiveFromMs = candyManiaSettingsEffectiveFromMs;
+        const previousPending = pendingCandyManiaSettingsUpdate
+            ? { ...pendingCandyManiaSettingsUpdate, settings: { ...pendingCandyManiaSettingsUpdate.settings } }
+            : null;
+        const next = normalizeCandyManiaSchedulerSettings(runtimeCandyManiaSettings, patch);
+        pendingCandyManiaSettingsUpdate = null;
+        Object.assign(runtimeCandyManiaSettings, next);
+        candyManiaSettingsEffectiveFromMs = effectiveFromMs ?? nowMs;
+        syncSchedulerStateAfterCandySettingsChange(previous);
+        try {
+            await persistCandyManiaSettingsToCatalog({
+                changedBy: {
+                    userId: adminUser.id,
+                    displayName: adminUser.displayName,
+                    role: adminUser.role
+                },
+                source: "ADMIN_CANDY_SETTINGS_APPLIED",
+                effectiveFromMs: candyManiaSettingsEffectiveFromMs
+            });
+        }
+        catch (error) {
+            Object.assign(runtimeCandyManiaSettings, previous);
+            candyManiaSettingsEffectiveFromMs = previousEffectiveFromMs;
+            pendingCandyManiaSettingsUpdate = previousPending;
+            syncSchedulerStateAfterCandySettingsChange(next);
+            throw error;
+        }
+        await emitManyRoomUpdates(engine.getAllRoomCodes());
+        apiSuccess(res, getCandyManiaAdminSettingsResponse());
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/rooms", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
+        const includeSnapshots = parseBooleanQueryValue(req.query.includeSnapshots, false);
+        const rooms = engine.listRoomSummaries();
+        if (!includeSnapshots) {
+            apiSuccess(res, rooms);
+            return;
+        }
+        const detailed = rooms.map((room) => ({
+            ...room,
+            snapshot: buildRoomUpdatePayload(engine.getRoomSnapshot(room.code))
+        }));
+        apiSuccess(res, detailed);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/rooms/:roomCode", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
+        const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+        const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
+        apiSuccess(res, snapshot);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/rooms", async (req, res) => {
+    try {
+        const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+        const hallId = await requireActiveHallIdFromInput(req.body?.hallId);
+        const requestedHostName = typeof req.body?.hostName === "string" && req.body.hostName.trim().length > 0
+            ? req.body.hostName.trim()
+            : `${adminUser.displayName} (Host)`;
+        const requestedHostWalletId = typeof req.body?.hostWalletId === "string" && req.body.hostWalletId.trim().length > 0
+            ? req.body.hostWalletId.trim()
+            : `admin-host-${hallId}-${Date.now().toString(36)}`;
+        const { roomCode, playerId } = await engine.createRoom({
+            hallId,
+            playerName: requestedHostName,
+            walletId: requestedHostWalletId
+        });
+        const snapshot = await emitRoomUpdate(roomCode);
+        apiSuccess(res, {
+            roomCode,
+            playerId,
+            snapshot
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+        const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+        const entryFee = parseOptionalNonNegativeNumber(req.body?.entryFee, "entryFee") ?? getRoomConfiguredEntryFee(roomCode);
+        const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
+        const requestedTicketsPerPlayer = parseOptionalTicketsPerPlayerInput(req.body?.ticketsPerPlayer);
+        const ticketsPerPlayer = requestedTicketsPerPlayer ??
+            Math.min(hallGameConfig.maxTicketsPerPlayer, runtimeCandyManiaSettings.autoRoundTicketsPerPlayer);
+        assertTicketsPerPlayerWithinHallLimit(ticketsPerPlayer, hallGameConfig.maxTicketsPerPlayer);
+        const beforeStartSnapshot = engine.getRoomSnapshot(roomCode);
+        await engine.startGame({
+            roomCode,
+            actorPlayerId: beforeStartSnapshot.hostPlayerId,
+            entryFee,
+            ticketsPerPlayer,
+            payoutPercent: runtimeCandyManiaSettings.payoutPercent
+        });
+        const snapshot = await emitRoomUpdate(roomCode);
+        apiSuccess(res, {
+            roomCode,
+            snapshot
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/rooms/:roomCode/draw-next", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+        const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+        const snapshot = engine.getRoomSnapshot(roomCode);
+        const number = await engine.drawNextNumber({
+            roomCode,
+            actorPlayerId: snapshot.hostPlayerId
+        });
+        const updatedSnapshot = await emitRoomUpdate(roomCode);
+        apiSuccess(res, {
+            roomCode,
+            number,
+            snapshot: updatedSnapshot
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/rooms/:roomCode/end", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+        const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+        const beforeEndSnapshot = engine.getRoomSnapshot(roomCode);
+        await engine.endGame({
+            roomCode,
+            actorPlayerId: beforeEndSnapshot.hostPlayerId,
+            reason: typeof req.body?.reason === "string" ? req.body.reason : "Manual end from admin"
+        });
+        const snapshot = await emitRoomUpdate(roomCode);
+        apiSuccess(res, {
+            roomCode,
+            snapshot
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/wallet/me", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const account = await walletAdapter.getAccount(user.walletId);
+        const transactions = await walletAdapter.listTransactions(user.walletId, 20);
+        apiSuccess(res, { account, transactions });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/wallet/me/compliance", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+        const compliance = engine.getPlayerCompliance(user.walletId, hallId || undefined);
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/wallet/me/timed-pause", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const durationMinutes = parseOptionalPositiveInteger(req.body?.durationMinutes, "durationMinutes");
+        const compliance = engine.setTimedPause({
+            walletId: user.walletId,
+            durationMinutes: durationMinutes ?? 15
+        });
+        sendComplianceWebhook("compliance.timedPause", user.id, { durationMinutes: durationMinutes ?? 15 });
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.delete("/api/wallet/me/timed-pause", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const compliance = engine.clearTimedPause(user.walletId);
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/wallet/me/self-exclusion", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const compliance = engine.setSelfExclusion(user.walletId);
+        sendComplianceWebhook("compliance.selfExclusion", user.id, {});
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.delete("/api/wallet/me/self-exclusion", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const compliance = engine.clearSelfExclusion(user.walletId);
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/wallet/me/loss-limits", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const hallId = mustBeNonEmptyString(req.body?.hallId, "hallId");
+        const dailyLossLimit = parseOptionalNonNegativeNumber(req.body?.dailyLossLimit, "dailyLossLimit");
+        const monthlyLossLimit = parseOptionalNonNegativeNumber(req.body?.monthlyLossLimit, "monthlyLossLimit");
+        if (dailyLossLimit === undefined && monthlyLossLimit === undefined) {
+            throw new DomainError("INVALID_INPUT", "dailyLossLimit eller monthlyLossLimit må oppgis.");
+        }
+        const compliance = engine.setPlayerLossLimits({
+            walletId: user.walletId,
+            hallId,
+            daily: dailyLossLimit,
+            monthly: monthlyLossLimit
+        });
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/wallet/me/topup", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const amount = mustBePositiveAmount(req.body?.amount);
+        const provider = typeof req.body?.provider === "string" && req.body.provider.trim()
+            ? req.body.provider.trim().toLowerCase()
+            : "manual";
+        if (provider === "swedbank") {
+            throw new DomainError("SWEDBANK_FLOW_REQUIRED", "Bruk /api/payments/swedbank/topup-intent for Swedbank-betaling.");
+        }
+        const tx = await walletAdapter.topUp(user.walletId, amount, provider === "swedbank_simulated"
+            ? "Swedbank top-up (simulated)"
+            : "Manual top-up");
+        await emitWalletRoomUpdates([user.walletId]);
+        apiSuccess(res, {
+            provider,
+            transaction: tx
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/wallets/:walletId/compliance", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_READ");
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+        const compliance = engine.getPlayerCompliance(walletId, hallId || undefined);
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/wallets/:walletId/loss-limits", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const hallId = mustBeNonEmptyString(req.body?.hallId, "hallId");
+        const dailyLossLimit = parseOptionalNonNegativeNumber(req.body?.dailyLossLimit, "dailyLossLimit");
+        const monthlyLossLimit = parseOptionalNonNegativeNumber(req.body?.monthlyLossLimit, "monthlyLossLimit");
+        if (dailyLossLimit === undefined && monthlyLossLimit === undefined) {
+            throw new DomainError("INVALID_INPUT", "dailyLossLimit eller monthlyLossLimit må oppgis.");
+        }
+        const compliance = engine.setPlayerLossLimits({
+            walletId,
+            hallId,
+            daily: dailyLossLimit,
+            monthly: monthlyLossLimit
+        });
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/wallets/:walletId/timed-pause", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const durationMinutes = parseOptionalPositiveInteger(req.body?.durationMinutes, "durationMinutes");
+        const compliance = engine.setTimedPause({
+            walletId,
+            durationMinutes: durationMinutes ?? 15
+        });
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.delete("/api/admin/wallets/:walletId/timed-pause", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const compliance = engine.clearTimedPause(walletId);
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/wallets/:walletId/self-exclusion", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const compliance = engine.setSelfExclusion(walletId);
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.delete("/api/admin/wallets/:walletId/self-exclusion", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const compliance = engine.clearSelfExclusion(walletId);
+        apiSuccess(res, compliance);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/compliance/extra-draw-denials", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "EXTRA_DRAW_DENIALS_READ");
+        const limit = parseLimit(req.query.limit, 100);
+        apiSuccess(res, engine.listExtraDrawDenials(limit));
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/prize-policy/active", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "PRIZE_POLICY_READ");
+        const hallId = mustBeNonEmptyString(req.query.hallId, "hallId");
+        const linkId = typeof req.query.linkId === "string" ? req.query.linkId.trim() : undefined;
+        const at = typeof req.query.at === "string" ? req.query.at.trim() : undefined;
+        const policy = engine.getActivePrizePolicy({
+            hallId,
+            linkId,
+            gameType: "DATABINGO",
+            at
+        });
+        apiSuccess(res, policy);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.put("/api/admin/prize-policy", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "PRIZE_POLICY_WRITE");
+        const policy = engine.upsertPrizePolicy({
+            gameType: "DATABINGO",
+            hallId: typeof req.body?.hallId === "string" ? req.body.hallId : undefined,
+            linkId: typeof req.body?.linkId === "string" ? req.body.linkId : undefined,
+            effectiveFrom: mustBeNonEmptyString(req.body?.effectiveFrom, "effectiveFrom"),
+            singlePrizeCap: req.body?.singlePrizeCap === undefined
+                ? undefined
+                : parseOptionalNonNegativeNumber(req.body?.singlePrizeCap, "singlePrizeCap"),
+            dailyExtraPrizeCap: req.body?.dailyExtraPrizeCap === undefined
+                ? undefined
+                : parseOptionalNonNegativeNumber(req.body?.dailyExtraPrizeCap, "dailyExtraPrizeCap")
+        });
+        apiSuccess(res, policy);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/wallets/:walletId/extra-prize", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "EXTRA_PRIZE_AWARD");
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const hallId = mustBeNonEmptyString(req.body?.hallId, "hallId");
+        const amount = mustBePositiveAmount(req.body?.amount);
+        const linkId = typeof req.body?.linkId === "string" ? req.body.linkId : undefined;
+        const reason = typeof req.body?.reason === "string" ? req.body.reason : undefined;
+        const result = await engine.awardExtraPrize({
+            walletId,
+            hallId,
+            linkId,
+            amount,
+            reason
+        });
+        await emitWalletRoomUpdates([walletId]);
+        apiSuccess(res, result);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/payout-audit", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "PAYOUT_AUDIT_READ");
+        const limit = parseLimit(req.query.limit, 100);
+        const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+        const gameId = typeof req.query.gameId === "string" ? req.query.gameId.trim() : undefined;
+        const walletId = typeof req.query.walletId === "string" ? req.query.walletId.trim() : undefined;
+        const events = engine.listPayoutAuditTrail({
+            limit,
+            hallId,
+            gameId,
+            walletId
+        });
+        apiSuccess(res, events);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/ledger/entries", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "LEDGER_READ");
+        const limit = parseLimit(req.query.limit, 200);
+        const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : undefined;
+        const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : undefined;
+        const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+        const gameType = parseOptionalLedgerGameType(req.query.gameType);
+        const channel = parseOptionalLedgerChannel(req.query.channel);
+        const entries = engine.listComplianceLedgerEntries({
+            limit,
+            dateFrom,
+            dateTo,
+            hallId,
+            gameType,
+            channel
+        });
+        apiSuccess(res, entries);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/ledger/entries", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "LEDGER_WRITE");
+        const eventTypeRaw = mustBeNonEmptyString(req.body?.eventType, "eventType").toUpperCase();
+        if (eventTypeRaw !== "STAKE" && eventTypeRaw !== "PRIZE" && eventTypeRaw !== "EXTRA_PRIZE") {
+            throw new DomainError("INVALID_INPUT", "eventType må være STAKE, PRIZE eller EXTRA_PRIZE.");
+        }
+        const entry = engine.recordAccountingEvent({
+            hallId: mustBeNonEmptyString(req.body?.hallId, "hallId"),
+            gameType: parseOptionalLedgerGameType(req.body?.gameType) ?? "DATABINGO",
+            channel: parseOptionalLedgerChannel(req.body?.channel) ?? "INTERNET",
+            eventType: eventTypeRaw,
+            amount: mustBePositiveAmount(req.body?.amount),
+            metadata: req.body?.metadata && typeof req.body.metadata === "object" && !Array.isArray(req.body.metadata)
+                ? req.body.metadata
+                : undefined
+        });
+        apiSuccess(res, entry);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/reports/daily/run", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "DAILY_REPORT_RUN");
+        const date = typeof req.body?.date === "string" ? req.body.date.trim() : undefined;
+        const hallId = typeof req.body?.hallId === "string" ? req.body.hallId.trim() : undefined;
+        const gameType = parseOptionalLedgerGameType(req.body?.gameType);
+        const channel = parseOptionalLedgerChannel(req.body?.channel);
+        const report = engine.runDailyReportJob({
+            date,
+            hallId,
+            gameType,
+            channel
+        });
+        apiSuccess(res, report);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/reports/daily", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "DAILY_REPORT_READ");
+        const date = mustBeNonEmptyString(req.query.date, "date");
+        const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+        const gameType = parseOptionalLedgerGameType(req.query.gameType);
+        const channel = parseOptionalLedgerChannel(req.query.channel);
+        const format = typeof req.query.format === "string" ? req.query.format.trim().toLowerCase() : "json";
+        if (format === "csv") {
+            const csv = engine.exportDailyReportCsv({
+                date,
+                hallId,
+                gameType,
+                channel
+            });
+            res.setHeader("Content-Type", "text/csv; charset=utf-8");
+            res.setHeader("Content-Disposition", `attachment; filename="daily-report-${date}.csv"`);
+            res.status(200).send(csv);
+            return;
+        }
+        const report = engine.generateDailyReport({
+            date,
+            hallId,
+            gameType,
+            channel
+        });
+        apiSuccess(res, report);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/reports/daily/archive/:date", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "DAILY_REPORT_READ");
+        const date = mustBeNonEmptyString(req.params.date, "date");
+        const report = engine.getArchivedDailyReport(date);
+        if (!report) {
+            throw new DomainError("REPORT_NOT_FOUND", "Fant ikke arkivert dagsrapport for valgt dato.");
+        }
+        apiSuccess(res, report);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/admin/overskudd/distributions", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "OVERSKUDD_WRITE");
+        const date = mustBeNonEmptyString(req.body?.date, "date");
+        if (!Array.isArray(req.body?.allocations) || req.body.allocations.length === 0) {
+            throw new DomainError("INVALID_INPUT", "allocations må inneholde minst én rad.");
+        }
+        const allocations = req.body.allocations.map((allocation) => {
+            const typed = allocation;
+            return {
+                organizationId: mustBeNonEmptyString(typed?.organizationId, "organizationId"),
+                organizationAccountId: mustBeNonEmptyString(typed?.organizationAccountId, "organizationAccountId"),
+                sharePercent: Number(typed?.sharePercent)
+            };
+        });
+        const batch = await engine.createOverskuddDistributionBatch({
+            date,
+            allocations,
+            hallId: typeof req.body?.hallId === "string" ? req.body.hallId : undefined,
+            gameType: parseOptionalLedgerGameType(req.body?.gameType),
+            channel: parseOptionalLedgerChannel(req.body?.channel)
+        });
+        apiSuccess(res, batch);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/admin/overskudd/distributions/:batchId", async (req, res) => {
+    try {
+        await requireAdminPermissionUser(req, "OVERSKUDD_READ");
+        const batchId = mustBeNonEmptyString(req.params.batchId, "batchId");
+        const batch = engine.getOverskuddDistributionBatch(batchId);
+        apiSuccess(res, batch);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/payments/swedbank/topup-intent", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const amount = mustBePositiveAmount(req.body?.amount);
+        const intent = await swedbankPayService.createTopupIntent({
+            userId: user.id,
+            walletId: user.walletId,
+            amountMajor: amount,
+            userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : undefined
+        });
+        apiSuccess(res, intent);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/payments/swedbank/confirm", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const intentId = mustBeNonEmptyString(req.body?.intentId, "intentId");
+        const result = await swedbankPayService.reconcileIntentForUser(intentId, user.id);
+        if (result.walletCreditedNow) {
+            await emitWalletRoomUpdates([user.walletId]);
+        }
+        apiSuccess(res, result.intent);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/payments/swedbank/intents/:intentId", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const intentId = mustBeNonEmptyString(req.params.intentId, "intentId");
+        const shouldRefresh = parseBooleanEnv(typeof req.query.refresh === "string" ? req.query.refresh : undefined, false);
+        if (!shouldRefresh) {
+            const intent = await swedbankPayService.getIntentForUser(intentId, user.id);
+            apiSuccess(res, intent);
+            return;
+        }
+        const result = await swedbankPayService.reconcileIntentForUser(intentId, user.id);
+        if (result.walletCreditedNow) {
+            await emitWalletRoomUpdates([user.walletId]);
+        }
+        apiSuccess(res, result.intent);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/payments/swedbank/callback", async (req, res) => {
+    try {
+        const result = await swedbankPayService.processCallback(req.body);
+        if (result.walletCreditedNow) {
+            await emitWalletRoomUpdates([result.intent.walletId]);
+        }
+        res.status(200).json({ ok: true });
+    }
+    catch (error) {
+        console.error("[swedbank-callback] failed", error);
+        res.status(500).json({
+            ok: false,
+            error: toPublicError(error)
+        });
+    }
+});
+app.get("/health", async (_req, res) => {
+    try {
+        const wallets = await walletAdapter.listAccounts();
+        const games = await platformService.listGames({ includeDisabled: true });
+        const halls = await platformService.listHalls({ includeInactive: true });
+        apiSuccess(res, {
+            rooms: engine.getAllRoomCodes().length,
+            wallets: wallets.length,
+            games: games.length,
+            halls: halls.length,
+            walletProvider: walletRuntime.provider,
+            swedbankConfigured: swedbankPayService.isConfigured(),
+            timestamp: new Date().toISOString()
+        });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/rooms", (_req, res) => {
+    try {
+        apiSuccess(res, engine.listRoomSummaries());
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/rooms/:roomCode", (req, res) => {
+    try {
+        const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(req.params.roomCode));
+        apiSuccess(res, snapshot);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/rooms/:roomCode/game/end", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+        const actorPlayerId = mustBeNonEmptyString(req.body?.actorPlayerId, "actorPlayerId");
+        assertUserCanActAsPlayer(user, roomCode, actorPlayerId);
+        const reason = typeof req.body?.reason === "string" ? req.body.reason : undefined;
+        await engine.endGame({ roomCode, actorPlayerId, reason });
+        const snapshot = await emitRoomUpdate(roomCode);
+        apiSuccess(res, snapshot);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/rooms/:roomCode/game/extra-draw", async (req, res) => {
+    try {
+        const user = await getAuthenticatedUser(req);
+        const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+        const actorPlayerId = mustBeNonEmptyString(req.body?.actorPlayerId, "actorPlayerId");
+        assertUserCanActAsPlayer(user, roomCode, actorPlayerId);
+        engine.rejectExtraDrawPurchase({
+            source: "API",
+            roomCode,
+            playerId: actorPlayerId,
+            metadata: {
+                requestedCount: req.body?.requestedCount === undefined ? undefined : Number(req.body?.requestedCount),
+                packageId: typeof req.body?.packageId === "string" ? req.body.packageId : undefined
+            }
+        });
+        apiSuccess(res, { ok: true });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/wallets", async (req, res) => {
+    try {
+        const walletId = typeof req.body?.walletId === "string" ? req.body.walletId.trim() : undefined;
+        const initialBalance = parseOptionalNonNegativeAmount(req.body?.initialBalance, 1000);
+        const account = await walletAdapter.createAccount({
+            accountId: walletId || undefined,
+            initialBalance,
+            allowExisting: false
+        });
+        apiSuccess(res, account);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/wallets", async (_req, res) => {
+    try {
+        const accounts = await walletAdapter.listAccounts();
+        apiSuccess(res, accounts);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/wallets/:walletId", async (req, res) => {
+    try {
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const account = await walletAdapter.getAccount(walletId);
+        const transactions = await walletAdapter.listTransactions(walletId, 20);
+        apiSuccess(res, { account, transactions });
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.get("/api/wallets/:walletId/transactions", async (req, res) => {
+    try {
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const limit = parseLimit(req.query.limit, 100);
+        const transactions = await walletAdapter.listTransactions(walletId, limit);
+        apiSuccess(res, transactions);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/wallets/:walletId/topup", async (req, res) => {
+    try {
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const amount = mustBePositiveAmount(req.body?.amount);
+        const reason = typeof req.body?.reason === "string" ? req.body.reason : "Manual top-up";
+        const tx = await walletAdapter.topUp(walletId, amount, reason);
+        await emitWalletRoomUpdates([walletId]);
+        apiSuccess(res, tx);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/wallets/:walletId/withdraw", async (req, res) => {
+    try {
+        const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
+        const amount = mustBePositiveAmount(req.body?.amount);
+        const reason = typeof req.body?.reason === "string" ? req.body.reason : "Manual withdrawal";
+        const tx = await walletAdapter.withdraw(walletId, amount, reason);
+        await emitWalletRoomUpdates([walletId]);
+        apiSuccess(res, tx);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+app.post("/api/wallets/transfer", async (req, res) => {
+    try {
+        const fromWalletId = mustBeNonEmptyString(req.body?.fromWalletId, "fromWalletId");
+        const toWalletId = mustBeNonEmptyString(req.body?.toWalletId, "toWalletId");
+        const amount = mustBePositiveAmount(req.body?.amount);
+        const reason = typeof req.body?.reason === "string" ? req.body.reason : "Wallet transfer";
+        const transfer = await walletAdapter.transfer(fromWalletId, toWalletId, amount, reason);
+        await emitWalletRoomUpdates([fromWalletId, toWalletId]);
+        apiSuccess(res, transfer);
+    }
+    catch (error) {
+        apiFailure(res, error);
+    }
+});
+io.on("connection", (socket) => {
+    async function resolveIdentityFromPayload(payload) {
+        const user = await getAuthenticatedSocketUser(payload);
+        platformService.assertUserEligibleForGameplay(user);
+        engine.assertWalletAllowedForGameplay(user.walletId);
+        const hallId = await requireActiveHallIdFromInput(payload?.hallId);
+        return {
+            playerName: user.displayName,
+            walletId: user.walletId,
+            hallId
+        };
+    }
+    socket.on("room:create", async (payload, callback) => {
+        try {
+            const identity = await resolveIdentityFromPayload(payload);
+            if (enforceSingleCandyRoomPerHall) {
+                const canonicalRoom = getCanonicalCandyRoomForHall(identity.hallId);
+                if (canonicalRoom) {
+                    const canonicalSnapshot = engine.getRoomSnapshot(canonicalRoom.code);
+                    const existingPlayer = findPlayerInRoomByWallet(canonicalSnapshot, identity.walletId);
+                    let playerId = existingPlayer?.id ?? "";
+                    if (existingPlayer) {
+                        engine.attachPlayerSocket(canonicalRoom.code, existingPlayer.id, socket.id);
+                    }
+                    else {
+                        const joined = await engine.joinRoom({
+                            roomCode: canonicalRoom.code,
+                            hallId: identity.hallId,
+                            playerName: identity.playerName,
+                            walletId: identity.walletId,
+                            socketId: socket.id
+                        });
+                        playerId = joined.playerId;
+                    }
+                    socket.join(canonicalRoom.code);
+                    const snapshot = await emitRoomUpdate(canonicalRoom.code);
+                    ackSuccess(callback, { roomCode: canonicalRoom.code, playerId, snapshot });
+                    return;
+                }
+            }
+            const { roomCode, playerId } = await engine.createRoom({
+                playerName: identity.playerName,
+                hallId: identity.hallId,
+                walletId: identity.walletId,
+                socketId: socket.id
+            });
+            socket.join(roomCode);
+            const snapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { roomCode, playerId, snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("room:join", async (payload, callback) => {
+        try {
+            const roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
+            const identity = await resolveIdentityFromPayload(payload);
+            if (enforceSingleCandyRoomPerHall) {
+                const canonicalRoom = getCanonicalCandyRoomForHall(identity.hallId);
+                if (canonicalRoom && canonicalRoom.code !== roomCode) {
+                    throw new DomainError("SINGLE_ROOM_ONLY", `Kun ett Candy-rom er aktivt per hall. Bruk rom ${canonicalRoom.code}.`);
+                }
+            }
+            const roomSnapshot = engine.getRoomSnapshot(roomCode);
+            const existingPlayer = findPlayerInRoomByWallet(roomSnapshot, identity.walletId);
+            if (existingPlayer) {
+                engine.attachPlayerSocket(roomCode, existingPlayer.id, socket.id);
+                socket.join(roomCode);
+                const snapshot = await emitRoomUpdate(roomCode);
+                ackSuccess(callback, { roomCode, playerId: existingPlayer.id, snapshot });
+                return;
+            }
+            const { playerId } = await engine.joinRoom({
+                roomCode,
+                hallId: identity.hallId,
+                playerName: identity.playerName,
+                walletId: identity.walletId,
+                socketId: socket.id
+            });
+            socket.join(roomCode);
+            const snapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { roomCode, playerId, snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("room:resume", async (payload, callback) => {
+        try {
+            const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+            engine.attachPlayerSocket(roomCode, playerId, socket.id);
+            socket.join(roomCode);
+            const snapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("room:configure", async (payload, callback) => {
+        try {
+            const { roomCode } = await requireAuthenticatedPlayerAction(payload);
+            engine.getRoomSnapshot(roomCode);
+            const requestedEntryFee = parseOptionalNonNegativeNumber(payload?.entryFee, "entryFee");
+            if (requestedEntryFee === undefined) {
+                throw new DomainError("INVALID_INPUT", "entryFee må oppgis.");
+            }
+            const entryFee = setRoomConfiguredEntryFee(roomCode, requestedEntryFee);
+            const updatedSnapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { snapshot: updatedSnapshot, entryFee });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("game:start", async (payload, callback) => {
+        try {
+            const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+            const requestedTicketsPerPlayer = payload?.ticketsPerPlayer === undefined || payload?.ticketsPerPlayer === null
+                ? undefined
+                : parseTicketsPerPlayerInput(payload.ticketsPerPlayer);
+            const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
+            const ticketsPerPlayer = requestedTicketsPerPlayer ??
+                Math.min(hallGameConfig.maxTicketsPerPlayer, runtimeCandyManiaSettings.autoRoundTicketsPerPlayer);
+            assertTicketsPerPlayerWithinHallLimit(ticketsPerPlayer, hallGameConfig.maxTicketsPerPlayer);
+            await engine.startGame({
+                roomCode,
+                actorPlayerId: playerId,
+                entryFee: payload?.entryFee ?? getRoomConfiguredEntryFee(roomCode),
+                ticketsPerPlayer,
+                payoutPercent: runtimeCandyManiaSettings.payoutPercent
+            });
+            const snapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("game:end", async (payload, callback) => {
+        try {
+            const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+            await engine.endGame({
+                roomCode,
+                actorPlayerId: playerId,
+                reason: payload?.reason
+            });
+            const snapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("draw:next", async (payload, callback) => {
+        try {
+            const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+            const number = await engine.drawNextNumber({ roomCode, actorPlayerId: playerId });
+            io.to(roomCode).emit("draw:new", { number });
+            const snapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { number, snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("draw:extra:purchase", async (payload, callback) => {
+        try {
+            const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+            engine.rejectExtraDrawPurchase({
+                source: "SOCKET",
+                roomCode,
+                playerId,
+                metadata: {
+                    requestedCount: payload?.requestedCount === undefined ? undefined : Number(payload.requestedCount),
+                    packageId: typeof payload?.packageId === "string" ? payload.packageId : undefined
+                }
+            });
+            ackSuccess(callback, { denied: true });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("ticket:mark", async (payload, callback) => {
+        try {
+            const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+            if (!Number.isFinite(payload?.number)) {
+                throw new DomainError("INVALID_INPUT", "number mangler.");
+            }
+            await engine.markNumber({
+                roomCode,
+                playerId,
+                number: Number(payload.number)
+            });
+            const snapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("claim:submit", async (payload, callback) => {
+        try {
+            const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+            if (payload?.type !== "LINE" && payload?.type !== "BINGO") {
+                throw new DomainError("INVALID_INPUT", "type må være LINE eller BINGO.");
+            }
+            await engine.submitClaim({
+                roomCode,
+                playerId,
+                type: payload.type
+            });
+            const snapshot = await emitRoomUpdate(roomCode);
+            ackSuccess(callback, { snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("room:state", async (payload, callback) => {
+        try {
+            const user = await getAuthenticatedSocketUser(payload);
+            const roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
+            assertUserCanAccessRoom(user, roomCode);
+            const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
+            ackSuccess(callback, { snapshot });
+        }
+        catch (error) {
+            ackFailure(callback, error);
+        }
+    });
+    socket.on("disconnect", () => {
+        engine.detachSocket(socket.id);
+    });
+});
+app.get("*", (_req, res) => {
+    if (_req.path === "/admin" || _req.path === "/admin/") {
+        res.sendFile(adminFrontendFile);
+        return;
+    }
+    // CandyWeb SPA: serve index.html for all /web/* routes that aren't static assets.
+    if (_req.path.startsWith("/web")) {
+        res.sendFile(candyWebIndexFile);
+        return;
+    }
+    res.sendFile(path.join(frontendDir, "index.html"));
+});
+const PORT = Number(process.env.PORT ?? 4000);
+hydrateCandyManiaSettingsFromCatalog()
+    .catch((error) => {
+    console.warn("[candy-mania] Oppstart med env/default settings pga last-feil.", error);
+})
+    .finally(() => {
+    server.listen(PORT, () => {
+        console.log(`Bingo backend kjører på http://localhost:${PORT}`);
+        console.log(`[compliance] minRoundInterval=${bingoMinRoundIntervalMs}ms minPlayersToStart=${bingoMinPlayersToStart} maxDrawsPerRound=${bingoMaxDrawsPerRound} dailyLoss=${bingoDailyLossLimit} monthlyLoss=${bingoMonthlyLossLimit} playSessionLimit=${bingoPlaySessionLimitMs}ms pauseDuration=${bingoPauseDurationMs}ms selfExclusionMin=${bingoSelfExclusionMinMs}ms`);
+        console.log(`[scheduler] autoStart=${runtimeCandyManiaSettings.autoRoundStartEnabled} autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} forceAutoStart=${forceCandyAutoStart} forceAutoDraw=${forceCandyAutoDraw} autoAllowedInProd=${allowAutoplayInProduction} singleRoomPerHall=${enforceSingleCandyRoomPerHall} interval=${runtimeCandyManiaSettings.autoRoundStartIntervalMs}ms minPlayers=${runtimeCandyManiaSettings.autoRoundMinPlayers} ticketsPerPlayer=${runtimeCandyManiaSettings.autoRoundTicketsPerPlayer} entryFee=${runtimeCandyManiaSettings.autoRoundEntryFee} payoutPercent=${runtimeCandyManiaSettings.payoutPercent}`);
+        console.log(`[scheduler] autoDraw=${runtimeCandyManiaSettings.autoDrawEnabled} interval=${runtimeCandyManiaSettings.autoDrawIntervalMs}ms tick=${schedulerTickMs}ms`);
+        console.log(`[daily-report] enabled=${dailyReportJobEnabled} interval=${dailyReportJobIntervalMs}ms lastDate=${lastDailyReportDateKey || "-"}`);
+        console.log(`[swedbank] configured=${swedbankPayService.isConfigured()}`);
+    });
+});
