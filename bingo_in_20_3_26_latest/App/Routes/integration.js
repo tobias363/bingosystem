@@ -44,23 +44,43 @@ router.get('/api/integration/health', (req, res) => {
 router.get('/api/integration/auth-beacon', (req, res) => {
   try {
     if (!Sys || !Sys.Io) {
-      return res.json({ authenticated: false });
+      return res.json({ authenticated: false, debug: 'no Sys.Io' });
     }
-    const sockets = Sys.Io.sockets.connected || Sys.Io.sockets.sockets || {};
+    const connected = Sys.Io.sockets.connected;
+    const sockets = connected || Sys.Io.sockets.sockets || {};
     const entries = (sockets instanceof Map) ? Array.from(sockets.values()) : Object.values(sockets);
+    // Debug: samle info om alle sockets
+    const socketDebug = entries.map(function(s) {
+      return {
+        id: s.id,
+        hasPlayerId: !!s.playerId,
+        hasAuthToken: !!s.authToken,
+        playerId: s.playerId || null,
+        nsp: s.nsp ? s.nsp.name : 'unknown',
+        query: s.handshake ? s.handshake.query : {}
+      };
+    });
     for (let i = 0; i < entries.length; i++) {
       if (entries[i].playerId && entries[i].authToken) {
         return res.json({
           authenticated: true,
           playerId: entries[i].playerId,
-          token: entries[i].authToken
+          token: entries[i].authToken,
+          debug: { totalSockets: entries.length, sockets: socketDebug }
         });
       }
     }
-    return res.json({ authenticated: false });
+    return res.json({
+      authenticated: false,
+      debug: {
+        totalSockets: entries.length,
+        connectedType: typeof connected,
+        sockets: socketDebug
+      }
+    });
   } catch (err) {
     console.error('auth-beacon endpoint error:', err.message);
-    return res.json({ authenticated: false });
+    return res.json({ authenticated: false, debug: 'error: ' + err.message });
   }
 });
 
