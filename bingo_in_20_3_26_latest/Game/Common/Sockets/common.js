@@ -61,8 +61,8 @@ module.exports = function (Socket) {
                 if (result && result.status === 'success' && result.result && result.result.authToken) {
                     Socket.emit('_playerToken', { token: result.result.authToken });
                     // Broadcast til alle sockets — lobby auth-beacon plukker det opp
-                    if (Sys.IO) {
-                        Sys.IO.emit('_playerAuthenticated', {
+                    if (Sys.Io) {
+                        Sys.Io.emit('_playerAuthenticated', {
                             playerId: result.result.playerId,
                             token: result.result.authToken
                         });
@@ -80,13 +80,13 @@ module.exports = function (Socket) {
             try {
                 const result = await Sys.Game.Common.Controllers.PlayerController.playerDetails(Socket, data);
                 // BIN-134: Broadcast auth-signal ved session-restore (PlayerDetails = bruker allerede innlogget)
-                if (result && result.status === 'success' && data.playerId && Sys.IO) {
+                if (result && result.status === 'success' && data.playerId && Sys.Io) {
                     try {
                         const player = await Sys.Game.Common.Services.PlayerServices.getOneByData(
                             { _id: data.playerId }, { 'otherData.authToken': 1 }
                         );
                         if (player?.otherData?.authToken) {
-                            Sys.IO.emit('_playerAuthenticated', {
+                            Sys.Io.emit('_playerAuthenticated', {
                                 playerId: data.playerId,
                                 token: player.otherData.authToken
                             });
@@ -145,13 +145,13 @@ module.exports = function (Socket) {
                 console.log("Reconnect Called............!!!!!!!!", data)
                 const result = await Sys.Game.Common.Controllers.PlayerController.reconnectPlayer(Socket, data);
                 // BIN-134: Broadcast auth-signal ved reconnect
-                if (result && result.status === 'success' && data.playerId && Sys.IO) {
+                if (result && result.status === 'success' && data.playerId && Sys.Io) {
                     try {
                         const player = await Sys.Game.Common.Services.PlayerServices.getOneByData(
                             { _id: data.playerId }, { 'otherData.authToken': 1 }
                         );
                         if (player?.otherData?.authToken) {
-                            Sys.IO.emit('_playerAuthenticated', {
+                            Sys.Io.emit('_playerAuthenticated', {
                                 playerId: data.playerId,
                                 token: player.otherData.authToken
                             });
