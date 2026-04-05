@@ -15,6 +15,8 @@ module.exports = function socketInit(Sys, sessionMiddleware) {
 
         const whitelist = [
             "LoginPlayer",
+            "ReconnectPlayer",
+            "PlayerDetails",
             "Logout",
             "HallList",
             "ScreenSaver",
