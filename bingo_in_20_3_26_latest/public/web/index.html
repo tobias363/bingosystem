@@ -257,46 +257,53 @@
 
     let existingTab = null;
 
-    // ─── BIN-134: Auth-beacon via HTTP-polling ────────────────────────────────
-    // Unity sin Socket.IO kjører internt i WASM og er utilgjengelig fra JS.
-    // Vi poller /api/integration/auth-beacon hvert 3. sekund for å oppdage
-    // at en spiller er innlogget, og kaller SetPlayerToken() når den er det.
+    // ─── BIN-134: Auth-beacon — venter på Unity-login ──────────────────────────
+    // Starter IKKE polling med en gang — venter til brukeren har klikket på
+    // Unity-canvasen (indikerer at de har logget inn).
     (function() {
-      var pollInterval = setInterval(function() {
-        if (_playerToken) {
-          clearInterval(pollInterval);
-          console.log('BIN-134: auth-beacon polling stoppet — allerede autentisert');
-          return;
-        }
-        fetch('/api/integration/auth-beacon')
-          .then(function(r) { return r.json(); })
-          .then(function(data) {
-            if (data && data.authenticated && !_playerToken) {
-              // Token kan mangle om bare ConnectedPlayers er kilde — vis tile uansett
-              if (data.token) {
+      var canvasClicks = 0;
+      var pollingStarted = false;
+      var unityCanvas = document.getElementById('unity-canvas');
+
+      if (unityCanvas) {
+        unityCanvas.addEventListener('click', function() {
+          canvasClicks++;
+          // Etter 3+ klikk (brukernavn, passord, logg inn) → start polling
+          if (canvasClicks >= 3 && !pollingStarted && !_playerToken) {
+            pollingStarted = true;
+            startAuthBeaconPolling();
+          }
+        });
+      }
+
+      function startAuthBeaconPolling() {
+        console.log('BIN-134: auth-beacon polling starter etter Unity-interaksjon');
+        var pollInterval = setInterval(function() {
+          if (_playerToken) {
+            clearInterval(pollInterval);
+            return;
+          }
+          fetch('/api/integration/auth-beacon')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              if (data && data.authenticated && data.token && !_playerToken) {
                 SetPlayerToken(data.token);
-              } else {
-                // Ingen token ennå, men spiller er innlogget — vis tile, poll videre for token
-                document.body.classList.add('player-authenticated');
-                console.log('BIN-134: spiller innlogget (ConnectedPlayers), venter på token');
-                return; // Ikke stopp polling — vi trenger token for wallet
+                clearInterval(pollInterval);
+                console.log('BIN-134: playerToken mottatt via auth-beacon');
               }
-              clearInterval(pollInterval);
-              console.log('BIN-134: playerToken mottatt via HTTP-polling, kilde:', data.source);
-            }
-          })
-          .catch(function() { /* stille feil — prøver igjen om 3s */ });
-      }, 3000);
-      console.log('BIN-134: auth-beacon HTTP-polling startet');
+            })
+            .catch(function() {});
+        }, 2000);
+      }
     })();
 
     // URL-er som skal åpnes i iframe-overlay istedenfor ny fane
     // Legg til flere spill her etter hvert som de integreres
     const EXTERNAL_GAMES = [
       {
-        // CandyMania — bruk lokal /candy/ på samme server
+        // CandyMania — ekte spill på staging-server
         pattern: '/candy/',
-        iframeUrl: null
+        iframeUrl: 'https://bingosystem-staging.onrender.com/candy/#lt=YcNIQgPJGppifo9DP8O0wX-VNiHQxWSs'
       },
       { pattern: '/candy-game/', iframeUrl: null }
     ];
@@ -322,12 +329,6 @@
           resolvedUrl = EXTERNAL_GAMES[i].iframeUrl;
           break;
         }
-      }
-
-      // Legg til auth-params slik at CandyWeb kan auto-koble
-      if (_playerToken && resolvedUrl.indexOf('/candy') !== -1) {
-        var sep = resolvedUrl.indexOf('?') === -1 ? '?' : '&';
-        resolvedUrl += sep + 'accessToken=' + encodeURIComponent(_playerToken) + '&embedded=1';
       }
 
       // Opprett ny iframe
