@@ -1,0 +1,545 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - banner [ref=e4]:
+        - generic [ref=e5]:
+          - link "Render" [ref=e7] [cursor=pointer]:
+            - /url: /
+            - img "Render" [ref=e8]
+          - button "T Tobias's workspace" [ref=e12] [cursor=pointer]:
+            - generic [ref=e13]:
+              - generic [ref=e14]: T
+              - generic "Tobias's workspace" [ref=e15]
+              - img [ref=e16]
+        - generic [ref=e20]:
+          - navigation [ref=e21]:
+            - list [ref=e22]:
+              - listitem [ref=e23]:
+                - link "bingosystem-staging" [ref=e24] [cursor=pointer]:
+                  - /url: /web/srv-d6klj07afjfc73eh5vrg
+                  - img [ref=e25]
+                  - generic [ref=e27]: bingosystem-staging
+                - button [ref=e30] [cursor=pointer]:
+                  - img [ref=e31]
+          - button "Search Command + K" [ref=e34] [cursor=pointer]:
+            - img [ref=e36]
+            - text: Search
+            - generic [ref=e38]:
+              - img [ref=e39]
+              - generic [ref=e41]: Command
+              - generic [ref=e42]: +
+              - generic [ref=e43]: K
+              - generic [ref=e44]: K
+        - generic [ref=e45]:
+          - button "New" [ref=e47] [cursor=pointer]:
+            - generic [ref=e48]:
+              - img [ref=e49]
+              - generic [ref=e51]: New
+          - button "Upgrade" [ref=e53] [cursor=pointer]:
+            - generic [ref=e54]:
+              - img [ref=e55]
+              - generic [ref=e57]: Upgrade
+          - button "Help" [ref=e59] [cursor=pointer]:
+            - img "Help" [ref=e60]
+          - button "t" [ref=e65] [cursor=pointer]:
+            - generic [ref=e67]: t
+      - generic [ref=e68]:
+        - navigation [ref=e69]:
+          - separator [ref=e70]
+          - generic [ref=e71]:
+            - generic [ref=e72]:
+              - link "Dashboard" [ref=e73] [cursor=pointer]:
+                - /url: /
+                - img [ref=e74]
+                - generic [ref=e76]: Dashboard
+              - generic [ref=e77]:
+                - img [ref=e78]
+                - generic [ref=e80]: bingosystem-staging
+            - generic [ref=e81]:
+              - list [ref=e82]:
+                - listitem [ref=e83]:
+                  - link "Events" [ref=e84] [cursor=pointer]:
+                    - /url: /web/srv-d6klj07afjfc73eh5vrg/events
+                    - img [ref=e85]
+                    - generic [ref=e92]: Events
+                - listitem [ref=e93]:
+                  - link "Settings" [ref=e94] [cursor=pointer]:
+                    - /url: /web/srv-d6klj07afjfc73eh5vrg/settings
+                    - img [ref=e95]
+                    - generic [ref=e98]: Settings
+              - generic [ref=e99]:
+                - generic [ref=e100]: Monitor
+                - list "Monitor" [ref=e101]:
+                  - listitem [ref=e102]:
+                    - link "Logs" [ref=e103] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/logs
+                      - img [ref=e104]
+                      - generic [ref=e109]: Logs
+                  - listitem [ref=e110]:
+                    - link "Metrics" [ref=e111] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/metrics
+                      - img [ref=e112]
+                      - generic [ref=e114]: Metrics
+              - generic [ref=e115]:
+                - generic [ref=e116]: Manage
+                - list "Manage" [ref=e117]:
+                  - listitem [ref=e118]:
+                    - link "Environment" [ref=e119] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/env
+                      - img [ref=e120]
+                      - generic [ref=e124]: Environment
+                  - listitem [ref=e125]:
+                    - link "Shell" [ref=e126] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/shell
+                      - img [ref=e127]
+                      - generic [ref=e130]: Shell
+                  - listitem [ref=e131]:
+                    - link "Scaling" [ref=e132] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/scaling
+                      - img [ref=e133]
+                      - generic [ref=e137]: Scaling
+                  - listitem [ref=e138]:
+                    - link "Previews" [ref=e139] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/previews
+                      - img [ref=e140]
+                      - generic [ref=e144]: Previews
+                  - listitem [ref=e145]:
+                    - link "Disk" [ref=e146] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/disks
+                      - img [ref=e147]
+                      - generic [ref=e151]: Disk
+                  - listitem [ref=e152]:
+                    - link "Jobs" [ref=e153] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/jobs
+                      - img [ref=e154]
+                      - generic [ref=e157]: Jobs
+          - generic [ref=e158]:
+            - alert [ref=e159]:
+              - img [ref=e161]
+              - generic [ref=e165]:
+                - generic [ref=e166]:
+                  - generic [ref=e167]: "Workflows: Now in beta"
+                  - generic [ref=e168]:
+                    - text: Orchestrate your agents and background jobs with automatic retries and scale-to-zero.
+                    - link "Learn more" [ref=e169] [cursor=pointer]:
+                      - /url: https://render.com/docs/workflows
+                - link "Create Workflow" [ref=e171] [cursor=pointer]:
+                  - /url: /workflow/new
+              - button "Close notification" [ref=e172] [cursor=pointer]:
+                - img [ref=e173]
+            - generic [ref=e175]:
+              - button "Collapse items" [expanded] [ref=e176] [cursor=pointer]:
+                - img [ref=e177]
+              - list "Footer navigation" [ref=e179]:
+                - listitem [ref=e180]:
+                  - link "Changelog" [ref=e181] [cursor=pointer]:
+                    - /url: https://render.com/changelog
+                    - img [ref=e182]
+                    - generic [ref=e187]: Changelog
+                - listitem [ref=e188]:
+                  - link "Invite a friend" [ref=e189] [cursor=pointer]:
+                    - /url: /invites
+                    - img [ref=e190]
+                    - generic [ref=e192]: Invite a friend
+                - listitem [ref=e193]:
+                  - button "Contact support" [ref=e194] [cursor=pointer]:
+                    - img [ref=e195]
+                    - generic [ref=e199]: Contact support
+              - link "Render Status" [ref=e201] [cursor=pointer]:
+                - /url: https://status.render.com
+                - img [ref=e202]
+                - generic [ref=e204]: Render Status
+        - generic [ref=e206]:
+          - banner [ref=e208]:
+            - generic [ref=e209]:
+              - generic [ref=e210]:
+                - img [ref=e211]
+                - generic [ref=e213]: Web Service
+              - generic [ref=e214]:
+                - heading "bingosystem-staging Node Starter" [level=1] [ref=e216]:
+                  - generic [ref=e217]: bingosystem-staging
+                  - generic [ref=e218]:
+                    - generic [ref=e219]: Node
+                    - link "Starter" [ref=e220] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/plan
+                      - generic [ref=e221]: Starter
+                - generic [ref=e223]:
+                  - button "Connect" [ref=e224] [cursor=pointer]:
+                    - generic [ref=e225]: Connect
+                    - img [ref=e226]
+                  - button "Manual Deploy" [ref=e228] [cursor=pointer]:
+                    - generic [ref=e229]: Manual Deploy
+                    - img [ref=e230]
+            - generic [ref=e234]:
+              - generic [ref=e236]:
+                - generic [ref=e237]: "Service ID:"
+                - generic "Service ID:" [ref=e238]:
+                  - generic [ref=e239]: srv-d6klj07afjfc73eh5vrg
+                  - button "Copy" [ref=e242] [cursor=pointer]:
+                    - img [ref=e243]
+              - generic [ref=e246]:
+                - img "GitHub" [ref=e248]
+                - link "tobias363 / bingosystem staging" [ref=e250] [cursor=pointer]:
+                  - /url: https://github.com/tobias363/bingosystem/tree/staging
+                  - generic [ref=e251]:
+                    - generic [ref=e252]: tobias363 / bingosystem
+                    - img [ref=e253]
+                    - generic [ref=e255]: staging
+              - generic "Copy" [ref=e257]:
+                - link "https://bingosystem-staging.onrender.com" [ref=e259] [cursor=pointer]:
+                  - /url: https://bingosystem-staging.onrender.com
+                - button "Copy" [ref=e262] [cursor=pointer]:
+                  - img [ref=e263]
+          - main [ref=e266]:
+            - generic [ref=e267]:
+              - generic [ref=e270]:
+                - generic [ref=e271]:
+                  - generic [ref=e272]: March 16, 2026 at 11:18 AM
+                  - generic [ref=e273]:
+                    - img [ref=e274]
+                    - generic [ref=e276]: live
+                - generic [ref=e277]:
+                  - link "f783980" [ref=e278] [cursor=pointer]:
+                    - /url: https://github.com/tobias363/bingosystem/commit/f78398042fa84cb3dd404ba92694f30364d81175
+                  - generic [ref=e279]: Add repo-managed staging Render config
+              - generic [ref=e280]:
+                - generic [ref=e282]:
+                  - generic [ref=e284]:
+                    - button "All logs" [ref=e287] [cursor=pointer]:
+                      - generic [ref=e288]:
+                        - generic [ref=e289]: All logs
+                        - img [ref=e290]
+                    - generic [ref=e293]:
+                      - generic [ref=e294]: Search
+                      - generic [ref=e296]:
+                        - img [ref=e297]
+                        - searchbox "Search" [ref=e299]
+                    - button "Mar 16, 11:17 AM - 11:20 AM GMT+1" [ref=e302] [cursor=pointer]:
+                      - generic [ref=e303]:
+                        - generic [ref=e305]:
+                          - img [ref=e306]
+                          - generic [ref=e309]: Mar 16, 11:17 AM - 11:20 AM
+                          - img [ref=e310]
+                        - generic [ref=e312]: GMT+1
+                    - button "Maximize" [ref=e317] [cursor=pointer]:
+                      - img "Maximize" [ref=e318]
+                    - button "Options" [ref=e323] [cursor=pointer]:
+                      - img "Options" [ref=e324]
+                  - generic:
+                    - button "Return to Bottom":
+                      - img
+                  - listbox [ref=e328]:
+                    - generic [ref=e329]: Mar 16
+                    - option "11:18:39 AM ==> Running build command 'NPM_CONFIG_PRODUCTION=false npm --prefix backend ci && npm --prefix backend run build'..." [ref=e330]:
+                      - generic [ref=e332]:
+                        - img [ref=e334]
+                        - time [ref=e338]: 11:18:39 AM
+                      - generic [ref=e341]: ==> Running build command 'NPM_CONFIG_PRODUCTION=false npm --prefix backend ci && npm --prefix backend run build'...
+                    - option "11:18:41 AM" [ref=e342]:
+                      - generic [ref=e344]:
+                        - img [ref=e346]
+                        - time [ref=e350]: 11:18:41 AM
+                    - option "11:18:41 AM added 122 packages, and audited 123 packages in 2s" [ref=e353]:
+                      - generic [ref=e355]:
+                        - img [ref=e357]
+                        - time [ref=e361]: 11:18:41 AM
+                      - generic [ref=e364]: added 122 packages, and audited 123 packages in 2s
+                    - option "11:18:41 AM" [ref=e365]:
+                      - generic [ref=e367]:
+                        - img [ref=e369]
+                        - time [ref=e373]: 11:18:41 AM
+                    - option "11:18:41 AM 19 packages are looking for funding" [ref=e376]:
+                      - generic [ref=e378]:
+                        - img [ref=e380]
+                        - time [ref=e384]: 11:18:41 AM
+                      - generic [ref=e387]: 19 packages are looking for funding
+                    - 'option "11:18:41 AM run `npm fund` for details" [ref=e388]':
+                      - generic [ref=e390]:
+                        - img [ref=e392]
+                        - time [ref=e396]: 11:18:41 AM
+                      - generic [ref=e399]: "run `npm fund` for details"
+                    - option "11:18:41 AM" [ref=e400]:
+                      - generic [ref=e402]:
+                        - img [ref=e404]
+                        - time [ref=e408]: 11:18:41 AM
+                    - option "11:18:41 AM found 0 vulnerabilities" [ref=e411]:
+                      - generic [ref=e413]:
+                        - img [ref=e415]
+                        - time [ref=e419]: 11:18:41 AM
+                      - generic [ref=e422]: found 0 vulnerabilities
+                    - option "11:18:41 AM" [ref=e423]:
+                      - generic [ref=e425]:
+                        - img [ref=e427]
+                        - time [ref=e431]: 11:18:41 AM
+                    - option "11:18:41 AM > bingo-backend@0.1.0 build" [ref=e434]:
+                      - generic [ref=e436]:
+                        - img [ref=e438]
+                        - time [ref=e442]: 11:18:41 AM
+                      - generic [ref=e445]: "> bingo-backend@0.1.0 build"
+                    - option "11:18:41 AM > bash -lc 'if [ ! -d ../candy-web/node_modules ]; then npm --prefix ../candy-web install; fi; npm --prefix ../candy-web run build; tsc -p tsconfig.json'" [ref=e446]:
+                      - generic [ref=e448]:
+                        - img [ref=e450]
+                        - time [ref=e454]: 11:18:41 AM
+                      - generic [ref=e457]: "> bash -lc 'if [ ! -d ../candy-web/node_modules ]; then npm --prefix ../candy-web install; fi; npm --prefix ../candy-web run build; tsc -p tsconfig.json'"
+                    - option "11:18:41 AM" [ref=e458]:
+                      - generic [ref=e460]:
+                        - img [ref=e462]
+                        - time [ref=e466]: 11:18:41 AM
+                    - option "11:18:43 AM" [ref=e469]:
+                      - generic [ref=e471]:
+                        - img [ref=e473]
+                        - time [ref=e477]: 11:18:43 AM
+                    - option "11:18:43 AM added 15 packages, and audited 16 packages in 1s" [ref=e480]:
+                      - generic [ref=e482]:
+                        - img [ref=e484]
+                        - time [ref=e488]: 11:18:43 AM
+                      - generic [ref=e491]: added 15 packages, and audited 16 packages in 1s
+                    - option "11:18:43 AM" [ref=e492]:
+                      - generic [ref=e494]:
+                        - img [ref=e496]
+                        - time [ref=e500]: 11:18:43 AM
+                    - option "11:18:43 AM found 0 vulnerabilities" [ref=e503]:
+                      - generic [ref=e505]:
+                        - img [ref=e507]
+                        - time [ref=e511]: 11:18:43 AM
+                      - generic [ref=e514]: found 0 vulnerabilities
+                    - option "11:18:43 AM" [ref=e515]:
+                      - generic [ref=e517]:
+                        - img [ref=e519]
+                        - time [ref=e523]: 11:18:43 AM
+                    - option "11:18:43 AM > candy-web@0.1.0 build" [ref=e526]:
+                      - generic [ref=e528]:
+                        - img [ref=e530]
+                        - time [ref=e534]: 11:18:43 AM
+                      - generic [ref=e537]: "> candy-web@0.1.0 build"
+                    - option "11:18:43 AM > tsc -b && vite build" [ref=e538]:
+                      - generic [ref=e540]:
+                        - img [ref=e542]
+                        - time [ref=e546]: 11:18:43 AM
+                      - generic [ref=e549]: "> tsc -b && vite build"
+                    - option "11:18:43 AM" [ref=e550]:
+                      - generic [ref=e552]:
+                        - img [ref=e554]
+                        - time [ref=e558]: 11:18:43 AM
+                    - 'option "11:18:45 AM error TS2688: Cannot find type definition file for ''vite/client''." [ref=e561]':
+                      - generic [ref=e563]:
+                        - img [ref=e565]
+                        - time [ref=e569]: 11:18:45 AM
+                      - generic [ref=e572]: "error TS2688: Cannot find type definition file for 'vite/client'."
+                    - option "11:18:45 AM The file is in the program because:" [ref=e573]:
+                      - generic [ref=e575]:
+                        - img [ref=e577]
+                        - time [ref=e581]: 11:18:45 AM
+                      - generic [ref=e584]: "The file is in the program because:"
+                    - option "11:18:45 AM Entry point of type library 'vite/client' specified in compilerOptions" [ref=e585]:
+                      - generic [ref=e587]:
+                        - img [ref=e589]
+                        - time [ref=e593]: 11:18:45 AM
+                      - generic [ref=e596]: Entry point of type library 'vite/client' specified in compilerOptions
+                    - option "11:18:52 AM ==> Uploading build..." [ref=e597]:
+                      - generic [ref=e599]:
+                        - img [ref=e601]
+                        - time [ref=e605]: 11:18:52 AM
+                      - generic [ref=e608]: ==> Uploading build...
+                    - option "11:19:08 AM ==> Uploaded in 13.6s. Compression took 3.0s" [ref=e609]:
+                      - generic [ref=e611]:
+                        - img [ref=e613]
+                        - time [ref=e617]: 11:19:08 AM
+                      - generic [ref=e620]: ==> Uploaded in 13.6s. Compression took 3.0s
+                    - option "11:19:09 AM ==> Build successful 🎉" [ref=e621]:
+                      - generic [ref=e623]:
+                        - img [ref=e625]
+                        - time [ref=e629]: 11:19:09 AM
+                      - generic [ref=e632]: ==> Build successful 🎉
+                    - option "11:19:12 AM ==> Deploying..." [ref=e633]:
+                      - generic [ref=e635]:
+                        - img [ref=e637]
+                        - time [ref=e641]: 11:19:12 AM
+                      - generic [ref=e644]: ==> Deploying...
+                    - option "11:19:13 AM ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance" [ref=e645]:
+                      - generic [ref=e647]:
+                        - img [ref=e649]
+                        - time [ref=e653]: 11:19:13 AM
+                      - generic [ref=e656]: ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+                    - option "11:19:30 AM [kqd9p] ==> Running 'npm --prefix backend run start'" [ref=e657]:
+                      - generic [ref=e658]:
+                        - generic [ref=e659]:
+                          - img [ref=e661]
+                          - time [ref=e665]: 11:19:30 AM
+                        - generic [ref=e669] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e671]: ==> Running 'npm --prefix backend run start'
+                    - option "11:19:31 AM [kqd9p]" [ref=e672]:
+                      - generic [ref=e673]:
+                        - generic [ref=e674]:
+                          - img [ref=e676]
+                          - time [ref=e680]: 11:19:31 AM
+                        - generic [ref=e684] [cursor=pointer]: "[kqd9p]"
+                    - option "11:19:31 AM [kqd9p] > bingo-backend@0.1.0 start" [ref=e686]:
+                      - generic [ref=e687]:
+                        - generic [ref=e688]:
+                          - img [ref=e690]
+                          - time [ref=e694]: 11:19:31 AM
+                        - generic [ref=e698] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e700]: "> bingo-backend@0.1.0 start"
+                    - option "11:19:31 AM [kqd9p] > node dist/index.js" [ref=e701]:
+                      - generic [ref=e702]:
+                        - generic [ref=e703]:
+                          - img [ref=e705]
+                          - time [ref=e709]: 11:19:31 AM
+                        - generic [ref=e713] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e715]: "> node dist/index.js"
+                    - option "11:19:31 AM [kqd9p]" [ref=e716]:
+                      - generic [ref=e717]:
+                        - generic [ref=e718]:
+                          - img [ref=e720]
+                          - time [ref=e724]: 11:19:31 AM
+                        - generic [ref=e728] [cursor=pointer]: "[kqd9p]"
+                    - 'option "11:19:31 AM [kqd9p] [dotenv@17.3.1] injecting env (0) from .env -- tip: 🤖 agentic secret storage: https://dotenvx.com/as2" [ref=e730]':
+                      - generic [ref=e731]:
+                        - generic [ref=e732]:
+                          - img [ref=e734]
+                          - time [ref=e738]: 11:19:31 AM
+                        - generic [ref=e742] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e745]:
+                        - text: "[dotenv@17.3.1] injecting env (0) from .env -- tip: 🤖 agentic secret storage:"
+                        - link "https://dotenvx.com/as2" [ref=e746] [cursor=pointer]:
+                          - /url: https://dotenvx.com/as2
+                    - option "11:19:31 AM [kqd9p] [daily-report] generated date=2026-03-15 rows=0 turnover=0 prizes=0" [ref=e747]:
+                      - generic [ref=e748]:
+                        - generic [ref=e749]:
+                          - img [ref=e751]
+                          - time [ref=e755]: 11:19:31 AM
+                        - generic [ref=e759] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e761]: "[daily-report] generated date=2026-03-15 rows=0 turnover=0 prizes=0"
+                    - option "11:19:32 AM [kqd9p] Bingo backend kjører på http://localhost:10000" [ref=e762]:
+                      - generic [ref=e763]:
+                        - generic [ref=e764]:
+                          - img [ref=e766]
+                          - time [ref=e770]: 11:19:32 AM
+                        - generic [ref=e774] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e777]:
+                        - text: Bingo backend kjører på
+                        - link "http://localhost:10000" [ref=e778] [cursor=pointer]:
+                          - /url: http://localhost:10000
+                    - option "11:19:32 AM [kqd9p] [compliance] minRoundInterval=30000ms minPlayersToStart=1 maxDrawsPerRound=30 dailyLoss=900 monthlyLoss=4400 playSessionLimit=3600000ms pauseDuration=300000ms selfExclusionMin=31536000000ms" [ref=e779]:
+                      - generic [ref=e780]:
+                        - generic [ref=e781]:
+                          - img [ref=e783]
+                          - time [ref=e787]: 11:19:32 AM
+                        - generic [ref=e791] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e793]: "[compliance] minRoundInterval=30000ms minPlayersToStart=1 maxDrawsPerRound=30 dailyLoss=900 monthlyLoss=4400 playSessionLimit=3600000ms pauseDuration=300000ms selfExclusionMin=31536000000ms"
+                    - option "11:19:32 AM [kqd9p] [rtp] rollingWindow=1000 controllerGain=0.5 nearMissBias=true nearMissTargetRate=0.38 nearMissCalibrationFactor=0.92" [ref=e794]:
+                      - generic [ref=e795]:
+                        - generic [ref=e796]:
+                          - img [ref=e798]
+                          - time [ref=e802]: 11:19:32 AM
+                        - generic [ref=e806] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e808]: "[rtp] rollingWindow=1000 controllerGain=0.5 nearMissBias=true nearMissTargetRate=0.38 nearMissCalibrationFactor=0.92"
+                    - option "11:19:32 AM [kqd9p] [candy-launch] allowProductionApiBase=false blockedProductionHost=bingosystem-3.onrender.com" [ref=e809]:
+                      - generic [ref=e810]:
+                        - generic [ref=e811]:
+                          - img [ref=e813]
+                          - time [ref=e817]: 11:19:32 AM
+                        - generic [ref=e821] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e823]: "[candy-launch] allowProductionApiBase=false blockedProductionHost=bingosystem-3.onrender.com"
+                    - option "11:19:32 AM [kqd9p] [scheduler] autoStart=true autoDraw=true forceAutoStart=true forceAutoDraw=true autoAllowedInProd=true singleGlobalRoom=true interval=30000ms minPlayers=1 ticketsPerPlayer=4 entryFee=0 payoutPercent=75" [ref=e824]:
+                      - generic [ref=e825]:
+                        - generic [ref=e826]:
+                          - img [ref=e828]
+                          - time [ref=e832]: 11:19:32 AM
+                        - generic [ref=e836] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e838]: "[scheduler] autoStart=true autoDraw=true forceAutoStart=true forceAutoDraw=true autoAllowedInProd=true singleGlobalRoom=true interval=30000ms minPlayers=1 ticketsPerPlayer=4 entryFee=0 payoutPercent=75"
+                    - option "11:19:32 AM [kqd9p] [scheduler] autoDraw=true interval=1000ms tick=250ms" [ref=e839]:
+                      - generic [ref=e840]:
+                        - generic [ref=e841]:
+                          - img [ref=e843]
+                          - time [ref=e847]: 11:19:32 AM
+                        - generic [ref=e851] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e853]: "[scheduler] autoDraw=true interval=1000ms tick=250ms"
+                    - option "11:19:32 AM [kqd9p] [daily-report] enabled=true interval=3600000ms lastDate=2026-03-15" [ref=e854]:
+                      - generic [ref=e855]:
+                        - generic [ref=e856]:
+                          - img [ref=e858]
+                          - time [ref=e862]: 11:19:32 AM
+                        - generic [ref=e866] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e868]: "[daily-report] enabled=true interval=3600000ms lastDate=2026-03-15"
+                    - option "11:19:32 AM [kqd9p] [swedbank] configured=false" [ref=e869]:
+                      - generic [ref=e870]:
+                        - generic [ref=e871]:
+                          - img [ref=e873]
+                          - time [ref=e877]: 11:19:32 AM
+                        - generic [ref=e881] [cursor=pointer]: "[kqd9p]"
+                      - generic [ref=e883]: "[swedbank] configured=false"
+                    - option "11:19:36 AM ==> Your service is live 🎉" [ref=e884]:
+                      - generic [ref=e886]:
+                        - img [ref=e888]
+                        - time [ref=e892]: 11:19:36 AM
+                      - generic [ref=e895]: ==> Your service is live 🎉
+                    - option "11:19:37 AM ==>" [ref=e896]:
+                      - generic [ref=e898]:
+                        - img [ref=e900]
+                        - time [ref=e904]: 11:19:37 AM
+                      - generic [ref=e907]: ==>
+                    - option "11:19:37 AM ==> ///////////////////////////////////////////////////////////" [ref=e908]:
+                      - generic [ref=e910]:
+                        - img [ref=e912]
+                        - time [ref=e916]: 11:19:37 AM
+                      - generic [ref=e919]: ==> ///////////////////////////////////////////////////////////
+                    - option "11:19:37 AM ==>" [ref=e920]:
+                      - generic [ref=e922]:
+                        - img [ref=e924]
+                        - time [ref=e928]: 11:19:37 AM
+                      - generic [ref=e931]: ==>
+                    - option "11:19:37 AM ==> Available at your primary URL https://bingosystem-staging.onrender.com" [ref=e932]:
+                      - generic [ref=e934]:
+                        - img [ref=e936]
+                        - time [ref=e940]: 11:19:37 AM
+                      - generic [ref=e943]:
+                        - text: ==>
+                        - generic [ref=e944]:
+                          - text: Available at your primary URL
+                          - link "https://bingosystem-staging.onrender.com" [ref=e945] [cursor=pointer]:
+                            - /url: https://bingosystem-staging.onrender.com
+                    - option "11:19:37 AM ==>" [ref=e946]:
+                      - generic [ref=e948]:
+                        - img [ref=e950]
+                        - time [ref=e954]: 11:19:37 AM
+                      - generic [ref=e957]: ==>
+                    - option "11:19:37 AM ==> ///////////////////////////////////////////////////////////" [ref=e958]:
+                      - generic [ref=e960]:
+                        - img [ref=e962]
+                        - time [ref=e966]: 11:19:37 AM
+                      - generic [ref=e969]: ==> ///////////////////////////////////////////////////////////
+                - paragraph [ref=e971]:
+                  - text: Need better ways to work with logs? Try the
+                  - link "Render CLI" [ref=e972] [cursor=pointer]:
+                    - /url: https://render.com/docs/cli
+                    - img [ref=e973]
+                    - text: Render CLI
+                  - text: ","
+                  - link "Render MCP Server" [ref=e976] [cursor=pointer]:
+                    - /url: https://render.com/docs/mcp-server
+                  - text: ", or set up a"
+                  - link "log stream integration" [ref=e977] [cursor=pointer]:
+                    - /url: https://render.com/docs/log-streams
+                    - text: log stream integration
+                    - img [ref=e978]
+    - generic:
+      - generic:
+        - generic: "0 services selected:"
+        - generic:
+          - generic:
+            - generic:
+              - button:
+                - generic:
+                  - img
+                - generic: Move
+                - img
+      - generic:
+        - separator
+        - generic:
+          - generic:
+            - button:
+              - img
+  - iframe [ref=e981]:
+    

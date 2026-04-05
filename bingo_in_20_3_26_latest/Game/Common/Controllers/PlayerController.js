@@ -983,6 +983,12 @@ module.exports = {
             console.log('[BIN-134] reconnectPlayer: ConnectedPlayers WRITTEN for', playerId,
                 'keys now:', Object.keys(Sys.ConnectedPlayers),
                 'authToken exists:', !!player?.otherData?.authToken);
+            // Diagnostic: write to a separate property to verify Sys identity
+            Sys._debugReconnect = {
+                playerId: playerId,
+                timestamp: Date.now(),
+                cpKeys: Object.keys(Sys.ConnectedPlayers)
+            };
             // BIN-134: Lagre auth-info for HTTP auth-beacon polling
             if (player?.otherData?.authToken) {
                 if (!Sys._authStore) Sys._authStore = {};

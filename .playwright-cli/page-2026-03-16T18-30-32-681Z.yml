@@ -1,0 +1,5 @@
+- main [ref=e3]:
+  - generic [ref=e6]:
+    - img "Candy"
+    - strong [ref=e8]: Kobler til
+    - paragraph [ref=e9]: Henter room state fra backend...

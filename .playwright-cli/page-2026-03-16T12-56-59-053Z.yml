@@ -1,0 +1,99 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e22]:
+    - generic [ref=e23]:
+      - img "Spillorama" [ref=e25]
+      - button "Profil" [ref=e27] [cursor=pointer]:
+        - img [ref=e29]
+        - generic [ref=e31]: Profil
+  - main [ref=e2]:
+    - generic [ref=e32]:
+      - generic [ref=e34]:
+        - article [ref=e35] [cursor=pointer]:
+          - generic [ref=e36]:
+            - generic [ref=e37]: "75"
+            - heading "Candy" [level=3] [ref=e38]
+            - paragraph [ref=e39]: /CANDY • LIVE
+            - paragraph [ref=e40]: Candy web-klienten for Theme1 med realtime backend.
+          - generic [ref=e41]:
+            - generic [ref=e42]:
+              - generic [ref=e43]:
+                - strong [ref=e44]: 1 792,52 kr
+                - generic [ref=e45]: Premiepott
+                - generic [ref=e46]: P
+              - generic [ref=e47]:
+                - strong [ref=e48]: "159"
+                - generic [ref=e49]: Spillere
+                - generic [ref=e50]: S
+              - generic [ref=e51]:
+                - strong [ref=e52]: 1,00 kr
+                - generic [ref=e53]: Pris
+                - generic [ref=e54]: K
+              - generic [ref=e55]:
+                - strong [ref=e56]: Trekkes kl. 13:53
+                - generic [ref=e57]: Neste
+                - generic [ref=e58]: T
+            - generic [ref=e59]:
+              - button "Les mer" [ref=e60]
+              - button "Spill nå" [ref=e61]
+        - article [ref=e62] [cursor=pointer]:
+          - generic [ref=e63]:
+            - generic [ref=e64]: "90"
+            - heading "Bingo" [level=3] [ref=e65]
+            - paragraph [ref=e66]: /BINGO • LIVE
+            - paragraph [ref=e67]: Multiplayer bingo i web-klienten.
+          - generic [ref=e68]:
+            - generic [ref=e69]:
+              - generic [ref=e70]:
+                - strong [ref=e71]: 2 789,30 kr
+                - generic [ref=e72]: Premiepott
+                - generic [ref=e73]: P
+              - generic [ref=e74]:
+                - strong [ref=e75]: "13"
+                - generic [ref=e76]: Spillere
+                - generic [ref=e77]: S
+              - generic [ref=e78]:
+                - strong [ref=e79]: 1,00 kr
+                - generic [ref=e80]: Pris
+                - generic [ref=e81]: K
+              - generic [ref=e82]:
+                - strong [ref=e83]: Trekkes kl. 13:55
+                - generic [ref=e84]: Neste
+                - generic [ref=e85]: T
+            - generic [ref=e86]:
+              - button "Les mer" [ref=e87]
+              - button "Spill nå" [ref=e88]
+        - article [ref=e89] [cursor=pointer]:
+          - generic [ref=e90]:
+            - generic [ref=e91]: "80"
+            - heading "Roma" [level=3] [ref=e92]
+            - paragraph [ref=e93]: /ROMA • LIVE
+            - paragraph [ref=e94]: Roma-spillet (Unity) med samme realtime-logikk som Candy.
+          - generic [ref=e95]:
+            - generic [ref=e96]:
+              - generic [ref=e97]:
+                - strong [ref=e98]: 2 100,00 kr
+                - generic [ref=e99]: Premiepott
+                - generic [ref=e100]: P
+              - generic [ref=e101]:
+                - strong [ref=e102]: "84"
+                - generic [ref=e103]: Spillere
+                - generic [ref=e104]: S
+              - generic [ref=e105]:
+                - strong [ref=e106]: 1,00 kr
+                - generic [ref=e107]: Pris
+                - generic [ref=e108]: K
+              - generic [ref=e109]:
+                - strong [ref=e110]: Trekkes kl. 13:55
+                - generic [ref=e111]: Neste
+                - generic [ref=e112]: T
+            - generic [ref=e113]:
+              - button "Les mer" [ref=e114]
+              - button "Spill nå" [ref=e115]
+      - article [ref=e117]:
+        - heading "KYC" [level=2] [ref=e118]
+        - paragraph [ref=e119]: Verifiser konto for full tilgang til spill og transaksjoner.
+        - generic [ref=e120]:
+          - textbox [ref=e121]: 1990-01-01
+          - button "Verifiser KYC" [disabled] [ref=e122] [cursor=pointer]
+        - generic [ref=e123]: "Status: VERIFIED Fødselsdato: 1990-01-01 Verifisert: 2026-03-06T17:31:50.855Z"
+  - text: + + + +

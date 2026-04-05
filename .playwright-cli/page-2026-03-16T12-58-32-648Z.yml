@@ -1,0 +1,167 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - article "Mønster 12 1 500 kr" [ref=e8]:
+          - generic [ref=e28]: 1 500 kr
+        - article "Mønster 11 500 kr" [ref=e29]:
+          - generic [ref=e49]: 500 kr
+        - article "Mønster 10 300 kr" [ref=e50]:
+          - generic [ref=e70]: 300 kr
+        - article "Mønster 9 200 kr" [ref=e71]:
+          - generic [ref=e91]: 200 kr
+        - article "Mønster 8 100 kr" [ref=e92]:
+          - generic [ref=e112]: 100 kr
+        - article "Mønster 7 100 kr" [ref=e113]:
+          - generic [ref=e115]:
+            - img "2L"
+          - generic [ref=e133]: 100 kr
+      - generic [ref=e135]:
+        - article "Mønster 6 40 kr" [ref=e136]:
+          - generic [ref=e156]: 40 kr
+        - article "Mønster 5 40 kr" [ref=e157]:
+          - generic [ref=e177]: 40 kr
+        - article "Mønster 4 10 kr" [ref=e178]:
+          - generic [ref=e198]: 10 kr
+        - article "Mønster 3 8 kr" [ref=e199]:
+          - generic [ref=e219]: 8 kr
+        - article "Mønster 2 3 kr" [ref=e220]:
+          - generic [ref=e240]: 3 kr
+        - article "Mønster 1 3 kr" [ref=e241]:
+          - generic [ref=e243]:
+            - img "1L"
+          - generic [ref=e261]: 3 kr
+    - generic [ref=e262]:
+      - img
+      - article [ref=e264]:
+        - generic [ref=e265]:
+          - img
+          - generic [ref=e267]:
+            - generic [ref=e270]: "5"
+            - generic [ref=e273]: "39"
+            - generic [ref=e276]: "20"
+            - generic [ref=e279]: "57"
+            - generic [ref=e282]: "36"
+            - generic [ref=e285]: "19"
+            - generic [ref=e288]: "53"
+            - generic [ref=e291]: "35"
+            - generic [ref=e294]: "7"
+            - generic [ref=e297]: "48"
+            - generic [ref=e300]: "31"
+            - generic [ref=e303]: "6"
+            - generic [ref=e306]: "45"
+            - generic [ref=e309]: "23"
+            - generic [ref=e312]: "58"
+          - generic: Bong nr 1
+      - generic [ref=e317]:
+        - img
+        - img
+        - img
+      - article [ref=e322]:
+        - generic [ref=e323]:
+          - img
+          - generic [ref=e325]:
+            - generic [ref=e328]: "4"
+            - generic [ref=e331]: "38"
+            - generic [ref=e334]: "16"
+            - generic [ref=e337]: "56"
+            - generic [ref=e340]: "35"
+            - generic [ref=e343]: "14"
+            - generic [ref=e346]: "51"
+            - generic [ref=e349]: "32"
+            - generic [ref=e352]: "10"
+            - generic [ref=e355]: "46"
+            - generic [ref=e358]: "29"
+            - generic [ref=e361]: "6"
+            - generic [ref=e364]: "45"
+            - generic [ref=e367]: "18"
+            - generic [ref=e370]: "60"
+          - generic: Bong nr 2
+      - article [ref=e372]:
+        - generic [ref=e373]:
+          - img
+          - generic [ref=e375]:
+            - generic [ref=e378]: "6"
+            - generic [ref=e381]: "40"
+            - generic [ref=e384]: "19"
+            - generic [ref=e387]: "55"
+            - generic [ref=e390]: "34"
+            - generic [ref=e393]: "14"
+            - generic [ref=e396]: "52"
+            - generic [ref=e399]: "30"
+            - generic [ref=e402]: "12"
+            - generic [ref=e405]: "45"
+            - generic [ref=e408]: "27"
+            - generic [ref=e411]: "10"
+            - generic [ref=e414]: "44"
+            - generic [ref=e417]: "20"
+            - generic [ref=e420]: "56"
+          - generic: Bong nr 3
+      - article [ref=e422]:
+        - generic [ref=e423]:
+          - img
+          - generic [ref=e425]:
+            - generic [ref=e428]: "6"
+            - generic [ref=e431]: "38"
+            - generic [ref=e434]: "18"
+            - generic [ref=e437]: "59"
+            - generic [ref=e440]: "36"
+            - generic [ref=e443]: "17"
+            - generic [ref=e446]: "51"
+            - generic [ref=e449]: "34"
+            - generic [ref=e452]: "12"
+            - generic [ref=e455]: "45"
+            - generic [ref=e458]: "27"
+            - generic [ref=e461]: "9"
+            - generic [ref=e464]: "43"
+            - generic [ref=e467]: "24"
+            - generic [ref=e470]: "60"
+          - generic: Bong nr 4
+      - region "Bunnkontroller" [ref=e472]:
+        - generic [ref=e473]:
+          - article [ref=e474]:
+            - generic [ref=e475]: Trekk
+            - strong [ref=e477]:
+              - generic [ref=e478]: 0 / 30
+          - article [ref=e479]:
+            - generic [ref=e480]: Saldo
+            - strong [ref=e482]:
+              - generic [ref=e483]: 120 104
+              - generic [ref=e484]: kr
+          - article [ref=e485]:
+            - generic [ref=e486]: Gevinst
+            - strong [ref=e488]:
+              - generic [ref=e489]: "0"
+              - generic [ref=e490]: kr
+          - button "Bytt tall" [ref=e491] [cursor=pointer]:
+            - generic [ref=e492]: Bytt tall
+            - img [ref=e495]
+          - article [ref=e497]:
+            - generic [ref=e498]: Innsats
+            - generic [ref=e499]:
+              - button "Reduser innsats" [ref=e500] [cursor=pointer]:
+                - generic [ref=e501]: −
+              - strong [ref=e502]:
+                - generic [ref=e503]: "0"
+                - generic [ref=e504]: kr
+              - button "Ok innsats" [ref=e505] [cursor=pointer]:
+                - generic [ref=e506]: +
+          - button "Plasser innsats" [ref=e507] [cursor=pointer]:
+            - generic [ref=e508]: Plasser innsats
+          - button "Tilfeldig bonus" [ref=e509] [cursor=pointer]:
+            - generic [ref=e510]: Tilfeldig bonus
+      - region "Siste baller" [ref=e512]:
+        - generic [ref=e513]:
+          - img "Ball 3" [ref=e515]
+          - img "Ball 11" [ref=e517]
+          - img "Ball 18" [ref=e519]
+          - img "Ball 24" [ref=e521]
+          - img "Ball 33" [ref=e523]
+          - img "Ball 41" [ref=e525]
+    - generic [ref=e526]:
+      - generic [ref=e528]:
+        - generic [ref=e529]: Live
+        - button "Vis" [ref=e530] [cursor=pointer]
+      - generic [ref=e531]:
+        - generic [ref=e532]: Token lastet fra launch-resolve
+        - generic [ref=e533]: 294ac3…9470

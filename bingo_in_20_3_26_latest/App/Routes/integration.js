@@ -37,11 +37,12 @@ router.get('/api/integration/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: 'b2cbe937+diag2',
+    version: 'diag3',
     sysType: typeof Sys,
     sysKeys: Object.keys(Sys).slice(0, 20),
     connectedPlayers: Sys.ConnectedPlayers ? Object.keys(Sys.ConnectedPlayers) : 'undefined',
-    authStore: Sys._authStore ? Object.keys(Sys._authStore) : 'undefined'
+    authStore: Sys._authStore ? Object.keys(Sys._authStore) : 'undefined',
+    debugReconnect: Sys._debugReconnect || 'not-set'
   });
 });
 

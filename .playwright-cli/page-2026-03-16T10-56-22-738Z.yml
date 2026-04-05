@@ -1,0 +1,582 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - banner [ref=e4]:
+        - generic [ref=e5]:
+          - link "Render" [ref=e7] [cursor=pointer]:
+            - /url: /
+            - img "Render" [ref=e8]
+          - button "T Tobias's workspace" [ref=e12] [cursor=pointer]:
+            - generic [ref=e13]:
+              - generic [ref=e14]: T
+              - generic "Tobias's workspace" [ref=e15]
+              - img [ref=e16]
+        - generic [ref=e20]:
+          - navigation [ref=e21]:
+            - list [ref=e22]:
+              - listitem [ref=e23]:
+                - button "bingosystem-staging" [ref=e486] [cursor=pointer]:
+                  - generic [ref=e487]:
+                    - img [ref=e488]
+                    - generic [ref=e490]:
+                      - generic [ref=e491]: bingosystem-staging
+                      - img [ref=e492]
+          - button "Search Command + K" [ref=e31] [cursor=pointer]:
+            - img [ref=e33]
+            - text: Search
+            - generic [ref=e35]:
+              - img [ref=e36]
+              - generic [ref=e38]: Command
+              - generic [ref=e39]: +
+              - generic [ref=e40]: K
+              - generic [ref=e41]: K
+        - generic [ref=e42]:
+          - button "New" [ref=e44] [cursor=pointer]:
+            - generic [ref=e45]:
+              - img [ref=e46]
+              - generic [ref=e48]: New
+          - button "Upgrade" [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]:
+              - img [ref=e52]
+              - generic [ref=e54]: Upgrade
+          - button "Help" [ref=e56] [cursor=pointer]:
+            - img "Help" [ref=e57]
+          - button "t" [ref=e62] [cursor=pointer]:
+            - generic [ref=e64]: t
+      - generic [ref=e65]:
+        - navigation [ref=e66]:
+          - separator [ref=e67]
+          - generic [ref=e68]:
+            - generic [ref=e494]:
+              - link "Dashboard" [ref=e495] [cursor=pointer]:
+                - /url: /
+                - img [ref=e496]
+                - generic [ref=e498]: Dashboard
+              - generic [ref=e499]:
+                - img [ref=e500]
+                - generic [ref=e502]: bingosystem-staging
+            - generic [ref=e69]:
+              - list [ref=e503]:
+                - listitem [ref=e504]:
+                  - link "Events" [ref=e505] [cursor=pointer]:
+                    - /url: /web/srv-d6klj07afjfc73eh5vrg/events
+                    - img [ref=e506]
+                    - generic [ref=e513]: Events
+                - listitem [ref=e514]:
+                  - link "Settings" [ref=e515] [cursor=pointer]:
+                    - /url: /web/srv-d6klj07afjfc73eh5vrg/settings
+                    - img [ref=e516]
+                    - generic [ref=e519]: Settings
+              - generic [ref=e520]:
+                - generic [ref=e521]: Monitor
+                - list "Monitor" [ref=e522]:
+                  - listitem [ref=e523]:
+                    - link "Logs" [ref=e524] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/logs
+                      - img [ref=e525]
+                      - generic [ref=e530]: Logs
+                  - listitem [ref=e531]:
+                    - link "Metrics" [ref=e532] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/metrics
+                      - img [ref=e533]
+                      - generic [ref=e535]: Metrics
+              - generic [ref=e536]:
+                - generic [ref=e537]: Manage
+                - list "Manage" [ref=e538]:
+                  - listitem [ref=e539]:
+                    - link "Environment" [ref=e540] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/env
+                      - img [ref=e541]
+                      - generic [ref=e545]: Environment
+                  - listitem [ref=e546]:
+                    - link "Shell" [ref=e547] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/shell
+                      - img [ref=e548]
+                      - generic [ref=e551]: Shell
+                  - listitem [ref=e552]:
+                    - link "Scaling" [ref=e553] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/scaling
+                      - img [ref=e554]
+                      - generic [ref=e558]: Scaling
+                  - listitem [ref=e559]:
+                    - link "Previews" [ref=e560] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/previews
+                      - img [ref=e561]
+                      - generic [ref=e565]: Previews
+                  - listitem [ref=e566]:
+                    - link "Disk" [ref=e567] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/disks
+                      - img [ref=e568]
+                      - generic [ref=e572]: Disk
+                  - listitem [ref=e573]:
+                    - link "Jobs" [ref=e574] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/jobs
+                      - img [ref=e575]
+                      - generic [ref=e578]: Jobs
+          - generic [ref=e146]:
+            - alert [ref=e147]:
+              - img [ref=e149]
+              - generic [ref=e153]:
+                - generic [ref=e154]:
+                  - generic [ref=e155]: "Workflows: Now in beta"
+                  - generic [ref=e156]:
+                    - text: Orchestrate your agents and background jobs with automatic retries and scale-to-zero.
+                    - link "Learn more" [ref=e157] [cursor=pointer]:
+                      - /url: https://render.com/docs/workflows
+                - link "Create Workflow" [ref=e159] [cursor=pointer]:
+                  - /url: /workflow/new
+              - button "Close notification" [ref=e160] [cursor=pointer]:
+                - img [ref=e161]
+            - generic [ref=e163]:
+              - button "Collapse items" [expanded] [ref=e164] [cursor=pointer]:
+                - img [ref=e165]
+              - list "Footer navigation" [ref=e167]:
+                - listitem [ref=e168]:
+                  - link "Changelog" [ref=e169] [cursor=pointer]:
+                    - /url: https://render.com/changelog
+                    - img [ref=e170]
+                    - generic [ref=e175]: Changelog
+                - listitem [ref=e176]:
+                  - link "Invite a friend" [ref=e177] [cursor=pointer]:
+                    - /url: /invites
+                    - img [ref=e178]
+                    - generic [ref=e180]: Invite a friend
+                - listitem [ref=e181]:
+                  - button "Contact support" [ref=e182] [cursor=pointer]:
+                    - img [ref=e183]
+                    - generic [ref=e187]: Contact support
+              - link "Render Status" [ref=e189] [cursor=pointer]:
+                - /url: https://status.render.com
+                - img [ref=e190]
+                - generic [ref=e192]: Render Status
+        - generic [ref=e579]:
+          - banner [ref=e581]:
+            - generic [ref=e582]:
+              - generic [ref=e583]:
+                - img [ref=e584]
+                - generic [ref=e586]: Web Service
+              - generic [ref=e587]:
+                - heading "bingosystem-staging Node Starter" [level=1] [ref=e589]:
+                  - generic [ref=e590]: bingosystem-staging
+                  - generic [ref=e591]:
+                    - generic [ref=e592]: Node
+                    - link "Starter" [ref=e593] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/plan
+                      - generic [ref=e594]: Starter
+                - generic [ref=e596]:
+                  - button "Connect" [ref=e597] [cursor=pointer]:
+                    - generic [ref=e598]: Connect
+                    - img [ref=e599]
+                  - button "Manual Deploy" [ref=e601] [cursor=pointer]:
+                    - generic [ref=e602]: Manual Deploy
+                    - img [ref=e603]
+            - generic [ref=e607]:
+              - generic [ref=e609]:
+                - generic [ref=e610]: "Service ID:"
+                - generic "Service ID:" [ref=e611]:
+                  - generic [ref=e612]: srv-d6klj07afjfc73eh5vrg
+                  - button "Copy" [ref=e615] [cursor=pointer]:
+                    - img [ref=e616]
+              - generic [ref=e619]:
+                - img "GitHub" [ref=e621]
+                - link "tobias363 / bingosystem staging" [ref=e623] [cursor=pointer]:
+                  - /url: https://github.com/tobias363/bingosystem/tree/staging
+                  - generic [ref=e624]:
+                    - generic [ref=e625]: tobias363 / bingosystem
+                    - img [ref=e626]
+                    - generic [ref=e628]: staging
+              - generic "Copy" [ref=e630]:
+                - link "https://bingosystem-staging.onrender.com" [ref=e632] [cursor=pointer]:
+                  - /url: https://bingosystem-staging.onrender.com
+                - button "Copy" [ref=e635] [cursor=pointer]:
+                  - img [ref=e636]
+          - main [ref=e639]:
+            - generic [ref=e640]:
+              - button "Filter events 31" [ref=e642] [cursor=pointer]:
+                - img [ref=e644]
+                - generic [ref=e646]:
+                  - text: Filter events
+                  - generic [ref=e647]: "31"
+                - img [ref=e648]
+              - generic [ref=e650]:
+                - list [ref=e651]:
+                  - listitem [ref=e652]:
+                    - generic [ref=e653]:
+                      - img [ref=e656]
+                      - generic [ref=e658]:
+                        - generic [ref=e659]:
+                          - generic [ref=e660]:
+                            - link "Deploy" [ref=e661] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rthqc50q8c739bv37g
+                            - text: live
+                          - text: for
+                          - link "f783980" [ref=e663] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/f78398042fa84cb3dd404ba92694f30364d81175
+                          - text: ":"
+                          - generic [ref=e664]: Add repo-managed staging Render config
+                        - generic [ref=e665]: March 16, 2026 at 11:19 AM
+                  - listitem [ref=e666]:
+                    - generic [ref=e667]:
+                      - img [ref=e670]
+                      - generic [ref=e673]:
+                        - generic [ref=e674]:
+                          - generic [ref=e675]:
+                            - generic [ref=e676]:
+                              - link "Deploy" [ref=e677] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rthqc50q8c739bv37g
+                              - text: started
+                            - text: for
+                            - link "f783980" [ref=e679] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/f78398042fa84cb3dd404ba92694f30364d81175
+                            - text: ":"
+                            - generic [ref=e680]: Add repo-managed staging Render config
+                          - generic [ref=e681]: New commit via Auto-Deploy
+                        - generic [ref=e682]: March 16, 2026 at 11:18 AM
+                  - listitem [ref=e683]:
+                    - generic [ref=e684]:
+                      - img [ref=e687]
+                      - generic [ref=e689]:
+                        - generic [ref=e690]:
+                          - generic [ref=e691]:
+                            - link "Deploy" [ref=e692] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rt1qth5nts739t3h0g
+                            - text: live
+                          - text: for
+                          - link "5679b5c" [ref=e694] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/5679b5c8883a0647d7588f81591cee4b8ed0a496
+                          - text: ":"
+                          - generic [ref=e695]: Serve candy-web on staging root
+                        - generic [ref=e696]: March 16, 2026 at 10:47 AM
+                    - link "Rollback" [ref=e698] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rt1qth5nts739t3h0g/rollback
+                      - img [ref=e700]
+                      - text: Rollback
+                  - listitem [ref=e702]:
+                    - generic [ref=e703]:
+                      - img [ref=e706]
+                      - generic [ref=e709]:
+                        - generic [ref=e710]:
+                          - generic [ref=e711]:
+                            - generic [ref=e712]:
+                              - link "Deploy" [ref=e713] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rt1qth5nts739t3h0g
+                              - text: started
+                            - text: for
+                            - link "5679b5c" [ref=e715] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/5679b5c8883a0647d7588f81591cee4b8ed0a496
+                            - text: ":"
+                            - generic [ref=e716]: Serve candy-web on staging root
+                          - generic [ref=e717]: Triggered via Deploy Hook
+                        - generic [ref=e718]: March 16, 2026 at 10:45 AM
+                  - listitem [ref=e719]:
+                    - generic [ref=e720]:
+                      - img [ref=e723]
+                      - generic [ref=e725]:
+                        - generic [ref=e726]:
+                          - generic [ref=e727]:
+                            - link "Deploy" [ref=e728] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rt1enkijhs73d2q6q0
+                            - text: live
+                          - text: for
+                          - link "5679b5c" [ref=e730] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/5679b5c8883a0647d7588f81591cee4b8ed0a496
+                          - text: ":"
+                          - generic [ref=e731]: Serve candy-web on staging root
+                        - generic [ref=e732]: March 16, 2026 at 10:45 AM
+                    - link "Rollback" [ref=e734] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rt1enkijhs73d2q6q0/rollback
+                      - img [ref=e736]
+                      - text: Rollback
+                  - listitem [ref=e738]:
+                    - generic [ref=e739]:
+                      - img [ref=e742]
+                      - generic [ref=e745]:
+                        - generic [ref=e746]:
+                          - generic [ref=e747]:
+                            - generic [ref=e748]:
+                              - link "Deploy" [ref=e749] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rt1enkijhs73d2q6q0
+                              - text: started
+                            - text: for
+                            - link "5679b5c" [ref=e751] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/5679b5c8883a0647d7588f81591cee4b8ed0a496
+                            - text: ":"
+                            - generic [ref=e752]: Serve candy-web on staging root
+                          - generic [ref=e753]: New commit via Auto-Deploy
+                        - generic [ref=e754]: March 16, 2026 at 10:43 AM
+                  - listitem [ref=e755]:
+                    - generic [ref=e756]:
+                      - img [ref=e759]
+                      - generic [ref=e761]:
+                        - generic [ref=e762]:
+                          - generic [ref=e763]:
+                            - link "Deploy" [ref=e764] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rsqf0gjchc73bgckh0
+                            - text: live
+                          - text: for
+                          - link "faec4dc" [ref=e766] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/faec4dc90e3403a7a63b2555539a0596f98e4a38
+                          - text: ":"
+                          - generic [ref=e767]: Merge staging into source-of-truth for deploy
+                        - generic [ref=e768]: March 16, 2026 at 10:29 AM
+                    - link "Rollback" [ref=e770] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rsqf0gjchc73bgckh0/rollback
+                      - img [ref=e772]
+                      - text: Rollback
+                  - listitem [ref=e774]:
+                    - generic [ref=e775]:
+                      - img [ref=e778]
+                      - generic [ref=e781]:
+                        - generic [ref=e782]:
+                          - generic [ref=e783]:
+                            - generic [ref=e784]:
+                              - link "Deploy" [ref=e785] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rsqf0gjchc73bgckh0
+                              - text: started
+                            - text: for
+                            - link "faec4dc" [ref=e787] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/faec4dc90e3403a7a63b2555539a0596f98e4a38
+                            - text: ":"
+                            - generic [ref=e788]: Merge staging into source-of-truth for deploy
+                          - generic [ref=e789]: Manually triggered by you via Dashboard
+                        - generic [ref=e790]: March 16, 2026 at 10:28 AM
+                  - listitem [ref=e791]:
+                    - generic [ref=e792]:
+                      - img [ref=e795]
+                      - generic [ref=e797]:
+                        - generic [ref=e798]:
+                          - generic [ref=e799]:
+                            - link "Deploy" [ref=e800] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rrq9cfo9mc738ru4fg
+                            - text: live
+                          - text: for
+                          - link "faec4dc" [ref=e802] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/faec4dc90e3403a7a63b2555539a0596f98e4a38
+                          - text: ":"
+                          - generic [ref=e803]: Merge staging into source-of-truth for deploy
+                        - generic [ref=e804]: March 16, 2026 at 9:21 AM
+                    - link "Rollback" [ref=e806] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rrq9cfo9mc738ru4fg/rollback
+                      - img [ref=e808]
+                      - text: Rollback
+                  - listitem [ref=e810]:
+                    - generic [ref=e811]:
+                      - img [ref=e814]
+                      - generic [ref=e817]:
+                        - generic [ref=e818]:
+                          - generic [ref=e819]:
+                            - generic [ref=e820]:
+                              - link "Deploy" [ref=e821] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rrq9cfo9mc738ru4fg
+                              - text: started
+                            - text: for
+                            - link "faec4dc" [ref=e823] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/faec4dc90e3403a7a63b2555539a0596f98e4a38
+                            - text: ":"
+                            - generic [ref=e824]: Merge staging into source-of-truth for deploy
+                          - generic [ref=e825]: Triggered via Deploy Hook
+                        - generic [ref=e826]: March 16, 2026 at 9:19 AM
+                  - listitem [ref=e827]:
+                    - generic [ref=e828]:
+                      - img [ref=e831]
+                      - generic [ref=e833]:
+                        - generic [ref=e834]:
+                          - generic [ref=e835]:
+                            - link "Deploy" [ref=e836] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rrppfkijhs73d2bse0
+                            - text: live
+                          - text: for
+                          - link "faec4dc" [ref=e838] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/faec4dc90e3403a7a63b2555539a0596f98e4a38
+                          - text: ":"
+                          - generic [ref=e839]: Merge staging into source-of-truth for deploy
+                        - generic [ref=e840]: March 16, 2026 at 9:19 AM
+                    - link "Rollback" [ref=e842] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rrppfkijhs73d2bse0/rollback
+                      - img [ref=e844]
+                      - text: Rollback
+                  - listitem [ref=e846]:
+                    - generic [ref=e847]:
+                      - img [ref=e850]
+                      - generic [ref=e853]:
+                        - generic [ref=e854]:
+                          - generic [ref=e855]:
+                            - generic [ref=e856]:
+                              - link "Deploy" [ref=e857] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6rrppfkijhs73d2bse0
+                              - text: started
+                            - text: for
+                            - link "faec4dc" [ref=e859] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/faec4dc90e3403a7a63b2555539a0596f98e4a38
+                            - text: ":"
+                            - generic [ref=e860]: Merge staging into source-of-truth for deploy
+                          - generic [ref=e861]: New commit via Auto-Deploy
+                        - generic [ref=e862]: March 16, 2026 at 9:18 AM
+                  - listitem [ref=e863]:
+                    - generic [ref=e864]:
+                      - img [ref=e867]
+                      - generic [ref=e869]:
+                        - generic [ref=e870]:
+                          - generic [ref=e871]:
+                            - link "Deploy" [ref=e872] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6qja96omgoc73c4jiig
+                            - text: failed
+                          - text: for
+                          - link "5e929f2" [ref=e874] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/5e929f241858a68c1b9abc87fc9b46209e3b1ab0
+                          - text: ":"
+                          - generic [ref=e875]: Tune candy RTP baseline for staging
+                        - generic [ref=e876]:
+                          - text: Exited with status 2 while building your code. Check your
+                          - link "deploy logs" [ref=e877] [cursor=pointer]:
+                            - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6qja96omgoc73c4jiig
+                          - text: for more information.
+                        - generic [ref=e878]: March 14, 2026 at 11:16 AM
+                    - button "Rollback" [disabled] [ref=e880]:
+                      - img [ref=e882]
+                      - text: Rollback
+                  - listitem [ref=e884]:
+                    - generic [ref=e885]:
+                      - img [ref=e888]
+                      - generic [ref=e891]:
+                        - generic [ref=e892]:
+                          - generic [ref=e893]:
+                            - generic [ref=e894]:
+                              - link "Deploy" [ref=e895] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6qja96omgoc73c4jiig
+                              - text: started
+                            - text: for
+                            - link "5e929f2" [ref=e897] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/5e929f241858a68c1b9abc87fc9b46209e3b1ab0
+                            - text: ":"
+                            - generic [ref=e898]: Tune candy RTP baseline for staging
+                          - generic [ref=e899]: Triggered via Deploy Hook
+                        - generic [ref=e900]: March 14, 2026 at 11:15 AM
+                  - listitem [ref=e901]:
+                    - generic [ref=e902]:
+                      - img [ref=e905]
+                      - generic [ref=e907]:
+                        - generic [ref=e908]:
+                          - generic [ref=e909]:
+                            - link "Deploy" [ref=e910] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6qja35m5p6s73bv1ldg
+                            - text: failed
+                          - text: for
+                          - link "5e929f2" [ref=e912] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/5e929f241858a68c1b9abc87fc9b46209e3b1ab0
+                          - text: ":"
+                          - generic [ref=e913]: Tune candy RTP baseline for staging
+                        - generic [ref=e914]:
+                          - text: Exited with status 2 while building your code. Check your
+                          - link "deploy logs" [ref=e915] [cursor=pointer]:
+                            - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6qja35m5p6s73bv1ldg
+                          - text: for more information.
+                        - generic [ref=e916]: March 14, 2026 at 11:15 AM
+                    - button "Rollback" [disabled] [ref=e918]:
+                      - img [ref=e920]
+                      - text: Rollback
+                  - listitem [ref=e922]:
+                    - generic [ref=e923]:
+                      - img [ref=e926]
+                      - generic [ref=e929]:
+                        - generic [ref=e930]:
+                          - generic [ref=e931]:
+                            - generic [ref=e932]:
+                              - link "Deploy" [ref=e933] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6qja35m5p6s73bv1ldg
+                              - text: started
+                            - text: for
+                            - link "5e929f2" [ref=e935] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/5e929f241858a68c1b9abc87fc9b46209e3b1ab0
+                            - text: ":"
+                            - generic [ref=e936]: Tune candy RTP baseline for staging
+                          - generic [ref=e937]: New commit via Auto-Deploy
+                        - generic [ref=e938]: March 14, 2026 at 11:14 AM
+                  - listitem [ref=e939]:
+                    - generic [ref=e940]:
+                      - img [ref=e943]
+                      - generic [ref=e945]:
+                        - generic [ref=e946]:
+                          - generic [ref=e947]:
+                            - link "Deploy" [ref=e948] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6puo1paae7s73fbrmt0
+                            - text: live
+                          - text: for
+                          - link "715687f" [ref=e950] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/715687f6df3962c9bf65c417b9d44388edad62c5
+                          - text: ":"
+                          - generic [ref=e951]: Merge codex/candy-stabilization-hard-gate into staging
+                        - generic [ref=e952]: March 13, 2026 at 11:53 AM
+                    - link "Rollback" [ref=e954] [cursor=pointer]:
+                      - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6puo1paae7s73fbrmt0/rollback
+                      - img [ref=e956]
+                      - text: Rollback
+                  - listitem [ref=e958]:
+                    - generic [ref=e959]:
+                      - img [ref=e962]
+                      - generic [ref=e965]:
+                        - generic [ref=e966]:
+                          - generic [ref=e967]:
+                            - generic [ref=e968]:
+                              - link "Deploy" [ref=e969] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6puo1paae7s73fbrmt0
+                              - text: started
+                            - text: for
+                            - link "715687f" [ref=e971] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/715687f6df3962c9bf65c417b9d44388edad62c5
+                            - text: ":"
+                            - generic [ref=e972]: Merge codex/candy-stabilization-hard-gate into staging
+                          - generic [ref=e973]: Manually triggered by you via Dashboard
+                        - generic [ref=e974]: March 13, 2026 at 11:50 AM
+                  - listitem [ref=e975]:
+                    - generic [ref=e976]:
+                      - img [ref=e979]
+                      - generic [ref=e981]:
+                        - generic [ref=e982]:
+                          - generic [ref=e983]:
+                            - link "Deploy" [ref=e984] [cursor=pointer]:
+                              - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6puf8f5gffc73dsa360
+                            - text: live
+                          - text: for
+                          - link "715687f" [ref=e986] [cursor=pointer]:
+                            - /url: https://github.com/tobias363/bingosystem/commit/715687f6df3962c9bf65c417b9d44388edad62c5
+                          - text: ":"
+                          - generic [ref=e987]: Merge codex/candy-stabilization-hard-gate into staging
+                        - generic [ref=e988]: March 13, 2026 at 11:34 AM
+                  - listitem [ref=e989]:
+                    - generic [ref=e990]:
+                      - img [ref=e993]
+                      - generic [ref=e996]:
+                        - generic [ref=e997]:
+                          - generic [ref=e998]:
+                            - generic [ref=e999]:
+                              - link "Deploy" [ref=e1000] [cursor=pointer]:
+                                - /url: /web/srv-d6klj07afjfc73eh5vrg/deploys/dep-d6puf8f5gffc73dsa360
+                              - text: started
+                            - text: for
+                            - link "715687f" [ref=e1002] [cursor=pointer]:
+                              - /url: https://github.com/tobias363/bingosystem/commit/715687f6df3962c9bf65c417b9d44388edad62c5
+                            - text: ":"
+                            - generic [ref=e1003]: Merge codex/candy-stabilization-hard-gate into staging
+                          - generic [ref=e1004]: Manually triggered by you via Dashboard
+                        - generic [ref=e1005]: March 13, 2026 at 11:32 AM
+                - img "Loading..." [ref=e1007]
+    - generic:
+      - generic:
+        - generic: "0 services selected:"
+        - generic:
+          - generic:
+            - generic:
+              - button:
+                - generic:
+                  - img
+                - generic: Move
+                - img
+      - generic:
+        - separator
+        - generic:
+          - generic:
+            - button:
+              - img
+  - iframe [ref=e483]:
+    

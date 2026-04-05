@@ -1,0 +1,1 @@
+- generic [ref=e2]: "Blocked request. This host (\"lvh.me\") is not allowed. To allow this host, add \"lvh.me\" to `server.allowedHosts` in vite.config.js."

@@ -1,0 +1,200 @@
+- main [ref=e3]:
+  - generic [ref=e10]:
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - article "Mønster 12 1 500 kr" [ref=e13]:
+          - generic [ref=e33]: 1 500 kr
+        - article "Mønster 11 500 kr" [ref=e34]:
+          - generic [ref=e54]: 500 kr
+        - article "Mønster 10 300 kr" [ref=e55]:
+          - generic [ref=e75]: 300 kr
+        - article "Mønster 9 200 kr" [ref=e76]:
+          - generic [ref=e96]: 200 kr
+        - article "Mønster 8 100 kr" [ref=e97]:
+          - generic [ref=e117]: 100 kr
+        - article "Mønster 7 100 kr" [ref=e118]:
+          - generic [ref=e120]:
+            - img "2L"
+          - generic [ref=e138]: 100 kr
+      - generic [ref=e140]:
+        - article "Mønster 6 40 kr" [ref=e141]:
+          - generic [ref=e161]: 40 kr
+        - article "Mønster 5 40 kr" [ref=e162]:
+          - generic [ref=e182]: 40 kr
+        - article "Mønster 4 10 kr" [ref=e183]:
+          - generic [ref=e203]: 10 kr
+        - article "Mønster 3 8 kr" [ref=e204]:
+          - generic [ref=e224]: 8 kr
+        - article "Mønster 2 3 kr" [ref=e225]:
+          - generic [ref=e245]: 3 kr
+        - article "Mønster 1 3 kr" [ref=e246]:
+          - generic [ref=e248]:
+            - img "1L"
+          - generic [ref=e266]: 3 kr
+    - generic [ref=e267]:
+      - img
+      - article [ref=e269]:
+        - generic [ref=e270]:
+          - img
+          - generic [ref=e272]:
+            - generic [ref=e275]: "4"
+            - generic [ref=e278]: "39"
+            - generic [ref=e281]: "18"
+            - generic [ref=e284]: "55"
+            - generic [ref=e287]: "32"
+            - generic [ref=e290]: "17"
+            - generic [ref=e293]: "52"
+            - generic [ref=e296]: "31"
+            - generic [ref=e299]: "12"
+            - generic [ref=e302]: "48"
+            - generic [ref=e305]: "25"
+            - generic [ref=e308]: "6"
+            - generic [ref=e311]: "43"
+            - generic [ref=e314]: "22"
+            - generic [ref=e317]: "58"
+          - generic: Bong nr 1
+      - generic [ref=e322]:
+        - img
+        - img
+        - img
+      - article [ref=e327]:
+        - generic [ref=e328]:
+          - img
+          - generic [ref=e330]:
+            - generic [ref=e333]: "5"
+            - generic [ref=e336]: "38"
+            - generic [ref=e337]:
+              - img
+              - generic [ref=e339]: "16"
+            - generic [ref=e342]: "51"
+            - generic [ref=e345]: "36"
+            - generic [ref=e348]: "15"
+            - generic [ref=e351]: "50"
+            - generic [ref=e354]: "35"
+            - generic [ref=e357]: "8"
+            - generic [ref=e360]: "44"
+            - generic [ref=e363]: "31"
+            - generic [ref=e366]: "6"
+            - generic [ref=e369]: "43"
+            - generic [ref=e372]: "18"
+            - generic [ref=e375]: "52"
+          - generic: Bong nr 2
+      - article [ref=e377]:
+        - generic [ref=e378]:
+          - img
+          - generic [ref=e380]:
+            - generic [ref=e383]: "2"
+            - generic [ref=e384]:
+              - img
+              - generic [ref=e386]: "41"
+            - generic [ref=e389]: "17"
+            - generic [ref=e392]: "57"
+            - generic [ref=e395]: "36"
+            - generic [ref=e398]: "13"
+            - generic [ref=e401]: "50"
+            - generic [ref=e404]: "30"
+            - generic [ref=e407]: "10"
+            - generic [ref=e410]: "46"
+            - generic [ref=e413]: "28"
+            - generic [ref=e416]: "6"
+            - generic [ref=e419]: "44"
+            - generic [ref=e422]: "21"
+            - generic [ref=e425]: "60"
+          - generic: Bong nr 3
+      - article [ref=e427]:
+        - generic [ref=e428]:
+          - img
+          - generic [ref=e430]:
+            - generic [ref=e433]: "8"
+            - generic [ref=e436]: "42"
+            - generic [ref=e439]: "16"
+            - generic [ref=e442]: "51"
+            - generic [ref=e445]: "36"
+            - generic [ref=e448]: "15"
+            - generic [ref=e451]: "49"
+            - generic [ref=e454]: "27"
+            - generic [ref=e457]: "11"
+            - generic [ref=e460]: "48"
+            - generic [ref=e463]: "25"
+            - generic [ref=e466]: "10"
+            - generic [ref=e469]: "44"
+            - generic [ref=e472]: "17"
+            - generic [ref=e473]:
+              - img
+              - generic [ref=e475]: "52"
+          - generic: Bong nr 4
+      - region "Bunnkontroller" [ref=e477]:
+        - generic [ref=e478]:
+          - article [ref=e479]:
+            - generic [ref=e480]: Trekk
+            - strong [ref=e482]:
+              - generic [ref=e483]: 0 / 30
+          - article [ref=e484]:
+            - generic [ref=e485]: Saldo
+            - strong [ref=e487]:
+              - generic [ref=e488]: 1 000
+              - generic [ref=e489]: kr
+          - article [ref=e490]:
+            - generic [ref=e491]: Gevinst
+            - strong [ref=e493]:
+              - generic [ref=e494]: "0"
+              - generic [ref=e495]: kr
+          - button "Bytt tall" [ref=e496] [cursor=pointer]:
+            - generic [ref=e497]: Bytt tall
+            - img [ref=e500]
+          - article [ref=e502]:
+            - generic [ref=e503]: Innsats
+            - generic [ref=e504]:
+              - button "Reduser innsats" [ref=e505] [cursor=pointer]:
+                - generic [ref=e506]: −
+              - strong [ref=e507]:
+                - generic [ref=e508]: "0"
+                - generic [ref=e509]: kr
+              - button "Ok innsats" [ref=e510] [cursor=pointer]:
+                - generic [ref=e511]: +
+          - button "Plasser innsats" [ref=e512] [cursor=pointer]:
+            - generic [ref=e513]: Plasser innsats
+          - button "Tilfeldig bonus" [ref=e514] [cursor=pointer]:
+            - generic [ref=e515]: Tilfeldig bonus
+      - article "Ny trekning starter om" [ref=e517]:
+        - generic [ref=e518]:
+          - strong [ref=e519]: Ny trekning starter om
+          - generic [ref=e520]: 00:22
+          - paragraph [ref=e521]: Plasser innsats for å være med i trekningen
+      - region "Siste baller" [ref=e523]:
+        - generic [ref=e524]:
+          - img "Ball 44" [ref=e526]
+          - img "Ball 17" [ref=e528]
+          - img "Ball 38" [ref=e530]
+          - img "Ball 35" [ref=e532]
+          - img "Ball 11" [ref=e534]
+          - img "Ball 25" [ref=e536]
+          - img "Ball 31" [ref=e538]
+          - img "Ball 47" [ref=e540]
+          - img "Ball 6" [ref=e542]
+          - img "Ball 33" [ref=e544]
+          - img "Ball 50" [ref=e546]
+          - img "Ball 10" [ref=e548]
+          - img "Ball 45" [ref=e550]
+          - img "Ball 56" [ref=e552]
+          - img "Ball 58" [ref=e554]
+          - img "Ball 51" [ref=e556]
+          - img "Ball 2" [ref=e558]
+          - img "Ball 36" [ref=e560]
+          - img "Ball 53" [ref=e562]
+          - img "Ball 49" [ref=e564]
+          - img "Ball 29" [ref=e566]
+          - img "Ball 34" [ref=e568]
+          - img "Ball 7" [ref=e570]
+          - img "Ball 20" [ref=e572]
+          - img "Ball 57" [ref=e574]
+          - img "Ball 5" [ref=e576]
+          - img "Ball 42" [ref=e578]
+          - img "Ball 40" [ref=e580]
+          - img "Ball 9" [ref=e582]
+          - img "Ball 12" [ref=e584]
+    - generic [ref=e585]:
+      - generic [ref=e587]:
+        - generic [ref=e588]: Live
+        - button "Vis" [ref=e589] [cursor=pointer]
+      - generic [ref=e591]: Portal-innlogging aktiv

@@ -1,0 +1,53 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - progressbar [ref=e6]
+      - main [ref=e14]:
+        - generic [ref=e15]:
+          - generic [ref=e17]:
+            - generic [ref=e18]:
+              - img [ref=e20]
+              - generic [ref=e25]: Logg på med Google
+            - img "Render" [ref=e26]
+          - generic [ref=e27]:
+            - heading "Logg på" [level=1] [ref=e28]
+            - generic [ref=e30]:
+              - text: Fortsett til
+              - button "Render" [ref=e31] [cursor=pointer]
+        - generic [ref=e34]:
+          - generic [ref=e39]:
+            - generic [ref=e44]:
+              - textbox "E-post eller telefon" [active] [ref=e45]
+              - generic: E-post eller telefon
+            - button "Har du glemt e-postadressen?" [ref=e49] [cursor=pointer]
+          - generic [ref=e52]:
+            - text: Før du bruker denne appen, kan du gjennomgå
+            - link "personvernreglene" [ref=e53] [cursor=pointer]:
+              - /url: https://render.com/privacy
+            - text: for og
+            - link "vilkårene for bruk" [ref=e54] [cursor=pointer]:
+              - /url: https://render.com/terms
+            - text: av Render.
+        - generic [ref=e56]:
+          - button "Neste" [ref=e60]:
+            - generic [ref=e63]: Neste
+          - button "Opprett konto" [ref=e68]:
+            - generic [ref=e71]: Opprett konto
+    - contentinfo [ref=e75]:
+      - combobox "Bytt språk norsk" [ref=e79] [cursor=pointer]:
+        - generic:
+          - generic: norsk
+        - generic:
+          - img
+      - list [ref=e81]:
+        - listitem [ref=e82]:
+          - link "Hjelp" [ref=e83] [cursor=pointer]:
+            - /url: https://support.google.com/accounts?hl=no&p=account_iph
+        - listitem [ref=e84]:
+          - link "Personvern" [ref=e85] [cursor=pointer]:
+            - /url: https://accounts.google.com/TOS?loc=NO&hl=no&privacy=true
+        - listitem [ref=e86]:
+          - link "Vilkår" [ref=e87] [cursor=pointer]:
+            - /url: https://accounts.google.com/TOS?loc=NO&hl=no
+  - iframe [ref=e88]:
+    

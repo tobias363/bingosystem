@@ -1,0 +1,32 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - article [ref=e4]:
+        - heading "Logg Inn" [level=2] [ref=e5]
+        - generic [ref=e6]:
+          - text: E-post
+          - textbox "E-post" [ref=e7]:
+            - /placeholder: navn@firma.no
+        - generic [ref=e8]:
+          - text: Passord
+          - textbox "Passord" [ref=e9]:
+            - /placeholder: Minst 8 tegn
+        - button "Logg inn" [ref=e10] [cursor=pointer]
+        - generic [ref=e11]: Ikke logget inn.
+      - article [ref=e12]:
+        - heading "Opprett Bruker" [level=2] [ref=e13]
+        - generic [ref=e14]:
+          - text: Navn
+          - textbox "Navn" [ref=e15]:
+            - /placeholder: Ditt navn
+        - generic [ref=e16]:
+          - text: E-post
+          - textbox "E-post" [ref=e17]:
+            - /placeholder: navn@firma.no
+        - generic [ref=e18]:
+          - text: Passord
+          - textbox "Passord" [ref=e19]:
+            - /placeholder: Minst 8 tegn
+        - button "Opprett bruker" [ref=e20] [cursor=pointer]
+        - generic [ref=e21]: Ikke opprettet bruker ennå.
+  - text: + + + +
