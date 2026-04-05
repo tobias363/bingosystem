@@ -53,12 +53,22 @@ router.get('/api/integration/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: 'diag6-common-on-game-ns',
+    version: 'diag7-ns-scan',
     sysType: typeof Sys,
     sysKeys: Object.keys(Sys).slice(0, 20),
     connectedPlayers: Sys.ConnectedPlayers ? Object.keys(Sys.ConnectedPlayers) : 'undefined',
     authStore: Sys._authStore ? Object.keys(Sys._authStore) : 'undefined',
-    debugReconnect: Sys._debugReconnect || 'not-set'
+    debugReconnect: Sys._debugReconnect || 'not-set',
+    // Check ALL namespaces for connected sockets
+    ioNamespaces: Sys.Io ? Object.keys(Sys.Io.nsps || {}).map(ns => {
+      const nsp = Sys.Io.nsps[ns];
+      const connected = nsp.connected || nsp.sockets || {};
+      const socketIds = connected instanceof Map ? Array.from(connected.keys()) : Object.keys(connected);
+      return { ns, count: socketIds.length, sockets: socketIds.slice(0, 3).map(id => {
+        const s = connected instanceof Map ? connected.get(id) : connected[id];
+        return { id, playerId: s?.playerId, hasAuthToken: !!s?.authToken };
+      })};
+    }) : 'no-io'
   });
 });
 
