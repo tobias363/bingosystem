@@ -172,6 +172,15 @@ module.exports = function (Socket) {
         Socket.on("ReconnectPlayer", async function (data, responce) {
             try {
                 console.log("Reconnect Called............!!!!!!!!", data)
+                // BIN-134: Write ConnectedPlayers BEFORE controller (diagnostic bypass)
+                if (data.playerId) {
+                    Sys.ConnectedPlayers[data.playerId] = {
+                        socketId: Socket.id,
+                        status: "Online"
+                    };
+                    Sys._debugReconnect = { src: 'common.js', playerId: data.playerId, ts: Date.now(), cpKeys: Object.keys(Sys.ConnectedPlayers) };
+                    console.log('[BIN-134] common.js: ConnectedPlayers WRITTEN DIRECTLY for', data.playerId, 'keys:', Object.keys(Sys.ConnectedPlayers));
+                }
                 const result = await Sys.Game.Common.Controllers.PlayerController.reconnectPlayer(Socket, data);
                 // BIN-134: Broadcast auth-signal ved reconnect
                 if (result && result.status === 'success' && data.playerId && Sys.Io) {
