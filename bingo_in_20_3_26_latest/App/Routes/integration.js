@@ -34,7 +34,15 @@ function verifyIntegrationToken(req, res, next) {
 
 // ─── GET /api/integration/health ─────────────────────────────────────────────
 router.get('/api/integration/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() });
+  res.json({
+    status: 'ok',
+    timestamp: Date.now(),
+    version: 'f92dd8be+diag',
+    sysType: typeof Sys,
+    sysKeys: Object.keys(Sys).slice(0, 20),
+    connectedPlayers: Sys.ConnectedPlayers ? Object.keys(Sys.ConnectedPlayers) : 'undefined',
+    authStore: Sys._authStore ? Object.keys(Sys._authStore) : 'undefined'
+  });
 });
 
 // ─── GET /api/integration/auth-beacon ───────────────────────────────────────
