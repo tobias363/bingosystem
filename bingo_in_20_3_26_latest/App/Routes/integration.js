@@ -451,4 +451,49 @@ router.post('/api/integration/seed-test-player', async (req, res) => {
   }
 });
 
+// ─── GET /api/integration/candy-launch ──────────────────────────────────────
+// Proxy-kall til candy-backend for å hente en fersk launch-token.
+// Lobbyen kaller dette når spilleren trykker "Spill nå" på CandyMania-tilen.
+// Admin-tokenet brukes server-side mot candy-backend; spilleren trenger kun
+// å være innlogget i bingo-systemet (verifisert via auth-beacon).
+const CANDY_BACKEND_URL = process.env.CANDY_BACKEND_URL || 'https://bingosystem-staging.onrender.com';
+const CANDY_ADMIN_TOKEN = process.env.CANDY_ADMIN_TOKEN || '';
+
+router.get('/api/integration/candy-launch', async (req, res) => {
+  try {
+    if (!CANDY_ADMIN_TOKEN) {
+      return res.status(503).json({ success: false, error: 'CANDY_ADMIN_TOKEN not configured' });
+    }
+
+    const response = await fetch(CANDY_BACKEND_URL + '/api/games/candy/launch-token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + CANDY_ADMIN_TOKEN
+      },
+      body: JSON.stringify({ hallId: 'hall-default' })
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      return res.status(502).json({ success: false, error: data.error || 'Candy backend error' });
+    }
+
+    const launchToken = data.data.launchToken;
+    const launchUrl = data.data.launchUrl || (CANDY_BACKEND_URL + '/candy/');
+    const iframeUrl = launchUrl + '#lt=' + encodeURIComponent(launchToken);
+
+    res.json({
+      success: true,
+      data: {
+        iframeUrl: iframeUrl,
+        expiresAt: data.data.expiresAt
+      }
+    });
+  } catch (err) {
+    console.error('candy-launch proxy error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

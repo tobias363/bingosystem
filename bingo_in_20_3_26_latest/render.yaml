@@ -94,3 +94,7 @@ services:
         sync: false
       - key: FIREBASE_ADMIN_DB_URL
         sync: false
+      - key: CANDY_BACKEND_URL
+        value: https://bingosystem-staging.onrender.com
+      - key: CANDY_ADMIN_TOKEN
+        sync: false
