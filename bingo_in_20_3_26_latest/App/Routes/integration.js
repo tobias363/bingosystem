@@ -53,7 +53,7 @@ router.get('/api/integration/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: 'diag8-whitelist-fix',
+    version: 'diag9-mongodb-auth',
     sysType: typeof Sys,
     sysKeys: Object.keys(Sys).slice(0, 20),
     connectedPlayers: Sys.ConnectedPlayers ? Object.keys(Sys.ConnectedPlayers) : 'undefined',
@@ -74,62 +74,44 @@ router.get('/api/integration/health', (req, res) => {
 
 // ─── GET /api/integration/auth-beacon ───────────────────────────────────────
 // BIN-134: HTTP-polling for auth-beacon.
-// Primært: Leser Sys.ConnectedPlayers (garantert populert ved login).
-// Fallback: Sjekker Sys._authStore for token (satt av PlayerController).
-// Returnerer { authenticated: true, token } eller { authenticated: false }.
-// Ingen JWT-verifisering — brukes kun for å oppdage at EN spiller er innlogget.
-router.get('/api/integration/auth-beacon', (req, res) => {
+// Strategy: Check MongoDB for a recently active player with a valid authToken.
+// Unity's Socket.IO runs in WASM and connects to a namespace inaccessible from
+// the integration layer, so we query the database directly instead.
+router.get('/api/integration/auth-beacon', async (req, res) => {
   try {
-    // Primær kilde: ConnectedPlayers — dette fylles ALLTID ved login og reconnect
+    // Primary: Check in-memory stores first (fast path)
     const connected = Sys.ConnectedPlayers;
     if (connected && typeof connected === 'object') {
       const playerIds = Object.keys(connected);
       if (playerIds.length > 0) {
         const playerId = playerIds[0];
-        const entry = connected[playerId];
-
-        // Sjekk _authStore for JWT-token til denne spilleren
         const authEntry = Sys._authStore && Sys._authStore[playerId];
-        const token = authEntry ? authEntry.token : null;
-
         return res.json({
           authenticated: true,
-          playerId: playerId,
-          token: token,
-          source: token ? 'authStore' : 'connectedPlayers'
+          playerId,
+          token: authEntry ? authEntry.token : null,
+          source: 'connectedPlayers'
         });
       }
     }
 
-    // Fallback: _authStore alene (for tilfeller der ConnectedPlayers er ryddet)
-    const store = Sys._authStore;
-    if (store) {
-      const maxAge = 24 * 60 * 60 * 1000;
-      const now = Date.now();
-      const storeIds = Object.keys(store);
-      for (let i = 0; i < storeIds.length; i++) {
-        const entry = store[storeIds[i]];
-        if (entry && entry.token && (now - entry.timestamp) < maxAge) {
-          return res.json({
-            authenticated: true,
-            playerId: entry.playerId,
-            token: entry.token,
-            source: 'authStoreFallback'
-          });
-        }
-      }
+    // Fallback: Query MongoDB for a player with a recent socketId (= active connection)
+    // Players get socketId set on login/reconnect. A non-empty socketId means active.
+    const player = await Sys.Game.Common.Services.PlayerServices.getOneByData(
+      { socketId: { $ne: '' }, 'otherData.authToken': { $exists: true, $ne: null } },
+      { _id: 1, username: 1, 'otherData.authToken': 1 }
+    );
+
+    if (player && player.otherData && player.otherData.authToken) {
+      return res.json({
+        authenticated: true,
+        playerId: player._id.toString(),
+        token: player.otherData.authToken,
+        source: 'mongodb'
+      });
     }
 
-    // Debug-info for feilsøking
-    return res.json({
-      authenticated: false,
-      reason: 'no-connected-players',
-      debug: {
-        connectedPlayersKeys: connected ? Object.keys(connected).length : 0,
-        authStoreKeys: Sys._authStore ? Object.keys(Sys._authStore).length : 0,
-        sysKeys: Object.keys(Sys).filter(k => k.startsWith('_') || k === 'ConnectedPlayers')
-      }
-    });
+    return res.json({ authenticated: false, reason: 'no-active-player' });
   } catch (err) {
     console.error('auth-beacon endpoint error:', err.message);
     return res.json({ authenticated: false, reason: 'error: ' + err.message });
