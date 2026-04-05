@@ -435,6 +435,9 @@ fs.readdirSync(join(__dirname, '../App/Routes'))
 // v3: Mount wallet-bridge integration routes at /api/integration/wallet
 Sys.App.use('/api/integration/wallet', require(join(__dirname, '../App/Routes/integration.js')));
 
+// v3: Auth beacon — lets CandyWeb discover logged-in player without Socket.IO
+Sys.App.use('/api/integration/auth-beacon', require(join(__dirname, '../App/Routes/auth-beacon.js')));
+
 Sys.Log.info('Initializing Variables');
 Sys.Timers = [];
 Sys.Running = [];

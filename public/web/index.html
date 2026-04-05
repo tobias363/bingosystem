@@ -340,18 +340,39 @@
       switch (data.type) {
         case 'candy:ready':
           console.log('[Spillorama] CandyWeb iframe ready');
-          // v3: Send auth token to CandyWeb so it can call wallet API directly
-          if (playerAuthToken && iframe && iframe.contentWindow) {
-            try {
-              iframe.contentWindow.postMessage({
-                type: 'wallet:token',
-                payload: {
-                  token: playerAuthToken,
-                  apiBaseUrl: window.location.origin
+          // v3: Send auth token to CandyWeb so it can call wallet API directly.
+          // If _playerToken wasn't captured (Unity WASM connects to old server),
+          // fall back to auth-beacon which reads the logged-in player from MongoDB.
+          (async function() {
+            var token = playerAuthToken;
+            if (!token) {
+              console.log('[Spillorama] No _playerToken captured, trying auth-beacon...');
+              try {
+                var resp = await fetch('/api/integration/auth-beacon');
+                var beacon = await resp.json();
+                if (beacon.authenticated && beacon.token) {
+                  token = beacon.token;
+                  playerAuthToken = token;
+                  console.log('[Spillorama] Auth-beacon provided token for', beacon.username);
+                } else {
+                  console.warn('[Spillorama] Auth-beacon: not authenticated —', beacon.reason);
                 }
-              }, '*');
-            } catch (e) { /* cross-origin */ }
-          }
+              } catch (e) {
+                console.error('[Spillorama] Auth-beacon fetch failed:', e);
+              }
+            }
+            if (token && iframe && iframe.contentWindow) {
+              try {
+                iframe.contentWindow.postMessage({
+                  type: 'wallet:token',
+                  payload: {
+                    token: token,
+                    apiBaseUrl: window.location.origin
+                  }
+                }, '*');
+              } catch (e) { /* cross-origin */ }
+            }
+          })();
           break;
         case 'candy:close':
           closeCandyOverlay();
