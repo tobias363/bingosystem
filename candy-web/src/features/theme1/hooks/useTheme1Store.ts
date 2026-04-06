@@ -277,14 +277,18 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
     const currentHostname =
       typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
     const currentSearch = typeof window !== "undefined" ? window.location.search : "";
+    console.log("[BIN-134] connect() start", { currentHostname, currentSearch: currentSearch.substring(0, 80) });
     const rehydratedSession = resolveTheme1InitialSessionSeed({
       storedSession: normalizeSession(get().session),
       search: currentSearch,
       hostname: currentHostname,
       portalAuthAccessToken: readPortalAuthAccessToken(),
     }).session;
+    console.log("[BIN-134] rehydratedSession", { accessToken: rehydratedSession.accessToken ? "SET(" + rehydratedSession.accessToken.length + ")" : "EMPTY", roomCode: rehydratedSession.roomCode, hallId: rehydratedSession.hallId, playerId: rehydratedSession.playerId });
     const hydrated = await hydrateSessionFromLaunchToken(rehydratedSession, set);
+    console.log("[BIN-134] hydrated", { accessToken: hydrated.session.accessToken ? "SET(" + hydrated.session.accessToken.length + ")" : "EMPTY", roomCode: hydrated.session.roomCode, hallId: hydrated.session.hallId, source: hydrated.accessTokenSource });
     const session = canonicalizeTheme1LiveSession(hydrated.session, currentHostname);
+    console.log("[BIN-134] canonicalized", { accessToken: session.accessToken ? "SET(" + session.accessToken.length + ")" : "EMPTY", roomCode: session.roomCode, hallId: session.hallId, playerId: session.playerId });
 
     if (
       shouldRedirectTheme1ToPortalOnLiveHost({
@@ -292,9 +296,11 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
         accessToken: session.accessToken,
       })
     ) {
+      console.log("[BIN-134] REDIRECTING TO PORTAL — accessToken empty on live host");
       redirectTheme1ToPortal();
       return;
     }
+    console.log("[BIN-134] redirect check passed — continuing to connect");
 
     writeSession(session);
     set({
@@ -970,6 +976,7 @@ async function syncLiveSnapshot(
 
   try {
     let syncSource: Theme1SyncSource = "room:state";
+    console.log("[BIN-134] syncLiveSnapshot", { roomCode: session.roomCode, playerId: session.playerId, hasAccessToken: !!session.accessToken, reason });
     let response =
       session.playerId.trim().length > 0
         ? await requestRoomResume(socket, session)
@@ -977,10 +984,13 @@ async function syncLiveSnapshot(
 
     const resumeFailed = response !== undefined && !response.ok;
     const resumeErrorCode = resumeFailed ? response?.error?.code : undefined;
+    console.log("[BIN-134] resume result", { attempted: session.playerId.trim().length > 0, ok: response?.ok, errorCode: resumeErrorCode });
 
     if (!response?.ok || !response.data?.snapshot) {
+      console.log("[BIN-134] trying room:state", { roomCode: session.roomCode });
       response = await requestRoomState(socket, session);
       syncSource = "room:state";
+      console.log("[BIN-134] room:state result", { ok: response.ok, errorCode: response.error?.code, hasSnapshot: !!response.data?.snapshot });
     } else {
       syncSource = "room:resume";
     }
@@ -994,6 +1004,7 @@ async function syncLiveSnapshot(
       response.data?.snapshot &&
       canAutoCreateRoom(session)
     ) {
+      console.log("[BIN-134] PLAYER_NOT_FOUND recovery");
       const recovered = await attemptLiveRoomRecovery(set, get, session, resumeErrorCode);
       if (recovered) {
         return;
@@ -1001,6 +1012,7 @@ async function syncLiveSnapshot(
     }
 
     if (!response.ok || !response.data?.snapshot) {
+      console.log("[BIN-134] sync failed, attempting recovery", { errorCode: response.error?.code, canAutoCreate: canAutoCreateRoom(session) });
       const recovered = await attemptLiveRoomRecovery(set, get, session, response.error?.code);
       if (recovered) {
         return;
@@ -1651,7 +1663,9 @@ async function autoCreateLiveRoom(
   });
 
   try {
+    console.log("[BIN-134] autoCreateLiveRoom → room:create", { hallId: session.hallId, hasAccessToken: !!session.accessToken });
     const response = await requestRoomCreate(socket, session);
+    console.log("[BIN-134] room:create response", { ok: response.ok, roomCode: response.data?.roomCode, playerId: response.data?.playerId, hasSnapshot: !!response.data?.snapshot, errorCode: response.error?.code, errorMsg: response.error?.message });
     if (!response.ok || !response.data?.snapshot || !response.data.roomCode || !response.data.playerId) {
       throw new Error(response.error?.message || "Klarte ikke opprette Candy-rom automatisk.");
     }
@@ -1679,10 +1693,13 @@ async function autoCreateLiveRoom(
     });
 
     applyLiveSnapshot(validatedSnapshot.value, "room:resume", set, get);
+    console.log("[BIN-134] autoCreateLiveRoom SUCCESS — game should be visible now");
   } catch (error) {
+    console.error("[BIN-134] autoCreateLiveRoom FAILED — will redirect on non-localhost", error);
     const hostname =
       typeof window !== "undefined" ? window.location.hostname.trim().toLowerCase() : "";
     if (!isLocalTheme1RuntimeHost(hostname)) {
+      console.log("[BIN-134] REDIRECTING TO PORTAL from autoCreateLiveRoom catch");
       redirectTheme1ToPortal();
       return;
     }
