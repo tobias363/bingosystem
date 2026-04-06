@@ -2169,6 +2169,61 @@ app.get("/api/integration/health", async (req, res) => {
   }
 });
 
+// BIN-134: Wallet bridge diagnostic — tests actual HTTP call to bingo-system
+app.get("/api/integration/wallet-diag", async (_req, res) => {
+  const diag: Record<string, unknown> = {
+    timestamp: new Date().toISOString(),
+    walletProvider: walletRuntime.provider,
+    integrationEnabled: !!integrationLaunchHandler,
+    walletApiBaseUrl: process.env.WALLET_API_BASE_URL || "NOT_SET",
+    walletApiKeySet: !!process.env.WALLET_API_KEY,
+    walletApiKeyLength: (process.env.WALLET_API_KEY || "").length,
+    walletApiKeyPrefix: process.env.WALLET_API_KEY ? process.env.WALLET_API_KEY.substring(0, 4) + "..." : "NOT_SET",
+  };
+
+  // Test actual HTTP call to bingo-system ext-wallet
+  if (walletRuntime.provider === "external" && process.env.WALLET_API_BASE_URL) {
+    const testUrl = `${process.env.WALLET_API_BASE_URL}/balance?playerId=wallet-ext-default-b3e4b752-5585-4229-9928-21b0b841155f`;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (process.env.WALLET_API_KEY) {
+        headers.Authorization = `Bearer ${process.env.WALLET_API_KEY}`;
+      }
+      const resp = await fetch(testUrl, { method: "GET", headers, signal: controller.signal });
+      clearTimeout(timeout);
+      const text = await resp.text();
+      diag.testCall = {
+        url: testUrl,
+        status: resp.status,
+        statusText: resp.statusText,
+        body: text.substring(0, 500),
+      };
+    } catch (err) {
+      diag.testCall = {
+        url: testUrl,
+        error: (err as Error).message,
+        name: (err as Error).name,
+      };
+    }
+  }
+
+  // Also try the diag endpoint on bingo-system (no auth needed)
+  if (process.env.WALLET_API_BASE_URL) {
+    try {
+      const diagUrl = `${process.env.WALLET_API_BASE_URL}/diag`;
+      const resp2 = await fetch(diagUrl, { signal: AbortSignal.timeout(5000) });
+      const text2 = await resp2.text();
+      diag.bingoSystemDiag = JSON.parse(text2);
+    } catch (err) {
+      diag.bingoSystemDiag = { error: (err as Error).message };
+    }
+  }
+
+  res.json(diag);
+});
+
 app.get("/api/admin/games", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "GAME_CATALOG_READ");
