@@ -166,6 +166,9 @@ const corsOrigins: string[] | "*" = corsAllowedOriginsRaw
   : "*";
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json());
+// BIN-134: Vite builds candy-web with base="/candy/", so asset URLs are /candy/assets/*.
+// Mount candyWebDir at /candy so images, CSS, and JS resolve correctly in the iframe.
+app.use("/candy", express.static(candyWebDir));
 app.use(express.static(frontendDir));
 app.use(express.static(publicDir));
 
@@ -3808,8 +3811,8 @@ app.get("*", (_req, res) => {
     res.sendFile(adminFrontendFile);
     return;
   }
-  // CandyWeb SPA: serve index.html for all /web/* routes that aren't static assets.
-  if (_req.path.startsWith("/web")) {
+  // CandyWeb SPA: serve index.html for /web/* and /candy/* routes that aren't static assets.
+  if (_req.path.startsWith("/web") || _req.path.startsWith("/candy")) {
     res.sendFile(candyWebIndexFile);
     return;
   }
