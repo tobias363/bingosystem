@@ -1428,13 +1428,21 @@ function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<
     millisUntilNextStart !== null &&
     millisUntilNextStart <= Math.max(1000, schedulerTickMs * 2);
 
+  const currentDrawCount = snapshot.currentGame?.drawnNumbers?.length ?? 0;
+
   return {
     enabled: runtimeCandyManiaSettings.autoRoundStartEnabled,
+    liveRoundsIndependentOfBet: true,
     intervalMs: runtimeCandyManiaSettings.autoRoundStartIntervalMs,
     minPlayers: runtimeCandyManiaSettings.autoRoundMinPlayers,
     playerCount: snapshot.players.length,
+    armedPlayerCount: snapshot.players.length,
+    armedPlayerIds: snapshot.players.map(p => p.id),
     entryFee: getRoomConfiguredEntryFee(snapshot.code),
     payoutPercent: runtimeCandyManiaSettings.payoutPercent,
+    drawCapacity: bingoMaxDrawsPerRound,
+    currentDrawCount,
+    remainingDrawCapacity: Math.max(0, bingoMaxDrawsPerRound - currentDrawCount),
     nextStartAt: nextStartAtMs === null ? null : new Date(nextStartAtMs).toISOString(),
     millisUntilNextStart,
     canStartNow,
