@@ -2773,6 +2773,18 @@ app.post("/api/admin/rooms", async (req, res) => {
   try {
     const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const hallId = await requireActiveHallIdFromInput(req.body?.hallId);
+
+    // Enforce single room per hall — block creation if a canonical room already exists
+    if (enforceSingleCandyRoomPerHall) {
+      const canonicalRoom = getCanonicalCandyRoomForHall(hallId);
+      if (canonicalRoom) {
+        throw new DomainError(
+          "SINGLE_ROOM_ONLY",
+          `Kun ett Candy-rom er tillatt per hall. Rom ${canonicalRoom.code} er allerede aktivt.`
+        );
+      }
+    }
+
     const requestedHostName =
       typeof req.body?.hostName === "string" && req.body.hostName.trim().length > 0
         ? req.body.hostName.trim()
@@ -2784,7 +2796,8 @@ app.post("/api/admin/rooms", async (req, res) => {
     const { roomCode, playerId } = await engine.createRoom({
       hallId,
       playerName: requestedHostName,
-      walletId: requestedHostWalletId
+      walletId: requestedHostWalletId,
+      roomCode: enforceSingleCandyRoomPerHall ? "CANDY1" : undefined
     });
     const snapshot = await emitRoomUpdate(roomCode);
     apiSuccess(res, {
@@ -2792,6 +2805,19 @@ app.post("/api/admin/rooms", async (req, res) => {
       playerId,
       snapshot
     });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.delete("/api/admin/rooms/:roomCode", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+    const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    engine.destroyRoom(roomCode);
+    roomSchedulerLocks.delete(roomCode);
+    roomConfiguredEntryFeeByRoom.delete(roomCode);
+    apiSuccess(res, { deleted: roomCode });
   } catch (error) {
     apiFailure(res, error);
   }
