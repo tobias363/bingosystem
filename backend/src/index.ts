@@ -1841,6 +1841,28 @@ app.get("/api/admin/permissions", async (req, res) => {
   }
 });
 
+// BIN-134: One-time bootstrap endpoint to promote a user to ADMIN when no admin exists.
+// Requires ADMIN_BOOTSTRAP_SECRET env var. Remove after first admin is created.
+app.post("/api/admin/bootstrap", async (req, res) => {
+  try {
+    const secret = process.env.ADMIN_BOOTSTRAP_SECRET?.trim();
+    if (!secret) {
+      throw new DomainError("DISABLED", "Bootstrap er deaktivert (ADMIN_BOOTSTRAP_SECRET ikke satt).");
+    }
+    if (req.body?.secret !== secret) {
+      throw new DomainError("UNAUTHORIZED", "Ugyldig bootstrap-hemmelighet.");
+    }
+    const email = mustBeNonEmptyString(req.body?.email, "email");
+    const password = mustBeNonEmptyString(req.body?.password, "password");
+    // Login to get the user, then promote to ADMIN
+    const session = await platformService.login({ email, password });
+    const updated = await platformService.updateUserRole(session.user.id, "ADMIN");
+    apiSuccess(res, { message: `${updated.email} er nå ADMIN.`, role: updated.role });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.put("/api/admin/users/:userId/role", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "USER_ROLE_WRITE");
