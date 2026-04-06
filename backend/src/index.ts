@@ -3412,8 +3412,10 @@ io.on("connection", (socket: Socket) => {
   }
 
   socket.on("room:create", async (payload: CreateRoomPayload, callback: (response: AckResponse<{ roomCode: string; playerId: string; snapshot: RoomSnapshot }>) => void) => {
+    console.log("[BIN-134] room:create received", { hallId: payload?.hallId, hasAccessToken: !!payload?.accessToken });
     try {
       const identity = await resolveIdentityFromPayload(payload);
+      console.log("[BIN-134] room:create identity resolved", { playerName: identity.playerName, walletId: identity.walletId, hallId: identity.hallId });
       if (enforceSingleCandyRoomPerHall) {
         const canonicalRoom = getCanonicalCandyRoomForHall(identity.hallId);
         if (canonicalRoom) {
@@ -3449,8 +3451,10 @@ io.on("connection", (socket: Socket) => {
       });
       socket.join(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
+      console.log("[BIN-134] room:create SUCCESS", { roomCode, playerId });
       ackSuccess(callback, { roomCode, playerId, snapshot });
     } catch (error) {
+      console.error("[BIN-134] room:create FAILED", { error: (error as Error).message, code: (error as any).code });
       ackFailure(callback, error);
     }
   });

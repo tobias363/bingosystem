@@ -410,10 +410,26 @@ export class BingoEngine {
     const hallId = this.assertHallId(input.hallId);
     const playerId = randomUUID();
     const walletId = input.walletId?.trim() || `wallet-${playerId}`;
+    console.log("[BIN-134] createRoom start", { hallId, walletId, playerName: input.playerName });
     this.assertWalletAllowedForGameplay(walletId, Date.now());
     this.assertWalletNotInRunningGame(walletId);
-    await this.walletAdapter.ensureAccount(walletId);
-    const balance = await this.walletAdapter.getBalance(walletId);
+    try {
+      console.log("[BIN-134] ensureAccount →", walletId);
+      await this.walletAdapter.ensureAccount(walletId);
+      console.log("[BIN-134] ensureAccount OK");
+    } catch (err) {
+      console.error("[BIN-134] ensureAccount FAILED", { walletId, error: (err as Error).message });
+      throw err;
+    }
+    let balance: number;
+    try {
+      console.log("[BIN-134] getBalance →", walletId);
+      balance = await this.walletAdapter.getBalance(walletId);
+      console.log("[BIN-134] getBalance OK", { balance });
+    } catch (err) {
+      console.error("[BIN-134] getBalance FAILED", { walletId, error: (err as Error).message });
+      throw err;
+    }
 
     const player: Player = {
       id: playerId,
