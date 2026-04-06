@@ -106,7 +106,7 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    branch: staging
+    branch: main
     rootDir: .
     buildCommand: npm --prefix backend run build
     startCommand: npm --prefix backend run start
@@ -130,7 +130,7 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    branch: staging
+    branch: main
     rootDir: .
     buildCommand: npm --prefix backend run build
     startCommand: npm --prefix backend run start
