@@ -1016,6 +1016,18 @@ export class BingoEngine {
       .sort((a, b) => a.code.localeCompare(b.code));
   }
 
+  destroyRoom(roomCode: string): void {
+    const code = roomCode.trim().toUpperCase();
+    const room = this.rooms.get(code);
+    if (!room) {
+      throw new DomainError("ROOM_NOT_FOUND", `Rom ${code} finnes ikke.`);
+    }
+    if (room.currentGame && room.currentGame.status === "RUNNING") {
+      throw new DomainError("GAME_IN_PROGRESS", `Kan ikke slette rom ${code} mens en runde pågår.`);
+    }
+    this.rooms.delete(code);
+  }
+
   getPlayerCompliance(walletId: string, hallId?: string): PlayerComplianceSnapshot {
     const normalizedWalletId = walletId.trim();
     if (!normalizedWalletId) {

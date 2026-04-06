@@ -648,9 +648,9 @@
             <button id="candyLoadSettingsBtn" class="secondary">Last fra backend</button>
             <button id="candySaveSettingsBtn">Lagre Candy-drift</button>
           </div>
-          <h3>Candy spillkontroll (alt på ett sted)</h3>
+          <h3>Candy spillkontroll</h3>
           <p class="muted">
-            Enkel flyt: velg hall og trykk <strong>Start Candy nå</strong>. Avanserte romkontroller ligger under.
+            Velg hall og rom, og styr trekning. Kun ett rom per hall er tillatt.
           </p>
           <div class="grid">
             <div class="field">
@@ -658,34 +658,23 @@
               <select id="candyQuickHallSelect"></select>
             </div>
             <div class="field">
-              <label for="candyQuickRoomSelect">Eksisterende rom</label>
+              <label for="candyQuickRoomSelect">Aktivt rom</label>
               <select id="candyQuickRoomSelect"></select>
             </div>
-            <div class="field full">
-              <label>&nbsp;</label>
-              <button id="candyQuickStartNowBtn">Start Candy nå</button>
-            </div>
           </div>
-          <details>
-            <summary>Avanserte Candy-romkontroller</summary>
-            <div class="grid" style="margin-top: 10px">
-              <div class="field">
-              <label for="candyQuickEntryFee">Innsats (entry fee)</label>
-              <input id="candyQuickEntryFee" type="number" min="0" step="0.01" value="0" />
-            </div>
-            <div class="field">
-              <label for="candyQuickTicketsPerPlayer">Bonger per spiller</label>
-              <input id="candyQuickTicketsPerPlayer" type="number" min="1" max="5" step="1" value="4" />
-            </div>
-            </div>
-            <div class="toolbar">
-              <button id="candyQuickCreateStartBtn">Opprett + Start Candy nå</button>
-              <button id="candyQuickStartExistingBtn" class="secondary">Start valgt Candy-rom</button>
-              <button id="candyQuickDrawNextBtn" class="secondary">Trekk neste i valgt rom</button>
-              <button id="candyQuickEndRoomBtn" class="secondary">Avslutt valgt rom</button>
-              <button id="candyQuickRefreshRoomsBtn" class="secondary">Oppdater hall/rom</button>
-            </div>
-          </details>
+          <div class="toolbar">
+            <button id="candyQuickStartNowBtn">Start ny runde</button>
+            <button id="candyQuickDrawNextBtn" class="secondary">Trekk neste</button>
+            <button id="candyQuickEndRoomBtn" class="secondary">Avslutt runde</button>
+            <button id="candyQuickRefreshRoomsBtn" class="secondary">Oppdater</button>
+          </div>
+          <!-- Hidden elements kept for JS compatibility -->
+          <div style="display:none">
+            <input id="candyQuickEntryFee" type="hidden" value="0" />
+            <input id="candyQuickTicketsPerPlayer" type="hidden" value="4" />
+            <button id="candyQuickCreateStartBtn"></button>
+            <button id="candyQuickStartExistingBtn"></button>
+          </div>
           <pre id="candyQuickStatus" class="status">Ingen Candy rom-kjøring startet.</pre>
           <pre id="candySettingsStatus" class="status">Ingen Candy-driftinnstillinger lastet.</pre>
         </article>
@@ -830,8 +819,9 @@
             </div>
           </div>
           <div class="toolbar">
-            <button id="createRoomBtn">Opprett rom</button>
-            <button id="createAndStartRoomBtn">Opprett + Start</button>
+            <!-- Opprett rom er deaktivert — kun ett rom per hall -->
+            <button id="createRoomBtn" style="display:none">Opprett rom</button>
+            <button id="createAndStartRoomBtn" style="display:none">Opprett + Start</button>
             <button id="refreshRoomsBtn" class="secondary">Oppdater romliste</button>
             <button id="startRoomBtn">Start spill</button>
             <button id="drawNextBtn" class="secondary">Trekk neste</button>

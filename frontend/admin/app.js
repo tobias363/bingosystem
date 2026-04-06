@@ -2662,15 +2662,37 @@ async function createAndStartCandyRoom(startPayload) {
 
 async function handleCandyQuickStartNow() {
   const startPayload = getCandyQuickStartPayloadFromDefaults();
-  setLoading(elements.candyQuickStartNowBtn, true, "Starter Candy...", "Start Candy nå");
+  setLoading(elements.candyQuickStartNowBtn, true, "Starter runde...", "Start ny runde");
   try {
-    const { created, started, hallId } = await createAndStartCandyRoom(startPayload);
+    // Single-room enforcement: try existing room first, create only if none exists
+    let roomCode;
+    try {
+      roomCode = getCandyQuickSelectedRoomCode();
+    } catch (_noRoom) {
+      // No room selected — create one (server enforces CANDY1 naming + single room)
+      const hallId = getCandyQuickSelectedHallId();
+      const created = await apiRequest("/api/admin/rooms", {
+        method: "POST",
+        auth: true,
+        body: { hallId, hostName: "Candy Admin" }
+      });
+      roomCode = created.roomCode;
+      await loadRooms();
+      renderCandyQuickRoomOptions(roomCode);
+      elements.candyQuickRoomSelect.value = roomCode;
+    }
+
+    const started = await apiRequest(`/api/admin/rooms/${encodeURIComponent(roomCode)}/start`, {
+      method: "POST",
+      auth: true,
+      body: startPayload
+    });
+    await showSelectedRoomSnapshot().catch(() => undefined);
     setStatus(
       elements.candyQuickStatus,
       [
-        `Candy startet med standardinnstillinger.`,
-        `Rom: ${created.roomCode}`,
-        `Hall: ${hallId}`,
+        `Ny runde startet.`,
+        `Rom: ${roomCode}`,
         `Innsats: ${startPayload.entryFee}`,
         `Bonger/spiller: ${startPayload.ticketsPerPlayer}`,
         `Status: ${started.snapshot?.currentGame?.status || "-"}`
@@ -2678,9 +2700,9 @@ async function handleCandyQuickStartNow() {
       "success"
     );
   } catch (error) {
-    setStatus(elements.candyQuickStatus, error.message || "Klarte ikke starte Candy nå.", "error");
+    setStatus(elements.candyQuickStatus, error.message || "Klarte ikke starte ny runde.", "error");
   } finally {
-    setLoading(elements.candyQuickStartNowBtn, false, "Starter Candy...", "Start Candy nå");
+    setLoading(elements.candyQuickStartNowBtn, false, "Starter runde...", "Start ny runde");
   }
 }
 
