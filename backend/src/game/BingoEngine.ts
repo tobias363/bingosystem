@@ -314,7 +314,7 @@ interface PlayerComplianceSnapshot {
 const POLICY_WILDCARD = "*";
 const DEFAULT_SELF_EXCLUSION_MIN_MS = 365 * 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_DRAWS_PER_ROUND = 30;
-const MAX_BINGO_BALLS = 75;
+const MAX_BINGO_BALLS = 60;
 const DEFAULT_BONUS_TRIGGER_PATTERN_INDEX = 1;
 
 export class BingoEngine {

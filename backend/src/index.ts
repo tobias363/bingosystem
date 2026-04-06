@@ -243,7 +243,7 @@ const bingoSelfExclusionMinMs = Math.max(
   parsePositiveIntEnv(process.env.BINGO_SELF_EXCLUSION_MIN_MS, 365 * 24 * 60 * 60 * 1000)
 );
 const bingoMaxDrawsPerRound = Math.min(
-  75,
+  60,
   Math.max(1, parsePositiveIntEnv(process.env.BINGO_MAX_DRAWS_PER_ROUND, 30))
 );
 

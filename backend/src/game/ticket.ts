@@ -27,17 +27,18 @@ export function makeRoomCode(existingCodes: Set<string>): string {
   }
 }
 
-export function makeShuffledBallBag(maxNumber = 75): number[] {
+export function makeShuffledBallBag(maxNumber = 60): number[] {
   return shuffle(Array.from({ length: maxNumber }, (_, i) => i + 1));
 }
 
 export function generateTraditional75Ticket(): Ticket {
+  // CandyMania uses 60 balls — 5 columns of 12 numbers each (1-12, 13-24, 25-36, 37-48, 49-60)
   const columns = [
-    pickUniqueInRange(1, 15, BOARD_SIZE),
-    pickUniqueInRange(16, 30, BOARD_SIZE),
-    pickUniqueInRange(31, 45, BOARD_SIZE - 1),
-    pickUniqueInRange(46, 60, BOARD_SIZE),
-    pickUniqueInRange(61, 75, BOARD_SIZE)
+    pickUniqueInRange(1, 12, BOARD_SIZE),
+    pickUniqueInRange(13, 24, BOARD_SIZE),
+    pickUniqueInRange(25, 36, BOARD_SIZE - 1),
+    pickUniqueInRange(37, 48, BOARD_SIZE),
+    pickUniqueInRange(49, 60, BOARD_SIZE)
   ];
 
   const grid: number[][] = [];
