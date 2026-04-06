@@ -323,6 +323,16 @@ export class IntegrationLaunchHandler {
          WHERE provider = $2 AND external_player_id = $3`,
         [now, provider, externalPlayerId]
       );
+      // BIN-134: Ensure existing integration players have KYC VERIFIED
+      // (fixes players created before this field was set)
+      await this.pool.query(
+        `UPDATE ${this.usersTable()}
+         SET kyc_status = 'VERIFIED',
+             birth_date = COALESCE(birth_date, '1990-01-01'),
+             updated_at = now()
+         WHERE id = $1 AND kyc_status != 'VERIFIED'`,
+        [existingRows[0].internal_player_id]
+      );
       return this.mapRow(existingRows[0], now);
     }
 
@@ -335,13 +345,15 @@ export class IntegrationLaunchHandler {
       await client.query("BEGIN");
 
       // Create user in the platform users table.
+      // Integration players are pre-verified by the provider — set KYC to VERIFIED
+      // and a placeholder birth date so gameplay eligibility checks pass.
       const email = `ext-${provider}-${externalPlayerId}@integration.local`;
       const placeholderHash = `integration-no-password-${randomBytes(16).toString("hex")}`;
       await client.query(
         `INSERT INTO ${this.usersTable()}
-          (id, email, display_name, password_hash, wallet_id, role)
-         VALUES ($1, $2, $3, $4, $5, 'PLAYER')
-         ON CONFLICT (email) DO UPDATE SET updated_at = now()
+          (id, email, display_name, password_hash, wallet_id, role, kyc_status, birth_date)
+         VALUES ($1, $2, $3, $4, $5, 'PLAYER', 'VERIFIED', '1990-01-01')
+         ON CONFLICT (email) DO UPDATE SET updated_at = now(), kyc_status = 'VERIFIED', birth_date = COALESCE(${this.usersTable()}.birth_date, '1990-01-01')
          RETURNING id`,
         [internalPlayerId, email, `Player-${externalPlayerId.slice(0, 8)}`, placeholderHash, internalWalletId]
       );
