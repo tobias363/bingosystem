@@ -1,7 +1,8 @@
 import { randomInt } from "node:crypto";
 import type { Ticket } from "./types.js";
 
-const BOARD_SIZE = 5;
+const BOARD_ROWS = 3;
+const BOARD_COLS = 5;
 
 function shuffle<T>(values: T[]): T[] {
   const arr = [...values];
@@ -33,25 +34,20 @@ export function makeShuffledBallBag(maxNumber = 60): number[] {
 
 export function generateTraditional75Ticket(): Ticket {
   // CandyMania uses 60 balls — 5 columns of 12 numbers each (1-12, 13-24, 25-36, 37-48, 49-60)
+  // Frontend expects a 3×5 grid (15 cells) — all cells must contain a number.
   const columns = [
-    pickUniqueInRange(1, 12, BOARD_SIZE),
-    pickUniqueInRange(13, 24, BOARD_SIZE),
-    pickUniqueInRange(25, 36, BOARD_SIZE - 1),
-    pickUniqueInRange(37, 48, BOARD_SIZE),
-    pickUniqueInRange(49, 60, BOARD_SIZE)
+    pickUniqueInRange(1, 12, BOARD_ROWS),
+    pickUniqueInRange(13, 24, BOARD_ROWS),
+    pickUniqueInRange(25, 36, BOARD_ROWS),
+    pickUniqueInRange(37, 48, BOARD_ROWS),
+    pickUniqueInRange(49, 60, BOARD_ROWS)
   ];
 
   const grid: number[][] = [];
-  for (let row = 0; row < BOARD_SIZE; row += 1) {
+  for (let row = 0; row < BOARD_ROWS; row += 1) {
     const rowValues: number[] = [];
-    for (let col = 0; col < BOARD_SIZE; col += 1) {
-      if (row === 2 && col === 2) {
-        rowValues.push(0);
-      } else if (col === 2 && row > 2) {
-        rowValues.push(columns[col][row - 1]);
-      } else {
-        rowValues.push(columns[col][row]);
-      }
+    for (let col = 0; col < BOARD_COLS; col += 1) {
+      rowValues.push(columns[col][row]);
     }
     grid.push(rowValues);
   }
@@ -75,28 +71,21 @@ function isMarked(ticket: Ticket, marks: Set<number>, row: number, col: number):
 }
 
 export function findFirstCompleteLinePatternIndex(ticket: Ticket, marks: Set<number>): number {
-  for (let row = 0; row < BOARD_SIZE; row += 1) {
-    const complete = Array.from({ length: BOARD_SIZE }, (_, col) => isMarked(ticket, marks, row, col)).every(Boolean);
+  const rows = ticket.grid.length;
+  const cols = ticket.grid[0]?.length ?? 0;
+
+  for (let row = 0; row < rows; row += 1) {
+    const complete = Array.from({ length: cols }, (_, col) => isMarked(ticket, marks, row, col)).every(Boolean);
     if (complete) {
       return row;
     }
   }
 
-  for (let col = 0; col < BOARD_SIZE; col += 1) {
-    const complete = Array.from({ length: BOARD_SIZE }, (_, row) => isMarked(ticket, marks, row, col)).every(Boolean);
+  for (let col = 0; col < cols; col += 1) {
+    const complete = Array.from({ length: rows }, (_, row) => isMarked(ticket, marks, row, col)).every(Boolean);
     if (complete) {
-      return BOARD_SIZE + col;
+      return rows + col;
     }
-  }
-
-  const leftDiagonal = Array.from({ length: BOARD_SIZE }, (_, i) => isMarked(ticket, marks, i, i)).every(Boolean);
-  if (leftDiagonal) {
-    return BOARD_SIZE * 2;
-  }
-
-  const rightDiagonal = Array.from({ length: BOARD_SIZE }, (_, i) => isMarked(ticket, marks, i, BOARD_SIZE - 1 - i)).every(Boolean);
-  if (rightDiagonal) {
-    return BOARD_SIZE * 2 + 1;
   }
 
   return -1;
