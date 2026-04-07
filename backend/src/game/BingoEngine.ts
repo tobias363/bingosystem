@@ -518,26 +518,22 @@ export class BingoEngine {
 
     const allPlayers = [...room.players.values()];
     const armedSet = input.armedPlayerIds ? new Set(input.armedPlayerIds) : null;
-    // Filter out ineligible players instead of blocking the entire room.
-    // The room runs continuously — players on pause, blocked, unarmed, or with
-    // insufficient balance simply skip this round.
-    const players = allPlayers.filter((player) => {
+    // Filter to eligible players for tickets — but the round ALWAYS starts.
+    // This is a live room: draws happen regardless of participation.
+    const ticketCandidates = allPlayers.filter((player) => {
       if (armedSet && !armedSet.has(player.id)) return false;
       if (this.isPlayerInAnotherRunningGame(room.code, player)) return false;
       if (this.isPlayerBlockedByRestriction(player, nowMs)) return false;
       if (this.isPlayerOnRequiredPause(player, nowMs)) return false;
       return true;
     });
-    if (players.length === 0) {
-      // No eligible players — silently skip this round, don't throw.
-      return this.getRoomSnapshot(room.code);
+    if (ticketCandidates.length > 0) {
+      await this.refreshPlayerObjectsFromWallet(ticketCandidates);
     }
-    await this.refreshPlayerObjectsFromWallet(players);
     // Filter out players who exceed loss limits or can't afford entry fee.
-    const eligiblePlayers = await this.filterEligiblePlayers(players, entryFee, nowMs, room.hallId);
-    if (eligiblePlayers.length === 0) {
-      return this.getRoomSnapshot(room.code);
-    }
+    const eligiblePlayers = ticketCandidates.length > 0
+      ? await this.filterEligiblePlayers(ticketCandidates, entryFee, nowMs, room.hallId)
+      : [];
     const gameId = randomUUID();
     const gameType: LedgerGameType = "DATABINGO";
     const channel: LedgerChannel = "INTERNET";
@@ -598,7 +594,7 @@ export class BingoEngine {
       marks.set(player.id, playerMarks);
     }
 
-    const prizePool = this.roundCurrency(entryFee * players.length);
+    const prizePool = this.roundCurrency(entryFee * eligiblePlayers.length);
     const maxPayoutBudget = this.roundCurrency((prizePool * normalizedPayoutPercent) / 100);
     const game: GameState = {
       id: gameId,
@@ -620,7 +616,7 @@ export class BingoEngine {
 
     room.currentGame = game;
     this.roomLastRoundStartMs.set(room.code, Date.parse(game.startedAt));
-    for (const player of players) {
+    for (const player of eligiblePlayers) {
       this.startPlaySession(player.walletId, nowMs);
     }
     if (this.bingoAdapter.onGameStarted) {

@@ -129,14 +129,15 @@ describe("resolveTheme1RecentBallsForLiveSync", () => {
     expect(result).toEqual([5, 10, 15]);
   });
 
-  it("appends server-only balls (reconnect: missed draw:new events)", () => {
+  it("preserves client balls during active round (server-first draws go through pending queue)", () => {
     const result = resolveTheme1RecentBallsForLiveSync({
       syncSource: "room:update",
       clientBalls: [5, 10],
       serverBalls: [5, 10, 15, 20],
     });
-    // Client order preserved, server-only balls appended
-    expect(result).toEqual([5, 10, 15, 20]);
+    // Client is authoritative during active round — server-first draws
+    // are recovered through the pending-draw queue, not merged here.
+    expect(result).toEqual([5, 10]);
   });
 
   it("does not duplicate balls already in client", () => {

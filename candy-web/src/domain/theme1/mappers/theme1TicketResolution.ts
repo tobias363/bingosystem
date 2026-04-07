@@ -23,9 +23,10 @@ export function resolvePlayerContext(
   const hasPreRoundTickets = Object.keys(preRoundTicketMap).length > 0;
   // Use currentGame tickets when RUNNING. Also when FINISHED/ENDED and there
   // are no preRoundTickets yet — keeps boards visible between rounds.
-  const shouldUseCurrentGameTickets =
-    currentGameStatus === "RUNNING" ||
-    (currentGameStatus === "ENDED" && !hasPreRoundTickets);
+  // Always check currentGame tickets first (any status). If the player
+  // has tickets there, use them. Otherwise fall through to preRoundTickets.
+  // This ensures boards NEVER go blank during status transitions.
+  const shouldUseCurrentGameTickets = true;
   const normalizedPreferredPlayerId = preferredPlayerId?.trim();
 
   if (normalizedPreferredPlayerId) {

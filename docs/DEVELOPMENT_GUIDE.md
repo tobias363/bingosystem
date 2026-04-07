@@ -1,5 +1,16 @@
 # CandyMania — Utviklerguide
 
+## Spillkonsept
+
+CandyMania er et **live bingo-rom** som kjorer kontinuerlig. Trekning skjer hvert 30. sekund uavhengig av hvor mange spillere som har plassert innsats. Spillere velger selv om de vil delta i hver runde ved a trykke "Plasser innsats" for runden starter.
+
+- **Rommet er alltid aktivt** — trekninger kjorer 24/7 sa lenge rommet er opprettet
+- **Innsats er per runde** — spilleren ma aktivt velge a delta for hver runde
+- **Uten innsats**: Spilleren ser trekningen og har tall pa bongene, men ingen markeringer/gevinster
+- **Med innsats**: Bongene markeres og spilleren kan vinne premier
+- **Etter runde**: Alle disarmes automatisk — ma trykke igjen for neste runde
+- **Saldo 0 kr**: Spilleren kan ikke plassere innsats, ser trekningen som tilskuer
+
 ## Arkitektur
 
 ```

@@ -59,7 +59,7 @@ describe("resolvePlayerContext", () => {
     expect(result.tickets).toEqual([]);
   });
 
-  it("prefers pre-round tickets over ended current-game tickets for the same player", () => {
+  it("keeps current-game tickets when ended so boards stay visible between rounds", () => {
     const snapshot = createSnapshot();
     snapshot.currentGame!.status = "ENDED";
     snapshot.currentGame!.tickets["player-2"] = [
@@ -78,11 +78,12 @@ describe("resolvePlayerContext", () => {
     const result = resolvePlayerContext(snapshot, "player-2");
 
     expect(result.playerId).toBe("player-2");
-    expect(result.source).toBe("preRoundTickets");
+    // Current game tickets are kept so the board numbers don't disappear
+    expect(result.source).toBe("currentGame");
     expect(result.tickets[0]?.numbers).toEqual([
-      41, 42, 43, 44, 45,
-      46, 47, 48, 49, 50,
-      51, 52, 53, 54, 55,
+      21, 22, 23, 24, 25,
+      26, 27, 28, 29, 30,
+      31, 32, 33, 34, 35,
     ]);
   });
 });
