@@ -1195,15 +1195,15 @@ function applyLiveSnapshot(
       : clientBalls;
     return { ...nextModelWithPendingDraw, recentBalls: mergedBalls };
   })();
-  // Protect visual ball state while a draw animation is active.
-  // room:update must not overwrite featuredBallNumber or recentBalls during
-  // the animation window — this prevents blink/double-ball glitches.
+  // Protect recentBalls during draw animation so the flight queue isn't
+  // disrupted by room:update dumping the server's full ball list.
+  // Featured ball state (featuredBallNumber/isPending) must NOT be held —
+  // DrawMachine uses transitions between pending→stable to trigger the
+  // correct animation sequence (beginPendingSequence vs applyStableMachineState).
   const isDrawAnimating = currentState.runtime.drawPresentationActiveUntilMs > Date.now();
   const nextModelWithDrawProtection = isDrawAnimating && syncSource === "room:update"
     ? {
         ...nextModelWithBallRailGuard,
-        featuredBallNumber: currentState.snapshot.featuredBallNumber,
-        featuredBallIsPending: currentState.snapshot.featuredBallIsPending,
         recentBalls: currentState.snapshot.recentBalls,
       }
     : nextModelWithBallRailGuard;
