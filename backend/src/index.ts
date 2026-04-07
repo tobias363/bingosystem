@@ -1711,7 +1711,8 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
 async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummaries>[number], now: number): Promise<void> {
   const roomCode = summary.code;
   if (!runtimeCandyManiaSettings.autoDrawEnabled || summary.gameStatus !== "RUNNING") {
-    lastAutoDrawAtByRoom.delete(roomCode);
+    // Don't delete lastAutoDrawAtByRoom — it was set by processAutoStart
+    // to enforce the initial delay for the first draw of the next round.
     return;
   }
 
