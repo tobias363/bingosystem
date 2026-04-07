@@ -54,12 +54,9 @@ export function resolvePlayerContext(
       };
     }
 
-    return {
-      playerId: normalizedPreferredPlayerId,
-      player: snapshot.players.find((player) => player.id === normalizedPreferredPlayerId),
-      tickets: [],
-      source: "empty",
-    };
+    // Preferred player has no tickets in either source. Don't return empty —
+    // fall through to the candidate search below so we can find ANY player
+    // with preRoundTickets and show those numbers on the boards.
   }
 
   const gameTicketKeys = Object.keys(gameTicketMap);

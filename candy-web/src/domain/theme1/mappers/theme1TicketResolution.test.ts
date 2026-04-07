@@ -49,14 +49,16 @@ function createSnapshot(): RoomSnapshot {
 }
 
 describe("resolvePlayerContext", () => {
-  it("does not fall back to another player's running tickets when a preferred player has none", () => {
+  it("falls through to candidate search when preferred player has no tickets (boards never blank)", () => {
     const snapshot = createSnapshot();
 
     const result = resolvePlayerContext(snapshot, "player-2");
 
-    expect(result.playerId).toBe("player-2");
-    expect(result.source).toBe("empty");
-    expect(result.tickets).toEqual([]);
+    // player-2 has no tickets, but boards should never be blank.
+    // Falls through to candidate search and finds player-1's tickets.
+    expect(result.playerId).toBe("player-1");
+    expect(result.source).toBe("currentGame");
+    expect(result.tickets.length).toBeGreaterThan(0);
   });
 
   it("keeps current-game tickets when ended so boards stay visible between rounds", () => {
