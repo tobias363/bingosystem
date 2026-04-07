@@ -1195,29 +1195,27 @@ function applyLiveSnapshot(
       : clientBalls;
     return { ...nextModelWithPendingDraw, recentBalls: mergedBalls };
   })();
-  // Protect recentBalls during draw animation so the flight queue isn't
-  // disrupted by room:update dumping the server's full ball list.
-  // Featured ball state (featuredBallNumber/isPending) must NOT be held —
-  // DrawMachine uses transitions between pending→stable to trigger the
-  // correct animation sequence (beginPendingSequence vs applyStableMachineState).
+  // ── Single visual-state guard ──────────────────────────────────
+  // Priority: draw animation > board freeze > default.
+  // Each guard applies its own overrides — they never stack or undo
+  // each other. recentBalls is ALWAYS decided by the ball rail guard
+  // above (nextModelWithBallRailGuard) — never overwritten here.
   const isDrawAnimating = currentState.runtime.drawPresentationActiveUntilMs > Date.now();
-  const nextModelWithDrawProtection = isDrawAnimating && syncSource === "room:update"
-    ? {
+  const nextModel = (() => {
+    if (isDrawAnimating && syncSource === "room:update") {
+      // Draw animation active: keep client's recentBalls (flight queue
+      // integrity). Let featured ball state flow naturally for DrawMachine.
+      return {
         ...nextModelWithBallRailGuard,
         recentBalls: currentState.snapshot.recentBalls,
-      }
-    : nextModelWithBallRailGuard;
-  const nextModelPreserved = shouldHoldPendingVisuals
-    ? preservePendingPresentationVisuals(currentState.snapshot, nextModelWithDrawProtection)
-    : shouldFreezeBoards
-      ? freezeBoardsFromPreviousModel(currentState.snapshot, nextModelWithDrawProtection)
-      : nextModelWithDrawProtection;
-  // preservePendingPresentationVisuals overwrites recentBalls with the
-  // previous model's balls. Restore the ball guard's decision so that
-  // new-round clearing is not undone.
-  const nextModel = nextModelPreserved.recentBalls !== nextModelWithDrawProtection.recentBalls
-    ? { ...nextModelPreserved, recentBalls: nextModelWithDrawProtection.recentBalls }
-    : nextModelPreserved;
+      };
+    }
+    if (shouldFreezeBoards) {
+      // Unarmed player: keep previous boards so marks stay visible.
+      return freezeBoardsFromPreviousModel(currentState.snapshot, nextModelWithBallRailGuard);
+    }
+    return nextModelWithBallRailGuard;
+  })();
   const nearCallouts =
     syncSource === "room:update" && !shouldFreezeBoards
       ? extractNewTheme1NearCallouts({
