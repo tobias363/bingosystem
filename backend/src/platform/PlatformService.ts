@@ -1782,6 +1782,7 @@ export class PlatformService {
     if (error instanceof WalletError) {
       return error;
     }
+    console.error("[PlatformService] DB error:", error);
     return new DomainError("PLATFORM_DB_ERROR", "Feil i plattform-databasen.");
   }
 }
