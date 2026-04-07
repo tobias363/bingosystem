@@ -1131,12 +1131,15 @@ function applyLiveSnapshot(
   ) {
     clearPendingDrawTimer();
   }
-  const playerIsArmed = isCurrentPlayerArmed({ ...currentState, roomSnapshot: snapshot });
+  // markBoards for the pending draw presentation: use ticketSource only.
+  // The armed check is done in applyPendingDrawPresentation (draw:new handler)
+  // where it gates NEW marks. Here we're re-applying the pending draw on top of
+  // a server-remapped model that already has correct marks from previous draws.
   const nextModelWithPendingDraw = applyTheme1DrawPresentation(
     result.model,
     nextPendingDrawNumber,
     {
-      markBoards: result.ticketSource === "currentGame" && playerIsArmed,
+      markBoards: result.ticketSource === "currentGame",
     },
   );
   const shouldFreezeBoards = shouldFreezeBoardsForUnarmedPlayer({
