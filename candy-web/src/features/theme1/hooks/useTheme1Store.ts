@@ -248,6 +248,7 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
     lastSyncSource: "mock",
     syncInFlight: false,
     pendingDrawNumber: null,
+    drawPresentationActiveUntilMs: 0,
     activeGameId: "",
     seenClaimIds: [],
     activeSessionKey: "",
@@ -1182,19 +1183,37 @@ function applyLiveSnapshot(
       return { ...nextModelWithPendingDraw, recentBalls: [] };
     }
 
-    // During active round: keep client's list exactly as-is
-    return { ...nextModelWithPendingDraw, recentBalls: clientBalls };
+    // During active round: keep client's order, append any server-only
+    // balls that the client missed (e.g. after brief disconnect).
+    const clientSet = new Set(clientBalls);
+    const missingFromClient = serverBalls.filter((b) => !clientSet.has(b));
+    const mergedBalls = missingFromClient.length > 0
+      ? [...clientBalls, ...missingFromClient]
+      : clientBalls;
+    return { ...nextModelWithPendingDraw, recentBalls: mergedBalls };
   })();
+  // Protect visual ball state while a draw animation is active.
+  // room:update must not overwrite featuredBallNumber or recentBalls during
+  // the animation window — this prevents blink/double-ball glitches.
+  const isDrawAnimating = currentState.runtime.drawPresentationActiveUntilMs > Date.now();
+  const nextModelWithDrawProtection = isDrawAnimating && syncSource === "room:update"
+    ? {
+        ...nextModelWithBallRailGuard,
+        featuredBallNumber: currentState.snapshot.featuredBallNumber,
+        featuredBallIsPending: currentState.snapshot.featuredBallIsPending,
+        recentBalls: currentState.snapshot.recentBalls,
+      }
+    : nextModelWithBallRailGuard;
   const nextModelPreserved = shouldHoldPendingVisuals
-    ? preservePendingPresentationVisuals(currentState.snapshot, nextModelWithBallRailGuard)
+    ? preservePendingPresentationVisuals(currentState.snapshot, nextModelWithDrawProtection)
     : shouldFreezeBoards
-      ? freezeBoardsFromPreviousModel(currentState.snapshot, nextModelWithBallRailGuard)
-      : nextModelWithBallRailGuard;
+      ? freezeBoardsFromPreviousModel(currentState.snapshot, nextModelWithDrawProtection)
+      : nextModelWithDrawProtection;
   // preservePendingPresentationVisuals overwrites recentBalls with the
   // previous model's balls. Restore the ball guard's decision so that
   // new-round clearing is not undone.
-  const nextModel = nextModelPreserved.recentBalls !== nextModelWithBallRailGuard.recentBalls
-    ? { ...nextModelPreserved, recentBalls: nextModelWithBallRailGuard.recentBalls }
+  const nextModel = nextModelPreserved.recentBalls !== nextModelWithDrawProtection.recentBalls
+    ? { ...nextModelPreserved, recentBalls: nextModelWithDrawProtection.recentBalls }
     : nextModelPreserved;
   const nearCallouts =
     syncSource === "room:update" && !shouldFreezeBoards
@@ -1862,6 +1881,9 @@ function applyPendingDrawPresentation(
 
   // Apply new draw presentation on top of the committed base
   const pendingPlayerArmed = isCurrentPlayerArmed(currentState);
+  // Protection window: DRAW_PRESENTATION (1600ms) + RAIL_FLIGHT (~2300ms) = ~3900ms.
+  // During this window, room:update must not overwrite visual ball state.
+  const DRAW_ANIMATION_PROTECTION_MS = 3900;
   set({
     snapshot: applyTheme1DrawPresentation(
       baseModel,
@@ -1873,6 +1895,7 @@ function applyPendingDrawPresentation(
     runtime: {
       ...currentState.runtime,
       pendingDrawNumber: nextPendingDrawNumber,
+      drawPresentationActiveUntilMs: Date.now() + DRAW_ANIMATION_PROTECTION_MS,
     },
   });
 

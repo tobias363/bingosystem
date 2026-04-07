@@ -10,6 +10,9 @@ export interface Theme1LiveRuntimeState {
   lastSyncSource: Theme1SyncSource;
   syncInFlight: boolean;
   pendingDrawNumber: number | null;
+  /** Timestamp (ms) until which a draw animation is active.
+   *  While active, room:update must not overwrite visual ball state. */
+  drawPresentationActiveUntilMs: number;
   activeGameId: string;
   seenClaimIds: string[];
   activeSessionKey: string;
