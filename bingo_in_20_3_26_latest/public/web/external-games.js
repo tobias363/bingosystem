@@ -1,18 +1,13 @@
 /**
  * External Games Overlay — config-drevet integrasjon av eksterne spill i lobbyen.
  *
- * Bruk:
- *   1. Inkluder denne filen i lobby-HTML
- *   2. Definer spill i EXTERNAL_GAMES-arrayen
- *   3. Kall openGameInIframe(url) for å åpne et spill
- *
- * Gjenbrukbar på tvers av systemer — ingen Unity-avhengighet.
+ * Visuelt design matcher Unity-lobbyens spillkort (Lynbingo, BingoBonanza etc.)
+ * slik at CandyMania ser integrert ut.
  */
 (function () {
   'use strict';
 
   // ── Konfigurasjon ─────────────────────────────────────────────
-  // Legg til flere spill her etter hvert som de integreres.
   var EXTERNAL_GAMES = [
     {
       id: 'candy-mania',
@@ -20,12 +15,12 @@
       url: '/candy/',
       status: 'Åpen',
       statusColor: '#5bbf72',
-      badge: 'Nytt!',
-      badgeColor: '#ff6b6b'
+      badge: 'NYTT!',
+      badgeColor: '#ff4444'
     }
   ];
 
-  // ── CSS ──────────────────────────────────────────────────
+  // ── CSS — matcher Unity-lobbyens spillkort ─────────────────────
   var style = document.createElement('style');
   style.textContent = [
     '#ext-games-wrap {',
@@ -39,59 +34,57 @@
     '  align-items: center;',
     '  justify-content: center;',
     '}',
+    '',
+    '/* Tile — matcher Unity-kortene */',
     '.ext-tile {',
     '  pointer-events: auto;',
-    '  width: 260px;',
-    '  background: linear-gradient(145deg, rgba(40,15,60,0.92) 0%, rgba(25,8,45,0.95) 100%);',
-    '  border-radius: 18px;',
+    '  width: 220px;',
     '  text-align: center;',
-    '  padding: 18px 16px 14px;',
     '  color: #fff;',
     '  cursor: pointer;',
-    '  box-shadow: 0 6px 30px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08);',
-    '  border: 1px solid rgba(255,255,255,0.06);',
-    '  transition: transform 0.18s ease, box-shadow 0.18s ease;',
     '  position: relative;',
     '  font-family: "Segoe UI", Arial, sans-serif;',
     '}',
-    '.ext-tile:hover {',
-    '  transform: translateY(-4px) scale(1.02);',
-    '  box-shadow: 0 10px 40px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.12);',
+    '',
+    '/* Spillnavn */',
+    '.ext-tile-name {',
+    '  font-size: 22px;',
+    '  font-weight: 700;',
+    '  margin-bottom: 8px;',
+    '  text-shadow: 0 2px 8px rgba(0,0,0,0.6);',
+    '  letter-spacing: 0.5px;',
     '}',
-    '.ext-tile:active {',
-    '  transform: translateY(0) scale(0.98);',
+    '',
+    '/* Status-badge (Åpen/Stengt) — matcher Unity */',
+    '.ext-tile-status {',
+    '  display: inline-block;',
+    '  padding: 4px 20px;',
+    '  border-radius: 20px;',
+    '  font-size: 13px;',
+    '  font-weight: 600;',
+    '  margin-bottom: 16px;',
+    '  letter-spacing: 0.3px;',
     '}',
+    '',
+    '/* NYTT!-badge */',
     '.ext-tile-badge {',
     '  position: absolute;',
-    '  top: -10px;',
-    '  right: -10px;',
-    '  padding: 4px 12px;',
-    '  border-radius: 20px;',
+    '  top: -12px;',
+    '  right: 10px;',
+    '  padding: 3px 10px;',
+    '  border-radius: 6px;',
     '  font-size: 11px;',
     '  font-weight: 700;',
     '  letter-spacing: 0.5px;',
     '  text-transform: uppercase;',
-    '  box-shadow: 0 2px 8px rgba(0,0,0,0.3);',
+    '  box-shadow: 0 2px 6px rgba(0,0,0,0.4);',
     '}',
-    '.ext-tile-name {',
-    '  font-size: 20px;',
-    '  font-weight: 700;',
-    '  margin-bottom: 6px;',
-    '  text-shadow: 0 2px 4px rgba(0,0,0,0.3);',
-    '}',
-    '.ext-tile-status {',
-    '  display: inline-block;',
-    '  padding: 3px 16px;',
-    '  border-radius: 20px;',
-    '  font-size: 12px;',
-    '  font-weight: 600;',
-    '  margin-bottom: 12px;',
-    '}',
+    '',
+    '/* Spinner-ikon — identisk med Unity-lobbyens ikoner */',
     '.ext-tile-icon {',
-    '  width: 80px;',
-    '  height: 80px;',
-    '  margin: 4px auto 14px;',
-    '  position: relative;',
+    '  width: 100px;',
+    '  height: 100px;',
+    '  margin: 0 auto 16px;',
     '}',
     '.ext-tile-icon svg {',
     '  width: 100%;',
@@ -102,43 +95,54 @@
     '  from { transform: rotate(0deg); }',
     '  to { transform: rotate(360deg); }',
     '}',
+    '',
+    '/* Spill nå-knapp — matcher Unity */',
     '.ext-tile-btn {',
     '  display: block;',
     '  width: 100%;',
-    '  padding: 12px 0;',
+    '  padding: 14px 0;',
     '  border: none;',
-    '  border-radius: 12px;',
-    '  background: linear-gradient(135deg, #5bc4ac 0%, #4db89e 100%);',
+    '  border-radius: 30px;',
+    '  background: linear-gradient(135deg, #5bc4ac 0%, #4aad96 100%);',
     '  color: #fff;',
-    '  font-size: 16px;',
+    '  font-size: 17px;',
     '  font-weight: 700;',
     '  cursor: pointer;',
     '  letter-spacing: 0.5px;',
-    '  transition: background 0.15s;',
-    '  box-shadow: 0 3px 12px rgba(91, 196, 172, 0.3);',
+    '  transition: background 0.15s, transform 0.1s;',
+    '  box-shadow: 0 4px 15px rgba(91, 196, 172, 0.35);',
     '}',
     '.ext-tile-btn:hover {',
     '  background: linear-gradient(135deg, #6bd4bc 0%, #5cc8ae 100%);',
+    '  transform: translateY(-1px);',
+    '}',
+    '.ext-tile-btn:active {',
+    '  transform: translateY(1px);',
     '}',
     '.ext-tile-btn:disabled {',
-    '  background: #666;',
+    '  background: #555;',
     '  cursor: not-allowed;',
     '  box-shadow: none;',
     '}',
+    '',
+    '/* Responsivt */',
     '@media (max-width: 1100px) {',
     '  #ext-games-wrap { width: 40%; }',
-    '  .ext-tile { width: 220px; }',
+    '  .ext-tile { width: 190px; }',
+    '  .ext-tile-icon { width: 80px; height: 80px; }',
+    '  .ext-tile-name { font-size: 18px; }',
     '}',
     '@media (max-width: 768px) {',
     '  #ext-games-wrap { width: 50%; height: 40%; }',
-    '  .ext-tile { width: 180px; padding: 12px 10px 10px; }',
+    '  .ext-tile { width: 160px; }',
+    '  .ext-tile-icon { width: 65px; height: 65px; }',
     '  .ext-tile-name { font-size: 16px; }',
-    '  .ext-tile-icon { width: 60px; height: 60px; }',
+    '  .ext-tile-btn { font-size: 14px; padding: 10px 0; }',
     '}'
   ].join('\n');
   document.head.appendChild(style);
 
-  // ── Spinner SVG (matcher Unity-lobbyen sine ikoner) ──────────
+  // ── Spinner SVG — identisk med Unity-lobbyens ikoner ────────────
   var spinnerSVG = [
     '<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">',
     '  <g stroke="white" stroke-width="6" stroke-linecap="round" opacity="0.85">',

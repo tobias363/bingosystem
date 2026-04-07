@@ -139,11 +139,15 @@ router.get('/api/integration/health', (req, res) => {
 router.get('/api/integration/auth-beacon', async (req, res) => {
   try {
     // Primary: Check in-memory stores first (fast path)
+    // Only count players with status "Online" — disconnect sets "Offline" but
+    // does not delete the entry, so stale entries must be filtered out.
     const connected = Sys.ConnectedPlayers;
     if (connected && typeof connected === 'object') {
-      const playerIds = Object.keys(connected);
-      if (playerIds.length > 0) {
-        const playerId = playerIds[0];
+      const onlineIds = Object.keys(connected).filter(
+        id => connected[id] && connected[id].status === 'Online'
+      );
+      if (onlineIds.length > 0) {
+        const playerId = onlineIds[0];
         const authEntry = Sys._authStore && Sys._authStore[playerId];
         return res.json({
           authenticated: true,
