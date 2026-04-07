@@ -1481,7 +1481,14 @@ function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<
   const nextStartAtMs = runtimeCandyManiaSettings.autoRoundStartEnabled
     ? normalizeRoomNextAutoStartAt(snapshot.code, nowMs)
     : null;
-  const millisUntilNextStart = nextStartAtMs === null ? null : Math.max(0, nextStartAtMs - nowMs);
+  // Never send 0 or negative countdown when game isn't running — that
+  // causes a "00:00" flash in the frontend before the real countdown appears.
+  const rawMillisUntilNextStart = nextStartAtMs === null ? null : Math.max(0, nextStartAtMs - nowMs);
+  const millisUntilNextStart = rawMillisUntilNextStart !== null &&
+    rawMillisUntilNextStart < 1000 &&
+    snapshot.currentGame?.status !== "RUNNING"
+    ? runtimeCandyManiaSettings.autoRoundStartIntervalMs
+    : rawMillisUntilNextStart;
   const canStartNow =
     runtimeCandyManiaSettings.autoRoundStartEnabled &&
     snapshot.currentGame?.status !== "RUNNING" &&
@@ -1694,7 +1701,9 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
       throw error;
     }
     setNextRoundForRoom(roomCode, Date.now());
-    lastAutoDrawAtByRoom.delete(roomCode);
+    // Set last draw to now so the first draw waits the full interval
+    // instead of firing immediately (which causes 3 balls in quick succession).
+    lastAutoDrawAtByRoom.set(roomCode, Date.now());
     await emitRoomUpdate(roomCode);
   });
 }
