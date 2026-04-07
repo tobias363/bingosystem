@@ -279,6 +279,58 @@ export function Theme1GameShell() {
     schedulerTargetMs - countdownNowMs <= 4000 &&
     countdownLabel.length > 0;
 
+  // ── Board mark clearing logic ──────────────────────────────────
+  // Armed players: fade out marks 3s before next round.
+  // Unarmed players: keep marks through the next round, clear at the
+  // start of the round after that (one full round of review time).
+  const [boardMarksPreservedForRoundId, setBoardMarksPreservedForRoundId] = useState("");
+  const currentGameId = roomSnapshot?.currentGame?.id ?? "";
+
+  const shouldClearBoardMarks = useMemo(() => {
+    if (snapshot.meta.gameStatus === "RUNNING") return false;
+    if (schedulerTargetMs === null) return false;
+    const msUntilNext = schedulerTargetMs - countdownNowMs;
+
+    if (isBetArmed) {
+      // Armed: clear 3s before next round
+      return msUntilNext <= 3000 && countdownLabel.length > 0;
+    }
+
+    // Unarmed: marks survive one full round. If the preserved round ID
+    // is set and differs from the current game (= a new round passed),
+    // it's time to clear.
+    if (boardMarksPreservedForRoundId && boardMarksPreservedForRoundId !== currentGameId) {
+      return true;
+    }
+    return false;
+  }, [snapshot.meta.gameStatus, schedulerTargetMs, countdownNowMs, countdownLabel, isBetArmed, boardMarksPreservedForRoundId, currentGameId]);
+
+  // Track when a round ends while unarmed — record the game ID so marks
+  // survive exactly one more round.
+  useEffect(() => {
+    const prevStatus = previousGameStatusRef.current;
+    if (prevStatus === "RUNNING" && snapshot.meta.gameStatus !== "RUNNING" && !isBetArmed) {
+      setBoardMarksPreservedForRoundId(currentGameId);
+    }
+    if (snapshot.meta.gameStatus === "RUNNING" && boardMarksPreservedForRoundId && boardMarksPreservedForRoundId !== currentGameId) {
+      // New round started — marks from preserved round should clear
+      setBoardMarksPreservedForRoundId("");
+    }
+  }, [snapshot.meta.gameStatus, isBetArmed, currentGameId, boardMarksPreservedForRoundId]);
+
+  // Build boards with marks cleared when needed
+  const playfieldBoards = useMemo(() => {
+    if (!shouldClearBoardMarks) return snapshot.boards;
+    return snapshot.boards.map((board) => ({
+      ...board,
+      cells: board.cells.map((cell) => ({
+        ...cell,
+        tone: "idle" as const,
+      })),
+      completedPatterns: [],
+    }));
+  }, [shouldClearBoardMarks, snapshot.boards]);
+
   // Memoize so clearing doesn't create a new [] reference on every render
   // (countdownNowMs updates every 250ms while clearing is active).
   // Between rounds snapshot.recentBalls may be empty (store resets for the
@@ -403,7 +455,7 @@ export function Theme1GameShell() {
             <Theme1Playfield
               bonusActive={isBonusActive}
               bonus={bonus}
-              boards={snapshot.boards}
+              boards={playfieldBoards}
               hud={{
                 ...snapshot.hud,
                 nesteTrekkOm: countdownLabel,
