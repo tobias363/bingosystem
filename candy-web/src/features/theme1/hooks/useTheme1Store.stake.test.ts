@@ -138,7 +138,7 @@ describe("theme1 stake controls", () => {
     ).toBe(false);
   });
 
-  it("does not auto-bootstrap on localhost either", () => {
+  it("auto-bootstraps on localhost for local dev", () => {
     expect(
       shouldAutoBootstrapDefaultLiveSession(
         {
@@ -153,7 +153,7 @@ describe("theme1 stake controls", () => {
           hasLaunchToken: false,
         },
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("recovers stale room sessions by falling back to canonical room create", () => {

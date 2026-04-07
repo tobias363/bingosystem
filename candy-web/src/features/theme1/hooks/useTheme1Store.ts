@@ -1130,11 +1130,12 @@ function applyLiveSnapshot(
   ) {
     clearPendingDrawTimer();
   }
+  const playerIsArmed = isCurrentPlayerArmed({ ...currentState, roomSnapshot: snapshot });
   const nextModelWithPendingDraw = applyTheme1DrawPresentation(
     result.model,
     nextPendingDrawNumber,
     {
-      markBoards: result.ticketSource === "currentGame",
+      markBoards: result.ticketSource === "currentGame" && playerIsArmed,
     },
   );
   const shouldFreezeBoards = shouldFreezeBoardsForUnarmedPlayer({
@@ -1860,12 +1861,13 @@ function applyPendingDrawPresentation(
   }
 
   // Apply new draw presentation on top of the committed base
+  const pendingPlayerArmed = isCurrentPlayerArmed(currentState);
   set({
     snapshot: applyTheme1DrawPresentation(
       baseModel,
       nextPendingDrawNumber,
       {
-        markBoards: currentState.runtime.lastTicketSource === "currentGame",
+        markBoards: currentState.runtime.lastTicketSource === "currentGame" && pendingPlayerArmed,
       },
     ),
     runtime: {
