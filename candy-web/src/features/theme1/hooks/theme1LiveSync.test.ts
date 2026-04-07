@@ -91,6 +91,7 @@ function createRuntimeState(
     lastSyncSource: "room:update",
     syncInFlight: true,
     pendingDrawNumber: 41,
+    drawPresentationActiveUntilMs: 0,
     activeGameId: "game-1",
     seenClaimIds: [],
     activeSessionKey: "session-key",

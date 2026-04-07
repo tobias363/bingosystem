@@ -25,7 +25,7 @@ export function resolvePlayerContext(
   // are no preRoundTickets yet — keeps boards visible between rounds.
   const shouldUseCurrentGameTickets =
     currentGameStatus === "RUNNING" ||
-    ((currentGameStatus === "FINISHED" || currentGameStatus === "ENDED") && !hasPreRoundTickets);
+    (currentGameStatus === "ENDED" && !hasPreRoundTickets);
   const normalizedPreferredPlayerId = preferredPlayerId?.trim();
 
   if (normalizedPreferredPlayerId) {

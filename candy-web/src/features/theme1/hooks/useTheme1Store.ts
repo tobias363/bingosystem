@@ -164,6 +164,63 @@ const THEME1_TOPPER_NEAR_PULSE_MS = 950;
 const THEME1_TOPPER_WIN_PULSE_MS = 1600;
 const topperPulseTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
+export function shouldIgnoreTheme1IncomingDrawNumber(input: {
+  visualRecentBalls: readonly number[];
+  pendingDrawNumber: number | null;
+  nextDrawNumber: number;
+}): boolean {
+  const normalizedNextDrawNumber =
+    Number.isFinite(input.nextDrawNumber) && input.nextDrawNumber > 0
+      ? Math.trunc(input.nextDrawNumber)
+      : null;
+
+  if (normalizedNextDrawNumber === null) {
+    return true;
+  }
+
+  return (
+    input.pendingDrawNumber === normalizedNextDrawNumber ||
+    input.visualRecentBalls.includes(normalizedNextDrawNumber)
+  );
+}
+
+export function resolveTheme1RecentBallsForLiveSync(input: {
+  syncSource: Extract<Theme1SyncSource, "room:resume" | "room:state" | "room:update">;
+  clientBalls: readonly number[];
+  serverBalls: readonly number[];
+}): number[] {
+  if (input.syncSource !== "room:update") {
+    return [...input.serverBalls];
+  }
+
+  // Initial load: client has no balls, use server's list.
+  if (input.clientBalls.length === 0) {
+    return [...input.serverBalls];
+  }
+
+  // New round: server has significantly fewer balls than client.
+  // A difference of 3+ rules out normal timing lag (1-2 balls)
+  // and means the rail should reset to the server round.
+  if (input.clientBalls.length - input.serverBalls.length >= 3) {
+    return [...input.serverBalls];
+  }
+
+  // Game ended / waiting: server has no balls, clear client's list.
+  if (input.serverBalls.length === 0) {
+    return [];
+  }
+
+  // Active round: preserve client order and append any balls that
+  // reached the server first, so late/missed draw:new events do not
+  // disappear from the rail animation pipeline.
+  const clientSet = new Set(input.clientBalls);
+  const missingFromClient = input.serverBalls.filter((ball) => !clientSet.has(ball));
+
+  return missingFromClient.length > 0
+    ? [...input.clientBalls, ...missingFromClient]
+    : [...input.clientBalls];
+}
+
 export function shouldRedirectTheme1ToPortalOnLiveHost(input: {
   hostname: string;
   accessToken: string;
@@ -435,6 +492,7 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
         lastSyncSource: "mock",
         syncInFlight: false,
         pendingDrawNumber: null,
+        drawPresentationActiveUntilMs: 0,
         activeGameId: "",
         seenClaimIds: [],
         activeSessionKey: "",
@@ -643,6 +701,7 @@ export const useTheme1Store = create<Theme1State>((set, get) => ({
         lastSyncSource: "mock",
         syncInFlight: false,
         pendingDrawNumber: null,
+        drawPresentationActiveUntilMs: 0,
         activeGameId: "",
         seenClaimIds: [],
         activeSessionKey: "",
@@ -873,11 +932,12 @@ function getBoundRealtimeSocket(
           return;
         }
 
-        // Skip draws that already appear in the latest snapshot to avoid
-        // replaying stale events after reconnect.
-        const currentSnapshot = get().roomSnapshot;
-        const drawnNumbers = currentSnapshot?.currentGame?.drawnNumbers ?? [];
-        if (drawnNumbers.includes(nextNumber)) {
+        const currentState = get();
+        if (shouldIgnoreTheme1IncomingDrawNumber({
+          visualRecentBalls: currentState.snapshot.recentBalls,
+          pendingDrawNumber: currentState.runtime.pendingDrawNumber,
+          nextDrawNumber: nextNumber,
+        })) {
           return;
         }
 
@@ -1158,43 +1218,14 @@ function applyLiveSnapshot(
   //   2. Client has no balls yet (initial load)
   //   3. Game ID changed (new round started)
   //   4. Server has no drawn balls (game ended / waiting)
-  const nextModelWithBallRailGuard = (() => {
-    if (syncSource !== "room:update") {
-      return nextModelWithPendingDraw;
-    }
-    const clientBalls = currentState.snapshot.recentBalls;
-    const serverBalls = nextModelWithPendingDraw.recentBalls;
-    const currentGameId = snapshot.currentGame?.id ?? "";
-    const previousGameId = currentState.runtime.activeGameId;
-
-    // Initial load: client has no balls, use server's list
-    if (clientBalls.length === 0) {
-      return nextModelWithPendingDraw;
-    }
-
-    // New round: server has significantly fewer balls than client.
-    // This catches the transition from a completed round (30 balls) to
-    // a new round with only a few balls. A difference of 3+ balls rules
-    // out normal timing lag (where client is 1-2 balls ahead of server).
-    // We can't use game ID because activeGameId is set AFTER this guard.
-    if (clientBalls.length - serverBalls.length >= 3) {
-      return nextModelWithPendingDraw;
-    }
-
-    // Game ended / waiting: server has no balls, clear client's list
-    if (serverBalls.length === 0) {
-      return { ...nextModelWithPendingDraw, recentBalls: [] };
-    }
-
-    // During active round: keep client's order, append any server-only
-    // balls that the client missed (e.g. after brief disconnect).
-    const clientSet = new Set(clientBalls);
-    const missingFromClient = serverBalls.filter((b) => !clientSet.has(b));
-    const mergedBalls = missingFromClient.length > 0
-      ? [...clientBalls, ...missingFromClient]
-      : clientBalls;
-    return { ...nextModelWithPendingDraw, recentBalls: mergedBalls };
-  })();
+  const nextModelWithBallRailGuard = {
+    ...nextModelWithPendingDraw,
+    recentBalls: resolveTheme1RecentBallsForLiveSync({
+      syncSource,
+      clientBalls: currentState.snapshot.recentBalls,
+      serverBalls: nextModelWithPendingDraw.recentBalls,
+    }),
+  };
   // ── Single visual-state guard ──────────────────────────────────
   // Priority: draw animation > board freeze > default.
   // Each guard applies its own overrides — they never stack or undo
@@ -1203,12 +1234,9 @@ function applyLiveSnapshot(
   const isDrawAnimating = currentState.runtime.drawPresentationActiveUntilMs > Date.now();
   const nextModel = (() => {
     if (isDrawAnimating && syncSource === "room:update") {
-      // Draw animation active: keep client's recentBalls (flight queue
-      // integrity). Let featured ball state flow naturally for DrawMachine.
-      return {
-        ...nextModelWithBallRailGuard,
-        recentBalls: currentState.snapshot.recentBalls,
-      };
+      // Draw animation active: keep the monotonic ball-rail merge so
+      // balls are never dropped if room:update reaches us before draw:new.
+      return nextModelWithBallRailGuard;
     }
     if (shouldFreezeBoards) {
       // Unarmed player: keep previous boards so marks stay visible.
@@ -1246,6 +1274,7 @@ function applyLiveSnapshot(
         lastSyncSource: syncSource,
         syncInFlight: false,
         pendingDrawNumber: nextPendingDrawNumber,
+        drawPresentationActiveUntilMs: currentState.runtime.drawPresentationActiveUntilMs,
         activeGameId: celebrationResolution.nextGameId,
         seenClaimIds: celebrationResolution.nextKnownClaimIds,
         activeSessionKey:
@@ -1274,6 +1303,7 @@ function applyLiveSnapshot(
       lastSyncSource: syncSource,
       syncInFlight: false,
       pendingDrawNumber: nextPendingDrawNumber,
+      drawPresentationActiveUntilMs: currentState.runtime.drawPresentationActiveUntilMs,
       activeGameId: celebrationResolution.nextGameId,
       seenClaimIds: celebrationResolution.nextKnownClaimIds,
       activeSessionKey:
