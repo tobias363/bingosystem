@@ -49,6 +49,8 @@ interface StartGameInput {
   entryFee?: number;
   ticketsPerPlayer?: number;
   payoutPercent?: number;
+  /** If provided, only these players get tickets. Others watch without playing. */
+  armedPlayerIds?: string[];
 }
 
 interface DrawNextInput {
@@ -515,10 +517,12 @@ export class BingoEngine {
     const normalizedPayoutPercent = Math.round(payoutPercent * 100) / 100;
 
     const allPlayers = [...room.players.values()];
+    const armedSet = input.armedPlayerIds ? new Set(input.armedPlayerIds) : null;
     // Filter out ineligible players instead of blocking the entire room.
-    // The room runs continuously — players on pause, blocked, or with
+    // The room runs continuously — players on pause, blocked, unarmed, or with
     // insufficient balance simply skip this round.
     const players = allPlayers.filter((player) => {
+      if (armedSet && !armedSet.has(player.id)) return false;
       if (this.isPlayerInAnotherRunningGame(room.code, player)) return false;
       if (this.isPlayerBlockedByRestriction(player, nowMs)) return false;
       if (this.isPlayerOnRequiredPause(player, nowMs)) return false;

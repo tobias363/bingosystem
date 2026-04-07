@@ -252,6 +252,7 @@ const minPlayersFloor = 1;
 const bingoMinPlayersToStart = minPlayersFloor;
 const requestedAutoRoundStartEnabled = parseBooleanEnv(process.env.AUTO_ROUND_START_ENABLED, true);
 const requestedAutoDrawEnabled = parseBooleanEnv(process.env.AUTO_DRAW_ENABLED, true);
+const candyFixedAutoDrawIntervalMs = 2000;
 // BIN-47: Default to false in production — autoplay must be explicitly enabled
 const allowAutoplayInProduction = parseBooleanEnv(process.env.BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION, false);
 // BIN-47: Never force autostart — respect the autoplayAllowed guard
@@ -290,7 +291,7 @@ const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
     Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 100))) * 100
   ) / 100,
   autoDrawEnabled: forceCandyAutoDraw ? true : autoplayAllowed ? requestedAutoDrawEnabled : false,
-  autoDrawIntervalMs: parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 2500)
+  autoDrawIntervalMs: candyFixedAutoDrawIntervalMs
 };
 let candyManiaSettingsEffectiveFromMs = Date.now();
 let pendingCandyManiaSettingsUpdate: PendingCandyManiaSettingsUpdate | null = null;
@@ -773,8 +774,14 @@ function parseCandyManiaSettingsPatch(value: unknown): Partial<CandyManiaSchedul
   }
 
   const autoDrawIntervalMs = parseOptionalPositiveInteger(payload.autoDrawIntervalMs, "autoDrawIntervalMs");
+  if (autoDrawIntervalMs !== undefined && autoDrawIntervalMs !== candyFixedAutoDrawIntervalMs) {
+    throw new DomainError(
+      "INVALID_INPUT",
+      `autoDrawIntervalMs er låst til ${candyFixedAutoDrawIntervalMs} ms.`
+    );
+  }
   if (autoDrawIntervalMs !== undefined) {
-    patch.autoDrawIntervalMs = autoDrawIntervalMs;
+    patch.autoDrawIntervalMs = candyFixedAutoDrawIntervalMs;
   }
 
   return patch;
@@ -821,7 +828,7 @@ function normalizeCandyManiaSchedulerSettings(
   next.autoRoundTicketsPerPlayer = Math.min(5, Math.max(1, Math.floor(next.autoRoundTicketsPerPlayer)));
   next.autoRoundEntryFee = Math.max(0, Math.round(next.autoRoundEntryFee * 100) / 100);
   next.payoutPercent = Math.min(100, Math.max(0, Math.round(next.payoutPercent * 100) / 100));
-  next.autoDrawIntervalMs = Math.max(250, Math.floor(next.autoDrawIntervalMs));
+  next.autoDrawIntervalMs = candyFixedAutoDrawIntervalMs;
 
   if (
     !autoplayAllowed &&
@@ -924,6 +931,7 @@ function getCandyManiaAdminSettingsResponse(): Record<string, unknown> {
       maxTicketsPerPlayer: 5,
       minPayoutPercent: 0,
       maxPayoutPercent: 100,
+      fixedAutoDrawIntervalMs: candyFixedAutoDrawIntervalMs,
       runningRoundLockActive: lockActive
     },
     locks: {
@@ -967,6 +975,7 @@ function buildAdminSettingsDefinitionForGame(game: GameDefinition): GameSettings
       minRoundIntervalMs: bingoMinRoundIntervalMs,
       minPlayersToStart: bingoMinPlayersToStart,
       maxTicketsPerPlayer: 5,
+      fixedAutoDrawIntervalMs: candyFixedAutoDrawIntervalMs,
       forceAutoStart: forceCandyAutoStart,
       forceAutoDraw: forceCandyAutoDraw,
       runningRoundLockActive: hasAnyRunningCandyManiaRound()
@@ -1311,7 +1320,30 @@ async function emitWalletRoomUpdates(walletIds: string[]): Promise<void> {
 const nextAutoStartAtByRoom = new Map<string, number>();
 const lastAutoDrawAtByRoom = new Map<string, number>();
 const roomConfiguredEntryFeeByRoom = new Map<string, number>();
+/** Per-room set of player IDs who have armed their bet for the next round. */
+const armedPlayerIdsByRoom = new Map<string, Set<string>>();
 const roomSchedulerLocks = new Set<string>();
+
+function getArmedPlayerIds(roomCode: string): string[] {
+  return [...(armedPlayerIdsByRoom.get(roomCode) ?? [])];
+}
+
+function armPlayer(roomCode: string, playerId: string): void {
+  let set = armedPlayerIdsByRoom.get(roomCode);
+  if (!set) {
+    set = new Set();
+    armedPlayerIdsByRoom.set(roomCode, set);
+  }
+  set.add(playerId);
+}
+
+function disarmPlayer(roomCode: string, playerId: string): void {
+  armedPlayerIdsByRoom.get(roomCode)?.delete(playerId);
+}
+
+function disarmAllPlayers(roomCode: string): void {
+  armedPlayerIdsByRoom.get(roomCode)?.clear();
+}
 let schedulerTickInProgress = false;
 
 function compareCandyRoomPriority(a: RoomSummary, b: RoomSummary): number {
@@ -1439,8 +1471,8 @@ function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<
     intervalMs: runtimeCandyManiaSettings.autoRoundStartIntervalMs,
     minPlayers: runtimeCandyManiaSettings.autoRoundMinPlayers,
     playerCount: snapshot.players.length,
-    armedPlayerCount: snapshot.players.length,
-    armedPlayerIds: snapshot.players.map(p => p.id),
+    armedPlayerCount: getArmedPlayerIds(snapshot.code).length,
+    armedPlayerIds: getArmedPlayerIds(snapshot.code),
     entryFee: getRoomConfiguredEntryFee(snapshot.code),
     payoutPercent: runtimeCandyManiaSettings.payoutPercent,
     drawCapacity: bingoMaxDrawsPerRound,
@@ -1606,8 +1638,11 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
         actorPlayerId: latestSnapshot.hostPlayerId,
         entryFee: getRoomConfiguredEntryFee(roomCode),
         ticketsPerPlayer: runtimeCandyManiaSettings.autoRoundTicketsPerPlayer,
-        payoutPercent: runtimeCandyManiaSettings.payoutPercent
+        payoutPercent: runtimeCandyManiaSettings.payoutPercent,
+        armedPlayerIds: getArmedPlayerIds(roomCode),
       });
+      // Disarm all after round starts — players must re-arm for next round
+      disarmAllPlayers(roomCode);
     } catch (error) {
       if (
         error instanceof DomainError &&
@@ -3710,6 +3745,28 @@ io.on("connection", (socket: Socket) => {
         const entryFee = setRoomConfiguredEntryFee(roomCode, requestedEntryFee);
         const updatedSnapshot = await emitRoomUpdate(roomCode);
         ackSuccess(callback, { snapshot: updatedSnapshot, entryFee });
+      } catch (error) {
+        ackFailure(callback, error);
+      }
+    }
+  );
+
+  socket.on(
+    "bet:arm",
+    async (
+      payload: { roomCode?: string; playerId?: string; accessToken?: string; armed?: boolean },
+      callback: (response: AckResponse<{ snapshot: RoomSnapshot; armed: boolean }>) => void
+    ) => {
+      try {
+        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+        const wantArmed = payload.armed !== false;
+        if (wantArmed) {
+          armPlayer(roomCode, playerId);
+        } else {
+          disarmPlayer(roomCode, playerId);
+        }
+        const snapshot = await emitRoomUpdate(roomCode);
+        ackSuccess(callback, { snapshot, armed: wantArmed });
       } catch (error) {
         ackFailure(callback, error);
       }
