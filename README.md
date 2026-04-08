@@ -241,4 +241,46 @@ npm run dev                             # http://localhost:4000
 | Tjeneste | URL | Repo | Branch |
 |----------|-----|------|--------|
 | Bingo System (lobby + alt) | `bingo-system-jsso.onrender.com` | `tobias363/bingosystem` | `main` |
-| CandyMania (kun spillet) | `candy-backend-ldvg.onrender.com` | `tobias363/candy-web` | `main` |
+| CandyMania (kun spillet) | `candy-backend-ldvg.onrender.com` | `tobias363/bingosystem` | `main` |
+
+> **Viktig:** Begge Render-tjenestene deployer fra **`tobias363/bingosystem`** (denne repoen). `candy-web`-repoen brukes kun til kildekode og CI — Render henter aldri fra den direkte. Se deploy-flyt over for hvordan candy-web-endringer kommer i produksjon.
+
+---
+
+## Feilsoking
+
+### Spillbilder vises ikke i lobbyen (loading spinner)
+
+Unity WebGL laster spillbilder fra `spillorama.aistechnolabs.info` via XHR/fetch. Disse blokkeres av CORS fordi lobbyen kjorer pa `bingo-system-jsso.onrender.com`.
+
+**Lossning (allerede implementert):**
+- `bingo_in_20_3_26_latest/public/web/index.html` har en XHR+fetch interceptor som skriver om bilde-URL-er til `/api/proxy/extimg/`
+- `bingo_in_20_3_26_latest/App/Routes/integration.js` har en proxy-rute som henter bilder fra den eksterne serveren og returnerer dem med CORS-headers
+- Whitelistede stier: `admin/images/` og `profile/bingo/`
+- Bilder caches i 24 timer
+
+Hvis nye bildestier legges til pa den eksterne serveren, ma whitelisten i proxy-ruten oppdateres.
+
+### CandyMania viser "Kobler til" i lobbyen (iframe)
+
+Vanligste arsaker:
+1. **Gammel frontend-build:** Sjekk at `backend/public/web/index.html` refererer til riktig JS-bundle. Bygg ny fra `candy-web/` og kopier til bade `backend/public/web/` og `frontend/web/`.
+2. **Launch token utlopt:** Tokens har 120 sekunders TTL. Hvis iframe laster tregt, kan tokenet utlope for resolve.
+3. **Gammel session i localStorage:** Spilleren kan ha en lagret session fra en annen backend. Tøm `candy-web.realtime-session` i localStorage.
+
+### Candy-backend: "Feil i wallet-databasen" (lokalt)
+
+Betyr at PostgreSQL-tabellene mangler nye kolonner (f.eks. `idempotency_key`). `CREATE TABLE IF NOT EXISTS` oppdaterer ikke eksisterende tabeller.
+
+**Fix — kjor manuell migrering:**
+
+```bash
+psql postgres://USER@localhost:5432/bingo -c "
+  ALTER TABLE public.wallet_transactions ADD COLUMN IF NOT EXISTS idempotency_key TEXT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_transactions_idempotency_key
+    ON public.wallet_transactions (idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+"
+```
+
+Restart backend etterpå.
