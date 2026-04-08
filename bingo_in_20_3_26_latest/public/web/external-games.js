@@ -1,8 +1,9 @@
 /**
  * External Games Overlay — config-drevet integrasjon av eksterne spill i lobbyen.
  *
- * Visuelt design matcher Unity-lobbyens spillkort (Lynbingo, BingoBonanza etc.)
- * slik at CandyMania ser integrert ut — samme bildestørrelse, knapper og badges.
+ * Posisjonert som 3. kolonne, 2. rad i Unity-lobbyens 3x2 grid.
+ * Visuelt design matcher Unity-lobbyens spillkort EKSAKT:
+ *   Tittel → [bilde med status-badge øverst-venstre] → knapp
  */
 (function () {
   'use strict';
@@ -22,27 +23,28 @@
     }
   ];
 
-  // ── CSS — matcher Unity-lobbyens spillkort ─────────────────────
+  // ── CSS — eksakt kopi av Unity-lobbyens spillkort-design ───────
   var style = document.createElement('style');
   style.textContent = [
+    '/* Wrapper — kolonne 3, rad 2 i Unity 3x2 grid */',
     '#ext-games-wrap {',
     '  position: fixed;',
     '  z-index: 100;',
     '  pointer-events: none;',
-    '  bottom: 0; right: 0;',
-    '  width: 33.3%;',
+    '  right: 0;',
+    '  bottom: 0;',
+    '  width: 33.33%;',
     '  height: 50%;',
     '  display: flex;',
     '  flex-direction: column;',
     '  align-items: center;',
     '  justify-content: center;',
-    '  padding-bottom: 20px;',
     '}',
     '',
     '/* Tile — matcher Unity-kortene */',
     '.ext-tile {',
     '  pointer-events: auto;',
-    '  width: 260px;',
+    '  width: 280px;',
     '  text-align: center;',
     '  color: #fff;',
     '  cursor: pointer;',
@@ -50,7 +52,7 @@
     '  font-family: "Segoe UI", Arial, sans-serif;',
     '}',
     '',
-    '/* Spillnavn */',
+    '/* Spillnavn — matcher Unity: sentrert over bildet */',
     '.ext-tile-name {',
     '  font-size: 22px;',
     '  font-weight: 700;',
@@ -59,22 +61,42 @@
     '  letter-spacing: 0.5px;',
     '}',
     '',
-    '/* Status-badge (Åpen/Stengt) — matcher Unity */',
+    '/* Bilde-container — relativ for å posisjonere status-badge */',
+    '.ext-tile-img-wrap {',
+    '  position: relative;',
+    '  width: 100%;',
+    '  aspect-ratio: 16 / 10;',
+    '  overflow: hidden;',
+    '  border-radius: 10px;',
+    '  margin: 0 auto 10px;',
+    '  box-shadow: 0 4px 16px rgba(0,0,0,0.3);',
+    '}',
+    '.ext-tile-img {',
+    '  width: 100%;',
+    '  height: 100%;',
+    '  object-fit: cover;',
+    '  display: block;',
+    '}',
+    '',
+    '/* Status-badge — overlapper topp-venstre på bildet, som Unity */',
     '.ext-tile-status {',
-    '  display: inline-block;',
-    '  padding: 4px 20px;',
+    '  position: absolute;',
+    '  top: 8px;',
+    '  left: 8px;',
+    '  z-index: 2;',
+    '  padding: 3px 16px;',
     '  border-radius: 20px;',
     '  font-size: 13px;',
     '  font-weight: 600;',
-    '  margin-bottom: 10px;',
     '  letter-spacing: 0.3px;',
+    '  box-shadow: 0 2px 6px rgba(0,0,0,0.3);',
     '}',
     '',
-    '/* NYTT!-badge */',
+    '/* NYTT!-badge — topp-høyre på tilen */',
     '.ext-tile-badge {',
     '  position: absolute;',
-    '  top: -8px;',
-    '  right: 10px;',
+    '  top: -6px;',
+    '  right: 5px;',
     '  padding: 3px 10px;',
     '  border-radius: 6px;',
     '  font-size: 11px;',
@@ -82,28 +104,14 @@
     '  letter-spacing: 0.5px;',
     '  text-transform: uppercase;',
     '  box-shadow: 0 2px 6px rgba(0,0,0,0.4);',
-    '  z-index: 2;',
+    '  z-index: 3;',
     '}',
     '',
-    '/* Spillbilde — matcher Unity-kortene */',
-    '.ext-tile-img {',
-    '  width: 100%;',
-    '  max-width: 240px;',
-    '  height: auto;',
-    '  border-radius: 12px;',
-    '  margin: 0 auto 12px;',
-    '  display: block;',
-    '  box-shadow: 0 4px 16px rgba(0,0,0,0.3);',
-    '  object-fit: cover;',
-    '}',
-    '',
-    '/* Spill nå-knapp — matcher Unity */',
+    '/* Spill nå-knapp — matcher Unity-knappene */',
     '.ext-tile-btn {',
     '  display: block;',
     '  width: 100%;',
-    '  max-width: 240px;',
-    '  margin: 0 auto;',
-    '  padding: 14px 0;',
+    '  padding: 12px 0;',
     '  border: none;',
     '  border-radius: 30px;',
     '  background: linear-gradient(135deg, #5bc4ac 0%, #4aad96 100%);',
@@ -128,25 +136,26 @@
     '  box-shadow: none;',
     '}',
     '',
-    '/* Responsivt */',
-    '@media (max-width: 1100px) {',
-    '  #ext-games-wrap { width: 40%; }',
-    '  .ext-tile { width: 220px; }',
-    '  .ext-tile-img { max-width: 200px; }',
-    '  .ext-tile-btn { max-width: 200px; }',
-    '  .ext-tile-name { font-size: 18px; }',
+    '/* Responsivt — skaler med Unity-canvasen */',
+    '@media (max-width: 1200px) {',
+    '  .ext-tile { width: 240px; }',
+    '  .ext-tile-name { font-size: 20px; }',
     '}',
-    '@media (max-width: 768px) {',
-    '  #ext-games-wrap { width: 50%; height: 40%; }',
-    '  .ext-tile { width: 180px; }',
-    '  .ext-tile-img { max-width: 160px; }',
-    '  .ext-tile-btn { max-width: 160px; font-size: 14px; padding: 10px 0; }',
+    '@media (max-width: 900px) {',
+    '  .ext-tile { width: 200px; }',
+    '  .ext-tile-name { font-size: 18px; }',
+    '  .ext-tile-btn { font-size: 15px; padding: 10px 0; }',
+    '}',
+    '@media (max-width: 600px) {',
+    '  #ext-games-wrap { width: 50%; }',
+    '  .ext-tile { width: 160px; }',
     '  .ext-tile-name { font-size: 16px; }',
+    '  .ext-tile-btn { font-size: 13px; padding: 8px 0; }',
     '}'
   ].join('\n');
   document.head.appendChild(style);
 
-  // ── Render ───────────────────────────────────────────────
+  // ── Render — layout: tittel → [bilde + status-badge] → knapp ──
   var wrap = document.createElement('div');
   wrap.id = 'ext-games-wrap';
 
@@ -157,14 +166,24 @@
     tile.setAttribute('data-game-id', game.id);
 
     var html = '';
+
+    // NYTT!-badge (top-right, absolutt posisjonert på tilen)
     if (game.badge) {
       html += '<div class="ext-tile-badge" style="background:' + game.badgeColor + '">' + game.badge + '</div>';
     }
+
+    // Tittel
     html += '<div class="ext-tile-name">' + game.name + '</div>';
-    html += '<div class="ext-tile-status" style="background:' + (isOpen ? game.statusColor : game.closedColor || '#e74c3c') + '">' + game.status + '</div>';
+
+    // Bilde med status-badge overlappende øverst-venstre (som Unity)
     if (game.image) {
-      html += '<img class="ext-tile-img" src="' + game.image + '" alt="' + game.name + '" />';
+      html += '<div class="ext-tile-img-wrap">';
+      html += '  <div class="ext-tile-status" style="background:' + (isOpen ? game.statusColor : game.closedColor || '#e74c3c') + '">' + game.status + '</div>';
+      html += '  <img class="ext-tile-img" src="' + game.image + '" alt="' + game.name + '" />';
+      html += '</div>';
     }
+
+    // Knapp
     html += '<button class="ext-tile-btn"' + (isOpen ? '' : ' disabled') + '>' + (isOpen ? 'Spill nå' : game.status) + '</button>';
     tile.innerHTML = html;
 
