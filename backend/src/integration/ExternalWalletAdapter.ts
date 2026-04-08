@@ -34,13 +34,7 @@ export interface ExternalWalletAdapterOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Circuit breaker state
-// ---------------------------------------------------------------------------
-
-interface CircuitBreakerState {
-  consecutiveFailures: number;
-  openUntilMs: number;
-}
+import { CircuitBreaker, CircuitBreakerOpenError } from "../util/CircuitBreaker.js";
 
 // ---------------------------------------------------------------------------
 // Adapter
@@ -65,8 +59,8 @@ export class ExternalWalletAdapter implements WalletAdapter {
   private readonly apiKey?: string;
   private readonly timeoutMs: number;
   private readonly currency: string;
-  private readonly cbThreshold: number;
-  private readonly cbResetMs: number;
+  /** BIN-165: Shared circuit breaker. */
+  private readonly cb: CircuitBreaker;
 
   /** Local transaction log for reconciliation. */
   private readonly localLedger: WalletTransaction[] = [];
@@ -78,12 +72,6 @@ export class ExternalWalletAdapter implements WalletAdapter {
   private readonly balanceCache = new Map<string, { balance: number; expiresAtMs: number }>();
   private readonly balanceCacheTtlMs = 5000;
 
-  /** Circuit breaker. */
-  private readonly cb: CircuitBreakerState = {
-    consecutiveFailures: 0,
-    openUntilMs: 0
-  };
-
   constructor(options: ExternalWalletAdapterOptions) {
     if (!options.baseUrl?.trim()) {
       throw new WalletError("INVALID_WALLET_CONFIG", "WALLET_API_BASE_URL mangler.");
@@ -92,8 +80,11 @@ export class ExternalWalletAdapter implements WalletAdapter {
     this.apiKey = options.apiKey;
     this.timeoutMs = options.timeoutMs ?? 5000;
     this.currency = options.currency ?? "NOK";
-    this.cbThreshold = options.circuitBreakerThreshold ?? 5;
-    this.cbResetMs = options.circuitBreakerResetMs ?? 30_000;
+    this.cb = new CircuitBreaker({
+      threshold: options.circuitBreakerThreshold ?? 5,
+      resetMs: options.circuitBreakerResetMs ?? 30_000,
+      name: "external-wallet"
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -469,33 +460,29 @@ export class ExternalWalletAdapter implements WalletAdapter {
   }
 
   // -----------------------------------------------------------------------
-  // Circuit breaker helpers
+  // Circuit breaker helpers (BIN-165: delegated to shared CircuitBreaker)
   // -----------------------------------------------------------------------
 
   private assertCircuitClosed(): void {
-    if (this.cb.openUntilMs > 0 && Date.now() < this.cb.openUntilMs) {
-      throw new WalletError(
-        "WALLET_UNAVAILABLE",
-        "Circuit breaker åpen — leverandør-API er midlertidig utilgjengelig."
-      );
-    }
-    // Auto-reset: if the open window has passed, allow the next request through.
-    if (this.cb.openUntilMs > 0 && Date.now() >= this.cb.openUntilMs) {
-      this.cb.openUntilMs = 0;
-      this.cb.consecutiveFailures = 0;
+    try {
+      this.cb.assertClosed();
+    } catch (err) {
+      if (err instanceof CircuitBreakerOpenError) {
+        throw new WalletError(
+          "WALLET_UNAVAILABLE",
+          "Circuit breaker apen — leverandor-API er midlertidig utilgjengelig."
+        );
+      }
+      throw err;
     }
   }
 
   private cbSuccess(): void {
-    this.cb.consecutiveFailures = 0;
-    this.cb.openUntilMs = 0;
+    this.cb.onSuccess();
   }
 
   private cbFailure(): void {
-    this.cb.consecutiveFailures++;
-    if (this.cb.consecutiveFailures >= this.cbThreshold) {
-      this.cb.openUntilMs = Date.now() + this.cbResetMs;
-    }
+    this.cb.onFailure();
   }
 
   // -----------------------------------------------------------------------

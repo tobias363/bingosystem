@@ -2,7 +2,7 @@
  * External Games Overlay — config-drevet integrasjon av eksterne spill i lobbyen.
  *
  * Visuelt design matcher Unity-lobbyens spillkort (Lynbingo, BingoBonanza etc.)
- * slik at CandyMania ser integrert ut.
+ * slik at CandyMania ser integrert ut — samme bildestørrelse, knapper og badges.
  */
 (function () {
   'use strict';
@@ -15,8 +15,10 @@
       url: '/candy/',
       status: 'Åpen',
       statusColor: '#5bbf72',
+      closedColor: '#e74c3c',
       badge: 'NYTT!',
-      badgeColor: '#ff4444'
+      badgeColor: '#ff4444',
+      image: '/web/assets/games/candy.png'
     }
   ];
 
@@ -31,14 +33,16 @@
     '  width: 33.3%;',
     '  height: 50%;',
     '  display: flex;',
+    '  flex-direction: column;',
     '  align-items: center;',
     '  justify-content: center;',
+    '  padding-bottom: 20px;',
     '}',
     '',
     '/* Tile — matcher Unity-kortene */',
     '.ext-tile {',
     '  pointer-events: auto;',
-    '  width: 220px;',
+    '  width: 260px;',
     '  text-align: center;',
     '  color: #fff;',
     '  cursor: pointer;',
@@ -50,7 +54,7 @@
     '.ext-tile-name {',
     '  font-size: 22px;',
     '  font-weight: 700;',
-    '  margin-bottom: 8px;',
+    '  margin-bottom: 6px;',
     '  text-shadow: 0 2px 8px rgba(0,0,0,0.6);',
     '  letter-spacing: 0.5px;',
     '}',
@@ -62,14 +66,14 @@
     '  border-radius: 20px;',
     '  font-size: 13px;',
     '  font-weight: 600;',
-    '  margin-bottom: 16px;',
+    '  margin-bottom: 10px;',
     '  letter-spacing: 0.3px;',
     '}',
     '',
     '/* NYTT!-badge */',
     '.ext-tile-badge {',
     '  position: absolute;',
-    '  top: -12px;',
+    '  top: -8px;',
     '  right: 10px;',
     '  padding: 3px 10px;',
     '  border-radius: 6px;',
@@ -78,28 +82,27 @@
     '  letter-spacing: 0.5px;',
     '  text-transform: uppercase;',
     '  box-shadow: 0 2px 6px rgba(0,0,0,0.4);',
+    '  z-index: 2;',
     '}',
     '',
-    '/* Spinner-ikon — identisk med Unity-lobbyens ikoner */',
-    '.ext-tile-icon {',
-    '  width: 100px;',
-    '  height: 100px;',
-    '  margin: 0 auto 16px;',
-    '}',
-    '.ext-tile-icon svg {',
+    '/* Spillbilde — matcher Unity-kortene */',
+    '.ext-tile-img {',
     '  width: 100%;',
-    '  height: 100%;',
-    '  animation: ext-spin 3s linear infinite;',
-    '}',
-    '@keyframes ext-spin {',
-    '  from { transform: rotate(0deg); }',
-    '  to { transform: rotate(360deg); }',
+    '  max-width: 240px;',
+    '  height: auto;',
+    '  border-radius: 12px;',
+    '  margin: 0 auto 12px;',
+    '  display: block;',
+    '  box-shadow: 0 4px 16px rgba(0,0,0,0.3);',
+    '  object-fit: cover;',
     '}',
     '',
     '/* Spill nå-knapp — matcher Unity */',
     '.ext-tile-btn {',
     '  display: block;',
     '  width: 100%;',
+    '  max-width: 240px;',
+    '  margin: 0 auto;',
     '  padding: 14px 0;',
     '  border: none;',
     '  border-radius: 30px;',
@@ -128,35 +131,20 @@
     '/* Responsivt */',
     '@media (max-width: 1100px) {',
     '  #ext-games-wrap { width: 40%; }',
-    '  .ext-tile { width: 190px; }',
-    '  .ext-tile-icon { width: 80px; height: 80px; }',
+    '  .ext-tile { width: 220px; }',
+    '  .ext-tile-img { max-width: 200px; }',
+    '  .ext-tile-btn { max-width: 200px; }',
     '  .ext-tile-name { font-size: 18px; }',
     '}',
     '@media (max-width: 768px) {',
     '  #ext-games-wrap { width: 50%; height: 40%; }',
-    '  .ext-tile { width: 160px; }',
-    '  .ext-tile-icon { width: 65px; height: 65px; }',
+    '  .ext-tile { width: 180px; }',
+    '  .ext-tile-img { max-width: 160px; }',
+    '  .ext-tile-btn { max-width: 160px; font-size: 14px; padding: 10px 0; }',
     '  .ext-tile-name { font-size: 16px; }',
-    '  .ext-tile-btn { font-size: 14px; padding: 10px 0; }',
     '}'
   ].join('\n');
   document.head.appendChild(style);
-
-  // ── Spinner SVG — identisk med Unity-lobbyens ikoner ────────────
-  var spinnerSVG = [
-    '<svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">',
-    '  <g stroke="white" stroke-width="6" stroke-linecap="round" opacity="0.85">',
-    '    <line x1="50" y1="8"  x2="50" y2="28"/>',
-    '    <line x1="50" y1="72" x2="50" y2="92"/>',
-    '    <line x1="8"  y1="50" x2="28" y2="50"/>',
-    '    <line x1="72" y1="50" x2="92" y2="50"/>',
-    '    <line x1="20" y1="20" x2="35" y2="35"/>',
-    '    <line x1="65" y1="65" x2="80" y2="80"/>',
-    '    <line x1="80" y1="20" x2="65" y2="35"/>',
-    '    <line x1="35" y1="65" x2="20" y2="80"/>',
-    '  </g>',
-    '</svg>'
-  ].join('\n');
 
   // ── Render ───────────────────────────────────────────────
   var wrap = document.createElement('div');
@@ -173,8 +161,10 @@
       html += '<div class="ext-tile-badge" style="background:' + game.badgeColor + '">' + game.badge + '</div>';
     }
     html += '<div class="ext-tile-name">' + game.name + '</div>';
-    html += '<div class="ext-tile-status" style="background:' + game.statusColor + '">' + game.status + '</div>';
-    html += '<div class="ext-tile-icon">' + spinnerSVG + '</div>';
+    html += '<div class="ext-tile-status" style="background:' + (isOpen ? game.statusColor : game.closedColor || '#e74c3c') + '">' + game.status + '</div>';
+    if (game.image) {
+      html += '<img class="ext-tile-img" src="' + game.image + '" alt="' + game.name + '" />';
+    }
     html += '<button class="ext-tile-btn"' + (isOpen ? '' : ' disabled') + '>' + (isOpen ? 'Spill nå' : game.status) + '</button>';
     tile.innerHTML = html;
 

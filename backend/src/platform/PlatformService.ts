@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual, createHash } from "node:crypto";
 import { promisify } from "node:util";
 import { Pool, type PoolClient } from "pg";
+import { getPoolTuning } from "../util/pgPool.js";
 import type { KycAdapter } from "../adapters/KycAdapter.js";
 import type { WalletAdapter } from "../adapters/WalletAdapter.js";
 import { WalletError } from "../adapters/WalletAdapter.js";
@@ -306,7 +307,8 @@ export class PlatformService {
     this.minAgeYears = Math.max(18, Math.floor(options.minAgeYears ?? 18));
     this.kycAdapter = options.kycAdapter;
     this.pool = new Pool({
-      connectionString: options.connectionString
+      connectionString: options.connectionString,
+      ...getPoolTuning()
     });
   }
 
@@ -1027,6 +1029,55 @@ export class PlatformService {
     }
   }
 
+  /**
+   * BIN-174: Refresh an existing session — issue a new token and revoke the old one.
+   * The old token must still be valid (not expired, not revoked).
+   */
+  async refreshSession(oldAccessToken: string): Promise<SessionInfo> {
+    await this.ensureInitialized();
+    const token = oldAccessToken.trim();
+    if (!token) {
+      throw new DomainError("UNAUTHORIZED", "Mangler access token.");
+    }
+
+    const tokenHash = hashToken(token);
+
+    // Validate old token and get user
+    const { rows } = await this.pool.query<UserRow & { session_id: string }>(
+      `SELECT s.id AS session_id, u.id, u.email, u.display_name, u.wallet_id, u.role, u.kyc_status,
+              u.birth_date, u.kyc_verified_at, u.kyc_provider_ref, u.created_at, u.updated_at
+       FROM ${this.sessionsTable()} s
+       JOIN ${this.usersTable()} u ON u.id = s.user_id
+       WHERE s.token_hash = $1
+         AND s.revoked_at IS NULL
+         AND s.expires_at > now()
+       ORDER BY s.created_at DESC
+       LIMIT 1`,
+      [tokenHash]
+    );
+
+    const row = rows[0];
+    if (!row) {
+      throw new DomainError("UNAUTHORIZED", "Token er utlopt eller ugyldig. Logg inn pa nytt.");
+    }
+
+    // Revoke old session
+    await this.pool.query(
+      `UPDATE ${this.sessionsTable()} SET revoked_at = now() WHERE token_hash = $1`,
+      [tokenHash]
+    );
+
+    // Create new session
+    const newSession = await this.createSession(row.id);
+    const user = await this.withBalance(this.mapUser(row));
+
+    return {
+      accessToken: newSession.accessToken,
+      expiresAt: newSession.expiresAt,
+      user
+    };
+  }
+
   private async createSession(userId: string): Promise<{ accessToken: string; expiresAt: string }> {
     const rawToken = randomBytes(32).toString("hex");
     const tokenHash = hashToken(rawToken);
@@ -1475,11 +1526,6 @@ export class PlatformService {
          VALUES ('roma', 'Roma', 'Roma-spillet med samme realtime-logikk som Candy.', '/roma', true, 3, '{}'::jsonb)
          ON CONFLICT (slug) DO NOTHING`
       );
-      await client.query(
-        `INSERT INTO ${this.gamesTable()} (slug, title, description, route, is_enabled, sort_order, settings_json)
-         VALUES ('spillorama', 'Spillorama', 'Unity WebGL bingo med 5 spillvarianter og Candy-integrasjon via iframe.', '/game', true, 4, '{"launchUrl":"/game/"}'::jsonb)
-         ON CONFLICT (slug) DO NOTHING`
-      );
 
       await client.query(
         `INSERT INTO ${this.hallsTable()} (id, slug, name, region, address, is_active)
@@ -1787,6 +1833,7 @@ export class PlatformService {
     if (error instanceof WalletError) {
       return error;
     }
+    console.error("[PlatformService] DB error:", error);
     return new DomainError("PLATFORM_DB_ERROR", "Feil i plattform-databasen.");
   }
 }

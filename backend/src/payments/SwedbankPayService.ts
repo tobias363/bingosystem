@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
+import { getPoolTuning } from "../util/pgPool.js";
 import type { WalletAdapter } from "../adapters/WalletAdapter.js";
 import { DomainError } from "../game/BingoEngine.js";
 
@@ -285,7 +286,8 @@ export class SwedbankPayService {
     this.requestTimeoutMs = Math.max(1000, Math.floor(options.requestTimeoutMs ?? 10000));
 
     this.pool = new Pool({
-      connectionString: options.connectionString
+      connectionString: options.connectionString,
+      ...getPoolTuning()
     });
   }
 

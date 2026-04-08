@@ -293,6 +293,8 @@ test("compliance: enforces regulatory and personal loss limits", async () => {
     monthly: 300
   });
 
+  // Hall-1: host has personal daily limit 60, entryFee 70 exceeds it.
+  // The engine soft-filters: game starts but host is excluded from tickets.
   const hallOneRoom = await createRoomWithTwoPlayers({
     engine,
     hallId: "hall-1",
@@ -302,17 +304,30 @@ test("compliance: enforces regulatory and personal loss limits", async () => {
     guestWalletId: "wallet-guest-a"
   });
 
-  await assert.rejects(
-    async () =>
-      engine.startGame({
-        roomCode: hallOneRoom.roomCode,
-        actorPlayerId: hallOneRoom.hostPlayerId,
-        entryFee: 70,
-        ticketsPerPlayer: 1
-      }),
-    (error: unknown) => error instanceof DomainError && error.code === "DAILY_LOSS_LIMIT_EXCEEDED"
+  await engine.startGame({
+    roomCode: hallOneRoom.roomCode,
+    actorPlayerId: hallOneRoom.hostPlayerId,
+    entryFee: 70,
+    ticketsPerPlayer: 1
+  });
+
+  const hallOneSnap = engine.getRoomSnapshot(hallOneRoom.roomCode);
+  const hallOneTicketPlayerIds = Object.keys(hallOneSnap.currentGame?.tickets ?? {});
+  // Host should be filtered out (exceeds daily limit), guest should have tickets.
+  assert.ok(
+    !hallOneTicketPlayerIds.includes(hallOneRoom.hostPlayerId),
+    "Host exceeding daily loss limit should not receive tickets"
   );
 
+  // End the hall-1 game so the host can join hall-2.
+  await engine.endGame({
+    roomCode: hallOneRoom.roomCode,
+    actorPlayerId: hallOneRoom.hostPlayerId,
+    reason: "test-cleanup"
+  });
+
+  // Hall-2: no personal limits set for hall-2, regulatory limit is 100 > 70.
+  // Both players should get tickets.
   const hallTwoRoom = await createRoomWithTwoPlayers({
     engine,
     hallId: "hall-2",
@@ -374,15 +389,20 @@ test("compliance: enforces mandatory break and timed pause", async () => {
   });
 
   await withFakeNow(3000, async () => {
-    await assert.rejects(
-      async () =>
-        engine.startGame({
-          roomCode: secondRoom.roomCode,
-          actorPlayerId: secondRoom.hostPlayerId,
-          entryFee: 0,
-          ticketsPerPlayer: 1
-        }),
-      (error: unknown) => error instanceof DomainError && error.code === "PLAYER_ON_REQUIRED_PAUSE"
+    // The engine soft-filters paused players: game starts but host
+    // (on required pause) is excluded from tickets.
+    await engine.startGame({
+      roomCode: secondRoom.roomCode,
+      actorPlayerId: secondRoom.hostPlayerId,
+      entryFee: 0,
+      ticketsPerPlayer: 1
+    });
+
+    const snap = engine.getRoomSnapshot(secondRoom.roomCode);
+    const ticketPlayerIds = Object.keys(snap.currentGame?.tickets ?? {});
+    assert.ok(
+      !ticketPlayerIds.includes(secondRoom.hostPlayerId),
+      "Host on required pause should not receive tickets"
     );
   });
 
@@ -481,7 +501,7 @@ test("compliance: enforces databingo prize caps and keeps payout audit", async (
   const needed = new Set([1, 2, 3, 4, 5]);
   let guard = 0;
   while (needed.size > 0 && guard < 60) {
-    const number = await engine.drawNextNumber({
+    const { number } = await engine.drawNextNumber({
       roomCode,
       actorPlayerId: hostPlayerId
     });
