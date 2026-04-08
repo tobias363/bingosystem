@@ -7,6 +7,7 @@ test("candy settings-katalog inkluderer payoutPercent med grenser", () => {
     minRoundIntervalMs: 30000,
     minPlayersToStart: 1,
     maxTicketsPerPlayer: 5,
+    fixedAutoDrawIntervalMs: 2000,
     forceAutoStart: true,
     forceAutoDraw: true,
     runningRoundLockActive: false
@@ -24,6 +25,7 @@ test("candy settings-katalog setter lock når runde kjører", () => {
     minRoundIntervalMs: 30000,
     minPlayersToStart: 1,
     maxTicketsPerPlayer: 5,
+    fixedAutoDrawIntervalMs: 2000,
     forceAutoStart: false,
     forceAutoDraw: false,
     runningRoundLockActive: true

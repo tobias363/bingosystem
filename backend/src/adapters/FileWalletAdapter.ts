@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   CreateWalletAccountInput,
+  TransactionOptions,
   WalletAccount,
   WalletAdapter,
   WalletTransaction,
@@ -129,7 +130,7 @@ export class FileWalletAdapter implements WalletAdapter {
     return account.balance;
   }
 
-  async debit(accountId: string, amount: number, reason: string): Promise<WalletTransaction> {
+  async debit(accountId: string, amount: number, reason: string, _options?: TransactionOptions): Promise<WalletTransaction> {
     return this.withLock(async () => {
       await this.load();
       const normalized = this.assertAccountId(accountId);
@@ -150,7 +151,7 @@ export class FileWalletAdapter implements WalletAdapter {
     });
   }
 
-  async credit(accountId: string, amount: number, reason: string): Promise<WalletTransaction> {
+  async credit(accountId: string, amount: number, reason: string, _options?: TransactionOptions): Promise<WalletTransaction> {
     return this.withLock(async () => {
       await this.load();
       const normalized = this.assertAccountId(accountId);
@@ -168,7 +169,7 @@ export class FileWalletAdapter implements WalletAdapter {
     });
   }
 
-  async topUp(accountId: string, amount: number, reason = "Manual top-up"): Promise<WalletTransaction> {
+  async topUp(accountId: string, amount: number, reason = "Manual top-up", _options?: TransactionOptions): Promise<WalletTransaction> {
     return this.withLock(async () => {
       await this.load();
       const normalized = this.assertAccountId(accountId);
@@ -186,7 +187,7 @@ export class FileWalletAdapter implements WalletAdapter {
     });
   }
 
-  async withdraw(accountId: string, amount: number, reason = "Manual withdrawal"): Promise<WalletTransaction> {
+  async withdraw(accountId: string, amount: number, reason = "Manual withdrawal", _options?: TransactionOptions): Promise<WalletTransaction> {
     return this.withLock(async () => {
       await this.load();
       const normalized = this.assertAccountId(accountId);
@@ -211,7 +212,8 @@ export class FileWalletAdapter implements WalletAdapter {
     fromAccountId: string,
     toAccountId: string,
     amount: number,
-    reason = "Wallet transfer"
+    reason = "Wallet transfer",
+    _options?: TransactionOptions
   ): Promise<WalletTransferResult> {
     return this.withLock(async () => {
       await this.load();

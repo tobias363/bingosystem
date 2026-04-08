@@ -1,6 +1,7 @@
 import { generateTraditional75Ticket } from "../game/ticket.js";
 import type {
   BingoSystemAdapter,
+  CheckpointInput,
   ClaimLoggedInput,
   CreateTicketInput,
   GameEndedInput,
@@ -26,6 +27,10 @@ export class LocalBingoSystemAdapter implements BingoSystemAdapter {
   }
 
   async onGameEnded(_input: GameEndedInput): Promise<void> {
+    // No-op for local development.
+  }
+
+  async onCheckpoint(_input: CheckpointInput): Promise<void> {
     // No-op for local development.
   }
 }

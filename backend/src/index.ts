@@ -8,10 +8,12 @@ import { URL, fileURLToPath } from "node:url";
 import { Server, type Socket } from "socket.io";
 import { createWalletAdapter } from "./adapters/createWalletAdapter.js";
 import { LocalBingoSystemAdapter } from "./adapters/LocalBingoSystemAdapter.js";
+import { PostgresBingoSystemAdapter } from "./adapters/PostgresBingoSystemAdapter.js";
 import { LocalKycAdapter } from "./adapters/LocalKycAdapter.js";
 import { assertTicketsPerPlayerWithinHallLimit } from "./game/compliance.js";
 import { BingoEngine, DomainError, toPublicError } from "./game/BingoEngine.js";
-import type { ClaimType, RoomSnapshot, RoomSummary } from "./game/types.js";
+import { generateTraditional75Ticket } from "./game/ticket.js";
+import type { ClaimType, RoomSnapshot, RoomSummary, Ticket } from "./game/types.js";
 import { CandyLaunchTokenStore } from "./launch/CandyLaunchTokenStore.js";
 import {
   ADMIN_ACCESS_POLICY,
@@ -41,6 +43,9 @@ import {
   type AdminSettingsCatalog,
   type GameSettingsDefinition
 } from "./admin/settingsCatalog.js";
+import { DrawScheduler, type SchedulerSettings } from "./draw-engine/DrawScheduler.js";
+import { SocketRateLimiter } from "./middleware/socketRateLimit.js";
+import { register as promRegister, metrics as promMetrics } from "./util/metrics.js";
 
 interface AckResponse<T> {
   ok: boolean;
@@ -57,7 +62,9 @@ interface AuthenticatedSocketPayload {
 
 interface RoomActionPayload extends AuthenticatedSocketPayload {
   roomCode: string;
-  playerId: string;
+  // For non-admin users we resolve the playerId from the access token's walletId.
+  // Admins can still provide playerId explicitly.
+  playerId?: string;
 }
 
 interface CreateRoomPayload extends AuthenticatedSocketPayload {
@@ -148,8 +155,6 @@ const candyWebDir = fs.existsSync(path.resolve(publicDir, "web/index.html"))
   ? path.resolve(publicDir, "web")
   : path.resolve(frontendDir, "web");
 const candyWebIndexFile = path.resolve(candyWebDir, "index.html");
-const gameIndexFile = path.resolve(publicDir, "game/index.html");
-const viewGameIndexFile = path.resolve(publicDir, "view-game/index.html");
 const projectDir = path.resolve(__dirname, "../..");
 
 const app = express();
@@ -254,6 +259,7 @@ const minPlayersFloor = 1;
 const bingoMinPlayersToStart = minPlayersFloor;
 const requestedAutoRoundStartEnabled = parseBooleanEnv(process.env.AUTO_ROUND_START_ENABLED, true);
 const requestedAutoDrawEnabled = parseBooleanEnv(process.env.AUTO_DRAW_ENABLED, true);
+const candyFixedAutoDrawIntervalMs = 2000;
 // BIN-47: Default to false in production — autoplay must be explicitly enabled
 const allowAutoplayInProduction = parseBooleanEnv(process.env.BINGO_ALLOW_AUTOPLAY_IN_PRODUCTION, false);
 // BIN-47: Never force autostart — respect the autoplayAllowed guard
@@ -289,10 +295,10 @@ const runtimeCandyManiaSettings: CandyManiaSchedulerSettings = {
     Math.max(1, parsePositiveIntEnv(process.env.AUTO_ROUND_TICKETS_PER_PLAYER, 4))
   ),
   payoutPercent: Math.round(
-    Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 100))) * 100
+    Math.min(100, Math.max(0, parseNonNegativeNumberEnv(process.env.CANDY_PAYOUT_PERCENT, 80))) * 100
   ) / 100,
   autoDrawEnabled: forceCandyAutoDraw ? true : autoplayAllowed ? requestedAutoDrawEnabled : false,
-  autoDrawIntervalMs: parsePositiveIntEnv(process.env.AUTO_DRAW_INTERVAL_MS, 2500)
+  autoDrawIntervalMs: candyFixedAutoDrawIntervalMs
 };
 let candyManiaSettingsEffectiveFromMs = Date.now();
 let pendingCandyManiaSettingsUpdate: PendingCandyManiaSettingsUpdate | null = null;
@@ -329,7 +335,43 @@ const webhookService = integrationEnabledEarly && process.env.INTEGRATION_WEBHOO
     })
   : null;
 
-const localBingoAdapter = new LocalBingoSystemAdapter();
+// BIN-159: Use PostgreSQL adapter for game checkpointing when a DB connection is available
+const checkpointConnectionString = process.env.APP_PG_CONNECTION_STRING?.trim() || process.env.WALLET_PG_CONNECTION_STRING?.trim() || "";
+const usePostgresBingoAdapter = parseBooleanEnv(process.env.BINGO_CHECKPOINT_ENABLED, false) && checkpointConnectionString.length > 0;
+
+const localBingoAdapter = usePostgresBingoAdapter
+  ? new PostgresBingoSystemAdapter({
+      connectionString: checkpointConnectionString,
+      schema: process.env.APP_PG_SCHEMA?.trim() || process.env.WALLET_PG_SCHEMA?.trim() || "public",
+      ssl: parseBooleanEnv(process.env.WALLET_PG_SSL, false)
+    })
+  : new LocalBingoSystemAdapter();
+
+if (usePostgresBingoAdapter) {
+  console.log("[BIN-159] Game state checkpointing enabled (PostgreSQL)");
+}
+
+// BIN-170/171: Room state store and scheduler lock provider
+import { InMemoryRoomStateStore, type RoomStateStore } from "./store/RoomStateStore.js";
+import { RedisRoomStateStore } from "./store/RedisRoomStateStore.js";
+import { RedisSchedulerLock } from "./store/RedisSchedulerLock.js";
+
+const roomStateProvider = process.env.ROOM_STATE_PROVIDER?.trim().toLowerCase() ?? "memory";
+const redisUrl = process.env.REDIS_URL?.trim() || "redis://localhost:6379";
+
+const roomStateStore: RoomStateStore = roomStateProvider === "redis"
+  ? new RedisRoomStateStore({ url: redisUrl })
+  : new InMemoryRoomStateStore();
+
+const useRedisLock = process.env.SCHEDULER_LOCK_PROVIDER?.trim().toLowerCase() === "redis";
+const redisSchedulerLock = useRedisLock ? new RedisSchedulerLock({ url: redisUrl }) : null;
+
+if (roomStateProvider === "redis") {
+  console.log("[BIN-170] Room state store: Redis");
+}
+if (useRedisLock) {
+  console.log("[BIN-171] Scheduler lock: Redis (distributed)");
+}
 const integrationSchema = process.env.APP_PG_SCHEMA?.trim() || process.env.WALLET_PG_SCHEMA?.trim() || "public";
 
 const bingoSystemAdapter = webhookService && integrationPool
@@ -775,8 +817,14 @@ function parseCandyManiaSettingsPatch(value: unknown): Partial<CandyManiaSchedul
   }
 
   const autoDrawIntervalMs = parseOptionalPositiveInteger(payload.autoDrawIntervalMs, "autoDrawIntervalMs");
+  if (autoDrawIntervalMs !== undefined && autoDrawIntervalMs !== candyFixedAutoDrawIntervalMs) {
+    throw new DomainError(
+      "INVALID_INPUT",
+      `autoDrawIntervalMs er låst til ${candyFixedAutoDrawIntervalMs} ms.`
+    );
+  }
   if (autoDrawIntervalMs !== undefined) {
-    patch.autoDrawIntervalMs = autoDrawIntervalMs;
+    patch.autoDrawIntervalMs = candyFixedAutoDrawIntervalMs;
   }
 
   return patch;
@@ -823,7 +871,7 @@ function normalizeCandyManiaSchedulerSettings(
   next.autoRoundTicketsPerPlayer = Math.min(5, Math.max(1, Math.floor(next.autoRoundTicketsPerPlayer)));
   next.autoRoundEntryFee = Math.max(0, Math.round(next.autoRoundEntryFee * 100) / 100);
   next.payoutPercent = Math.min(100, Math.max(0, Math.round(next.payoutPercent * 100) / 100));
-  next.autoDrawIntervalMs = Math.max(250, Math.floor(next.autoDrawIntervalMs));
+  next.autoDrawIntervalMs = candyFixedAutoDrawIntervalMs;
 
   if (
     !autoplayAllowed &&
@@ -926,6 +974,7 @@ function getCandyManiaAdminSettingsResponse(): Record<string, unknown> {
       maxTicketsPerPlayer: 5,
       minPayoutPercent: 0,
       maxPayoutPercent: 100,
+      fixedAutoDrawIntervalMs: candyFixedAutoDrawIntervalMs,
       runningRoundLockActive: lockActive
     },
     locks: {
@@ -969,6 +1018,7 @@ function buildAdminSettingsDefinitionForGame(game: GameDefinition): GameSettings
       minRoundIntervalMs: bingoMinRoundIntervalMs,
       minPlayersToStart: bingoMinPlayersToStart,
       maxTicketsPerPlayer: 5,
+      fixedAutoDrawIntervalMs: candyFixedAutoDrawIntervalMs,
       forceAutoStart: forceCandyAutoStart,
       forceAutoDraw: forceCandyAutoDraw,
       runningRoundLockActive: hasAnyRunningCandyManiaRound()
@@ -1310,48 +1360,67 @@ async function emitWalletRoomUpdates(walletIds: string[]): Promise<void> {
   await emitManyRoomUpdates(affectedRooms);
 }
 
-const nextAutoStartAtByRoom = new Map<string, number>();
-const lastAutoDrawAtByRoom = new Map<string, number>();
 const roomConfiguredEntryFeeByRoom = new Map<string, number>();
-const roomSchedulerLocks = new Set<string>();
-let schedulerTickInProgress = false;
+/** Per-room set of player IDs who have armed their bet for the next round. */
+const armedPlayerIdsByRoom = new Map<string, Set<string>>();
+/** Cached display tickets for unarmed players — stable until game changes. */
+const displayTicketCache = new Map<string, Ticket[]>();
 
-function compareCandyRoomPriority(a: RoomSummary, b: RoomSummary): number {
-  const runningScoreA = a.gameStatus === "RUNNING" ? 1 : 0;
-  const runningScoreB = b.gameStatus === "RUNNING" ? 1 : 0;
-  if (runningScoreA !== runningScoreB) {
-    return runningScoreB - runningScoreA;
+function getOrCreateDisplayTickets(roomCode: string, playerId: string, count: number): Ticket[] {
+  const key = `${roomCode}:${playerId}`;
+  const cached = displayTicketCache.get(key);
+  if (cached && cached.length === count) return cached;
+  const tickets: Ticket[] = [];
+  for (let i = 0; i < count; i++) {
+    tickets.push(generateTraditional75Ticket());
   }
-
-  if (a.playerCount !== b.playerCount) {
-    return b.playerCount - a.playerCount;
-  }
-
-  const createdAtA = Date.parse(a.createdAt);
-  const createdAtB = Date.parse(b.createdAt);
-  const normalizedCreatedAtA = Number.isFinite(createdAtA) ? createdAtA : Number.MAX_SAFE_INTEGER;
-  const normalizedCreatedAtB = Number.isFinite(createdAtB) ? createdAtB : Number.MAX_SAFE_INTEGER;
-  if (normalizedCreatedAtA !== normalizedCreatedAtB) {
-    return normalizedCreatedAtA - normalizedCreatedAtB;
-  }
-
-  return a.code.localeCompare(b.code);
+  displayTicketCache.set(key, tickets);
+  return tickets;
 }
 
-function selectCanonicalCandyRoomSummariesByHall(summaries: RoomSummary[]): RoomSummary[] {
-  if (!enforceSingleCandyRoomPerHall) {
-    return summaries;
-  }
-
-  const canonicalByHall = new Map<string, RoomSummary>();
-  for (const summary of summaries) {
-    const existing = canonicalByHall.get(summary.hallId);
-    if (!existing || compareCandyRoomPriority(summary, existing) < 0) {
-      canonicalByHall.set(summary.hallId, summary);
+function clearDisplayTicketCache(roomCode: string): void {
+  for (const key of displayTicketCache.keys()) {
+    if (key.startsWith(`${roomCode}:`)) {
+      displayTicketCache.delete(key);
     }
   }
+}
+// DrawScheduler is initialized after emitRoomUpdate is defined (see below).
+let drawScheduler: DrawScheduler;
 
-  return [...canonicalByHall.values()].sort((a, b) => a.code.localeCompare(b.code));
+function getArmedPlayerIds(roomCode: string): string[] {
+  return [...(armedPlayerIdsByRoom.get(roomCode) ?? [])];
+}
+
+function armPlayer(roomCode: string, playerId: string): void {
+  let set = armedPlayerIdsByRoom.get(roomCode);
+  if (!set) {
+    set = new Set();
+    armedPlayerIdsByRoom.set(roomCode, set);
+  }
+  set.add(playerId);
+}
+
+function disarmPlayer(roomCode: string, playerId: string): void {
+  armedPlayerIdsByRoom.get(roomCode)?.delete(playerId);
+}
+
+function disarmAllPlayers(roomCode: string): void {
+  armedPlayerIdsByRoom.get(roomCode)?.clear();
+}
+// ── Room priority (used by getCanonicalCandyRoomForHall) ──────────────
+
+function compareCandyRoomPriority(a: RoomSummary, b: RoomSummary): number {
+  const runA = a.gameStatus === "RUNNING" ? 1 : 0;
+  const runB = b.gameStatus === "RUNNING" ? 1 : 0;
+  if (runA !== runB) return runB - runA;
+  if (a.playerCount !== b.playerCount) return b.playerCount - a.playerCount;
+  const createdA = Date.parse(a.createdAt);
+  const createdB = Date.parse(b.createdAt);
+  const normA = Number.isFinite(createdA) ? createdA : Number.MAX_SAFE_INTEGER;
+  const normB = Number.isFinite(createdB) ? createdB : Number.MAX_SAFE_INTEGER;
+  if (normA !== normB) return normA - normB;
+  return a.code.localeCompare(b.code);
 }
 
 function getCanonicalCandyRoomForHall(hallId: string, summaries = engine.listRoomSummaries()): RoomSummary | null {
@@ -1371,42 +1440,6 @@ function findPlayerInRoomByWallet(snapshot: RoomSnapshot, walletId: string): Roo
   return snapshot.players.find((player) => player.walletId === normalizedWalletId) ?? null;
 }
 
-function getNextRoundBoundaryMs(nowMs: number): number {
-  return (
-    Math.ceil(nowMs / runtimeCandyManiaSettings.autoRoundStartIntervalMs) *
-    runtimeCandyManiaSettings.autoRoundStartIntervalMs
-  );
-}
-
-function normalizeRoomNextAutoStartAt(roomCode: string, nowMs: number): number {
-  if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
-    nextAutoStartAtByRoom.delete(roomCode);
-    return nowMs;
-  }
-
-  const fallbackNextStartAt = getNextRoundBoundaryMs(nowMs);
-  const existing = nextAutoStartAtByRoom.get(roomCode);
-  const staleToleranceMs = Math.max(1500, schedulerTickMs * 4);
-
-  if (existing === undefined || !Number.isFinite(existing)) {
-    nextAutoStartAtByRoom.set(roomCode, fallbackNextStartAt);
-    return fallbackNextStartAt;
-  }
-
-  if (existing < nowMs - staleToleranceMs) {
-    nextAutoStartAtByRoom.set(roomCode, fallbackNextStartAt);
-    return fallbackNextStartAt;
-  }
-
-  return existing;
-}
-
-function setNextRoundForRoom(roomCode: string, nowMs: number): number {
-  const nextStartAt = getNextRoundBoundaryMs(nowMs + 1);
-  nextAutoStartAtByRoom.set(roomCode, nextStartAt);
-  return nextStartAt;
-}
-
 function getRoomConfiguredEntryFee(roomCode: string): number {
   const configured = roomConfiguredEntryFeeByRoom.get(roomCode);
   if (configured === undefined || !Number.isFinite(configured)) {
@@ -1423,7 +1456,7 @@ function setRoomConfiguredEntryFee(roomCode: string, entryFee: number): number {
 
 function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<string, unknown> {
   const nextStartAtMs = runtimeCandyManiaSettings.autoRoundStartEnabled
-    ? normalizeRoomNextAutoStartAt(snapshot.code, nowMs)
+    ? drawScheduler.normalizeNextAutoStartAt(snapshot.code, nowMs)
     : null;
   const millisUntilNextStart = nextStartAtMs === null ? null : Math.max(0, nextStartAtMs - nowMs);
   const canStartNow =
@@ -1441,8 +1474,8 @@ function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<
     intervalMs: runtimeCandyManiaSettings.autoRoundStartIntervalMs,
     minPlayers: runtimeCandyManiaSettings.autoRoundMinPlayers,
     playerCount: snapshot.players.length,
-    armedPlayerCount: snapshot.players.length,
-    armedPlayerIds: snapshot.players.map(p => p.id),
+    armedPlayerCount: getArmedPlayerIds(snapshot.code).length,
+    armedPlayerIds: getArmedPlayerIds(snapshot.code),
     entryFee: getRoomConfiguredEntryFee(snapshot.code),
     payoutPercent: runtimeCandyManiaSettings.payoutPercent,
     drawCapacity: bingoMaxDrawsPerRound,
@@ -1458,36 +1491,26 @@ function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<
 function buildRoomUpdatePayload(
   snapshot: RoomSnapshot,
   nowMs = Date.now()
-): RoomSnapshot & { scheduler: Record<string, unknown> } {
+): RoomSnapshot & { scheduler: Record<string, unknown>; preRoundTickets: Record<string, Ticket[]>; serverTimestamp: number } {
+  // Generate display tickets for players who are in the room but didn't
+  // get game tickets (not armed). This ensures their boards always show
+  // numbers — just without marking.
+  const preRoundTickets: Record<string, Ticket[]> = {};
+  const gameTickets = snapshot.currentGame?.tickets ?? {};
+  const ticketsPerPlayer = runtimeCandyManiaSettings.autoRoundTicketsPerPlayer;
+  for (const player of snapshot.players) {
+    if (gameTickets[player.id] && gameTickets[player.id].length > 0) continue;
+    preRoundTickets[player.id] = getOrCreateDisplayTickets(snapshot.code, player.id, ticketsPerPlayer);
+  }
   return {
     ...snapshot,
-    scheduler: buildRoomSchedulerState(snapshot, nowMs)
+    preRoundTickets,
+    scheduler: buildRoomSchedulerState(snapshot, nowMs),
+    serverTimestamp: nowMs,
   };
 }
 
-async function withRoomSchedulerLock(roomCode: string, work: () => Promise<void>): Promise<void> {
-  if (roomSchedulerLocks.has(roomCode)) {
-    return;
-  }
-  roomSchedulerLocks.add(roomCode);
-  try {
-    await work();
-  } finally {
-    roomSchedulerLocks.delete(roomCode);
-  }
-}
-
-function cleanupSchedulerState(activeRoomCodes: Set<string>): void {
-  for (const roomCode of nextAutoStartAtByRoom.keys()) {
-    if (!activeRoomCodes.has(roomCode)) {
-      nextAutoStartAtByRoom.delete(roomCode);
-    }
-  }
-  for (const roomCode of lastAutoDrawAtByRoom.keys()) {
-    if (!activeRoomCodes.has(roomCode)) {
-      lastAutoDrawAtByRoom.delete(roomCode);
-    }
-  }
+function cleanupRoomConfiguredEntryFees(activeRoomCodes: Set<string>): void {
   for (const roomCode of roomConfiguredEntryFeeByRoom.keys()) {
     if (!activeRoomCodes.has(roomCode)) {
       roomConfiguredEntryFeeByRoom.delete(roomCode);
@@ -1495,31 +1518,15 @@ function cleanupSchedulerState(activeRoomCodes: Set<string>): void {
   }
 }
 
-function syncSchedulerStateAfterCandySettingsChange(previous: CandyManiaSchedulerSettings): void {
-  const autoStartToggled =
-    previous.autoRoundStartEnabled !== runtimeCandyManiaSettings.autoRoundStartEnabled;
-  const roundIntervalChanged =
-    previous.autoRoundStartIntervalMs !== runtimeCandyManiaSettings.autoRoundStartIntervalMs;
-  const autoDrawToggled =
-    previous.autoDrawEnabled !== runtimeCandyManiaSettings.autoDrawEnabled;
-
-  if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
-    nextAutoStartAtByRoom.clear();
-  }
-  if (!runtimeCandyManiaSettings.autoDrawEnabled) {
-    lastAutoDrawAtByRoom.clear();
-  }
-
-  if (runtimeCandyManiaSettings.autoRoundStartEnabled && (autoStartToggled || roundIntervalChanged)) {
-    const nowMs = Date.now();
-    for (const roomCode of engine.getAllRoomCodes()) {
-      setNextRoundForRoom(roomCode, nowMs);
-    }
-  }
-
-  if (autoDrawToggled && runtimeCandyManiaSettings.autoDrawEnabled) {
-    lastAutoDrawAtByRoom.clear();
-  }
+/** Convert CandyManiaSchedulerSettings → SchedulerSettings for DrawScheduler. */
+function toSchedulerSettings(s: CandyManiaSchedulerSettings): SchedulerSettings {
+  return {
+    autoRoundStartEnabled: s.autoRoundStartEnabled,
+    autoRoundStartIntervalMs: s.autoRoundStartIntervalMs,
+    autoRoundMinPlayers: s.autoRoundMinPlayers,
+    autoDrawEnabled: s.autoDrawEnabled,
+    autoDrawIntervalMs: s.autoDrawIntervalMs,
+  };
 }
 
 async function applyPendingCandyManiaSettingsIfDue(
@@ -1545,7 +1552,7 @@ async function applyPendingCandyManiaSettingsIfDue(
   pendingCandyManiaSettingsUpdate = null;
   Object.assign(runtimeCandyManiaSettings, pendingToApply.settings);
   candyManiaSettingsEffectiveFromMs = pendingToApply.effectiveFromMs;
-  syncSchedulerStateAfterCandySettingsChange(previous);
+  drawScheduler.syncAfterSettingsChange(toSchedulerSettings(previous));
 
   try {
     await persistCandyManiaSettingsToCatalog({
@@ -1556,7 +1563,7 @@ async function applyPendingCandyManiaSettingsIfDue(
     Object.assign(runtimeCandyManiaSettings, previous);
     candyManiaSettingsEffectiveFromMs = previousEffectiveFromMs;
     pendingCandyManiaSettingsUpdate = pendingToApply;
-    syncSchedulerStateAfterCandySettingsChange(pendingToApply.settings);
+    drawScheduler.syncAfterSettingsChange(toSchedulerSettings(pendingToApply.settings));
     throw error;
   }
 
@@ -1564,52 +1571,75 @@ async function applyPendingCandyManiaSettingsIfDue(
   return true;
 }
 
-async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummaries>[number], now: number): Promise<void> {
-  const roomCode = summary.code;
-  if (!runtimeCandyManiaSettings.autoRoundStartEnabled) {
-    nextAutoStartAtByRoom.delete(roomCode);
-    return;
-  }
+// ── DrawScheduler initialization ──────────────────────────────────────
+// All scheduler timing, locking, watchdog, error classification, processAutoStart,
+// processAutoDraw and the tick loop live in DrawScheduler. This block wires up the
+// business-logic callbacks (onAutoStart / onAutoDraw) that the scheduler invokes
+// inside its lock.
 
-  const scheduledStartAt = normalizeRoomNextAutoStartAt(roomCode, now);
+drawScheduler = new DrawScheduler({
+  tickIntervalMs: schedulerTickMs,
+  lockTimeoutMs: 5_000,
+  watchdogIntervalMs: 5_000,
+  watchdogStuckMultiplier: 3,
+  fixedDrawIntervalMs: candyFixedAutoDrawIntervalMs,
+  enforceSingleRoomPerHall: enforceSingleCandyRoomPerHall,
+  onRoomRescheduled: async (roomCode) => {
+    // Ensure clients receive an updated scheduler state (nextStartAt / millisUntilNextStart)
+    // when we reschedule without drawing or starting a new round.
+    await emitRoomUpdate(roomCode);
+  },
 
-  if (summary.gameStatus === "RUNNING") {
-    if (scheduledStartAt <= now) {
-      setNextRoundForRoom(roomCode, now);
+  onRoomExhausted: (roomCode, count) => {
+    console.error(
+      `[DrawScheduler] Room ${roomCode} exhausted after ${count} consecutive stuck detections. ` +
+      `Ending round with SYSTEM_ERROR.`
+    );
+    try {
+      const snapshot = engine.getRoomSnapshot(roomCode);
+      if (snapshot.currentGame?.status === "RUNNING") {
+        engine.endGame({ roomCode, actorPlayerId: snapshot.hostPlayerId, reason: "SYSTEM_ERROR" });
+        void emitRoomUpdate(roomCode);
+      }
+    } catch (error) {
+      console.error(`[DrawScheduler] Failed to end exhausted room ${roomCode}:`, error);
     }
-    return;
-  }
+  },
 
-  if (summary.playerCount < runtimeCandyManiaSettings.autoRoundMinPlayers) {
-    if (scheduledStartAt <= now) {
-      setNextRoundForRoom(roomCode, now);
+  onShutdown: async (activeRoomCodes) => {
+    for (const roomCode of activeRoomCodes) {
+      io.to(roomCode).emit("room:update", {
+        ...buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode)),
+        serverRestarting: true,
+      });
     }
-    return;
-  }
+  },
 
-  if (now < scheduledStartAt) {
-    return;
-  }
+  getSettings: () => toSchedulerSettings(runtimeCandyManiaSettings),
+  listRoomSummaries: () => engine.listRoomSummaries(),
+  getRoomSnapshot: (roomCode) => engine.getRoomSnapshot(roomCode),
+  getAllRoomCodes: () => engine.getAllRoomCodes(),
 
-  await withRoomSchedulerLock(roomCode, async () => {
-    const latestSnapshot = engine.getRoomSnapshot(roomCode);
-    if (latestSnapshot.currentGame?.status === "RUNNING") {
-      setNextRoundForRoom(roomCode, Date.now());
-      return;
-    }
-    if (latestSnapshot.players.length < runtimeCandyManiaSettings.autoRoundMinPlayers) {
-      setNextRoundForRoom(roomCode, Date.now());
-      return;
-    }
+  applyPendingSettings: async (nowMs, summaries) => {
+    // Adapter: DrawScheduler passes its own RoomSummary[], but
+    // applyPendingCandyManiaSettingsIfDue expects the engine's type.
+    // They are structurally compatible.
+    return applyPendingCandyManiaSettingsIfDue(nowMs, summaries as ReturnType<typeof engine.listRoomSummaries>);
+  },
 
+  onAutoStart: async (roomCode, hostPlayerId) => {
+    let firstDrawAtMs: number | null = null;
     try {
       await engine.startGame({
         roomCode,
-        actorPlayerId: latestSnapshot.hostPlayerId,
+        actorPlayerId: hostPlayerId,
         entryFee: getRoomConfiguredEntryFee(roomCode),
         ticketsPerPlayer: runtimeCandyManiaSettings.autoRoundTicketsPerPlayer,
-        payoutPercent: runtimeCandyManiaSettings.payoutPercent
+        payoutPercent: runtimeCandyManiaSettings.payoutPercent,
+        armedPlayerIds: getArmedPlayerIds(roomCode),
       });
+      disarmAllPlayers(roomCode);
+      clearDisplayTicketCache(roomCode);
     } catch (error) {
       if (
         error instanceof DomainError &&
@@ -1617,94 +1647,60 @@ async function processAutoStart(summary: ReturnType<typeof engine.listRoomSummar
           error.code === "ROUND_START_TOO_SOON" ||
           error.code === "NOT_ENOUGH_PLAYERS")
       ) {
-        setNextRoundForRoom(roomCode, Date.now());
-        return;
+        // Permanent domain errors — scheduler will reschedule the next round.
+        return { firstDrawAtMs };
       }
       throw error;
     }
-    setNextRoundForRoom(roomCode, Date.now());
-    lastAutoDrawAtByRoom.delete(roomCode);
+
+    // Publish the RUNNING snapshot so clients transition UI before the first draw.
     await emitRoomUpdate(roomCode);
-  });
-}
 
-async function processAutoDraw(summary: ReturnType<typeof engine.listRoomSummaries>[number], now: number): Promise<void> {
-  const roomCode = summary.code;
-  if (!runtimeCandyManiaSettings.autoDrawEnabled || summary.gameStatus !== "RUNNING") {
-    lastAutoDrawAtByRoom.delete(roomCode);
-    return;
-  }
-
-  const lastDrawAt = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
-  if (now - lastDrawAt < runtimeCandyManiaSettings.autoDrawIntervalMs) {
-    return;
-  }
-
-  await withRoomSchedulerLock(roomCode, async () => {
-    const latestSnapshot = engine.getRoomSnapshot(roomCode);
-    if (latestSnapshot.currentGame?.status !== "RUNNING") {
-      lastAutoDrawAtByRoom.delete(roomCode);
-      return;
+    if (!runtimeCandyManiaSettings.autoDrawEnabled) {
+      return { firstDrawAtMs };
     }
 
-    const refreshedLastDrawAt = lastAutoDrawAtByRoom.get(roomCode) ?? 0;
-    const currentNow = Date.now();
-    if (currentNow - refreshedLastDrawAt < runtimeCandyManiaSettings.autoDrawIntervalMs) {
-      return;
-    }
-
+    // Draw the first ball immediately (no extra 2s gap after countdown).
     try {
-      const number = await engine.drawNextNumber({
-        roomCode,
-        actorPlayerId: latestSnapshot.hostPlayerId
-      });
-      io.to(roomCode).emit("draw:new", { number, source: "auto" });
+      const { number, drawIndex, gameId } = await engine.drawNextNumber({ roomCode, actorPlayerId: hostPlayerId });
+      io.to(roomCode).emit("draw:new", { number, source: "auto", drawIndex, gameId });
+      // Anchor the cadence to the actual first draw emission time so draw #2
+      // happens intervalMs after draw #1 (no longer 2x interval for the first gap).
+      firstDrawAtMs = Date.now();
     } catch (error) {
       if (!(error instanceof DomainError) || error.code !== "NO_MORE_NUMBERS") {
         throw error;
       }
-    } finally {
-      lastAutoDrawAtByRoom.set(roomCode, currentNow);
     }
 
     await emitRoomUpdate(roomCode);
-  });
-}
+    return { firstDrawAtMs };
+  },
 
-async function runSchedulerTick(): Promise<void> {
-  if (schedulerTickInProgress) {
-    return;
-  }
-  schedulerTickInProgress = true;
+  onAutoDraw: async (roomCode, hostPlayerId) => {
+    let roundEnded = false;
 
-  try {
-    const now = Date.now();
-    let summaries = engine.listRoomSummaries();
-    if (await applyPendingCandyManiaSettingsIfDue(now, summaries)) {
-      summaries = engine.listRoomSummaries();
-    }
-    const schedulerSummaries = selectCanonicalCandyRoomSummariesByHall(summaries);
-    cleanupSchedulerState(new Set(schedulerSummaries.map((summary) => summary.code)));
-
-    for (const summary of schedulerSummaries) {
-      try {
-        await processAutoStart(summary, now);
-        await processAutoDraw(summary, now);
-      } catch (error) {
-        console.error(`[scheduler] room ${summary.code} feilet`, error);
+    try {
+      const { number, drawIndex, gameId } = await engine.drawNextNumber({ roomCode, actorPlayerId: hostPlayerId });
+      io.to(roomCode).emit("draw:new", { number, source: "auto", drawIndex, gameId });
+    } catch (error) {
+      if (!(error instanceof DomainError) || error.code !== "NO_MORE_NUMBERS") {
+        throw error;
       }
     }
-  } finally {
-    schedulerTickInProgress = false;
-  }
-}
 
-const scheduler = setInterval(() => {
-  runSchedulerTick().catch((error) => {
-    console.error("[scheduler] uventet feil", error);
-  });
-}, schedulerTickMs);
-scheduler.unref();
+    // Check if draw ended the round (max draws reached).
+    const postDrawSnapshot = engine.getRoomSnapshot(roomCode);
+    if (postDrawSnapshot.currentGame?.status !== "RUNNING") {
+      roundEnded = true;
+    }
+
+    await emitRoomUpdate(roomCode);
+    return { roundEnded };
+  },
+});
+
+drawScheduler.start();
 
 function formatDateKeyLocal(reference: Date): string {
   const year = reference.getFullYear();
@@ -1800,6 +1796,17 @@ app.post("/api/auth/logout", async (req, res) => {
     const accessToken = getAccessTokenFromRequest(req);
     await platformService.logout(accessToken);
     apiSuccess(res, { loggedOut: true });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// BIN-174: Token refresh — issue new token, revoke old one
+app.post("/api/auth/refresh", async (req, res) => {
+  try {
+    const accessToken = getAccessTokenFromRequest(req);
+    const session = await platformService.refreshSession(accessToken);
+    apiSuccess(res, session);
   } catch (error) {
     apiFailure(res, error);
   }
@@ -2416,7 +2423,7 @@ app.put("/api/admin/settings/games/:slug", async (req, res) => {
     pendingCandyManiaSettingsUpdate = null;
     Object.assign(runtimeCandyManiaSettings, next);
     candyManiaSettingsEffectiveFromMs = effectiveFromMs ?? nowMs;
-    syncSchedulerStateAfterCandySettingsChange(previous);
+    drawScheduler.syncAfterSettingsChange(toSchedulerSettings(previous));
 
     try {
       await persistCandyManiaSettingsToCatalog({
@@ -2432,7 +2439,7 @@ app.put("/api/admin/settings/games/:slug", async (req, res) => {
       Object.assign(runtimeCandyManiaSettings, previous);
       candyManiaSettingsEffectiveFromMs = previousEffectiveFromMs;
       pendingCandyManiaSettingsUpdate = previousPending;
-      syncSchedulerStateAfterCandySettingsChange(next);
+      drawScheduler.syncAfterSettingsChange(toSchedulerSettings(next));
       throw error;
     }
 
@@ -2502,7 +2509,7 @@ app.put("/api/admin/games/:slug", async (req, res) => {
       pendingCandyManiaSettingsUpdate = null;
       Object.assign(runtimeCandyManiaSettings, next);
       candyManiaSettingsEffectiveFromMs = Date.now();
-      syncSchedulerStateAfterCandySettingsChange(previous);
+      drawScheduler.syncAfterSettingsChange(toSchedulerSettings(previous));
       await persistCandyManiaSettingsToCatalog({
         changedBy: {
           userId: adminUser.id,
@@ -2714,7 +2721,7 @@ app.put("/api/admin/candy-mania/settings", async (req, res) => {
     pendingCandyManiaSettingsUpdate = null;
     Object.assign(runtimeCandyManiaSettings, next);
     candyManiaSettingsEffectiveFromMs = effectiveFromMs ?? nowMs;
-    syncSchedulerStateAfterCandySettingsChange(previous);
+    drawScheduler.syncAfterSettingsChange(toSchedulerSettings(previous));
 
     try {
       await persistCandyManiaSettingsToCatalog({
@@ -2730,7 +2737,7 @@ app.put("/api/admin/candy-mania/settings", async (req, res) => {
       Object.assign(runtimeCandyManiaSettings, previous);
       candyManiaSettingsEffectiveFromMs = previousEffectiveFromMs;
       pendingCandyManiaSettingsUpdate = previousPending;
-      syncSchedulerStateAfterCandySettingsChange(next);
+      drawScheduler.syncAfterSettingsChange(toSchedulerSettings(next));
       throw error;
     }
 
@@ -2817,7 +2824,7 @@ app.delete("/api/admin/rooms/:roomCode", async (req, res) => {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
     engine.destroyRoom(roomCode);
-    roomSchedulerLocks.delete(roomCode);
+    drawScheduler.releaseRoom(roomCode);
     roomConfiguredEntryFeeByRoom.delete(roomCode);
     apiSuccess(res, { deleted: roomCode });
   } catch (error) {
@@ -2859,14 +2866,17 @@ app.post("/api/admin/rooms/:roomCode/draw-next", async (req, res) => {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
     const snapshot = engine.getRoomSnapshot(roomCode);
-    const number = await engine.drawNextNumber({
+    const drawResult = await engine.drawNextNumber({
       roomCode,
       actorPlayerId: snapshot.hostPlayerId
     });
+    io.to(roomCode).emit("draw:new", { number: drawResult.number, source: "admin", drawIndex: drawResult.drawIndex, gameId: drawResult.gameId });
     const updatedSnapshot = await emitRoomUpdate(roomCode);
     apiSuccess(res, {
       roomCode,
-      number,
+      number: drawResult.number,
+      drawIndex: drawResult.drawIndex,
+      gameId: drawResult.gameId,
       snapshot: updatedSnapshot
     });
   } catch (error) {
@@ -3188,6 +3198,30 @@ app.get("/api/admin/payout-audit", async (req, res) => {
   }
 });
 
+// BIN-173: Game replay endpoint — returns full checkpoint timeline for a game
+app.get("/api/admin/games/:gameId/replay", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "ADMIN_PANEL_ACCESS");
+    const gameId = mustBeNonEmptyString(req.params.gameId, "gameId");
+
+    if (!usePostgresBingoAdapter || !(localBingoAdapter instanceof PostgresBingoSystemAdapter)) {
+      apiFailure(res, new DomainError("NOT_CONFIGURED", "Game checkpointing er ikke aktivert."));
+      return;
+    }
+
+    const session = await localBingoAdapter.getGameSession(gameId);
+    if (!session) {
+      apiFailure(res, new DomainError("GAME_NOT_FOUND", `Spill ${gameId} finnes ikke.`));
+      return;
+    }
+
+    const timeline = await localBingoAdapter.getGameTimeline(gameId);
+    apiSuccess(res, { session, timeline });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.get("/api/admin/ledger/entries", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "LEDGER_READ");
@@ -3409,11 +3443,33 @@ app.post("/api/payments/swedbank/callback", async (req, res) => {
   }
 });
 
+// BIN-172: Prometheus metrics endpoint
+app.get("/metrics", async (_req, res) => {
+  try {
+    // Update gauges with current state before scrape
+    const roomSummaries = engine.listRoomSummaries();
+    promMetrics.activeRooms.set(roomSummaries.length);
+    promMetrics.activePlayers.set(roomSummaries.reduce((sum, r) => sum + r.playerCount, 0));
+    if (drawScheduler) {
+      const health = drawScheduler.healthSummary();
+      const watchdog = health.drawWatchdog as { stuckRooms?: number } | undefined;
+      promMetrics.stuckRooms.set(watchdog?.stuckRooms ?? 0);
+    }
+    promMetrics.socketConnections.set(io.engine.clientsCount ?? 0);
+
+    res.set("Content-Type", promRegister.contentType);
+    res.end(await promRegister.metrics());
+  } catch (err) {
+    res.status(500).end(String(err));
+  }
+});
+
 app.get("/health", async (_req, res) => {
   try {
     const wallets = await walletAdapter.listAccounts();
     const games = await platformService.listGames({ includeDisabled: true });
     const halls = await platformService.listHalls({ includeInactive: true });
+    const schedulerHealth = drawScheduler.healthSummary();
     apiSuccess(res, {
       rooms: engine.getAllRoomCodes().length,
       wallets: wallets.length,
@@ -3421,11 +3477,25 @@ app.get("/health", async (_req, res) => {
       halls: halls.length,
       walletProvider: walletRuntime.provider,
       swedbankConfigured: swedbankPayService.isConfigured(),
+      ...schedulerHealth,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
     apiFailure(res, error);
   }
+});
+
+app.get("/health/draw-engine", (_req, res) => {
+  // Basic auth guard: require admin token or localhost.
+  const isLocalhost = _req.ip === "127.0.0.1" || _req.ip === "::1" || _req.ip === "::ffff:127.0.0.1";
+  const hasToken = _req.headers.authorization === `Bearer ${process.env.ADMIN_API_TOKEN ?? ""}`;
+  if (!isLocalhost && !hasToken && process.env.NODE_ENV === "production") {
+    res.status(403).json({ ok: false, error: "Forbidden" });
+    return;
+  }
+  // No DB queries — purely in-memory data for fast response (<50ms).
+  const detailed = drawScheduler.healthSummary(true);
+  apiSuccess(res, detailed);
 });
 
 app.get("/api/rooms", (_req, res) => {
@@ -3568,7 +3638,27 @@ app.post("/api/wallets/transfer", async (req, res) => {
   }
 });
 
+// BIN-164: Socket.IO rate limiter — prevents event flooding per socket
+const socketRateLimiter = new SocketRateLimiter();
+socketRateLimiter.start();
+
 io.on("connection", (socket: Socket) => {
+  /** BIN-164: Wrap a socket handler with rate limiting. */
+  function rateLimited<P, R>(
+    eventName: string,
+    handler: (payload: P, callback: (response: AckResponse<R>) => void) => Promise<void>
+  ): (payload: P, callback: (response: AckResponse<R>) => void) => void {
+    return (payload, callback) => {
+      if (!socketRateLimiter.check(socket.id, eventName)) {
+        ackFailure(callback, new DomainError("RATE_LIMITED", "For mange foresporsler. Vent litt."));
+        return;
+      }
+      handler(payload, callback).catch((err) => {
+        console.error(`[socket] unhandled error in ${eventName}:`, err);
+      });
+    };
+  }
+
   async function resolveIdentityFromPayload(payload: CreateRoomPayload): Promise<{
     playerName: string;
     walletId: string;
@@ -3585,7 +3675,7 @@ io.on("connection", (socket: Socket) => {
     };
   }
 
-  socket.on("room:create", async (payload: CreateRoomPayload, callback: (response: AckResponse<{ roomCode: string; playerId: string; snapshot: RoomSnapshot }>) => void) => {
+  socket.on("room:create", rateLimited("room:create", async (payload: CreateRoomPayload, callback: (response: AckResponse<{ roomCode: string; playerId: string; snapshot: RoomSnapshot }>) => void) => {
     console.log("[BIN-134] room:create received", { hallId: payload?.hallId, hasAccessToken: !!payload?.accessToken });
     try {
       const identity = await resolveIdentityFromPayload(payload);
@@ -3634,9 +3724,9 @@ io.on("connection", (socket: Socket) => {
       console.error("[BIN-134] room:create FAILED", { error: (error as Error).message, code: (error as any).code });
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on("room:join", async (payload: JoinRoomPayload, callback: (response: AckResponse<{ roomCode: string; playerId: string; snapshot: RoomSnapshot }>) => void) => {
+  socket.on("room:join", rateLimited("room:join", async (payload: JoinRoomPayload, callback: (response: AckResponse<{ roomCode: string; playerId: string; snapshot: RoomSnapshot }>) => void) => {
     try {
       let roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
       const identity = await resolveIdentityFromPayload(payload);
@@ -3680,9 +3770,9 @@ io.on("connection", (socket: Socket) => {
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on("room:resume", async (payload: ResumeRoomPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
+  socket.on("room:resume", rateLimited("room:resume", async (payload: ResumeRoomPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
       engine.attachPlayerSocket(roomCode, playerId, socket.id);
@@ -3692,33 +3782,49 @@ io.on("connection", (socket: Socket) => {
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on(
-    "room:configure",
-    async (
-      payload: ConfigureRoomPayload,
-      callback: (response: AckResponse<{ snapshot: RoomSnapshot; entryFee: number }>) => void
-    ) => {
-      try {
-        const { roomCode } = await requireAuthenticatedPlayerAction(payload);
-        engine.getRoomSnapshot(roomCode);
+  socket.on("room:configure", rateLimited("room:configure", async (
+    payload: ConfigureRoomPayload,
+    callback: (response: AckResponse<{ snapshot: RoomSnapshot; entryFee: number }>) => void
+  ) => {
+    try {
+      const { roomCode } = await requireAuthenticatedPlayerAction(payload);
+      engine.getRoomSnapshot(roomCode);
 
-        const requestedEntryFee = parseOptionalNonNegativeNumber(payload?.entryFee, "entryFee");
-        if (requestedEntryFee === undefined) {
-          throw new DomainError("INVALID_INPUT", "entryFee må oppgis.");
-        }
-
-        const entryFee = setRoomConfiguredEntryFee(roomCode, requestedEntryFee);
-        const updatedSnapshot = await emitRoomUpdate(roomCode);
-        ackSuccess(callback, { snapshot: updatedSnapshot, entryFee });
-      } catch (error) {
-        ackFailure(callback, error);
+      const requestedEntryFee = parseOptionalNonNegativeNumber(payload?.entryFee, "entryFee");
+      if (requestedEntryFee === undefined) {
+        throw new DomainError("INVALID_INPUT", "entryFee må oppgis.");
       }
-    }
-  );
 
-  socket.on("game:start", async (payload: StartGamePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
+      const entryFee = setRoomConfiguredEntryFee(roomCode, requestedEntryFee);
+      const updatedSnapshot = await emitRoomUpdate(roomCode);
+      ackSuccess(callback, { snapshot: updatedSnapshot, entryFee });
+    } catch (error) {
+      ackFailure(callback, error);
+    }
+  }));
+
+  socket.on("bet:arm", rateLimited("bet:arm", async (
+    payload: RoomActionPayload & { armed?: boolean },
+    callback: (response: AckResponse<{ snapshot: RoomSnapshot; armed: boolean }>) => void
+  ) => {
+    try {
+      const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      const wantArmed = payload.armed !== false;
+      if (wantArmed) {
+        armPlayer(roomCode, playerId);
+      } else {
+        disarmPlayer(roomCode, playerId);
+      }
+      const snapshot = await emitRoomUpdate(roomCode);
+      ackSuccess(callback, { snapshot, armed: wantArmed });
+    } catch (error) {
+      ackFailure(callback, error);
+    }
+  }));
+
+  socket.on("game:start", rateLimited("game:start", async (payload: StartGamePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
       const requestedTicketsPerPlayer =
@@ -3742,9 +3848,9 @@ io.on("connection", (socket: Socket) => {
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on("game:end", async (payload: EndGamePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
+  socket.on("game:end", rateLimited("game:end", async (payload: EndGamePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
       await engine.endGame({
@@ -3757,21 +3863,21 @@ io.on("connection", (socket: Socket) => {
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on("draw:next", async (payload: RoomActionPayload, callback: (response: AckResponse<{ number: number; snapshot: RoomSnapshot }>) => void) => {
+  socket.on("draw:next", rateLimited("draw:next", async (payload: RoomActionPayload, callback: (response: AckResponse<{ number: number; snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
-      const number = await engine.drawNextNumber({ roomCode, actorPlayerId: playerId });
-      io.to(roomCode).emit("draw:new", { number });
+      const { number, drawIndex, gameId } = await engine.drawNextNumber({ roomCode, actorPlayerId: playerId });
+      io.to(roomCode).emit("draw:new", { number, drawIndex, gameId });
       const snapshot = await emitRoomUpdate(roomCode);
       ackSuccess(callback, { number, snapshot });
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on("draw:extra:purchase", async (payload: ExtraDrawPayload, callback: (response: AckResponse<{ denied: true }>) => void) => {
+  socket.on("draw:extra:purchase", rateLimited("draw:extra:purchase", async (payload: ExtraDrawPayload, callback: (response: AckResponse<{ denied: true }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
       engine.rejectExtraDrawPurchase({
@@ -3788,9 +3894,9 @@ io.on("connection", (socket: Socket) => {
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on("ticket:mark", async (payload: MarkPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
+  socket.on("ticket:mark", rateLimited("ticket:mark", async (payload: MarkPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
       if (!Number.isFinite(payload?.number)) {
@@ -3806,9 +3912,9 @@ io.on("connection", (socket: Socket) => {
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on("claim:submit", async (payload: ClaimPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
+  socket.on("claim:submit", rateLimited("claim:submit", async (payload: ClaimPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
       if (payload?.type !== "LINE" && payload?.type !== "BINGO") {
@@ -3824,9 +3930,9 @@ io.on("connection", (socket: Socket) => {
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
-  socket.on("room:state", async (payload: RoomStatePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
+  socket.on("room:state", rateLimited("room:state", async (payload: RoomStatePayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
     try {
       const user = await getAuthenticatedSocketUser(payload);
       let roomCode = mustBeNonEmptyString(payload?.roomCode, "roomCode").toUpperCase();
@@ -3849,10 +3955,11 @@ io.on("connection", (socket: Socket) => {
     } catch (error) {
       ackFailure(callback, error);
     }
-  });
+  }));
 
   socket.on("disconnect", () => {
     engine.detachSocket(socket.id);
+    socketRateLimiter.cleanup(socket.id);
   });
 });
 
@@ -3866,16 +3973,6 @@ app.get("*", (_req, res) => {
     res.sendFile(candyWebIndexFile);
     return;
   }
-  // Spillorama WebGL: serve game/index.html for /game/* paths.
-  if (_req.path.startsWith("/game")) {
-    res.sendFile(gameIndexFile);
-    return;
-  }
-  // SpilloramaTv: serve view-game/index.html for /view-game/* paths.
-  if (_req.path.startsWith("/view-game")) {
-    res.sendFile(viewGameIndexFile);
-    return;
-  }
   res.sendFile(path.join(frontendDir, "index.html"));
 });
 
@@ -3884,7 +3981,35 @@ hydrateCandyManiaSettingsFromCatalog()
   .catch((error) => {
     console.warn("[candy-mania] Oppstart med env/default settings pga last-feil.", error);
   })
-  .finally(() => {
+  .finally(async () => {
+    // BIN-170: Load rooms from Redis on startup (if Redis provider)
+    if (roomStateProvider === "redis") {
+      try {
+        const loaded = await roomStateStore.loadAll();
+        if (loaded > 0) {
+          console.log(`[BIN-170] Loaded ${loaded} room(s) from Redis`);
+        }
+      } catch (err) {
+        console.error("[BIN-170] Failed to load rooms from Redis:", err);
+      }
+    }
+
+    // BIN-159: Recover incomplete games from previous crash
+    if (usePostgresBingoAdapter && localBingoAdapter instanceof PostgresBingoSystemAdapter) {
+      try {
+        const incompleteGames = await localBingoAdapter.findIncompleteGames();
+        for (const game of incompleteGames) {
+          console.warn(`[BIN-159] Recovery: marking incomplete game ${game.gameId} in room ${game.roomCode} as ENDED (crash recovery)`);
+          await localBingoAdapter.markGameEnded(game.gameId, "CRASH_RECOVERY");
+        }
+        if (incompleteGames.length > 0) {
+          console.warn(`[BIN-159] Recovered ${incompleteGames.length} incomplete game(s) from previous session`);
+        }
+      } catch (err) {
+        console.error("[BIN-159] Crash recovery failed:", err);
+      }
+    }
+
     server.listen(PORT, () => {
       console.log(`Bingo backend kjører på http://localhost:${PORT}`);
       console.log(
@@ -3902,3 +4027,32 @@ hydrateCandyManiaSettingsFromCatalog()
       console.log(`[swedbank] configured=${swedbankPayService.isConfigured()}`);
     });
   });
+
+// ── Graceful shutdown ──────────────────────────────────────────
+function handleShutdown(signal: string) {
+  console.info(`[shutdown] Received ${signal}. Starting graceful shutdown...`);
+
+  drawScheduler.gracefulStop()
+    .then(async () => {
+      // BIN-170/171: Shutdown Redis stores
+      await roomStateStore.shutdown();
+      if (redisSchedulerLock) await redisSchedulerLock.shutdown();
+
+      server.close(() => {
+        console.info("[shutdown] HTTP server closed. Exiting.");
+        process.exit(0);
+      });
+      // Force exit if server doesn't close within 10s.
+      setTimeout(() => {
+        console.warn("[shutdown] Forced exit after timeout.");
+        process.exit(1);
+      }, 10_000).unref();
+    })
+    .catch((error) => {
+      console.error("[shutdown] Error during graceful shutdown:", error);
+      process.exit(1);
+    });
+}
+
+process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+process.on("SIGINT", () => handleShutdown("SIGINT"));

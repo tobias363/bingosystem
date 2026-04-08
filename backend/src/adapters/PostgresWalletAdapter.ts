@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
+import { getPoolTuning } from "../util/pgPool.js";
 import type {
   CreateWalletAccountInput,
+  TransactionOptions,
   WalletAccount,
   WalletAdapter,
   WalletTransaction,
@@ -34,6 +36,8 @@ interface InsertTransactionInput {
   amount: number;
   reason: string;
   relatedAccountId?: string;
+  /** BIN-162: Idempotency key for deduplication */
+  idempotencyKey?: string;
 }
 
 interface LedgerEntryInput {
@@ -102,7 +106,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
 
     this.pool = new Pool({
       connectionString,
-      ssl: options.ssl ? { rejectUnauthorized: false } : undefined
+      ssl: options.ssl ? { rejectUnauthorized: false } : undefined,
+      ...getPoolTuning()
     });
   }
 
@@ -234,7 +239,7 @@ export class PostgresWalletAdapter implements WalletAdapter {
     return account.balance;
   }
 
-  async debit(accountId: string, amount: number, reason: string): Promise<WalletTransaction> {
+  async debit(accountId: string, amount: number, reason: string, options?: TransactionOptions): Promise<WalletTransaction> {
     const normalized = this.normalizeUserWalletId(accountId);
     this.assertPositiveAmount(amount);
     const tx = await this.singleAccountMovement({
@@ -243,12 +248,13 @@ export class PostgresWalletAdapter implements WalletAdapter {
       amount,
       reason: reason || "Debit",
       fromAccountId: normalized,
-      toAccountId: this.houseAccountId
+      toAccountId: this.houseAccountId,
+      idempotencyKey: options?.idempotencyKey
     });
     return tx;
   }
 
-  async credit(accountId: string, amount: number, reason: string): Promise<WalletTransaction> {
+  async credit(accountId: string, amount: number, reason: string, options?: TransactionOptions): Promise<WalletTransaction> {
     const normalized = this.normalizeUserWalletId(accountId);
     this.assertPositiveAmount(amount);
     return this.singleAccountMovement({
@@ -257,11 +263,12 @@ export class PostgresWalletAdapter implements WalletAdapter {
       amount,
       reason: reason || "Credit",
       fromAccountId: this.houseAccountId,
-      toAccountId: normalized
+      toAccountId: normalized,
+      idempotencyKey: options?.idempotencyKey
     });
   }
 
-  async topUp(accountId: string, amount: number, reason = "Manual top-up"): Promise<WalletTransaction> {
+  async topUp(accountId: string, amount: number, reason = "Manual top-up", options?: TransactionOptions): Promise<WalletTransaction> {
     const normalized = this.normalizeUserWalletId(accountId);
     this.assertPositiveAmount(amount);
     return this.singleAccountMovement({
@@ -270,11 +277,12 @@ export class PostgresWalletAdapter implements WalletAdapter {
       amount,
       reason,
       fromAccountId: this.externalCashAccountId,
-      toAccountId: normalized
+      toAccountId: normalized,
+      idempotencyKey: options?.idempotencyKey
     });
   }
 
-  async withdraw(accountId: string, amount: number, reason = "Manual withdrawal"): Promise<WalletTransaction> {
+  async withdraw(accountId: string, amount: number, reason = "Manual withdrawal", options?: TransactionOptions): Promise<WalletTransaction> {
     const normalized = this.normalizeUserWalletId(accountId);
     this.assertPositiveAmount(amount);
     return this.singleAccountMovement({
@@ -283,7 +291,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
       amount,
       reason,
       fromAccountId: normalized,
-      toAccountId: this.externalCashAccountId
+      toAccountId: this.externalCashAccountId,
+      idempotencyKey: options?.idempotencyKey
     });
   }
 
@@ -291,7 +300,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
     fromAccountId: string,
     toAccountId: string,
     amount: number,
-    reason = "Wallet transfer"
+    reason = "Wallet transfer",
+    options?: TransactionOptions
   ): Promise<WalletTransferResult> {
     await this.ensureInitialized();
     const fromId = this.normalizeUserWalletId(fromAccountId);
@@ -420,8 +430,16 @@ export class PostgresWalletAdapter implements WalletAdapter {
     reason: string;
     fromAccountId: string;
     toAccountId: string;
+    idempotencyKey?: string;
   }): Promise<WalletTransaction> {
     await this.ensureInitialized();
+
+    // BIN-162: Idempotency check — return existing transaction if key was already used
+    if (input.idempotencyKey) {
+      const existing = await this.findByIdempotencyKey(input.idempotencyKey);
+      if (existing) return existing;
+    }
+
     await this.ensureAccount(input.accountId);
 
     const client = await this.pool.connect();
@@ -437,7 +455,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
             accountId: input.accountId,
             type: input.type,
             amount: input.amount,
-            reason: input.reason
+            reason: input.reason,
+            idempotencyKey: input.idempotencyKey
           }
         ],
         entries: [
@@ -469,6 +488,37 @@ export class PostgresWalletAdapter implements WalletAdapter {
     } finally {
       client.release();
     }
+  }
+
+  /** BIN-162: Find an existing transaction by idempotency key. */
+  private async findByIdempotencyKey(key: string): Promise<WalletTransaction | undefined> {
+    await this.ensureInitialized();
+    const { rows } = await this.pool.query<{
+      id: string;
+      account_id: string;
+      transaction_type: WalletTransaction["type"];
+      amount: string | number;
+      reason: string;
+      related_account_id: string | null;
+      created_at: Date | string;
+    }>(
+      `SELECT id, account_id, transaction_type, amount, reason, related_account_id, created_at
+       FROM ${this.transactionsTable()}
+       WHERE idempotency_key = $1
+       LIMIT 1`,
+      [key]
+    );
+    if (rows.length === 0) return undefined;
+    const row = rows[0];
+    return {
+      id: row.id,
+      accountId: row.account_id,
+      type: row.transaction_type,
+      amount: asMoney(row.amount),
+      reason: row.reason,
+      createdAt: asIso(row.created_at),
+      relatedAccountId: row.related_account_id ?? undefined
+    };
   }
 
   private async executeLedger(
@@ -520,8 +570,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
         created_at: Date | string;
       }>(
         `INSERT INTO ${this.transactionsTable()}
-          (id, operation_id, account_id, transaction_type, amount, reason, related_account_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+          (id, operation_id, account_id, transaction_type, amount, reason, related_account_id, idempotency_key)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING id, account_id, transaction_type, amount, reason, related_account_id, created_at`,
         [
           tx.id,
@@ -530,7 +580,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
           tx.type,
           tx.amount,
           tx.reason,
-          tx.relatedAccountId ?? null
+          tx.relatedAccountId ?? null,
+          tx.idempotencyKey ?? null
         ]
       );
       const row = rows[0];
@@ -595,8 +646,14 @@ export class PostgresWalletAdapter implements WalletAdapter {
           amount NUMERIC(20, 6) NOT NULL CHECK (amount > 0),
           reason TEXT NOT NULL,
           related_account_id TEXT NULL,
+          idempotency_key TEXT NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )`
+      );
+      // BIN-162: Idempotency key unique index (only for non-null keys)
+      await client.query(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_transactions_idempotency_key
+         ON ${this.transactionsTable()} (idempotency_key) WHERE idempotency_key IS NOT NULL`
       );
 
       await client.query(
@@ -753,7 +810,9 @@ export class PostgresWalletAdapter implements WalletAdapter {
     if (error instanceof WalletError) {
       return error;
     }
-    return new WalletError("WALLET_DB_ERROR", "Feil i wallet-databasen.");
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error("[PostgresWalletAdapter] DB error:", detail, error);
+    return new WalletError("WALLET_DB_ERROR", `Feil i wallet-databasen: ${detail}`);
   }
 
   private accountsTable(): string {

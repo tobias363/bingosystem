@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   CreateWalletAccountInput,
+  TransactionOptions,
   WalletAccount,
   WalletAdapter,
   WalletTransaction,
@@ -68,7 +69,10 @@ export class InMemoryWalletAdapter implements WalletAdapter {
     return account.balance;
   }
 
-  async debit(accountId: string, amount: number, reason: string): Promise<WalletTransaction> {
+  async debit(accountId: string, amount: number, reason: string, options?: TransactionOptions): Promise<WalletTransaction> {
+    const existing = this.findByIdempotencyKey(options?.idempotencyKey);
+    if (existing) return existing;
+
     this.assertPositiveAmount(amount);
     const account = await this.ensureAccount(accountId);
     if (account.balance < amount) {
@@ -78,28 +82,37 @@ export class InMemoryWalletAdapter implements WalletAdapter {
     account.balance -= amount;
     account.updatedAt = new Date().toISOString();
     this.accounts.set(account.id, account);
-    return this.recordTx(account.id, "DEBIT", amount, reason || "Debit");
+    return this.recordTx(account.id, "DEBIT", amount, reason || "Debit", undefined, options?.idempotencyKey);
   }
 
-  async credit(accountId: string, amount: number, reason: string): Promise<WalletTransaction> {
+  async credit(accountId: string, amount: number, reason: string, options?: TransactionOptions): Promise<WalletTransaction> {
+    const existing = this.findByIdempotencyKey(options?.idempotencyKey);
+    if (existing) return existing;
+
     this.assertPositiveAmount(amount);
     const account = await this.ensureAccount(accountId);
     account.balance += amount;
     account.updatedAt = new Date().toISOString();
     this.accounts.set(account.id, account);
-    return this.recordTx(account.id, "CREDIT", amount, reason || "Credit");
+    return this.recordTx(account.id, "CREDIT", amount, reason || "Credit", undefined, options?.idempotencyKey);
   }
 
-  async topUp(accountId: string, amount: number, reason = "Manual top-up"): Promise<WalletTransaction> {
+  async topUp(accountId: string, amount: number, reason = "Manual top-up", options?: TransactionOptions): Promise<WalletTransaction> {
+    const existing = this.findByIdempotencyKey(options?.idempotencyKey);
+    if (existing) return existing;
+
     this.assertPositiveAmount(amount);
     const account = await this.ensureAccount(accountId);
     account.balance += amount;
     account.updatedAt = new Date().toISOString();
     this.accounts.set(account.id, account);
-    return this.recordTx(account.id, "TOPUP", amount, reason);
+    return this.recordTx(account.id, "TOPUP", amount, reason, undefined, options?.idempotencyKey);
   }
 
-  async withdraw(accountId: string, amount: number, reason = "Manual withdrawal"): Promise<WalletTransaction> {
+  async withdraw(accountId: string, amount: number, reason = "Manual withdrawal", options?: TransactionOptions): Promise<WalletTransaction> {
+    const existing = this.findByIdempotencyKey(options?.idempotencyKey);
+    if (existing) return existing;
+
     this.assertPositiveAmount(amount);
     const account = await this.ensureAccount(accountId);
     if (account.balance < amount) {
@@ -108,14 +121,15 @@ export class InMemoryWalletAdapter implements WalletAdapter {
     account.balance -= amount;
     account.updatedAt = new Date().toISOString();
     this.accounts.set(account.id, account);
-    return this.recordTx(account.id, "WITHDRAWAL", amount, reason);
+    return this.recordTx(account.id, "WITHDRAWAL", amount, reason, undefined, options?.idempotencyKey);
   }
 
   async transfer(
     fromAccountId: string,
     toAccountId: string,
     amount: number,
-    reason = "Wallet transfer"
+    reason = "Wallet transfer",
+    options?: TransactionOptions
   ): Promise<WalletTransferResult> {
     const fromId = this.assertAccountId(fromAccountId);
     const toId = this.assertAccountId(toAccountId);
@@ -152,12 +166,19 @@ export class InMemoryWalletAdapter implements WalletAdapter {
       .map((tx) => ({ ...tx }));
   }
 
+  /** BIN-162: Look up an existing transaction by idempotency key. */
+  private findByIdempotencyKey(key?: string): WalletTransaction | undefined {
+    if (!key) return undefined;
+    return this.ledger.find((tx) => (tx as any)._idempotencyKey === key);
+  }
+
   private recordTx(
     accountId: string,
     type: WalletTransactionType,
     amount: number,
     reason: string,
-    relatedAccountId?: string
+    relatedAccountId?: string,
+    idempotencyKey?: string
   ): WalletTransaction {
     const tx: WalletTransaction = {
       id: randomUUID(),
@@ -168,6 +189,9 @@ export class InMemoryWalletAdapter implements WalletAdapter {
       createdAt: new Date().toISOString(),
       relatedAccountId
     };
+    if (idempotencyKey) {
+      (tx as any)._idempotencyKey = idempotencyKey;
+    }
     this.ledger.push(tx);
     return { ...tx };
   }

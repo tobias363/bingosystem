@@ -1,10 +1,14 @@
 import { createHmac } from "node:crypto";
+import type { Pool as PgPool } from "pg";
 import type {
   GameResultWebhookPayload,
   GameResultDetails,
   ComplianceCallbackPayload,
   ComplianceEventType
 } from "./types.js";
+import { logger as rootLogger } from "../util/logger.js";
+
+const logger = rootLogger.child({ module: "webhook" });
 
 // ---------------------------------------------------------------------------
 // Options
@@ -21,6 +25,11 @@ export interface WebhookServiceOptions {
   timeoutMs?: number;
   /** Max retry attempts on failure. Default 5. */
   maxRetries?: number;
+  /** BIN-166: PostgreSQL pool for webhook event persistence. When provided,
+   *  events are stored in `webhook_events` table with status tracking. */
+  pool?: PgPool;
+  /** DB schema for webhook_events table. Default: "public". */
+  schema?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -38,12 +47,20 @@ export class WebhookService {
   private readonly deliveryLog: WebhookDeliveryRecord[] = [];
   private static readonly MAX_LOG_SIZE = 500;
 
+  /** BIN-166: PostgreSQL persistence (optional). */
+  private readonly pool: PgPool | null;
+  private readonly dbSchema: string;
+  private dbInitPromise: Promise<void> | null = null;
+  private retryTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor(options: WebhookServiceOptions) {
     this.gameResultUrl = options.gameResultWebhookUrl;
     this.complianceUrl = options.complianceWebhookUrl ?? options.gameResultWebhookUrl;
     this.secret = options.webhookSecret;
     this.timeoutMs = options.timeoutMs ?? 10_000;
     this.maxRetries = options.maxRetries ?? 5;
+    this.pool = options.pool ?? null;
+    this.dbSchema = options.schema ?? "public";
   }
 
   // -----------------------------------------------------------------------
@@ -150,6 +167,12 @@ export class WebhookService {
   ): Promise<WebhookDeliveryRecord> {
     let lastError: string | undefined;
 
+    // BIN-166: Persist webhook event to DB (if pool available)
+    let dbEventId: string | null = null;
+    if (this.pool) {
+      dbEventId = await this.insertDbEvent(url, payload, tag);
+    }
+
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       if (attempt > 0) {
         const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 16_000);
@@ -187,6 +210,10 @@ export class WebhookService {
         this.addToLog(record);
 
         if (response.ok) {
+          // BIN-166: Mark as delivered in DB
+          if (this.pool && dbEventId) {
+            await this.updateDbEventStatus(dbEventId, "delivered", attempt + 1);
+          }
           return record;
         }
 
@@ -207,7 +234,13 @@ export class WebhookService {
       timestamp: new Date().toISOString()
     };
     this.addToLog(failRecord);
-    console.error(`[WebhookService] Delivery failed after ${this.maxRetries + 1} attempts: ${tag} — ${lastError}`);
+    logger.error({ tag, attempts: this.maxRetries + 1, error: lastError }, "Webhook delivery failed after all retries");
+
+    // BIN-166: Mark as dead_letter in DB
+    if (this.pool && dbEventId) {
+      await this.updateDbEventStatus(dbEventId, "dead_letter", this.maxRetries + 1, lastError);
+    }
+
     return failRecord;
   }
 
@@ -229,6 +262,228 @@ export class WebhookService {
       this.deliveryLog.splice(0, this.deliveryLog.length - WebhookService.MAX_LOG_SIZE);
     }
   }
+
+  // -----------------------------------------------------------------------
+  // BIN-166: Database persistence for webhook events
+  // -----------------------------------------------------------------------
+
+  private webhookTable(): string {
+    return `"${this.dbSchema}"."webhook_events"`;
+  }
+
+  /** Initialize the webhook_events table if it doesn't exist. */
+  async ensureDbInitialized(): Promise<void> {
+    if (!this.pool) return;
+    if (!this.dbInitPromise) {
+      this.dbInitPromise = this.initWebhookSchema();
+    }
+    await this.dbInitPromise;
+  }
+
+  private async initWebhookSchema(): Promise<void> {
+    if (!this.pool) return;
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS ${this.webhookTable()} (
+          id BIGSERIAL PRIMARY KEY,
+          tag TEXT NOT NULL,
+          url TEXT NOT NULL,
+          payload JSONB NOT NULL,
+          signature TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          max_attempts INTEGER NOT NULL DEFAULT ${this.maxRetries + 1},
+          last_attempt_at TIMESTAMPTZ,
+          last_error TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS idx_webhook_events_status
+        ON ${this.webhookTable()} (status)
+      `);
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async insertDbEvent(url: string, payload: object, tag: string): Promise<string | null> {
+    try {
+      await this.ensureDbInitialized();
+      const body = JSON.stringify(payload);
+      const signature = this.sign(body);
+      const { rows } = await this.pool!.query<{ id: string }>(
+        `INSERT INTO ${this.webhookTable()} (tag, url, payload, signature, status, max_attempts)
+         VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING id::text`,
+        [tag, url, body, signature, this.maxRetries + 1]
+      );
+      return rows[0]?.id ?? null;
+    } catch (err) {
+      logger.error({ err, tag }, "Failed to persist webhook event to DB");
+      return null;
+    }
+  }
+
+  private async updateDbEventStatus(
+    eventId: string,
+    status: "delivered" | "dead_letter",
+    attempts: number,
+    lastError?: string
+  ): Promise<void> {
+    try {
+      await this.pool!.query(
+        `UPDATE ${this.webhookTable()}
+         SET status = $2, attempts = $3, last_attempt_at = now(), last_error = $4
+         WHERE id = $1`,
+        [eventId, status, attempts, lastError ?? null]
+      );
+    } catch (err) {
+      logger.error({ err, eventId, status }, "Failed to update webhook event status in DB");
+    }
+  }
+
+  /** Start background retry job for pending webhook events (every 60s). */
+  startRetryJob(): void {
+    if (!this.pool || this.retryTimer) return;
+    this.retryTimer = setInterval(() => {
+      this.retryPendingEvents().catch((err) => {
+        logger.error({ err }, "Webhook retry job failed");
+      });
+    }, 60_000);
+    if (this.retryTimer.unref) this.retryTimer.unref();
+    logger.info("Webhook retry job started (60s interval)");
+  }
+
+  stopRetryJob(): void {
+    if (this.retryTimer) {
+      clearInterval(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
+  /** Retry pending events that have been waiting > 30s. */
+  private async retryPendingEvents(): Promise<void> {
+    if (!this.pool) return;
+    await this.ensureDbInitialized();
+
+    const { rows } = await this.pool.query<{
+      id: string; tag: string; url: string; payload: string; attempts: number; max_attempts: number;
+    }>(
+      `SELECT id::text, tag, url, payload::text, attempts, max_attempts
+       FROM ${this.webhookTable()}
+       WHERE status = 'pending'
+         AND (last_attempt_at IS NULL OR last_attempt_at < now() - interval '30 seconds')
+         AND attempts < max_attempts
+       ORDER BY created_at ASC
+       LIMIT 10`
+    );
+
+    for (const row of rows) {
+      try {
+        const payload = JSON.parse(row.payload);
+        const body = JSON.stringify(payload);
+        const signature = this.sign(body);
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+        const response = await fetch(row.url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Webhook-Signature": signature },
+          body,
+          signal: controller.signal
+        });
+        clearTimeout(timeout);
+
+        if (response.ok) {
+          await this.updateDbEventStatus(row.id, "delivered", row.attempts + 1);
+          logger.info({ eventId: row.id, tag: row.tag }, "Webhook retry delivered");
+        } else {
+          const nextAttempts = row.attempts + 1;
+          if (nextAttempts >= row.max_attempts) {
+            await this.updateDbEventStatus(row.id, "dead_letter", nextAttempts, `HTTP ${response.status}`);
+            logger.warn({ eventId: row.id, tag: row.tag }, "Webhook moved to dead letter after max retries");
+          } else {
+            await this.pool.query(
+              `UPDATE ${this.webhookTable()} SET attempts = $2, last_attempt_at = now(), last_error = $3 WHERE id = $1`,
+              [row.id, nextAttempts, `HTTP ${response.status}`]
+            );
+          }
+        }
+      } catch (err) {
+        const nextAttempts = row.attempts + 1;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        if (nextAttempts >= row.max_attempts) {
+          await this.updateDbEventStatus(row.id, "dead_letter", nextAttempts, errorMsg);
+        } else {
+          await this.pool.query(
+            `UPDATE ${this.webhookTable()} SET attempts = $2, last_attempt_at = now(), last_error = $3 WHERE id = $1`,
+            [row.id, nextAttempts, errorMsg]
+          );
+        }
+      }
+    }
+  }
+
+  /** List webhook events by status (for admin endpoint). */
+  async listWebhookEvents(status?: string, limit = 50): Promise<WebhookDbEvent[]> {
+    if (!this.pool) return [];
+    await this.ensureDbInitialized();
+    const where = status ? "WHERE status = $1" : "";
+    const params: unknown[] = status ? [status, limit] : [limit];
+    const { rows } = await this.pool.query<{
+      id: string; tag: string; url: string; status: string; attempts: number;
+      last_error: string | null; created_at: Date | string;
+    }>(
+      `SELECT id::text, tag, url, status, attempts, last_error, created_at
+       FROM ${this.webhookTable()} ${where}
+       ORDER BY created_at DESC LIMIT $${status ? 2 : 1}`,
+      params
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      tag: r.tag,
+      url: r.url,
+      status: r.status,
+      attempts: r.attempts,
+      lastError: r.last_error ?? undefined,
+      createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at)
+    }));
+  }
+
+  /** Manually retry a specific dead-letter event. */
+  async retryEvent(eventId: string): Promise<boolean> {
+    if (!this.pool) return false;
+    await this.ensureDbInitialized();
+    const { rows } = await this.pool.query<{ url: string; payload: string }>(
+      `SELECT url, payload::text FROM ${this.webhookTable()} WHERE id = $1 AND status = 'dead_letter'`,
+      [eventId]
+    );
+    if (rows.length === 0) return false;
+
+    // Reset to pending for next retry cycle
+    await this.pool.query(
+      `UPDATE ${this.webhookTable()} SET status = 'pending', attempts = 0, last_error = NULL WHERE id = $1`,
+      [eventId]
+    );
+    return true;
+  }
+}
+
+/** BIN-166: DB event record for admin API. */
+export interface WebhookDbEvent {
+  id: string;
+  tag: string;
+  url: string;
+  status: string;
+  attempts: number;
+  lastError?: string;
+  createdAt: string;
 }
 
 // ---------------------------------------------------------------------------

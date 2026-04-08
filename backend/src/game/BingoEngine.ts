@@ -2,6 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { BingoSystemAdapter } from "../adapters/BingoSystemAdapter.js";
 import { WalletError } from "../adapters/WalletAdapter.js";
 import type { WalletAdapter } from "../adapters/WalletAdapter.js";
+import { roundCurrency } from "../util/currency.js";
+import { logger as rootLogger } from "../util/logger.js";
+
+const logger = rootLogger.child({ module: "engine" });
 import {
   findFirstCompleteLinePatternIndex,
   hasFullBingo,
@@ -49,6 +53,8 @@ interface StartGameInput {
   entryFee?: number;
   ticketsPerPlayer?: number;
   payoutPercent?: number;
+  /** If provided, only these players get tickets. Others watch without playing. */
+  armedPlayerIds?: string[];
 }
 
 interface DrawNextInput {
@@ -412,24 +418,24 @@ export class BingoEngine {
     const hallId = this.assertHallId(input.hallId);
     const playerId = randomUUID();
     const walletId = input.walletId?.trim() || `wallet-${playerId}`;
-    console.log("[BIN-134] createRoom start", { hallId, walletId, playerName: input.playerName });
+    logger.debug({ hallId, walletId, playerName: input.playerName }, "createRoom start");
     this.assertWalletAllowedForGameplay(walletId, Date.now());
     this.assertWalletNotInRunningGame(walletId);
     try {
-      console.log("[BIN-134] ensureAccount →", walletId);
+      logger.debug({ walletId }, "ensureAccount start");
       await this.walletAdapter.ensureAccount(walletId);
-      console.log("[BIN-134] ensureAccount OK");
+      logger.debug({ walletId }, "ensureAccount OK");
     } catch (err) {
-      console.error("[BIN-134] ensureAccount FAILED", { walletId, error: (err as Error).message });
+      logger.error({ walletId, err }, "ensureAccount FAILED");
       throw err;
     }
     let balance: number;
     try {
-      console.log("[BIN-134] getBalance →", walletId);
+      logger.debug({ walletId }, "getBalance start");
       balance = await this.walletAdapter.getBalance(walletId);
-      console.log("[BIN-134] getBalance OK", { balance });
+      logger.debug({ walletId, balance }, "getBalance OK");
     } catch (err) {
-      console.error("[BIN-134] getBalance FAILED", { walletId, error: (err as Error).message });
+      logger.error({ walletId, err }, "getBalance FAILED");
       throw err;
     }
 
@@ -514,19 +520,31 @@ export class BingoEngine {
     }
     const normalizedPayoutPercent = Math.round(payoutPercent * 100) / 100;
 
-    const players = [...room.players.values()];
-    this.assertPlayersNotInAnotherRunningGame(room.code, players);
-    this.assertPlayersNotBlockedByRestriction(players, nowMs);
-    this.assertPlayersNotOnRequiredPause(players, nowMs);
-    await this.refreshPlayerObjectsFromWallet(players);
-    await this.assertLossLimitsBeforeBuyIn(players, entryFee, nowMs, room.hallId);
+    const allPlayers = [...room.players.values()];
+    const armedSet = input.armedPlayerIds ? new Set(input.armedPlayerIds) : null;
+    // Filter to eligible players for tickets — but the round ALWAYS starts.
+    // This is a live room: draws happen regardless of participation.
+    const ticketCandidates = allPlayers.filter((player) => {
+      if (armedSet && !armedSet.has(player.id)) return false;
+      if (this.isPlayerInAnotherRunningGame(room.code, player)) return false;
+      if (this.isPlayerBlockedByRestriction(player, nowMs)) return false;
+      if (this.isPlayerOnRequiredPause(player, nowMs)) return false;
+      return true;
+    });
+    if (ticketCandidates.length > 0) {
+      await this.refreshPlayerObjectsFromWallet(ticketCandidates);
+    }
+    // Filter out players who exceed loss limits or can't afford entry fee.
+    const eligiblePlayers = ticketCandidates.length > 0
+      ? await this.filterEligiblePlayers(ticketCandidates, entryFee, nowMs, room.hallId)
+      : [];
     const gameId = randomUUID();
     const gameType: LedgerGameType = "DATABINGO";
     const channel: LedgerChannel = "INTERNET";
     const houseAccountId = this.makeHouseAccountId(room.hallId, gameType, channel);
+    await this.walletAdapter.ensureAccount(houseAccountId);
     if (entryFee > 0) {
-      await this.ensureSufficientBalance(players, entryFee);
-      for (const player of players) {
+      for (const player of eligiblePlayers) {
         const transfer = await this.walletAdapter.transfer(
           player.walletId,
           houseAccountId,
@@ -560,7 +578,7 @@ export class BingoEngine {
     const tickets = new Map<string, Ticket[]>();
     const marks = new Map<string, Set<number>[]>();
 
-    for (const player of players) {
+    for (const player of eligiblePlayers) {
       const playerTickets: Ticket[] = [];
       const playerMarks: Set<number>[] = [];
 
@@ -580,8 +598,8 @@ export class BingoEngine {
       marks.set(player.id, playerMarks);
     }
 
-    const prizePool = this.roundCurrency(entryFee * players.length);
-    const maxPayoutBudget = this.roundCurrency((prizePool * normalizedPayoutPercent) / 100);
+    const prizePool = roundCurrency(entryFee * eligiblePlayers.length);
+    const maxPayoutBudget = roundCurrency((prizePool * normalizedPayoutPercent) / 100);
     const game: GameState = {
       id: gameId,
       status: "RUNNING",
@@ -602,20 +620,47 @@ export class BingoEngine {
 
     room.currentGame = game;
     this.roomLastRoundStartMs.set(room.code, Date.parse(game.startedAt));
-    for (const player of players) {
+
+    // BIN-161: Structured RNG audit log — enables regulatory replay of draw sequence
+    logger.info({
+      event: "RNG_DRAW_BAG",
+      gameId,
+      roomCode: room.code,
+      hallId: room.hallId,
+      drawBag: game.drawBag,
+      ballCount: game.drawBag.length,
+      timestamp: game.startedAt
+    }, "RNG draw bag generated");
+
+    for (const player of eligiblePlayers) {
       this.startPlaySession(player.walletId, nowMs);
+    }
+    // BIN-159: Checkpoint at game start — captures initial state for crash recovery
+    if (this.bingoAdapter.onCheckpoint) {
+      try {
+        await this.bingoAdapter.onCheckpoint({
+          roomCode: room.code,
+          gameId,
+          reason: "BUY_IN",
+          snapshot: this.serializeGame(game),
+          players: [...room.players.values()],
+          hallId: room.hallId
+        });
+      } catch (err) {
+        logger.error({ err, gameId }, "CRITICAL: Checkpoint failed after game start");
+      }
     }
     if (this.bingoAdapter.onGameStarted) {
       await this.bingoAdapter.onGameStarted({
         roomCode: room.code,
         gameId,
         entryFee,
-        playerIds: players.map((player) => player.id)
+        playerIds: eligiblePlayers.map((player) => player.id)
       });
     }
   }
 
-  async drawNextNumber(input: DrawNextInput): Promise<number> {
+  async drawNextNumber(input: DrawNextInput): Promise<{ number: number; drawIndex: number; gameId: string }> {
     const room = this.requireRoom(input.roomCode);
     this.assertHost(room, input.actorPlayerId);
     const host = this.requirePlayer(room, input.actorPlayerId);
@@ -656,7 +701,7 @@ export class BingoEngine {
       game.endedReason = "MAX_DRAWS_REACHED";
       this.finishPlaySessionsForGame(room, game, endedAt.getTime());
     }
-    return nextNumber;
+    return { number: nextNumber, drawIndex: game.drawnNumbers.length, gameId: game.id };
   }
 
   async markNumber(input: MarkNumberInput): Promise<void> {
@@ -773,7 +818,7 @@ export class BingoEngine {
 
     if (valid && input.type === "LINE") {
       game.lineWinnerId = player.id;
-      const rtpBudgetBefore = this.roundCurrency(Math.max(0, game.remainingPayoutBudget));
+      const rtpBudgetBefore = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       const requestedPayout = Math.floor(game.prizePool * 0.3);
       const cappedLinePayout = this.applySinglePrizeCap({
         room,
@@ -793,8 +838,8 @@ export class BingoEngine {
           `Line prize ${room.code}`
         );
         player.balance += payout;
-        game.remainingPrizePool = this.roundCurrency(Math.max(0, game.remainingPrizePool - payout));
-        game.remainingPayoutBudget = this.roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
+        game.remainingPrizePool = roundCurrency(Math.max(0, game.remainingPrizePool - payout));
+        game.remainingPayoutBudget = roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
         this.recordLossEntry(player.walletId, room.hallId, {
           type: "PAYOUT",
           amount: payout,
@@ -839,14 +884,17 @@ export class BingoEngine {
               reason: "PAYOUT",
               claimId: claim.id,
               payoutAmount: payout,
-              transactionIds: [transfer.fromTx.id, transfer.toTx.id]
+              transactionIds: [transfer.fromTx.id, transfer.toTx.id],
+              snapshot: this.serializeGame(game),
+              players: [...room.players.values()],
+              hallId: room.hallId
             });
           } catch (err) {
-            console.error(`CRITICAL: Checkpoint failed after LINE payout (claim ${claim.id}, game ${game.id}):`, err);
+            logger.error({ err, claimId: claim.id, gameId: game.id }, "CRITICAL: Checkpoint failed after LINE payout");
           }
         }
       }
-      const rtpBudgetAfter = this.roundCurrency(Math.max(0, game.remainingPayoutBudget));
+      const rtpBudgetAfter = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       claim.payoutAmount = payout;
       claim.payoutPolicyVersion = cappedLinePayout.policy.id;
       claim.payoutWasCapped = payout < requestedPayout;
@@ -862,7 +910,7 @@ export class BingoEngine {
     if (valid && input.type === "BINGO") {
       const endedAt = new Date();
       game.bingoWinnerId = player.id;
-      const rtpBudgetBefore = this.roundCurrency(Math.max(0, game.remainingPayoutBudget));
+      const rtpBudgetBefore = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       const requestedPayout = game.remainingPrizePool;
       const cappedBingoPayout = this.applySinglePrizeCap({
         room,
@@ -926,20 +974,23 @@ export class BingoEngine {
               reason: "PAYOUT",
               claimId: claim.id,
               payoutAmount: payout,
-              transactionIds: [transfer.fromTx.id, transfer.toTx.id]
+              transactionIds: [transfer.fromTx.id, transfer.toTx.id],
+              snapshot: this.serializeGame(game),
+              players: [...room.players.values()],
+              hallId: room.hallId
             });
           } catch (err) {
-            console.error(`CRITICAL: Checkpoint failed after BINGO payout (claim ${claim.id}, game ${game.id}):`, err);
+            logger.error({ err, claimId: claim.id, gameId: game.id }, "CRITICAL: Checkpoint failed after BINGO payout");
           }
         }
       }
-      game.remainingPrizePool = this.roundCurrency(Math.max(0, game.remainingPrizePool - payout));
-      game.remainingPayoutBudget = this.roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
+      game.remainingPrizePool = roundCurrency(Math.max(0, game.remainingPrizePool - payout));
+      game.remainingPayoutBudget = roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
       game.status = "ENDED";
       game.endedAt = endedAt.toISOString();
       game.endedReason = "BINGO_CLAIMED";
       this.finishPlaySessionsForGame(room, game, endedAt.getTime());
-      const rtpBudgetAfter = this.roundCurrency(Math.max(0, game.remainingPayoutBudget));
+      const rtpBudgetAfter = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       claim.payoutAmount = payout;
       claim.payoutPolicyVersion = cappedBingoPayout.policy.id;
       claim.payoutWasCapped = payout < requestedPayout;
@@ -981,10 +1032,13 @@ export class BingoEngine {
         await this.bingoAdapter.onCheckpoint({
           roomCode: room.code,
           gameId: game.id,
-          reason: "GAME_END"
+          reason: "GAME_END",
+          snapshot: this.serializeGame(game),
+          players: [...room.players.values()],
+          hallId: room.hallId
         });
       } catch (err) {
-        console.error(`CRITICAL: Checkpoint failed after game end (game ${game.id}):`, err);
+        logger.error({ err, gameId: game.id }, "CRITICAL: Checkpoint failed after game end");
       }
     }
   }
@@ -1786,7 +1840,7 @@ export class BingoEngine {
       .map((row) => {
         const minimumPercent = row.gameType === "DATABINGO" ? 0.3 : 0.15;
         const net = Math.max(0, row.net);
-        const minimumAmount = this.roundCurrency(net * minimumPercent);
+        const minimumAmount = roundCurrency(net * minimumPercent);
         return {
           row,
           minimumPercent,
@@ -1795,7 +1849,7 @@ export class BingoEngine {
       })
       .filter((entry) => entry.minimumAmount > 0);
 
-    const requiredMinimum = this.roundCurrency(
+    const requiredMinimum = roundCurrency(
       rowsWithMinimum.reduce((sum, entry) => sum + entry.minimumAmount, 0)
     );
     const batchId = randomUUID();
@@ -1850,7 +1904,7 @@ export class BingoEngine {
       }
     }
 
-    const distributedAmount = this.roundCurrency(transfers.reduce((sum, transfer) => sum + transfer.amount, 0));
+    const distributedAmount = roundCurrency(transfers.reduce((sum, transfer) => sum + transfer.amount, 0));
     const batch: OverskuddDistributionBatch = {
       id: batchId,
       createdAt,
@@ -2077,6 +2131,53 @@ export class BingoEngine {
     return latest;
   }
 
+  private async filterEligiblePlayers(
+    players: Player[],
+    entryFee: number,
+    nowMs: number,
+    hallId: string,
+  ): Promise<Player[]> {
+    const eligible: Player[] = [];
+    for (const player of players) {
+      if (entryFee > 0 && player.balance < entryFee) continue;
+      if (this.wouldExceedLossLimit(player, entryFee, nowMs, hallId)) continue;
+      eligible.push(player);
+    }
+    return eligible;
+  }
+
+  private wouldExceedLossLimit(player: Player, entryFee: number, nowMs: number, hallId: string): boolean {
+    if (entryFee <= 0) return false;
+    const limits = this.getEffectiveLossLimits(player.walletId, hallId);
+    const netLoss = this.calculateNetLoss(player.walletId, nowMs, hallId);
+    return (netLoss.daily + entryFee) > limits.daily || (netLoss.monthly + entryFee) > limits.monthly;
+  }
+
+  private isPlayerOnRequiredPause(player: Player, nowMs: number): boolean {
+    const state = this.playStateByWallet.get(player.walletId);
+    if (!state?.pauseUntilMs) return false;
+    if (state.pauseUntilMs > nowMs) return true;
+    // Pause expired — clear it
+    state.pauseUntilMs = undefined;
+    state.accumulatedMs = 0;
+    this.playStateByWallet.set(player.walletId, state);
+    return false;
+  }
+
+  private isPlayerBlockedByRestriction(player: Player, nowMs: number): boolean {
+    return Boolean(this.resolveGameplayBlock(player.walletId, nowMs));
+  }
+
+  private isPlayerInAnotherRunningGame(roomCode: string, player: Player): boolean {
+    for (const [code, room] of this.rooms) {
+      if (code === roomCode) continue;
+      if (room.currentGame?.status === "RUNNING" && room.players.has(player.id)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private assertPlayersNotOnRequiredPause(players: Player[], nowMs: number): void {
     for (const player of players) {
       const state = this.playStateByWallet.get(player.walletId);
@@ -2257,7 +2358,7 @@ export class BingoEngine {
         claims: [...game.claims],
         playerIds: [...game.tickets.keys()]
       }).catch((err) => {
-        console.error("[BingoEngine] onGameEnded callback failed:", err);
+        logger.error({ err }, "onGameEnded callback failed");
       });
     }
   }
@@ -2330,7 +2431,7 @@ export class BingoEngine {
       gameType: this.assertLedgerGameType(input.gameType),
       channel: this.assertLedgerChannel(input.channel),
       eventType: input.eventType,
-      amount: this.roundCurrency(this.assertNonNegativeNumber(input.amount, "amount")),
+      amount: roundCurrency(this.assertNonNegativeNumber(input.amount, "amount")),
       currency: "NOK",
       roomCode: input.roomCode?.trim() || undefined,
       gameId: input.gameId?.trim() || undefined,
@@ -2390,7 +2491,7 @@ export class BingoEngine {
       roomCode: input.roomCode?.trim() || undefined,
       hallId: this.assertHallId(input.hallId),
       policyVersion: input.policyVersion?.trim() || undefined,
-      amount: this.roundCurrency(this.assertNonNegativeNumber(input.amount, "amount")),
+      amount: roundCurrency(this.assertNonNegativeNumber(input.amount, "amount")),
       currency: "NOK",
       walletId: input.walletId.trim(),
       playerId: input.playerId?.trim() || undefined,
@@ -2645,12 +2746,10 @@ export class BingoEngine {
     return normalized;
   }
 
-  private roundCurrency(value: number): number {
-    return Math.round(value * 100) / 100;
-  }
+  // BIN-163: roundCurrency extracted to ../util/currency.ts
 
   private allocateAmountByShares(totalAmount: number, shares: number[]): number[] {
-    const total = this.roundCurrency(totalAmount);
+    const total = roundCurrency(totalAmount);
     if (shares.length === 0) {
       return [];
     }
@@ -2659,10 +2758,10 @@ export class BingoEngine {
       throw new DomainError("INVALID_INPUT", "Ugyldige andeler for fordeling.");
     }
 
-    const amounts = shares.map((share) => this.roundCurrency((total * share) / sumShares));
-    const allocated = this.roundCurrency(amounts.reduce((sum, amount) => sum + amount, 0));
-    const remainder = this.roundCurrency(total - allocated);
-    amounts[0] = this.roundCurrency(amounts[0] + remainder);
+    const amounts = shares.map((share) => roundCurrency((total * share) / sumShares));
+    const allocated = roundCurrency(amounts.reduce((sum, amount) => sum + amount, 0));
+    const remainder = roundCurrency(total - allocated);
+    amounts[0] = roundCurrency(amounts[0] + remainder);
     return amounts;
   }
 

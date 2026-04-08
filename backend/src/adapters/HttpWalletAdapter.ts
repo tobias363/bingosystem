@@ -1,11 +1,13 @@
 import type {
   CreateWalletAccountInput,
+  TransactionOptions,
   WalletAccount,
   WalletAdapter,
   WalletTransaction,
   WalletTransferResult
 } from "./WalletAdapter.js";
 import { WalletError } from "./WalletAdapter.js";
+import { CircuitBreaker, CircuitBreakerOpenError } from "../util/CircuitBreaker.js";
 
 interface HttpWalletAdapterOptions {
   baseUrl: string;
@@ -134,6 +136,9 @@ export class HttpWalletAdapter implements WalletAdapter {
 
   private readonly defaultInitialBalance: number;
 
+  /** BIN-165: Circuit breaker to prevent cascading failures when wallet API is down. */
+  private readonly circuitBreaker: CircuitBreaker;
+
   constructor(options: HttpWalletAdapterOptions) {
     if (!options.baseUrl || !options.baseUrl.trim()) {
       throw new WalletError("INVALID_WALLET_CONFIG", "WALLET_API_BASE_URL mangler.");
@@ -143,6 +148,7 @@ export class HttpWalletAdapter implements WalletAdapter {
     this.apiKey = options.apiKey;
     this.timeoutMs = options.timeoutMs ?? 8000;
     this.defaultInitialBalance = options.defaultInitialBalance ?? 1000;
+    this.circuitBreaker = new CircuitBreaker({ threshold: 5, resetMs: 30_000, name: "http-wallet" });
   }
 
   async createAccount(input?: CreateWalletAccountInput): Promise<WalletAccount> {
@@ -211,38 +217,42 @@ export class HttpWalletAdapter implements WalletAdapter {
     return account.balance;
   }
 
-  async debit(accountId: string, amount: number, reason: string): Promise<WalletTransaction> {
+  async debit(accountId: string, amount: number, reason: string, options?: TransactionOptions): Promise<WalletTransaction> {
     const id = accountId.trim();
     const payload = await this.request<unknown>("POST", `/wallets/${encodeURIComponent(id)}/debit`, {
       amount,
-      reason
+      reason,
+      idempotencyKey: options?.idempotencyKey
     });
     return toWalletTransaction(payload);
   }
 
-  async credit(accountId: string, amount: number, reason: string): Promise<WalletTransaction> {
+  async credit(accountId: string, amount: number, reason: string, options?: TransactionOptions): Promise<WalletTransaction> {
     const id = accountId.trim();
     const payload = await this.request<unknown>("POST", `/wallets/${encodeURIComponent(id)}/credit`, {
       amount,
-      reason
+      reason,
+      idempotencyKey: options?.idempotencyKey
     });
     return toWalletTransaction(payload);
   }
 
-  async topUp(accountId: string, amount: number, reason = "Manual top-up"): Promise<WalletTransaction> {
+  async topUp(accountId: string, amount: number, reason = "Manual top-up", options?: TransactionOptions): Promise<WalletTransaction> {
     const id = accountId.trim();
     const payload = await this.request<unknown>("POST", `/wallets/${encodeURIComponent(id)}/topup`, {
       amount,
-      reason
+      reason,
+      idempotencyKey: options?.idempotencyKey
     });
     return toWalletTransaction(payload);
   }
 
-  async withdraw(accountId: string, amount: number, reason = "Manual withdrawal"): Promise<WalletTransaction> {
+  async withdraw(accountId: string, amount: number, reason = "Manual withdrawal", options?: TransactionOptions): Promise<WalletTransaction> {
     const id = accountId.trim();
     const payload = await this.request<unknown>("POST", `/wallets/${encodeURIComponent(id)}/withdraw`, {
       amount,
-      reason
+      reason,
+      idempotencyKey: options?.idempotencyKey
     });
     return toWalletTransaction(payload);
   }
@@ -251,13 +261,15 @@ export class HttpWalletAdapter implements WalletAdapter {
     fromAccountId: string,
     toAccountId: string,
     amount: number,
-    reason = "Wallet transfer"
+    reason = "Wallet transfer",
+    options?: TransactionOptions
   ): Promise<WalletTransferResult> {
     const payload = await this.request<unknown>("POST", "/wallets/transfer", {
       fromWalletId: fromAccountId,
       toWalletId: toAccountId,
       amount,
-      reason
+      reason,
+      idempotencyKey: options?.idempotencyKey
     });
     return toWalletTransferResult(payload);
   }
@@ -284,6 +296,16 @@ export class HttpWalletAdapter implements WalletAdapter {
     path: string,
     body?: Record<string, unknown>
   ): Promise<T> {
+    // BIN-165: Circuit breaker check before making the request
+    try {
+      this.circuitBreaker.assertClosed();
+    } catch (err) {
+      if (err instanceof CircuitBreakerOpenError) {
+        throw new WalletError("WALLET_API_UNAVAILABLE", err.message);
+      }
+      throw err;
+    }
+
     const url = this.makeUrl(path);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -317,6 +339,10 @@ export class HttpWalletAdapter implements WalletAdapter {
       }
 
       if (!response.ok) {
+        // BIN-165: Trip circuit breaker on server errors (5xx), not business errors (4xx)
+        if (response.status >= 500) {
+          this.circuitBreaker.onFailure();
+        }
         const apiMessage =
           parsed &&
           typeof parsed === "object" &&
@@ -342,11 +368,15 @@ export class HttpWalletAdapter implements WalletAdapter {
         return envelope.data as T;
       }
 
+      // BIN-165: Successful response — reset circuit breaker
+      this.circuitBreaker.onSuccess();
       return parsed as T;
     } catch (error) {
       if (error instanceof WalletError) {
         throw error;
       }
+      // BIN-165: Infra failure — trip circuit breaker
+      this.circuitBreaker.onFailure();
       if ((error as Error).name === "AbortError") {
         throw new WalletError("WALLET_API_TIMEOUT", "Timeout ved kall mot wallet-API.");
       }

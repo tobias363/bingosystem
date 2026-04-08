@@ -49,6 +49,7 @@ export interface CandySettingsCatalogContext {
   minRoundIntervalMs: number;
   minPlayersToStart: number;
   maxTicketsPerPlayer: number;
+  fixedAutoDrawIntervalMs: number;
   forceAutoStart: boolean;
   forceAutoDraw: boolean;
   runningRoundLockActive: boolean;
@@ -179,14 +180,16 @@ export function buildCandySettingsDefinition(context: CandySettingsCatalogContex
           key: "autoDrawIntervalMs",
           path: "autoDrawIntervalMs",
           label: "Trekkintervall",
-          description: "Tid mellom hvert trekk i millisekunder.",
+          description: `Tid mellom hvert trekk i millisekunder. Fast verdi: ${context.fixedAutoDrawIntervalMs} ms.`,
           type: "integer",
-          min: 250,
+          min: context.fixedAutoDrawIntervalMs,
+          max: context.fixedAutoDrawIntervalMs,
           step: 50,
           unit: "ms",
-          defaultValue: 1200,
-          isLocked: context.runningRoundLockActive,
-          lockReason
+          defaultValue: context.fixedAutoDrawIntervalMs,
+          readOnly: true,
+          isLocked: true,
+          lockReason: `Låst av kode til ${context.fixedAutoDrawIntervalMs} ms.`
         }
       ]
     }

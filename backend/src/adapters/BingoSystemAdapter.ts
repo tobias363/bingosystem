@@ -1,4 +1,4 @@
-import type { Player, Ticket, ClaimType, ClaimRecord } from "../game/types.js";
+import type { Player, Ticket, ClaimType, ClaimRecord, GameSnapshot } from "../game/types.js";
 
 export interface CreateTicketInput {
   roomCode: string;
@@ -50,6 +50,12 @@ export interface CheckpointInput {
   claimId?: string;
   payoutAmount?: number;
   transactionIds?: string[];
+  /** BIN-159: Full serialized game snapshot at checkpoint time. */
+  snapshot?: GameSnapshot;
+  /** BIN-159: Players in the room at checkpoint time. */
+  players?: Player[];
+  /** BIN-159: Hall ID for the room. */
+  hallId?: string;
 }
 
 export interface BingoSystemAdapter {
