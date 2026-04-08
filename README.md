@@ -1,256 +1,110 @@
-# Spillorama Bingo System
+# Bingosystem Spillorama
 
-Selvstendig multiplayer-bingoplattform med sanntidsspill, wallet, compliance og CandyMania-integrasjon.
+Komplett spillplattform med lobby, 5 Unity WebGL-bingospill, wallet, auth, compliance og admin.
 
-> **Merk:** Dette er et **frittstående prosjekt** og har ingenting med [Nordic Profil](https://nordicprofil.no) (WordPress e-handel) eller Lappeland (Next.js nettbutikk) å gjøre. De deler ikke kode, servere, deploy-pipelines eller databaser. Eneste fellesnevner er at de administreres av samme utvikler.
+Utviklet av ekstern leverandor (AIS Technolabs). Vi har overtatt kildekoden og gjor videre utvikling. CandyMania er integrert i dette systemet via iframe med kobling til lommebok.
 
----
-
-## Prosjektoversikt
-
-| Komponent | Teknologi | Mappe | Beskrivelse |
-|-----------|-----------|-------|-------------|
-| **Backend** | Express + Socket.IO + TypeScript | `backend/` | Spillmotor, wallet, auth, compliance, admin API |
-| **CandyMania frontend** | React 19 + Vite + Zustand | `candy-web/` | Candy-spillets brukergrensesnitt (tema 1) |
-| **Bingo lobby** | Unity WebGL | `bingo_in_20_3_26_latest/` | Eksisterende lobby med Spillorama Unity-klient |
-| **Frontend (test)** | Vanilla JS | `frontend/` | Enkel webklient for testing og admin |
-
-### Tjenester på Render
-
-| Tjeneste | Hva | URL |
-|----------|-----|-----|
-| `bingo-system` | Unity-lobby + legacy bingo-backend (Node/Express) | `bingo-system-jsso.onrender.com` |
-| `candy-backend` | CandyMania-spillmotor + frontend | `candy-backend-ldvg.onrender.com` |
-| `candy-db` | PostgreSQL database for candy-backend | intern |
+> **Viktig:** Dette er **hovedsystemet**. Lobbyen, spillkatalogen, brukerhandtering, wallet og alle Unity-spillene lever her. CandyMania er det eneste spillet med separat backend — det er integrert via iframe med delt lommebok.
 
 ---
 
-## Hvordan jobbe i dette prosjektet
+## To prosjekter — tydelig skille
 
-### Branch-strategi: alt skjer på `main`
+### 1. Bingosystem Spillorama (DETTE prosjektet)
 
-Vi bruker **kun `main`** som deploy-branch. Alle Render-tjenester deployer fra `main`.
+- **Mappe:** `/Users/tobiashaugen/Projects/Bingo-system/`
+- **Repo:** `tobias363/bingosystem`
+- **Deploy:** `bingo-system-jsso.onrender.com`
+- **Hva det er:** Hele plattformen — lobby, auth, wallet, compliance, admin, spillkatalog, og alle 5 Unity WebGL-bingospill. CandyMania er integrert her via iframe med kobling til lommebok.
 
-```
-feature/mitt-arbeid  →  PR til main  →  auto-deploy til Render
-```
+Lobbyen (`/web/`) viser alle tilgjengelige spill:
 
-**Workflow:**
+| Spill | Type | Status | Beskrivelse |
+|-------|------|--------|-------------|
+| Papir bingo | Unity WebGL | Stengt | Klassisk papirbingo-tema |
+| Lynbingo | Unity WebGL | Apen | Lynrask bingo |
+| BingoBonanza | Unity WebGL | Apen | Bonanza-variant |
+| Turbomania | Unity WebGL | Apen | Turbo bingospill |
+| SpinnGo | Unity WebGL | Apen | SpinnGo-variant |
+| **Candy Mania** | **iframe** | **Apen** | Eget utviklet — separat backend |
 
-1. **Opprett feature-branch fra main:**
-   ```bash
-   git checkout main && git pull
-   git checkout -b feature/mitt-arbeid
-   ```
+De forste 5 spillene er Unity WebGL-spill fra Spillorama-prosjektet som kjorer direkte i dette systemet. Candy Mania er eneste spill med separat backend og integreres via iframe.
 
-2. **Gjør endringer, commit og push:**
-   ```bash
-   git add <filer>
-   git commit -m "feat: beskrivelse av endring"
-   git push -u origin feature/mitt-arbeid
-   ```
+### 2. CandyMania (separat prosjekt)
 
-3. **Lag PR til main:**
-   ```bash
-   gh pr create --base main --title "feat: beskrivelse"
-   ```
+- **Mappe:** `/Users/tobiashaugen/Projects/Candy/`
+- **Repo:** `tobias363/candy-web`
+- **Deploy:** `candy-backend-ldvg.onrender.com`
+- **Hva det er:** Kun CandyMania-spillmotoren og React-frontenden. Eget utviklet bingospill med sanntidstrekninger.
 
-4. **CI kjører automatisk:**
-   - `backend` — typecheck
-   - `compliance` — RTP/tapsgrense-tester
-
-5. **Merge til main → Render deployer automatisk** (3-5 min)
-
-### Candy-web: bygg før commit
-
-`candy-web/` er React-kildekoden, men candy-backend serverer pre-bygget frontend fra `frontend/web/`. Hvis du endrer noe i `candy-web/src/`:
-
-```bash
-cd candy-web && npm install && npm run build
-cp -r dist/* ../frontend/web/
-cd ..
-git add frontend/web/ candy-web/
-git commit -m "fix: oppdater candy-web frontend build"
-```
+CandyMania har **egen backend** (Express + Socket.IO) og **egen database**. Den embeddes i Bingo-system via iframe med delt lommebok (PostMessage-bro).
 
 ---
 
-## Lokal utvikling
+## Hvor skal endringer gjores?
 
-### Forutsetninger
-
-- Node.js 18+
-- PostgreSQL (for wallet/auth/sessions)
-- npm
-
-### Kjør backend lokalt
-
-```bash
-npm --prefix backend install
-
-WALLET_PROVIDER=postgres \
-WALLET_PG_CONNECTION_STRING='postgres://user:pass@localhost:5432/bingo' \
-WALLET_PG_SCHEMA=public \
-WALLET_PG_SSL=false \
-APP_PG_CONNECTION_STRING='postgres://user:pass@localhost:5432/bingo' \
-APP_PG_SCHEMA=public \
-npm run dev
-```
-
-Backend starter på [http://localhost:4000](http://localhost:4000).
-
-### Kjør candy-web (hot reload)
-
-```bash
-cd candy-web
-npm install
-npm run dev
-```
-
-Vite dev-server starter på [http://localhost:5173](http://localhost:5173).
-
-### Typecheck + compliance
-
-```bash
-npm run check:all    # backend typecheck + compliance-suite + Unity compile-check
-npm --prefix backend run test:compliance   # kun compliance
-```
+| Jeg vil... | Prosjekt | Mappe |
+|------------|----------|-------|
+| Endre lobbyen (UI, spillkort, bilder) | **Bingosystem Spillorama** | `frontend/` |
+| Legge til spillbilder/thumbnails | **Bingosystem Spillorama** | `frontend/assets/games/` |
+| Endre spillkatalogen | **Bingosystem Spillorama** | `backend/src/platform/` |
+| Endre auth/wallet/compliance | **Bingosystem Spillorama** | `backend/src/` |
+| Endre Unity WebGL-spillene | **Bingosystem Spillorama** | `Spillorama/` (Unity 6) |
+| Endre CandyMania spillogikk | **CandyMania** | `candy-web/src/` |
+| Endre CandyMania backend/motor | **CandyMania** | `backend/src/` |
+| Endre iframe-integrasjonen (Candy ↔ lommebok) | **Begge** | Spillorama: `backend/public/game/index.html`, Candy: `candy-web/src/domain/embed/` |
 
 ---
 
 ## Arkitektur
 
-### Spillmotor (`BingoEngine`)
-
-Server-autoritativ spillmotor i `backend/src/game/BingoEngine.ts`:
-
-- Romflyt: opprett, join, start, trekk, claim, avslutt
-- Automatisk rundestart (konfigurerbart intervall)
-- RTP-styring for Candy (konfigurerbar `payoutPercent`)
-- Maks 5 bonger per spiller
-- Sperre mot parallell deltakelse (en aktiv runde per wallet)
-- 30s minimum mellom spillstarter
-- Near-miss bias (konfigurerbar rate)
-
-### Wallet
-
-Tre providere, konfigurert via `WALLET_PROVIDER`:
-
-| Provider | Bruk | Env |
-|----------|------|-----|
-| `file` | Lokal utvikling | `WALLET_DATA_PATH=backend/data/wallets.json` |
-| `http` | Ekstern wallet-API | `WALLET_API_BASE_URL`, `WALLET_API_KEY` |
-| `postgres` | Produksjon | `WALLET_PG_CONNECTION_STRING` |
-
-### Compliance
-
-Håndheves server-side:
-- Tapsgrenser: 900 NOK/dag, 4400 NOK/måned (regulatorisk maks)
-- Personlige tapsgrenser (innenfor regulatorisk maks)
-- Obligatorisk pause: 5 min etter 60 min samlet spilltid
-- Selvutelukkelse
-- Premiecaps + payout-audit trail
-
-### CandyMania-integrasjon
-
-Bingo-lobbyen apner CandyMania i en iframe via en launch-token-flyt:
-
 ```
-1. Spiller logger inn i bingo-lobby
-2. Klikker CandyMania-tile
-3. Lobby kaller /api/integration/candy-launch
-4. candy-backend oppretter launch-token + spillersesjon
-5. Iframe apnes med ?lt=TOKEN&embed=true
-6. candy-frontend resolver token -> henter sesjon -> spillet starter
-```
-
-Wallet-transaksjoner (bet/win) gar via PostMessage mellom iframe og lobby.
-
-### Swedbank Pay
-
-Checkout v3.1 for wallet top-up:
-
-1. `POST /api/payments/swedbank/topup-intent` oppretter payment order
-2. Spiller redirectes til Swedbank
-3. Callback: `POST /api/payments/swedbank/callback`
-4. Backend avstemmer og krediterer wallet
-
----
-
-## Miljovariabler
-
-### Spillinnstillinger
-
-```bash
-BINGO_MIN_ROUND_INTERVAL_MS=30000
-BINGO_DAILY_LOSS_LIMIT=900
-BINGO_MONTHLY_LOSS_LIMIT=4400
-BINGO_PLAY_SESSION_LIMIT_MS=3600000   # 60 min
-BINGO_PAUSE_DURATION_MS=300000         # 5 min
-AUTO_ROUND_START_ENABLED=true
-AUTO_ROUND_START_INTERVAL_MS=30000
-AUTO_DRAW_ENABLED=true
-AUTO_DRAW_INTERVAL_MS=1200
-CANDY_PAYOUT_PERCENT=80
-BINGO_NEAR_MISS_BIAS_ENABLED=true
-BINGO_NEAR_MISS_TARGET_RATE=0.38
-```
-
-### Integrasjon
-
-```bash
-INTEGRATION_ENABLED=true
-INTEGRATION_API_KEY=<delt nokkel mellom bingo-system og candy-backend>
-CANDY_BACKEND_URL=https://candy-backend-ldvg.onrender.com
-```
-
-### Database / Auth
-
-```bash
-APP_PG_CONNECTION_STRING=postgres://...
-APP_PG_SCHEMA=public
-AUTH_SESSION_TTL_HOURS=168
-JWT_SECRET=<secret>
+┌─────────────────────────────────────────────────────┐
+│           Bingo-system (denne repoen)               │
+│           bingo-system-jsso.onrender.com            │
+│                                                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
+│  │ Backend  │  │ Frontend │  │ Spillorama Unity │  │
+│  │ Express  │  │ Lobby    │  │ 5 WebGL-spill:   │  │
+│  │ Socket.IO│  │ /web/    │  │ - Papir bingo    │  │
+│  │ Postgres │  │ Auth     │  │ - Lynbingo       │  │
+│  │ Wallet   │  │ Wallet   │  │ - BingoBonanza   │  │
+│  │ Admin    │  │ Admin    │  │ - Turbomania     │  │
+│  └────┬─────┘  └────┬─────┘  │ - SpinnGo        │  │
+│       │              │        └────────┬─────────┘  │
+│       └──────┬───────┘                 │            │
+│              │    ┌────────────────────┘            │
+│              ▼    ▼                                  │
+│       ┌──────────────────┐                          │
+│       │ /game/  WebGL    │ ← Unity-spillene         │
+│       │ /view-game/  TV  │ ← SpilloramaTv           │
+│       └──────────────────┘                          │
+│              │                                       │
+│              │ iframe + PostMessage                  │
+│              ▼                                       │
+│       ┌──────────────────┐                          │
+│       │  Candy Mania     │ ← separat repo/backend   │
+│       │  candy-backend-  │   tobias363/candy-web     │
+│       │  ldvg.onrender   │   Delt lommebok via       │
+│       │  .com            │   PostMessage             │
+│       └──────────────────┘                          │
+└─────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## API-oversikt
+## Spillbilder
 
-### Auth
-- `POST /api/auth/register` / `login` / `logout`
-- `GET /api/auth/me`
+Thumbnails hentet fra Spillorama Unity-prosjektet ligger i `frontend/assets/games/`:
 
-### Wallet (innlogget)
-- `GET /api/wallet/me`
-- `POST /api/wallet/me/topup`
-- `GET /api/wallet/me/compliance`
-- `PUT /api/wallet/me/loss-limits`
-
-### Spill / Rom
-- `GET /api/rooms` / `GET /api/rooms/:code`
-- `POST /api/admin/rooms` / `start` / `draw-next` / `end`
-
-### Admin
-- `GET /api/admin/games` / `PUT /api/admin/games/:slug`
-- `GET /api/admin/wallets/:id/compliance`
-
-### Socket.IO events
-- `room:create` / `room:join` / `room:resume`
-- `game:start` / `game:end`
-- `draw:next` / `ticket:mark` / `claim:submit`
-- `room:state`
-
----
-
-## CI/CD
-
-| Workflow | Trigger | Hva |
-|----------|---------|-----|
-| `ci.yml` | PR til main | Typecheck, tester, compliance-suite, RTP-gate |
-| `compliance-gate.yml` | PR til main | Compliance-test enforcement |
-| `deploy-staging.yml` | Push til main | Trigger Render deploy + health-wait |
-| `deploy-production.yml` | Manuell / tag | Produksjons-deploy |
+| Fil | Tilhorende spill |
+|-----|-----------------|
+| `godterihuset.png` | Candy Mania |
+| `papirbingo.png` | Papir bingo |
+| `galopp.png` | (tema-thumbnail) |
+| `gold-digger.png` | (tema-thumbnail) |
+| `spillorama.png` | Spillorama generisk |
+| `bingo_1.png` – `bingo_4.png` | Generelle spillvalg-bilder |
 
 ---
 
@@ -268,41 +122,123 @@ JWT_SECRET=<secret>
 │   │   ├── launch/       # Launch-token store
 │   │   ├── payments/     # Swedbank Pay
 │   │   └── platform/     # Auth, sessions, spillkatalog
+│   ├── public/
+│   │   ├── game/         # Spillorama WebGL build (/game/)
+│   │   ├── view-game/    # SpilloramaTv WebGL (/view-game/)
+│   │   └── web/          # CandyMania bygget frontend (/web/)
 │   └── package.json
-├── candy-web/            # CandyMania React frontend (kildekode)
-├── frontend/             # Pre-bygget webklient + admin
-│   ├── admin/
-│   └── web/              # Bygget candy-web output (serveres av backend)
-├── bingo_in_20_3_26_latest/  # Legacy lobby (Unity WebGL + Node)
-├── docs/                 # Utfyllende dokumentasjon (20+ filer)
-├── scripts/              # Build, deploy, release-automatisering
-├── .github/workflows/    # CI/CD pipelines
+├── frontend/             # Lobby-portal + admin
+│   ├── assets/
+│   │   └── games/        # Spillbilder (thumbnails fra Unity)
+│   ├── admin/            # Admin-panel
+│   ├── app.js            # Lobby-applikasjon
+│   ├── style.css
+│   └── index.html
+├── Spillorama/           # Unity 6 WebGL-prosjekt (ekskludert fra git, 1.4GB)
+├── scripts/              # Build, deploy, release
+├── docs/                 # Teknisk dokumentasjon
 └── render.yaml           # Render deploy-konfigurasjon
 ```
 
 ---
 
-## Dokumentasjon
+## Deploy-flyt — slik pusher du endringer
 
-Detaljert dokumentasjon finnes i `docs/`:
+### Branch protection
 
-- `ENGINEERING_WORKFLOW.md` — Git + Render arbeidsflyt
-- `RENDER_GITHUB_SETUP.md` — Infrastruktur-oppsett
-- `CANDY_RELEASE_ROLLOUT_PLAN.md` — Release-prosedyrer
-- `LOCAL_SOURCE_OF_TRUTH_WORKFLOW.md` — Unity/Candy lokal utvikling
-- `HALL_PILOT_RUNBOOK.md` — Pilotprosedyrer og rollback
+`main`-branchen er **beskyttet**. Du kan ikke pushe direkte. Alle endringer ma ga via **Pull Request (PR)** med godkjente status checks.
+
+### Steg-for-steg: Bingosystem Spillorama
+
+```bash
+# 1. Ga til prosjektmappa
+cd /Users/tobiashaugen/Projects/Bingo-system
+
+# 2. Opprett feature-branch fra main
+git checkout main && git pull
+git checkout -b feat/min-endring
+
+# 3. Gjor endringer, stage og commit
+git add <filer>
+git commit -m "feat: beskrivelse av endring"
+
+# 4. Push branch og lag PR
+git push -u origin feat/min-endring
+gh pr create --base main --title "feat: beskrivelse"
+
+# 5. Merge PR pa GitHub (krever godkjente status checks)
+# -> Render deployer automatisk fra main (3-5 min)
+```
+
+### Steg-for-steg: CandyMania
+
+```bash
+# 1. Ga til prosjektmappa
+cd /Users/tobiashaugen/Projects/Candy
+
+# 2. Gjor endringer i candy-web eller backend
+# ... rediger filer ...
+
+# 3. Commit og push direkte til main (ingen branch protection)
+git add <filer>
+git commit -m "feat: beskrivelse av endring"
+git push origin main
+# -> Render deployer automatisk (3-5 min)
+```
+
+### Oppdatere CandyMania-frontenden i Bingosystem Spillorama
+
+Nar du endrer CandyMania (`candy-web/`), ma du **ogsa oppdatere builden i Bingosystem** for at endringene vises i lobbyen:
+
+```bash
+# 1. Bygg candy-web
+cd /Users/tobiashaugen/Projects/Candy/candy-web
+npm install && npm run build
+
+# 2. Kopier build til Bingosystem
+cp -r dist/* /Users/tobiashaugen/Projects/Bingo-system/backend/public/web/
+cp -r dist/* /Users/tobiashaugen/Projects/Bingo-system/frontend/web/
+
+# 3. Commit og push via PR i Bingosystem
+cd /Users/tobiashaugen/Projects/Bingo-system
+git checkout -b feat/update-candy-build
+git add backend/public/web/ frontend/web/
+git commit -m "chore: oppdater candy-web build"
+git push -u origin feat/update-candy-build
+gh pr create --base main --title "chore: oppdater candy-web build"
+```
+
+> **Viktig:** Begge steg er nodvendige. Candy-backenden og Bingosystemet deployer separat. Hvis du bare pusher til `candy-web`, vil endringene kun vises pa `candy-backend-ldvg.onrender.com`, men **ikke** i lobbyen pa `bingo-system-jsso.onrender.com`.
+
+### Oversikt: hva trigger deploy hvor?
+
+| Handling | Resultat |
+|----------|----------|
+| Merge PR til `main` i `tobias363/bingosystem` | Bingo System deployer pa Render |
+| Push til `main` i `tobias363/candy-web` | CandyMania-backend deployer pa Render |
+| Endre candy-web uten a oppdatere Bingosystem | Endringer vises KUN pa candy-backend, IKKE i lobbyen |
 
 ---
 
-## Forskjell fra andre prosjekter
+## Lokal utvikling
 
-| | Spillorama Bingo | Nordic Profil | Lappeland |
-|--|-----------------|---------------|-----------|
-| **Type** | Sanntids multiplayer bingoplattform | WordPress e-handel (profilprodukter) | Next.js nettbutikk (navnelapper) |
-| **Teknologi** | Node/TS + React + Unity + PostgreSQL + Socket.IO | WordPress + PHP + mu-plugins | Next.js + React |
-| **Server** | Render (Frankfurt) | Servebolt | Vercel |
-| **Repo** | `tobias363/bingosystem` | `tobias50/Nordic-profil` | Separat |
-| **Database** | PostgreSQL (wallet, sessions, games) | WordPress MySQL | — |
-| **Deploy** | PR til main -> Render auto-deploy | PR til main -> GitHub Actions -> Servebolt | Vercel auto-deploy |
+```bash
+# Start Bingo-system backend
+npm --prefix backend install
+cp backend/.env.example backend/.env   # konfigurer PostgreSQL
+npm run dev                             # http://localhost:4000
 
-Disse prosjektene deler ingen kode, infrastruktur eller avhengigheter.
+# Lobby:        http://localhost:4000/web/
+# Admin:        http://localhost:4000/admin
+# Spillorama:   http://localhost:4000/game/
+# SpilloramaTv: http://localhost:4000/view-game/
+```
+
+---
+
+## Tjenester (Render)
+
+| Tjeneste | URL | Repo | Branch |
+|----------|-----|------|--------|
+| Bingo System (lobby + alt) | `bingo-system-jsso.onrender.com` | `tobias363/bingosystem` | `main` |
+| CandyMania (kun spillet) | `candy-backend-ldvg.onrender.com` | `tobias363/candy-web` | `main` |
