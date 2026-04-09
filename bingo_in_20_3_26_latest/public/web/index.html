@@ -221,6 +221,7 @@
         if (progress >= 1) dbg('Unity load progress: 100%', 'ok');
       }).then((unityInstance) => {
         dbg('Unity instance created successfully');
+        window.unityInstance = unityInstance; // Eksponert globalt for SendMessage fra HTML-grid
         loadingBar.style.display = "none";
         _unityLoaded = true;
         fullscreenButton.onclick = () => {
