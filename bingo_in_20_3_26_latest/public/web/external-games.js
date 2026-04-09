@@ -1,51 +1,44 @@
 /**
- * Full HTML Game Grid — erstatter Unity-canvasens spillkort med
- * identisk-designede HTML-tiles i et 3x2 CSS Grid.
+ * Full HTML Game Grid — 3x2 CSS Grid over Unity-canvasen.
  *
- * Unity-header (logo, wallet, nav) forblir synlig over gridet.
- * Unity-spill åpnes ved syntetisk klikk på canvasen.
- * Candy Mania åpnes via iframe.
+ * Alle 6 tiles har identisk design. Unity-spill har pointer-events:none
+ * slik at klikk passerer gjennom HTML-overlayet til Unity-canvasen.
+ * Candy Mania har pointer-events:auto og åpner via iframe.
  */
 (function () {
   'use strict';
 
   // ── Spillkatalog ──────────────────────────────────────────────
-  // type: 'unity'    → klikk sendes til Unity-canvas
-  // type: 'external' → openGameInIframe()
   var GAMES = [
     {
       id: 'papir-bingo', name: 'Papir bingo',
       image: '/web/assets/games/papirbingo.png',
       status: 'Stengt', statusColor: '#5bbf72', closedColor: '#e74c3c',
-      type: 'unity', canvasXY: [0.28, 0.42]
+      type: 'unity'
     },
     {
       id: 'lynbingo', name: 'Lynbingo',
       image: '/web/assets/games/bingo_1.png',
       status: 'Åpen', statusColor: '#5bbf72',
-      btnText: 'Spill nå',
-      type: 'unity', canvasXY: [0.52, 0.42]
+      btnText: 'Spill nå', type: 'unity'
     },
     {
       id: 'bingo-bonanza', name: 'BingoBonanza',
       image: '/web/assets/games/bingo_3.png',
       status: 'Åpen', statusColor: '#5bbf72',
-      btnText: 'Spill nå',
-      type: 'unity', canvasXY: [0.78, 0.42]
+      btnText: 'Spill nå', type: 'unity'
     },
     {
       id: 'turbomania', name: 'Turbomania',
       image: '/web/assets/games/bingo_4.png',
       status: 'Åpen', statusColor: '#5bbf72',
-      btnText: 'Spill nå',
-      type: 'unity', canvasXY: [0.28, 0.85]
+      btnText: 'Spill nå', type: 'unity'
     },
     {
       id: 'spinngo', name: 'SpinnGo',
       image: '/web/assets/games/gold-digger.png',
       status: 'Åpen', statusColor: '#5bbf72',
-      btnText: 'Spill nå',
-      type: 'unity', canvasXY: [0.52, 0.85]
+      btnText: 'Spill nå', type: 'unity'
     },
     {
       id: 'candy-mania', name: 'Candy Mania',
@@ -82,14 +75,19 @@
 }\
 \
 .ext-tile {\
-  pointer-events: auto;\
   width: 80%;\
   max-width: 300px;\
   text-align: center;\
   color: #fff;\
-  cursor: pointer;\
   position: relative;\
   font-family: "Segoe UI", Arial, sans-serif;\
+  pointer-events: none;\
+}\
+\
+/* Bare external-tiles (Candy) fanger klikk */\
+.ext-tile[data-type="external"] {\
+  pointer-events: auto;\
+  cursor: pointer;\
 }\
 \
 .ext-tile-name {\
@@ -150,48 +148,28 @@
   color: #fff;\
   font-size: clamp(12px, 1.2vw, 17px);\
   font-weight: 700;\
-  cursor: pointer;\
   letter-spacing: 0.5px;\
-  transition: background 0.15s, transform 0.1s;\
   box-shadow: 0 4px 15px rgba(91,196,172,0.35);\
+  pointer-events: none;\
 }\
-.ext-tile-btn:hover {\
+\
+/* Bare external-tiles har klikkbar knapp */\
+.ext-tile[data-type="external"] .ext-tile-btn {\
+  pointer-events: auto;\
+  cursor: pointer;\
+  transition: background 0.15s, transform 0.1s;\
+}\
+.ext-tile[data-type="external"] .ext-tile-btn:hover {\
   background: linear-gradient(135deg, #6bd4bc 0%, #5cc8ae 100%);\
   transform: translateY(-1px);\
 }\
-.ext-tile-btn:active { transform: translateY(1px); }\
+.ext-tile[data-type="external"] .ext-tile-btn:active { transform: translateY(1px); }\
 .ext-tile-btn:disabled {\
   background: #666;\
-  cursor: not-allowed;\
   box-shadow: none;\
 }\
 ';
   document.head.appendChild(css);
-
-  // ── Syntetisk klikk på Unity-canvas ───────────────────────────
-  function clickUnityCanvas(normX, normY) {
-    var canvas = document.getElementById('unity-canvas');
-    if (!canvas) return;
-    var r = canvas.getBoundingClientRect();
-    var cx = r.left + r.width * normX;
-    var cy = r.top + r.height * normY;
-    var opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy };
-
-    // Fjern pointer-events midlertidig slik at canvas mottar klikket
-    wrap.style.pointerEvents = 'none';
-    var tiles = wrap.querySelectorAll('.ext-tile');
-    for (var i = 0; i < tiles.length; i++) tiles[i].style.pointerEvents = 'none';
-
-    canvas.dispatchEvent(new PointerEvent('pointerdown', opts));
-    setTimeout(function () {
-      canvas.dispatchEvent(new PointerEvent('pointerup', opts));
-      canvas.dispatchEvent(new MouseEvent('click', opts));
-      setTimeout(function () {
-        wrap.style.pointerEvents = '';
-        for (var j = 0; j < tiles.length; j++) tiles[j].style.pointerEvents = '';
-      }, 100);
-    }, 50);
-  }
 
   // ── Bygg grid ─────────────────────────────────────────────────
   var wrap = document.createElement('div');
@@ -208,6 +186,7 @@
     var tile = document.createElement('div');
     tile.className = 'ext-tile';
     tile.setAttribute('data-game-id', game.id);
+    tile.setAttribute('data-type', game.type);
 
     var h = '';
     if (game.badge) {
@@ -221,17 +200,12 @@
     h += '<button class="ext-tile-btn"' + (isOpen ? '' : ' disabled') + '>' + btnLabel + '</button>';
     tile.innerHTML = h;
 
-    if (isOpen) {
-      (function (g) {
-        tile.addEventListener('click', function () {
-          if (g.type === 'external') {
-            if (typeof openGameInIframe === 'function') openGameInIframe(g.url);
-            else window.open(g.url, '_blank');
-          } else if (g.type === 'unity' && g.canvasXY) {
-            clickUnityCanvas(g.canvasXY[0], g.canvasXY[1]);
-          }
-        });
-      })(game);
+    // Bare external-spill (Candy) håndteres i JS
+    if (game.type === 'external' && isOpen) {
+      tile.addEventListener('click', function () {
+        if (typeof openGameInIframe === 'function') openGameInIframe(game.url);
+        else window.open(game.url, '_blank');
+      });
     }
 
     cell.appendChild(tile);
