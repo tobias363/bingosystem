@@ -1097,16 +1097,11 @@ function renderHeroPanel() {
 }
 
 function renderGameLobby() {
-  if (!els.gamesLobby) {
-    return;
-  }
-
+  if (!els.gamesLobby) return;
   els.gamesLobby.innerHTML = "";
+
   if (!state.games.length) {
-    const empty = document.createElement("p");
-    empty.className = "subtle";
-    empty.textContent = "Ingen spill publisert ennå.";
-    els.gamesLobby.appendChild(empty);
+    els.gamesLobby.innerHTML = '<p class="subtle">Ingen spill publisert ennå.</p>';
     return;
   }
 
@@ -1115,111 +1110,65 @@ function renderGameLobby() {
     const stats = resolveShowcaseStats(game, index);
 
     const card = document.createElement("article");
-    card.className = "game-showcase-card";
-    card.classList.toggle("active", game.slug === state.selectedGameSlug);
+    card.className = `game-showcase-card ${game.slug === state.selectedGameSlug ? "active" : ""}`;
     card.style.setProperty("--showcase-accent", theme.accent);
     card.style.setProperty("--showcase-accent-soft", theme.accentSoft);
     card.style.setProperty("--showcase-bg", theme.background);
 
-    const left = document.createElement("div");
-    left.className = "game-showcase-left";
+    card.innerHTML = `
+      <div class="game-showcase-left">
+        ${theme.image ? `
+        <div class="game-showcase-image">
+          <img src="${theme.image}" alt="${game.title || game.slug}" loading="lazy" />
+        </div>` : ""}
+        <div class="game-showcase-text">
+          <span class="game-showcase-badge">${stats.badgeValue}</span>
+          <h3 class="game-showcase-title">${game.title || game.slug}</h3>
+          <p class="game-showcase-meta">${(game.route || "/").toUpperCase()} • ${game.isEnabled ? "LIVE" : "STENGT"}</p>
+          <p class="game-showcase-description">${game.description || "Ingen beskrivelse tilgjengelig."}</p>
+        </div>
+      </div>
+      <div class="game-showcase-right">
+        <div class="game-showcase-metrics">
+          <div class="game-showcase-metric">
+            <strong>${formatNok(stats.prizePool)}</strong><span>Premiepott</span><span class="game-showcase-icon">P</span>
+          </div>
+          <div class="game-showcase-metric">
+            <strong>${stats.players}</strong><span>Spillere</span><span class="game-showcase-icon">S</span>
+          </div>
+          <div class="game-showcase-metric">
+            <strong>${formatNok(stats.ticketPrice)}</strong><span>Pris</span><span class="game-showcase-icon">K</span>
+          </div>
+          <div class="game-showcase-metric">
+            <strong>${stats.drawText}</strong><span>Neste</span><span class="game-showcase-icon">T</span>
+          </div>
+        </div>
+        <div class="game-showcase-actions">
+          <button type="button" class="btn-ghost js-read-more">Les mer</button>
+          <button type="button" class="btn-primary js-play-now" ${!game.isEnabled ? "disabled" : ""}>Spill nå</button>
+        </div>
+      </div>
+    `;
 
-    if (theme.image) {
-      const imgWrap = document.createElement("div");
-      imgWrap.className = "game-showcase-image";
-      const img = document.createElement("img");
-      img.src = theme.image;
-      img.alt = game.title || game.slug;
-      img.loading = "lazy";
-      imgWrap.appendChild(img);
-      left.appendChild(imgWrap);
-    }
-
-    const textBlock = document.createElement("div");
-    textBlock.className = "game-showcase-text";
-
-    const badge = document.createElement("span");
-    badge.className = "game-showcase-badge";
-    badge.textContent = String(stats.badgeValue);
-
-    const title = document.createElement("h3");
-    title.className = "game-showcase-title";
-    title.textContent = game.title || game.slug;
-
-    const meta = document.createElement("p");
-    meta.className = "game-showcase-meta";
-    meta.textContent = `${(game.route || "/").toUpperCase()} • ${game.isEnabled ? "LIVE" : "STENGT"}`;
-
-    const description = document.createElement("p");
-    description.className = "game-showcase-description";
-    description.textContent = game.description || "Ingen beskrivelse tilgjengelig.";
-
-    textBlock.appendChild(badge);
-    textBlock.appendChild(title);
-    textBlock.appendChild(meta);
-    textBlock.appendChild(description);
-    left.appendChild(textBlock);
-
-    const right = document.createElement("div");
-    right.className = "game-showcase-right";
-
-    const metricRows = document.createElement("div");
-    metricRows.className = "game-showcase-metrics";
-
-    const metrics = [
-      { label: "Premiepott", value: formatNok(stats.prizePool), icon: "P" },
-      { label: "Spillere", value: String(stats.players), icon: "S" },
-      { label: "Pris", value: formatNok(stats.ticketPrice), icon: "K" },
-      { label: "Neste", value: stats.drawText, icon: "T" }
-    ];
-
-    for (const metric of metrics) {
-      const row = document.createElement("div");
-      row.className = "game-showcase-metric";
-
-      const value = document.createElement("strong");
-      value.textContent = metric.value;
-
-      const label = document.createElement("span");
-      label.textContent = metric.label;
-
-      const icon = document.createElement("span");
-      icon.className = "game-showcase-icon";
-      icon.textContent = metric.icon;
-
-      row.appendChild(value);
-      row.appendChild(label);
-      row.appendChild(icon);
-      metricRows.appendChild(row);
-    }
-
-    const actions = document.createElement("div");
-    actions.className = "game-showcase-actions";
-
-    const readMoreBtn = document.createElement("button");
-    readMoreBtn.type = "button";
-    readMoreBtn.className = "btn-ghost";
-    readMoreBtn.textContent = "Les mer";
-    readMoreBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
+    card.addEventListener("click", () => {
       state.selectedGameSlug = game.slug;
-      renderSelectedGame();
+      if (typeof renderSelectedGame === 'function') renderSelectedGame();
     });
 
-    const playBtn = document.createElement("button");
-    playBtn.type = "button";
-    playBtn.className = "btn-primary";
-    playBtn.textContent = "Spill nå";
-    playBtn.disabled = !game.isEnabled;
-    playBtn.addEventListener("click", (event) => {
+    card.querySelector(".js-read-more").addEventListener("click", (event) => {
       event.stopPropagation();
       state.selectedGameSlug = game.slug;
-      renderSelectedGame();
+      if (typeof renderSelectedGame === 'function') renderSelectedGame();
+    });
+
+    card.querySelector(".js-play-now").addEventListener("click", (event) => {
+      event.stopPropagation();
+      state.selectedGameSlug = game.slug;
+      if (typeof renderSelectedGame === 'function') renderSelectedGame();
+
       if (DIRECT_LAUNCH_GAME_SLUGS.has(game.slug)) {
         const launchUrl = resolveGameLaunchUrl(game);
-        if (launchUrl) {
-          window.location.assign(launchUrl);
-        }
+        if (launchUrl) window.location.assign(launchUrl);
         return;
       }
       if (INSTANT_LAUNCH_GAME_SLUGS.has(game.slug)) {
@@ -1230,20 +1179,6 @@ function renderGameLobby() {
       if (target && !target.classList.contains("hidden")) {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
-    });
-
-    actions.appendChild(readMoreBtn);
-    actions.appendChild(playBtn);
-
-    right.appendChild(metricRows);
-    right.appendChild(actions);
-
-    card.appendChild(left);
-    card.appendChild(right);
-
-    card.addEventListener("click", () => {
-      state.selectedGameSlug = game.slug;
-      renderSelectedGame();
     });
 
     els.gamesLobby.appendChild(card);
