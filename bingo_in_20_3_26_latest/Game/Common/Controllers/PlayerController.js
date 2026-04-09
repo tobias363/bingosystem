@@ -228,14 +228,25 @@ module.exports = {
     },
 
     playerLogin: async function (socket, data) {
+        let language = data?.language || "nor";
+        let loginResult = { storeUrl: "", message: "", disable_store_link: true, playerId: "", hall: "", hallName: "", points: 0, realMoney: 0 };
+
         try {
+            const payload = data || {};
             const {
-                language = "nor", password, os, appVersion, name, forceLogin, deviceId, firebaseToken
-            } = data;
+                language: requestedLanguage = "nor",
+                password,
+                os,
+                appVersion,
+                name,
+                forceLogin,
+                deviceId,
+                firebaseToken
+            } = payload;
 
-            let { hallId } = data;
+            language = requestedLanguage;
 
-            let loginResult = { storeUrl: "", message: "", disable_store_link: true, playerId: "", hall: "", hallName: "", points: 0, realMoney: 0 }
+            let { hallId } = payload;
 
             // Early validation for required fields
             if (!password?.trim()) { //|| !hallId?.trim()
@@ -396,8 +407,15 @@ module.exports = {
             return createSuccessResponse({ storeUrl: "", message: "", disable_store_link: true, playerId: player._id.toString(), hall: currentHall.id, hallName: currentHall.name, points: player.points, realMoney: player.walletAmount.toFixed(2), selectedLanguage: player.selectedLanguage, screenSaver: Sys.Setting.screenSaver, screenSaverTime: Sys.Setting.screenSaverTime, imageTime: Sys.Setting.imageTime, authToken, refreshAuthToken, canPlayGames: canPlayGames, isVerifiedByBankID: isVerifiedByBankID, isVerifiedByHall: isVerifiedByHall, approvedHalls: approvedHalls, isSoundOn: 0, isVoiceOn: 0, selectedVoiceLanguage: 0 }, "Player Successfully Login!", language, false,);
 
         } catch (error) {
-            console.error('Login Error:', error);
-            return await createErrorResponse("something_went_wrong", language, 400, true, null, { storeUrl: "", message: "", disable_store_link: true, playerId: "", hall: "", hallName: "", points: 0, realMoney: 0 });
+            console.error('Login Error:', {
+                message: error?.message,
+                stack: error?.stack,
+                playerName: data?.name,
+                os: data?.os,
+                appVersion: data?.appVersion,
+                language
+            });
+            return await createErrorResponse("something_went_wrong", language, 400, true, null, loginResult);
         }
     },
 
@@ -6207,4 +6225,3 @@ const renderPendingResponse = async (res, reponsePage, language, messageKey, tit
     };
     return res.render(reponsePage, data);
 };
-
