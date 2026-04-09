@@ -25,6 +25,11 @@ const {
     isDateInRange 
 } = require('../../../gamehelper/all');
 const { countryNames } = require('../../../gamehelper/game1-process');
+
+function getRuntimeSettings() {
+    return Sys.Setting && typeof Sys.Setting === 'object' ? Sys.Setting : {};
+}
+
 module.exports = {
     // [ Cron Function ]
     startGameCron: async function () {
@@ -133,23 +138,25 @@ module.exports = {
     // [ Register Time Hall List Function ]
     hallList: async function (socket, data) {
         try {
-            const { 
-                android_version, ios_version, wind_linux_version: windows_version, webgl_version 
-            } = Sys.Setting;
+            const settings = getRuntimeSettings();
 
             // Get player IP early
             const playerIp = getPlayerIp({
-                handshake: { headers: socket.handshake.headers },
-                conn: { remoteAddress: socket.conn.remoteAddress }
+                handshake: { headers: socket?.handshake?.headers || {} },
+                conn: { remoteAddress: socket?.conn?.remoteAddress }
             });
             
             // Create versions object once
             const versions = {
-                android_version,
-                ios_version,
-                windows_version,
-                webgl_version,
+                android_version: settings.android_version || "",
+                ios_version: settings.ios_version || "",
+                windows_version: settings.wind_linux_version || "",
+                webgl_version: settings.webgl_version || "",
             };
+
+            if (!Sys.Setting) {
+                console.warn('[BIN-134-DIAG] Sys.Setting mangler i hallList, returnerer fallback versions');
+            }
 
             // DB query with minimal projection
             const hallList = await Sys.Game.Common.Services.GameServices.getHallData(
@@ -2083,7 +2090,6 @@ module.exports = {
     // },
 
 }
-
 
 
 

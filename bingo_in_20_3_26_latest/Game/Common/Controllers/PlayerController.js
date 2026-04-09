@@ -58,6 +58,39 @@ const {
 const { validateAddressData, playerVerificationStatus } = require('../../../gamehelper/game1-process');
 const { playerForgotPassTranslation } = require('../../../gamehelper/common');
 const { json } = require('body-parser');
+
+function getRuntimeSettings() {
+    return Sys.Setting && typeof Sys.Setting === 'object' ? Sys.Setting : {};
+}
+
+function parseVersion(version) {
+    const cleaned = String(version ?? '').trim().replace(/[^0-9.]/g, '');
+    if (!cleaned) return [];
+    return cleaned.split('.').map(part => Number.parseInt(part, 10) || 0);
+}
+
+function isVersionAtLeast(currentVersion, requiredVersion) {
+    if (requiredVersion === undefined || requiredVersion === null || requiredVersion === '') {
+        return true;
+    }
+    if (currentVersion === undefined || currentVersion === null || currentVersion === '') {
+        return false;
+    }
+
+    const currentParts = parseVersion(currentVersion);
+    const requiredParts = parseVersion(requiredVersion);
+    const maxLength = Math.max(currentParts.length, requiredParts.length);
+
+    for (let index = 0; index < maxLength; index++) {
+        const current = currentParts[index] || 0;
+        const required = requiredParts[index] || 0;
+        if (current > required) return true;
+        if (current < required) return false;
+    }
+
+    return true;
+}
+
 module.exports = {
 
     registerPlayer: async function (req, res) {
@@ -232,6 +265,7 @@ module.exports = {
         let loginResult = { storeUrl: "", message: "", disable_store_link: true, playerId: "", hall: "", hallName: "", points: 0, realMoney: 0 };
 
         try {
+            const settings = getRuntimeSettings();
             const payload = data || {};
             const {
                 language: requestedLanguage = "nor",
@@ -258,23 +292,36 @@ module.exports = {
                 return await createErrorResponse("update_app", language, 401, true, null, loginResult);
             }
 
+            const requiredVersionByOs = {
+                android: settings.android_version,
+                iOS: settings.ios_version,
+                windows: settings.wind_linux_version,
+                other: settings.wind_linux_version,
+                webgl: settings.webgl_version
+            };
+
+            const requiredVersion = requiredVersionByOs[os];
+
+            if (!Sys.Setting) {
+                console.warn('[BIN-134-DIAG] Sys.Setting mangler i playerLogin, hopper over streng versjonsgating', {
+                    os,
+                    appVersion,
+                    requiredVersion
+                });
+            }
+
             // Version check
-            const isValidVersion = (
-                (os === 'android' && appVersion >= Sys.Setting.android_version) ||
-                (os === 'iOS' && appVersion >= Sys.Setting.ios_version) ||
-                ((os === 'windows' || os === 'other') && appVersion >= Sys.Setting.wind_linux_version) ||
-                (os === 'webgl' && appVersion >= Sys.Setting.webgl_version)
-            );
+            const isValidVersion = isVersionAtLeast(appVersion, requiredVersion);
 
             if (!isValidVersion) {
                 const storeUrls = {
-                    android: Sys.Setting.android_store_link,
-                    iOS: Sys.Setting.ios_store_link,
-                    windows: Sys.Setting.windows_store_link,
-                    webgl: Sys.Setting.webgl_store_link
+                    android: settings.android_store_link,
+                    iOS: settings.ios_store_link,
+                    windows: settings.windows_store_link,
+                    webgl: settings.webgl_store_link
                 };
-                loginResult.storeUrl = Sys.Setting.disable_store_link === "No" ? (storeUrls[os] || storeUrls.windows) : "";
-                loginResult.disable_store_link = Sys.Setting.disable_store_link === "Yes";
+                loginResult.storeUrl = settings.disable_store_link === "No" ? (storeUrls[os] || storeUrls.windows || "") : "";
+                loginResult.disable_store_link = settings.disable_store_link === "Yes";
                 loginResult.message = await translate({ key: "update_app", language: language });
                 return await createErrorResponse("updateApp", language, 401, false, null, loginResult);
             }
@@ -404,7 +451,7 @@ module.exports = {
             const approvedHalls = await getAvailableHallLimit({ playerId: player._id, approvedHalls: updatedPlayer?.approvedHalls, selectedHallId: currentHall.id });
            
             // Return success response
-            return createSuccessResponse({ storeUrl: "", message: "", disable_store_link: true, playerId: player._id.toString(), hall: currentHall.id, hallName: currentHall.name, points: player.points, realMoney: player.walletAmount.toFixed(2), selectedLanguage: player.selectedLanguage, screenSaver: Sys.Setting.screenSaver, screenSaverTime: Sys.Setting.screenSaverTime, imageTime: Sys.Setting.imageTime, authToken, refreshAuthToken, canPlayGames: canPlayGames, isVerifiedByBankID: isVerifiedByBankID, isVerifiedByHall: isVerifiedByHall, approvedHalls: approvedHalls, isSoundOn: 0, isVoiceOn: 0, selectedVoiceLanguage: 0 }, "Player Successfully Login!", language, false,);
+            return createSuccessResponse({ storeUrl: "", message: "", disable_store_link: true, playerId: player._id.toString(), hall: currentHall.id, hallName: currentHall.name, points: player.points, realMoney: player.walletAmount.toFixed(2), selectedLanguage: player.selectedLanguage, screenSaver: settings.screenSaver ?? 0, screenSaverTime: settings.screenSaverTime ?? 0, imageTime: settings.imageTime ?? 0, authToken, refreshAuthToken, canPlayGames: canPlayGames, isVerifiedByBankID: isVerifiedByBankID, isVerifiedByHall: isVerifiedByHall, approvedHalls: approvedHalls, isSoundOn: 0, isVoiceOn: 0, selectedVoiceLanguage: 0 }, "Player Successfully Login!", language, false,);
 
         } catch (error) {
             console.error('Login Error:', {
@@ -413,7 +460,8 @@ module.exports = {
                 playerName: data?.name,
                 os: data?.os,
                 appVersion: data?.appVersion,
-                language
+                language,
+                hasSetting: !!Sys.Setting
             });
             return await createErrorResponse("something_went_wrong", language, 400, true, null, loginResult);
         }
@@ -4498,9 +4546,10 @@ module.exports = {
 
     ScreenSaver: async function (socket, data) {
         try {
+            const settings = getRuntimeSettings();
             return {
                 status: 'success',
-                result: { screenSaver: Sys.Setting.screenSaver, screenSaverTime: Sys.Setting.screenSaverTime, imageTime: Sys.Setting.imageTime },
+                result: { screenSaver: settings.screenSaver ?? 0, screenSaverTime: settings.screenSaverTime ?? 0, imageTime: settings.imageTime ?? 0 },
                 message: 'Screen saver response'
             }
         } catch (error) {
