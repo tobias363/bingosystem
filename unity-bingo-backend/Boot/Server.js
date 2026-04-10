@@ -66,11 +66,44 @@ const allowedOrigins = [
     ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : []),
 ];
 
+function normalizeOriginList(values) {
+    return [...new Set(
+        values
+            .filter(Boolean)
+            .flatMap((value) => String(value).split(','))
+            .map((value) => value.trim())
+            .filter(Boolean)
+            .map((value) => {
+                try {
+                    return new URL(value).origin;
+                } catch (_error) {
+                    return null;
+                }
+            })
+            .filter(Boolean)
+    )];
+}
+
+const allowedEmbedOrigins = normalizeOriginList([
+    'http://127.0.0.1:4174',
+    'http://localhost:4174',
+    'http://127.0.0.1:4000',
+    'http://localhost:4000',
+    'https://candy-backend-ldvg.onrender.com',
+    process.env.CANDY_BACKEND_URL,
+    process.env.CANDY_RUNTIME_URL,
+    process.env.INTEGRATION_CANDY_FRONTEND_URL,
+    process.env.INTEGRATION_CANDY_API_BASE_URL,
+    process.env.ALLOWED_EMBED_ORIGINS
+]);
+
 Sys.App = express();
 Sys.App.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "wss:", "data:", "blob:"],
+            childSrc: ["'self'", ...allowedEmbedOrigins],
+            frameSrc: ["'self'", ...allowedEmbedOrigins],
             fontSrc: ["'self'", "https:", "data:"],
             imgSrc: ["'self'", "https:", "data:", "blob:"],
             scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https:", "blob:"],

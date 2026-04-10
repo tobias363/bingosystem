@@ -277,15 +277,27 @@ module.exports = {
             // Get game types with minimal projection
             const gameTypes = await Sys.Game.Common.Services.GameServices.getListData(
                 {}, // query
-                { name: 1, photo: 1, _id: 0 } // projection - only get needed fields
+                { name: 1, photo: 1, type: 1, _id: 0 } // projection - only get needed fields
             );
 
             if (!gameTypes?.length) {
                 return createErrorResponse( 'No game types found','en', 400, false);
             }
 
+            const unityGameTypes = gameTypes
+                .filter(({ type }) => typeof type === 'string' && /^game_\d+$/.test(type))
+                .sort((left, right) => {
+                    const leftNumber = Number((left.type || '').replace('game_', '')) || 0;
+                    const rightNumber = Number((right.type || '').replace('game_', '')) || 0;
+                    return leftNumber - rightNumber;
+                });
+
+            if (!unityGameTypes.length) {
+                return createErrorResponse('No Unity game types found', 'en', 400, false);
+            }
+
             // Transform data efficiently using map
-            const gameList = gameTypes.map(({ name, photo }) => {
+            const gameList = unityGameTypes.map(({ name, photo }) => {
                 const normalizedPhoto = typeof photo === 'string'
                     ? photo.replace(/^\/+/, '')
                     : '';
@@ -2094,6 +2106,5 @@ module.exports = {
     // },
 
 }
-
 
 

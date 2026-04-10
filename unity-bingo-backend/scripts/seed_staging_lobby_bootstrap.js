@@ -273,6 +273,18 @@ async function main() {
     const existingTypesByType = new Map(gameTypes.map((doc) => [doc.type, doc]));
     const typeBootstrap = [
       {
+        type: 'game_1',
+        name: 'Recovery Bingo 1',
+        photo: photoPool[2],
+        row: '5',
+        columns: '5',
+        totalNoTickets: '30',
+        userMaxTickets: '30',
+        pickLuckyNumber: [],
+        rangeMin: '1',
+        rangeMax: '75',
+      },
+      {
         type: 'game_2',
         name: 'Recovery Game 2',
         photo: photoPool[0],
@@ -311,6 +323,7 @@ async function main() {
       },
     ];
 
+    const game1TypeId = existingTypesByType.get('game_1')?._id || new ObjectId();
     const game2TypeId = existingTypesByType.get('game_2')?._id || new ObjectId();
     const game3TypeId = existingTypesByType.get('game_3')?._id || new ObjectId();
 
@@ -597,7 +610,17 @@ async function main() {
       const typeData = typeBootstrap[index];
       const existing = existingTypesByType.get(typeData.type);
       await db.collection('gameType').updateOne(
-        { _id: existing?._id || (typeData.type === 'game_2' ? game2TypeId : game3TypeId) },
+        {
+          _id:
+            existing?._id
+            || (
+              typeData.type === 'game_1'
+                ? game1TypeId
+                : typeData.type === 'game_2'
+                  ? game2TypeId
+                  : game3TypeId
+            ),
+        },
         {
           $set: {
             ...typeData,
