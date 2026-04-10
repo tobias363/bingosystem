@@ -10,7 +10,7 @@ export interface Player {
 }
 
 export interface Ticket {
-  // 5x5 board, where 0 indicates the free center square.
+  // 3x5 grid (3 rows, 5 columns), numbers 1-60. No free space.
   grid: number[][];
 }
 

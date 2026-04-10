@@ -25,6 +25,7 @@ import type {
   RoomSummary,
   Ticket
 } from "./types.js";
+import { InMemoryRoomStateStore, type RoomStateStore } from "../store/RoomStateStore.js";
 
 export class DomainError extends Error {
   public readonly code: string;
@@ -83,6 +84,8 @@ interface EndGameInput {
 
 interface ComplianceOptions {
   minRoundIntervalMs?: number;
+  /** MEDIUM-1: Minimum interval between manual draws (ms). Default 1500. */
+  minDrawIntervalMs?: number;
   minPlayersToStart?: number;
   dailyLossLimit?: number;
   monthlyLossLimit?: number;
@@ -325,7 +328,8 @@ const MAX_BINGO_BALLS = 60;
 const DEFAULT_BONUS_TRIGGER_PATTERN_INDEX = 1;
 
 export class BingoEngine {
-  private readonly rooms = new Map<string, RoomState>();
+  /** HOEY-7: Pluggable room state store (in-memory or Redis-backed). */
+  private readonly rooms: RoomStateStore;
   private readonly roomLastRoundStartMs = new Map<string, number>();
   private readonly lossEntriesByScope = new Map<string, LossLedgerEntry[]>();
   private readonly personalLossLimitsByScope = new Map<string, LossLimits>();
@@ -341,6 +345,8 @@ export class BingoEngine {
   private lastPayoutAuditHash = "GENESIS";
 
   private readonly minRoundIntervalMs: number;
+  private readonly minDrawIntervalMs: number;
+  private readonly lastDrawAtByRoom = new Map<string, number>();
   private readonly minPlayersToStart: number;
   private readonly regulatoryLossLimits: LossLimits;
   private readonly playSessionLimitMs: number;
@@ -351,9 +357,13 @@ export class BingoEngine {
   constructor(
     private readonly bingoAdapter: BingoSystemAdapter,
     private readonly walletAdapter: WalletAdapter,
-    options: ComplianceOptions = {}
+    options: ComplianceOptions = {},
+    /** HOEY-7: Pluggable room state store. Defaults to in-memory. */
+    rooms?: RoomStateStore
   ) {
+    this.rooms = rooms ?? new InMemoryRoomStateStore();
     this.minRoundIntervalMs = Math.max(30000, Math.floor(options.minRoundIntervalMs ?? 30000));
+    this.minDrawIntervalMs = Math.max(0, Math.floor(options.minDrawIntervalMs ?? 1500));
     const minPlayersToStart = options.minPlayersToStart ?? 2;
     if (!Number.isFinite(minPlayersToStart) || !Number.isInteger(minPlayersToStart) || minPlayersToStart < 1) {
       throw new DomainError("INVALID_CONFIG", "minPlayersToStart må være et heltall >= 1.");
@@ -672,6 +682,8 @@ export class BingoEngine {
         logger.error({ err, gameId }, "CRITICAL: Checkpoint failed after game start");
       }
     }
+    // HOEY-7: Persist room state after buy-in
+    await this.rooms.persist(room.code);
     if (this.bingoAdapter.onGameStarted) {
       await this.bingoAdapter.onGameStarted({
         roomCode: room.code,
@@ -686,7 +698,21 @@ export class BingoEngine {
     const room = this.requireRoom(input.roomCode);
     this.assertHost(room, input.actorPlayerId);
     const host = this.requirePlayer(room, input.actorPlayerId);
-    this.assertWalletAllowedForGameplay(host.walletId, Date.now());
+    const nowMs = Date.now();
+    this.assertWalletAllowedForGameplay(host.walletId, nowMs);
+
+    // MEDIUM-1: Enforce minimum interval between manual draws
+    if (this.minDrawIntervalMs > 0) {
+      const lastDraw = this.lastDrawAtByRoom.get(room.code);
+      if (lastDraw !== undefined) {
+        const elapsed = nowMs - lastDraw;
+        if (elapsed < this.minDrawIntervalMs) {
+          const waitSec = ((this.minDrawIntervalMs - elapsed) / 1000).toFixed(1);
+          throw new DomainError("DRAW_TOO_FAST", `Vent ${waitSec}s mellom trekninger.`);
+        }
+      }
+    }
+
     const game = this.requireRunningGame(room);
     if (game.drawnNumbers.length >= this.maxDrawsPerRound) {
       const endedAt = new Date();
@@ -731,6 +757,8 @@ export class BingoEngine {
       // HOEY-6: Write GAME_END checkpoint for MAX_DRAWS_REACHED (post-draw)
       await this.writeGameEndCheckpoint(room, game);
     }
+    // MEDIUM-1: Record draw timestamp for interval enforcement
+    this.lastDrawAtByRoom.set(room.code, Date.now());
     return { number: nextNumber, drawIndex: game.drawnNumbers.length, gameId: game.id };
   }
 
@@ -938,6 +966,8 @@ export class BingoEngine {
             logger.error({ err, claimId: claim.id, gameId: game.id }, "CRITICAL: Checkpoint failed after LINE payout");
           }
         }
+        // HOEY-7: Persist after LINE payout
+        await this.rooms.persist(room.code);
       }
       const rtpBudgetAfter = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       claim.payoutAmount = payout;
@@ -1035,6 +1065,8 @@ export class BingoEngine {
             logger.error({ err, claimId: claim.id, gameId: game.id }, "CRITICAL: Checkpoint failed after BINGO payout");
           }
         }
+        // HOEY-7: Persist after BINGO payout
+        await this.rooms.persist(room.code);
       }
       game.remainingPrizePool = roundCurrency(Math.max(0, game.remainingPrizePool - payout));
       game.remainingPayoutBudget = roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
@@ -1137,6 +1169,8 @@ export class BingoEngine {
       throw new DomainError("GAME_IN_PROGRESS", `Kan ikke slette rom ${code} mens en runde pågår.`);
     }
     this.rooms.delete(code);
+    this.roomLastRoundStartMs.delete(code);
+    this.lastDrawAtByRoom.delete(code);
   }
 
   getPlayerCompliance(walletId: string, hallId?: string): PlayerComplianceSnapshot {
@@ -2229,8 +2263,8 @@ export class BingoEngine {
   }
 
   private isPlayerInAnotherRunningGame(roomCode: string, player: Player): boolean {
-    for (const [code, room] of this.rooms) {
-      if (code === roomCode) continue;
+    for (const room of this.rooms.values()) {
+      if (room.code === roomCode) continue;
       if (room.currentGame?.status === "RUNNING" && room.players.has(player.id)) {
         return true;
       }
@@ -2943,6 +2977,8 @@ export class BingoEngine {
     } catch (err) {
       logger.error({ err, gameId: game.id, drawCount: game.drawnNumbers.length }, "CRITICAL: Checkpoint failed after draw");
     }
+    // HOEY-7: Persist room state to backing store after draw
+    await this.rooms.persist(room.code);
   }
 
   /** HOEY-6: Write a GAME_END checkpoint for any termination path. */
@@ -2960,6 +2996,8 @@ export class BingoEngine {
     } catch (err) {
       logger.error({ err, gameId: game.id, endedReason: game.endedReason }, "CRITICAL: Checkpoint failed at game end");
     }
+    // HOEY-7: Persist room state to backing store after game end
+    await this.rooms.persist(room.code);
   }
 
   private serializeGame(game: GameState): GameSnapshot {

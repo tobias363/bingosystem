@@ -11,7 +11,7 @@ import { PostgresBingoSystemAdapter } from "./adapters/PostgresBingoSystemAdapte
 import { LocalKycAdapter } from "./adapters/LocalKycAdapter.js";
 import { assertTicketsPerPlayerWithinHallLimit } from "./game/compliance.js";
 import { BingoEngine, DomainError, toPublicError } from "./game/BingoEngine.js";
-import { generateTraditional75Ticket } from "./game/ticket.js";
+import { generateDatabingo60Ticket } from "./game/ticket.js";
 import type { ClaimType, RoomSnapshot, RoomSummary, Ticket } from "./game/types.js";
 import {
   ADMIN_ACCESS_POLICY,
@@ -362,7 +362,7 @@ const engine = new BingoEngine(localBingoAdapter, walletAdapter, {
   pauseDurationMs: bingoPauseDurationMs,
   selfExclusionMinMs: bingoSelfExclusionMinMs,
   maxDrawsPerRound: bingoMaxDrawsPerRound
-});
+}, roomStateStore);
 
 const platformService = new PlatformService(walletAdapter, {
   connectionString: platformConnectionString,
@@ -1104,7 +1104,7 @@ function getOrCreateDisplayTickets(roomCode: string, playerId: string, count: nu
   if (cached && cached.length === count) return cached;
   const tickets: Ticket[] = [];
   for (let i = 0; i < count; i++) {
-    tickets.push(generateTraditional75Ticket());
+    tickets.push(generateDatabingo60Ticket());
   }
   displayTicketCache.set(key, tickets);
   return tickets;
@@ -2077,12 +2077,20 @@ app.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
 
 app.post("/api/admin/rooms/:roomCode/draw-next", async (req, res) => {
   try {
-    await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+    const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
     const snapshot = engine.getRoomSnapshot(roomCode);
     const drawResult = await engine.drawNextNumber({
       roomCode,
       actorPlayerId: snapshot.hostPlayerId
+    });
+    console.info("[MEDIUM-4] Admin draw", {
+      adminUserId: adminUser.id,
+      adminEmail: adminUser.email,
+      roomCode,
+      gameId: drawResult.gameId,
+      number: drawResult.number,
+      drawIndex: drawResult.drawIndex
     });
     io.to(roomCode).emit("draw:new", { number: drawResult.number, source: "admin", drawIndex: drawResult.drawIndex, gameId: drawResult.gameId });
     const updatedSnapshot = await emitRoomUpdate(roomCode);
@@ -2100,13 +2108,20 @@ app.post("/api/admin/rooms/:roomCode/draw-next", async (req, res) => {
 
 app.post("/api/admin/rooms/:roomCode/end", async (req, res) => {
   try {
-    await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+    const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+    const reason = typeof req.body?.reason === "string" ? req.body.reason : "Manual end from admin";
     const beforeEndSnapshot = engine.getRoomSnapshot(roomCode);
     await engine.endGame({
       roomCode,
       actorPlayerId: beforeEndSnapshot.hostPlayerId,
-      reason: typeof req.body?.reason === "string" ? req.body.reason : "Manual end from admin"
+      reason
+    });
+    console.info("[MEDIUM-4] Admin end game", {
+      adminUserId: adminUser.id,
+      adminEmail: adminUser.email,
+      roomCode,
+      reason
     });
     const snapshot = await emitRoomUpdate(roomCode);
     apiSuccess(res, {
@@ -2871,6 +2886,12 @@ io.use(async (socket, next) => {
 });
 
 io.on("connection", (socket: Socket) => {
+  // HOEY-9: Register player identity for player-based rate limiting.
+  // socket.data.user is set by the auth middleware above.
+  if (socket.data.user?.walletId) {
+    socketRateLimiter.registerPlayer(socket.id, socket.data.user.walletId);
+  }
+
   /** BIN-164: Wrap a socket handler with rate limiting. */
   function rateLimited<P, R>(
     eventName: string,

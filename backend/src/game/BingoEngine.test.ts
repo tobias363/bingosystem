@@ -291,7 +291,8 @@ test("rtp payout budget caps total payouts across line and bingo claims", async 
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
     dailyLossLimit: 10000,
     monthlyLossLimit: 10000,
-    maxDrawsPerRound: 60
+    maxDrawsPerRound: 60,
+    minDrawIntervalMs: 0
   });
 
   const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
@@ -397,7 +398,8 @@ test("rtp payout budget caps total payouts across line and bingo claims", async 
 
 test("line claim includes deterministic backend bonus contract fields in claim and snapshot", async () => {
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), new InMemoryWalletAdapter(), {
-    maxDrawsPerRound: 60
+    maxDrawsPerRound: 60,
+    minDrawIntervalMs: 0
   });
   const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
     hallId: "hall-1",
@@ -463,7 +465,8 @@ test("line claim includes deterministic backend bonus contract fields in claim a
 
 test("round ends automatically when max draws is reached", async () => {
   const limitedEngine = new BingoEngine(new FixedTicketBingoAdapter(), new InMemoryWalletAdapter(), {
-    maxDrawsPerRound: 3
+    maxDrawsPerRound: 3,
+    minDrawIntervalMs: 0
   });
   const { roomCode: limitedRoomCode, playerId: limitedHostPlayerId } = await limitedEngine.createRoom({
     hallId: "hall-1",
@@ -812,7 +815,8 @@ test("prize policy caps single databingo payouts and stores policy reference", a
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
     dailyLossLimit: 20000,
     monthlyLossLimit: 20000,
-    maxDrawsPerRound: 60
+    maxDrawsPerRound: 60,
+    minDrawIntervalMs: 0
   });
   const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
     hallId: "hall-1",
@@ -948,7 +952,8 @@ test("payout audit trail includes immutable hash chain and payout metadata", asy
   const engine = new BingoEngine(new FixedTicketBingoAdapter(), wallet, {
     dailyLossLimit: 10000,
     monthlyLossLimit: 10000,
-    maxDrawsPerRound: 60
+    maxDrawsPerRound: 60,
+    minDrawIntervalMs: 0
   });
 
   const { roomCode, playerId: hostPlayerId } = await engine.createRoom({
