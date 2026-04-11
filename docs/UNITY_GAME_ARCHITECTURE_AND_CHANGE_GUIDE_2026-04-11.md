@@ -64,7 +64,7 @@ Den faktiske flyten i klienten er:
 
 ## Test- og verifikasjonslag
 
-Det finnes nå tre grunnleggende Unity-sjekker som bør kjøres etter hver cleanup- eller strukturendring:
+Det finnes nå fire grunnleggende Unity-sjekker som bør kjøres etter hver cleanup- eller strukturendring:
 
 1. Compile-check
    - [`unity-compile-check.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-compile-check.sh)
@@ -80,11 +80,17 @@ Det finnes nå tre grunnleggende Unity-sjekker som bør kjøres etter hver clean
    - [`GamePanelWiringSmokeTests.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Other/Editor/GamePanelWiringSmokeTests.cs)
    - formål: bekrefte at `Game.unity` fortsatt har intakt wiring mellom `UIManager`, Game1-Game5-panelene og de viktigste gameplay-/minigame-referansene
 
-Disse tre testene er ikke full gameplay-verifisering, men de er nok til å fange:
+4. Game flow contract smoke
+   - [`unity-game-flow-contract-smoke.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-game-flow-contract-smoke.sh)
+   - [`GameFlowContractSmokeTests.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Other/Editor/GameFlowContractSmokeTests.cs)
+   - formål: bekrefte at Game1-Game5 fortsatt eksponerer de viktigste runtime-entrypoints for panelåpning, subscribe og play/purchase, og at `EventManager` fortsatt har de sentrale gameplay-kallene
+
+Disse fire testene er ikke full gameplay-verifisering, men de er nok til å fange:
 
 - brutt scene-wiring etter prefab-/sceneendringer
 - feil etter partial-splitting av gameplay-paneler
 - manglende serialiserte referanser som ellers først ville vist seg ved runtime-klikk i lobbyen
+- regressjoner der sentrale per-spill entrypoints forsvinner under refaktor
 
 ## Spilloversikt
 

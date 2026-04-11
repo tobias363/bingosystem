@@ -1,7 +1,7 @@
 ## Unity Dead-Code Audit
 
 Dato: 11. april 2026
-Status: ellevte sikre pass gjennomfort
+Status: tolvte sikre pass gjennomfort
 
 ### Fjernet i denne runden
 
@@ -115,14 +115,26 @@ Følgende automatiske sjekker er grønne etter splitten av manager-laget og Game
 - `bash scripts/unity-compile-check.sh`
 - `bash scripts/unity-theme2-smoke.sh`
 - `bash scripts/unity-game-panel-smoke.sh`
+- `bash scripts/unity-game-flow-contract-smoke.sh`
 
 Den siste testen kjøres via:
 
 - `Spillorama/Assets/_Project/_Scripts/Other/Editor/GamePanelWiringSmokeTests.cs`
 - `scripts/unity-game-panel-smoke.sh`
 
+Den nye kontraktsmoken kjøres via:
+
+- `Spillorama/Assets/_Project/_Scripts/Other/Editor/GameFlowContractSmokeTests.cs`
+- `scripts/unity-game-flow-contract-smoke.sh`
+
 og verifiserer at `Game.unity` fortsatt har intakt referanse-wiring for:
 
 - `UIManager.game1Panel` til `UIManager.game5Panel`
 - Game1-Game5 sine panelreferanser
 - sentrale gameplay-/minigame-referanser som fortsatt må være satt i scenen
+
+Kontraktsmoken verifiserer i tillegg at de sentrale per-spill entrypoints fortsatt finnes:
+
+- panelåpning og close-flyt for Game1-Game5
+- subscribe-/play-entrypoints i gameplay-panelene
+- sentrale purchase-/play-kall i `EventManager`
