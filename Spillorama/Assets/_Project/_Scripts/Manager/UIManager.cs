@@ -2,7 +2,6 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
-using System.IO;
 using Assets.Plugins.Drop3DEffects.Scripts;
 using TMPro;
 using UnityEngine;
@@ -612,68 +611,6 @@ public class UIManager : MonoBehaviour
         }
     }
 
-    private void LoadFirebaseTokenFromTray()
-    {
-        string token = LoadTokenFromTray();
-
-        if (!string.IsNullOrEmpty(token))
-        {
-            if (gameAssetData != null && gameAssetData.playerGameData != null)
-            {
-                gameAssetData.playerGameData.firebaseToken = token;
-                Debug.Log($"✅ Firebase token loaded and assigned: {token}");
-
-                // (Optional) Save it again for confirmation
-                // SaveTokenLocally(token);
-            }
-            else
-            {
-                Debug.LogWarning("⚠️ UIManager or data structure is not initialized.");
-            }
-        }
-        else
-        {
-            Debug.LogWarning("⚠️ No Firebase token found from tray app.");
-        }
-    }
-
-    private string LoadTokenFromTray()
-    {
-        try
-        {
-            string tokenPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "Spillorama",
-                "fcm_token.txt"
-            );
-
-            if (File.Exists(tokenPath))
-            {
-                return File.ReadAllText(tokenPath);
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogError($"🔥 Error reading token: {ex.Message}");
-        }
-
-        return null;
-    }
-
-    // private void SaveTokenLocally(string token)
-    // {
-    //     try
-    //     {
-    //         string savePath = Path.Combine(Application.persistentDataPath, "firebase_token_copy.txt");
-    //         File.WriteAllText(savePath, token);
-    //         Debug.Log($"📁 Token backed up locally at: {savePath}");
-    //     }
-    //     catch (Exception ex)
-    //     {
-    //         Debug.LogError($"❌ Could not save local copy: {ex.Message}");
-    //     }
-    // }
-
     #endregion
 
     #region COROUTINES
@@ -696,26 +633,6 @@ public class UIManager : MonoBehaviour
             return emojiSpriteList.Count;
         }
     }
-    public int setVoiceLanguage(string Lang)
-    {
-        int rand;
-        if (Lang == "norway_men")
-        {
-            rand = 0;
-            return rand;
-        }
-        else if (Lang == "norway_women")
-        {
-            rand = 1;
-            return rand;
-        }
-        else
-        {
-            rand = 2;
-            return rand;
-        }
-    }
-
     #endregion
 }
 

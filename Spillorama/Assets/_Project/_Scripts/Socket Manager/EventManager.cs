@@ -1,12 +1,10 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using BestHTTP.JSON;
 using BestHTTP.SocketIO;
 using BestHTTP.SocketIO.Events;
 using I2.Loc;
-using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -95,10 +93,6 @@ public class EventManager : MonoBehaviour
 
         JSON_Object jsonObj = new JSON_Object();
         jsonObj.put("forceLoin", forceLoin);
-        //if (emailUsername.Contains("@"))
-        //    jsonObj.put("email", emailUsername);
-        //else
-        //    jsonObj.put("username", emailUsername);
         jsonObj.put("name", emailUsername);
         jsonObj.put("password", password);
         jsonObj.put("appVersion", Utility.Instance.AppVersion);
@@ -127,17 +121,13 @@ public class EventManager : MonoBehaviour
         GameSocketManager.socketManager.Socket.Emit("LoginWithUniqueId", action, Json.Decode(jsonObj.toString()));
     }
 
-    public void LoginPlayer(bool forceLogin, string emailUsername, string password, /*string hallId, string hallName,*/ SocketIOAckCallback action)
+    public void LoginPlayer(bool forceLogin, string emailUsername, string password, SocketIOAckCallback action)
     {
         if (!HasInternetConnection)
             return;
 
         JSON_Object jsonObj = new JSON_Object();
         jsonObj.put("forceLogin", forceLogin);
-        //if (emailUsername.Contains("@"))
-        //    jsonObj.put("email", emailUsername);
-        //else
-        //    jsonObj.put("username", emailUsername);
         jsonObj.put("name", emailUsername);
         jsonObj.put("password", password);
         jsonObj.put("appVersion", Utility.Instance.AppVersion);
@@ -149,9 +139,6 @@ public class EventManager : MonoBehaviour
         jsonObj.put("firebaseToken", UIManager.Instance.gameAssetData.playerGameData.firebaseToken);
 #endif
         jsonObj.put("language", Utility.Instance.CurrentLanguage);
-        // jsonObj.put("hallId", hallId);
-        // jsonObj.put("hallName", hallName);
-
         Debug.Log("New Login Event: " + jsonObj.toString());
         GameSocketManager.socketManager.Socket.Emit("LoginPlayer", action, Json.Decode(jsonObj.toString()));
     }
@@ -161,7 +148,6 @@ public class EventManager : MonoBehaviour
         JSON_Object jsonObj = new JSON_Object();
         jsonObj.put("playerId", playerID);
 
-        //Debug.Log("Player Details : " + jsonObj.toString());
         GameSocketManager.socketManager.Socket.Emit("PlayerDetails", action, Json.Decode(jsonObj.toString()));
     }
     public void StopGameByPlayers(SocketIOAckCallback action)
@@ -219,7 +205,6 @@ public class EventManager : MonoBehaviour
         jsonObj.put("dob", dateOfBirth);
         jsonObj.put("password", password);
         jsonObj.put("bankId", bankId);
-        //jsonObj.put("hall", JsonConvert.SerializeObject(hallList));
         jsonObj.put("hall", JsonUtility.ToJson(new ListJsonT<HallData>(hallList)));
         jsonObj.put("appVersion", Utility.Instance.AppVersion);
         jsonObj.put("deviceId", Utility.Instance.DeviceId);
@@ -251,13 +236,10 @@ public class EventManager : MonoBehaviour
         if (front != null)
             frontPhotoString = GetBase64String(front);
         form.AddField("photoFront", frontPhotoString);
-        //form.AddBinaryData("photoFront", File.ReadAllBytes(front_Img_Path), front_Img_Name);
-
         string backPhotoString = "";
         if (back != null)
             backPhotoString = GetBase64String(back);
         form.AddField("photoBack", backPhotoString);
-        //form.AddBinaryData("photoBack", File.ReadAllBytes(back_Img_Path), back_Img_Name);
 
         Debug.Log($"ImageUpload API:");
 
@@ -329,7 +311,6 @@ public class EventManager : MonoBehaviour
         form.AddField("dob", dateOfBirth);
         form.AddField("password", password);
         form.AddField("bankId", bankId);
-        //jsonObj.put("hall", JsonConvert.SerializeObject(hallList));
         form.AddField("hall", JsonUtility.ToJson(new ListJsonT<HallData>(hallList)));
         form.AddField("appVersion", Utility.Instance.AppVersion);
         form.AddField("deviceId", Utility.Instance.DeviceId);
@@ -366,13 +347,10 @@ public class EventManager : MonoBehaviour
         if (front != null)
             frontPhotoString = GetBase64String(front);
         form.AddField("photoFront", frontPhotoString);
-        //form.AddBinaryData("photoFront", File.ReadAllBytes(front_Img_Path), front_Img_Name);
-
         string backPhotoString = "";
         if (back != null)
             backPhotoString = GetBase64String(back);
         form.AddField("photoBack", backPhotoString);
-        //form.AddBinaryData("photoBack", File.ReadAllBytes(back_Img_Path), back_Img_Name);
 
         Debug.Log($"RegisterPlayer API:");
 
@@ -426,7 +404,6 @@ public class EventManager : MonoBehaviour
         jsonObj.put("deviceId", Utility.Instance.DeviceId);
         jsonObj.put("os", Utility.Instance.OSname);
 
-        //Debug.Log("UpdateFirebaseToken Event: " + jsonObj.toString());
         GameSocketManager.socketManager.Socket.Emit("UpdateFirebaseToken", action, Json.Decode(jsonObj.toString()));
     }
 
@@ -578,7 +555,6 @@ public class EventManager : MonoBehaviour
         json.put("language", Utility.Instance.CurrentLanguage);
 
         Debug.Log($"isGameAvailbaleForVerifiedPlayer: {json.toString()}");
-        //Debug.Log($"{GameSocketManager.SocketGame4.Namespace}");
         GameSocketManager.SocketGame4.Emit("isGameAvailbaleForVerifiedPlayer", action, Json.Decode(json.toString()));
     }
 
