@@ -210,13 +210,16 @@ public partial class Game1GamePlayPanel : MonoBehaviour
         UIManager.Instance.topBarPanel.MiniGamePlanButtonEnable = false;
         UIManager.Instance.topBarPanel.HallGameListButton = false;
 
-        if (gameData.gameId != null || gameData.gameId != "")
+        if (Application.isPlaying && !string.IsNullOrEmpty(gameData.gameId))
         {
             EventManager.Instance.UnSubscribeRoom(gameData.namespaceString, gameData.gameId, null);
         }
 
         UIManager.Instance.withdrawNumberHistoryPanel.Close();
-        UIManager.Instance.topBarPanel.GameType = "";
+        if (UIManager.Instance.topBarPanel != null)
+        {
+            UIManager.Instance.topBarPanel.GameType = "";
+        }
         CloseMiniGames();
 
         LocalizationManager.OnLocalizeEvent -= HandleLanguageChange;
@@ -236,20 +239,35 @@ public partial class Game1GamePlayPanel : MonoBehaviour
     {
         this.gameData = gameData;
         this.gameData.gameId = gameID;
-        UIManager.Instance.topBarPanel.GameType = gameData.gameName;
+        TopBarPanel topBarPanel = UIManager.Instance.topBarPanel;
+        if (topBarPanel != null)
+        {
+            topBarPanel.GameType = gameData.gameName;
+        }
 
         //chatPanel.InitiateChatFeature(gameData);
         changeMarkerBackgroundPanel.Close();
         GameMarkerId = PlayerPrefs.GetInt("Game_Marker", 1);
         selectLuckyNumberPanel.Close();
         UIManager.Instance.Current_Game_Number = 1;
-        UIManager.Instance.topBarPanel.hallGameListPanel.gameObject.SetActive(false);
-        UIManager.Instance.topBarPanel.hallGameListPanel.game1PurchaseTicket.gameObject.SetActive(
-            false
-        );
+        if (topBarPanel != null && topBarPanel.hallGameListPanel != null)
+        {
+            topBarPanel.hallGameListPanel.gameObject.SetActive(false);
+            if (topBarPanel.hallGameListPanel.game1PurchaseTicket != null)
+            {
+                topBarPanel.hallGameListPanel.game1PurchaseTicket.gameObject.SetActive(
+                    false
+                );
+            }
+        }
 
         this.Open();
         DisplayLoader(true);
+        if (!Application.isPlaying)
+        {
+            DisplayLoader(false);
+            return;
+        }
 
         //Invoke("CallSubscribeRoom", 0.1f);
         CallSubscribeRoom();

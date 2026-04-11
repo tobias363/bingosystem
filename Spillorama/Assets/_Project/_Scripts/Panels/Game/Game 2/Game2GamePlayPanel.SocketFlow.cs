@@ -9,6 +9,9 @@ public partial class Game2GamePlayPanel
 
     private void EnableBroadcasts()
     {
+        if (!Application.isPlaying)
+            return;
+
         Debug.Log("Game 2 broadcast on");
         GameSocketManager.SocketGame2.On(Constants.BroadcastName.SubscribeRoom, OnSubscribeRoom);
         GameSocketManager.SocketGame2.On(Constants.BroadcastName.UpdatePlayerRegisteredCount, OnUpdatePlayerRegisteredCount);
@@ -26,6 +29,9 @@ public partial class Game2GamePlayPanel
 
     private void DisableBroadcasts()
     {
+        if (!Application.isPlaying)
+            return;
+
         Debug.Log("Game 2 broadcast off");
         GameSocketManager.SocketGame2.Off(Constants.BroadcastName.SubscribeRoom);
         GameSocketManager.SocketGame2.Off(Constants.BroadcastName.UpdatePlayerRegisteredCount);
@@ -43,6 +49,13 @@ public partial class Game2GamePlayPanel
 
     public void CallSubscribeRoom()
     {
+        if (!Application.isPlaying)
+        {
+            DisplayLoader(false);
+            Debug.Log("[EditModeSmoke] Skipping Game2 SubscribeRoom.");
+            return;
+        }
+
         DisplayLoader(true);
         Upcoming_Game_UI.SetActive(false);
         Waiting_For_Next_Game.SetActive(false);

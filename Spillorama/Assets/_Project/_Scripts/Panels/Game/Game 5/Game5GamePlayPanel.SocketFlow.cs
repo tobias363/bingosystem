@@ -16,6 +16,13 @@ public partial class Game5GamePlayPanel
 
     public void CallSubscribeRoom()
     {
+        if (!Application.isPlaying)
+        {
+            DisplayLoader(false);
+            Debug.Log("[EditModeSmoke] Skipping Game5 SubscribeRoom.");
+            return;
+        }
+
         DisplayLoader(true);
 
         DisableBroadcasts();
@@ -100,6 +107,9 @@ public partial class Game5GamePlayPanel
 
     void CallPlayerHallLimitEvent()
     {
+        if (!Application.isPlaying)
+            return;
+
         EventManager.Instance.PlayerHallLimit((socket, packet, args) =>
         {
             Debug.Log("PlayerHallLimit: " + packet.ToString());
@@ -120,6 +130,9 @@ public partial class Game5GamePlayPanel
 
     private void EnableBroadcasts()
     {
+        if (!Application.isPlaying)
+            return;
+
         Debug.Log("EnableBroadcasts Game 5 Play Panel");
         GameSocketManager.SocketGame5.On(Constants.BroadcastName.WithdrawBingoBall, OnWithdrawBingoBall);
         GameSocketManager.SocketGame5.On(Constants.BroadcastName.GameFinish, OnGameFinish);
@@ -133,6 +146,9 @@ public partial class Game5GamePlayPanel
 
     private void DisableBroadcasts()
     {
+        if (!Application.isPlaying)
+            return;
+
         Debug.Log("DisableBroadcasts Game 5 Play Panel");
         GameSocketManager.SocketGame5.Off(Constants.BroadcastName.WithdrawBingoBall);
         GameSocketManager.SocketGame5.Off(Constants.BroadcastName.GameFinish);

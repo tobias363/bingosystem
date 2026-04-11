@@ -13,6 +13,9 @@ public partial class Game1GamePlayPanel
 
     private void EnableBroadcasts()
     {
+        if (!Application.isPlaying)
+            return;
+
         GameSocketManager.SocketGame1.On(Constants.BroadcastName.SubscribeRoom, OnSubscribeRoom);
         GameSocketManager.SocketGame1.On(Constants.BroadcastName.UpdatePlayerRegisteredCount, OnUpdatePlayerRegisteredCount);
         GameSocketManager.SocketGame1.On(Constants.BroadcastName.countDownToStartTheGame, OnCountDownToStartTheGame);
@@ -32,6 +35,9 @@ public partial class Game1GamePlayPanel
 
     private void DisableBroadcasts()
     {
+        if (!Application.isPlaying)
+            return;
+
         GameSocketManager.SocketGame1.Off(Constants.BroadcastName.SubscribeRoom);
         GameSocketManager.SocketGame1.Off(Constants.BroadcastName.UpdatePlayerRegisteredCount);
         GameSocketManager.SocketGame1.Off(Constants.BroadcastName.countDownToStartTheGame);
@@ -52,6 +58,13 @@ public partial class Game1GamePlayPanel
 
     public void CallSubscribeRoom()
     {
+        if (!Application.isPlaying)
+        {
+            DisplayLoader(false);
+            Debug.Log("[EditModeSmoke] Skipping Game1 SubscribeRoom.");
+            return;
+        }
+
         DisplayLoader(true);
         EventManager.Instance.SubscribeRoomGame1(
             UIManager.Instance.game1Panel.Game_1_Data.gameId,

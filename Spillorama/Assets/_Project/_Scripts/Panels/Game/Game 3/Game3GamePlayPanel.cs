@@ -128,7 +128,14 @@ public partial class Game3GamePlayPanel : MonoBehaviour
             Destroy(transform.gameObject);
         Patterns.Clear();
         UIManager.Instance.topBarPanel.MiniGamePlanButtonEnable = false;
-        EventManager.Instance.UnSubscribeGame3Room(UIManager.Instance.game3Panel.Game_3_Data.gameId, null);
+        if (
+            Application.isPlaying
+            && UIManager.Instance.game3Panel.Game_3_Data != null
+            && !string.IsNullOrEmpty(UIManager.Instance.game3Panel.Game_3_Data.gameId)
+        )
+        {
+            EventManager.Instance.UnSubscribeGame3Room(UIManager.Instance.game3Panel.Game_3_Data.gameId, null);
+        }
         UIManager.Instance.withdrawNumberHistoryPanel.Close();
 
         LocalizationManager.OnLocalizeEvent -= HandleLanguageChange;
@@ -167,6 +174,12 @@ public partial class Game3GamePlayPanel : MonoBehaviour
         GameMarkerId = PlayerPrefs.GetInt("Game_Marker", 1);
 
         this.Open();
+        UIManager.Instance.isGame3 = true;
+        UIManager.Instance.Current_Game_Number = 3;
+        if (!Application.isPlaying)
+        {
+            return;
+        }
         if (UIManager.Instance.game2Panel.game2PlayPanel.gameObject == gameObject)
         {
             Chat_Panel_State = Chat_Panel_RT.anchoredPosition.x == 0 ? 1 : 0;
@@ -205,8 +218,6 @@ public partial class Game3GamePlayPanel : MonoBehaviour
         }
 
         Upcoming_Game_UI_Offset = (bingoBallPanelManager.transform.parent.gameObject.GetComponent<RectTransform>().anchoredPosition.x + ((bingoBallPanelManager.transform.parent.gameObject.GetComponent<RectTransform>().rect.width - bingoBallPanelManager.gameObject.GetComponent<RectTransform>().rect.width) / 2f) + bingoBallPanelManager.gameObject.GetComponent<RectTransform>().rect.width) / 2f;
-
-        UIManager.Instance.Current_Game_Number = 3;
 
         //Invoke("CallSubscribeRoom", 0.1f);
         if (UIManager.Instance.isBreak)

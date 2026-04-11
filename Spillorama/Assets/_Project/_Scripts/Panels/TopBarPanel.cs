@@ -523,6 +523,12 @@ public class TopBarPanel : MonoBehaviour
     {
         set
         {
+            if (txtGameType == null || txtGameType.transform == null || txtGameType.transform.parent == null || txtGameType.transform.parent.parent == null)
+            {
+                Debug.LogWarning("TopBarPanel.GameType skipped because txtGameType hierarchy is not assigned.");
+                return;
+            }
+
             if (value == "")
             {
                 txtGameType.transform.parent.parent.gameObject.SetActive(false);

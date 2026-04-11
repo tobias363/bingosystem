@@ -10,6 +10,9 @@ public partial class Game3GamePlayPanel
 
     private void EnableBroadcasts()
     {
+        if (!Application.isPlaying)
+            return;
+
         Debug.Log("Game 3 namespace: " + GameSocketManager.SocketGame3.Namespace);
         GameSocketManager.SocketGame3.On(Constants.BroadcastName.SubscribeRoom, OnSubscribeRoom);
         GameSocketManager.SocketGame3.On(Constants.BroadcastName.UpdatePlayerRegisteredCount, OnUpdatePlayerRegisteredCount);
@@ -29,6 +32,9 @@ public partial class Game3GamePlayPanel
 
     private void DisableBroadcasts()
     {
+        if (!Application.isPlaying)
+            return;
+
         GameSocketManager.SocketGame3.Off(Constants.BroadcastName.SubscribeRoom);
         GameSocketManager.SocketGame3.Off(Constants.BroadcastName.UpdatePlayerRegisteredCount);
         GameSocketManager.SocketGame3.Off(Constants.BroadcastName.GameStartWaiting);
@@ -47,6 +53,13 @@ public partial class Game3GamePlayPanel
 
     public void CallSubscribeRoom()
     {
+        if (!Application.isPlaying)
+        {
+            DisplayLoader(false);
+            Debug.Log("[EditModeSmoke] Skipping Game3 SubscribeRoom.");
+            return;
+        }
+
         DisableBroadcasts();
         EnableBroadcasts();
         DisplayLoader(true);

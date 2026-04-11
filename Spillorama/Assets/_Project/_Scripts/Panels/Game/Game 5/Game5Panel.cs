@@ -40,6 +40,12 @@ public class Game5Panel : MonoBehaviour
     public void OpenPanel()
     {
         this.Open();
+        game5GamePlayPanel.Open();
+        UIManager.Instance.isGame5 = true;
+        if (!Application.isPlaying)
+        {
+            return;
+        }
         if (UIManager.Instance.isBreak)
         {
             UIManager.Instance.breakTimePopup.OpenPanel("null");

@@ -68,11 +68,16 @@ public class Game4Panel : MonoBehaviour
     public void OpenPanel()
     {
         this.Open();
+        UIManager.Instance.isGame4 = true;
 
         if (game4ThemeSelectionPanel)
             game4ThemeSelectionPanel.Open();
 
         game4GamePlayPanel.Close();
+        if (!Application.isPlaying)
+        {
+            return;
+        }
         if (UIManager.Instance.isBreak)
         {
             UIManager.Instance.breakTimePopup.OpenPanel("null");

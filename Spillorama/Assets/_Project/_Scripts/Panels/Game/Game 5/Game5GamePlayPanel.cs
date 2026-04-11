@@ -121,10 +121,13 @@ public partial class Game5GamePlayPanel : MonoBehaviour
         GameSocketManager.OnSocketReconnected -= Reconnect;
 
         DisableBroadcasts();
-        EventManager.Instance.UnSubscribeGame5Room(UIManager.Instance.game5Panel.game5GamePlayPanel.game5Data.gameId, (socket, packet, args) =>
+        if (Application.isPlaying && game5Data != null && !string.IsNullOrEmpty(game5Data.gameId))
         {
-            Debug.Log("UnSubscribeGame5Room Response: " + packet.ToString());
-        });
+            EventManager.Instance.UnSubscribeGame5Room(UIManager.Instance.game5Panel.game5GamePlayPanel.game5Data.gameId, (socket, packet, args) =>
+            {
+                Debug.Log("UnSubscribeGame5Room Response: " + packet.ToString());
+            });
+        }
     }
 
     #endregion

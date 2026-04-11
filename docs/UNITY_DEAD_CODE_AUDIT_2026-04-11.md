@@ -1,7 +1,7 @@
 ## Unity Dead-Code Audit
 
 Dato: 11. april 2026
-Status: tolvte sikre pass gjennomfort
+Status: trettende sikre pass gjennomfort
 
 ### Fjernet i denne runden
 
@@ -73,6 +73,7 @@ Disse filene var beviselig ubrukte eller kun backup/testartefakter:
 - `addGroupHallTest.html` var bare nevnt i kommentert kode.
 - `GameController-old.js` hadde ingen referanser i runtime.
 - root-testfilene i `unity-bingo-backend` var ikke del av appstart, routes eller build.
+- den nye lifecycle-smoken initialiserer scene-singletons eksplisitt i edit-mode i stedet for å anta at `Awake()` har kjørt, og gameplay-panelene for Game1-Game5 har nå trygge edit-mode-kortslutninger for open/subscribe-lifecycle
 
 ### Ikke fjernet i denne runden
 
@@ -116,6 +117,7 @@ Følgende automatiske sjekker er grønne etter splitten av manager-laget og Game
 - `bash scripts/unity-theme2-smoke.sh`
 - `bash scripts/unity-game-panel-smoke.sh`
 - `bash scripts/unity-game-flow-contract-smoke.sh`
+- `bash scripts/unity-game-panel-lifecycle-smoke.sh`
 
 Den siste testen kjøres via:
 
@@ -126,6 +128,11 @@ Den nye kontraktsmoken kjøres via:
 
 - `Spillorama/Assets/_Project/_Scripts/Other/Editor/GameFlowContractSmokeTests.cs`
 - `scripts/unity-game-flow-contract-smoke.sh`
+
+Den nye lifecycle-smoken kjøres via:
+
+- `Spillorama/Assets/_Project/_Scripts/Other/Editor/GamePanelLifecycleSmokeTests.cs`
+- `scripts/unity-game-panel-lifecycle-smoke.sh`
 
 og verifiserer at `Game.unity` fortsatt har intakt referanse-wiring for:
 
@@ -138,3 +145,9 @@ Kontraktsmoken verifiserer i tillegg at de sentrale per-spill entrypoints fortsa
 - panelåpning og close-flyt for Game1-Game5
 - subscribe-/play-entrypoints i gameplay-panelene
 - sentrale purchase-/play-kall i `EventManager`
+
+Lifecycle-smoken verifiserer i tillegg at Game1-Game5 kan åpnes og lukkes i edit-mode uten live socket eller play-mode:
+
+- `Game1GamePlayPanel.OpenPanel(...)` setter panelstate uten å kreve full runtime-UI
+- `Game2GamePlayPanel.OpenPanel(...)` og `Game3GamePlayPanel.OpenPanel(...)` setter `Current_Game_Number` og `isGame*`
+- `Game4Panel.OpenPanel()` og `Game5Panel.OpenPanel()` kan aktiveres uten `BackgroundManager`/socket-crash i batch

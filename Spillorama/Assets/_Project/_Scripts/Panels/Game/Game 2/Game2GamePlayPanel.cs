@@ -141,7 +141,14 @@ public partial class Game2GamePlayPanel : MonoBehaviour
         GameSocketManager.OnSocketReconnected -= Reconnect;
         DisableBroadcasts();
         UIManager.Instance.topBarPanel.MiniGamePlanButtonEnable = false;
-        EventManager.Instance.UnSubscribeGame2Room(UIManager.Instance.game2Panel.Game_2_Data.gameId, null);
+        if (
+            Application.isPlaying
+            && UIManager.Instance.game2Panel.Game_2_Data != null
+            && !string.IsNullOrEmpty(UIManager.Instance.game2Panel.Game_2_Data.gameId)
+        )
+        {
+            EventManager.Instance.UnSubscribeGame2Room(UIManager.Instance.game2Panel.Game_2_Data.gameId, null);
+        }
         UIManager.Instance.withdrawNumberHistoryPanel.Close();
 
         LocalizationManager.OnLocalizeEvent -= HandleLanguageChange;
@@ -168,6 +175,12 @@ public partial class Game2GamePlayPanel : MonoBehaviour
         if (Lucky_Number_Btn != null)
             Lucky_Number_Btn.targetGraphic.raycastTarget = true;
         this.Open();
+        UIManager.Instance.isGame2 = true;
+        UIManager.Instance.Current_Game_Number = 2;
+        if (!Application.isPlaying)
+        {
+            return;
+        }
 
         if (UIManager.Instance.game2Panel.game2PlayPanel.gameObject == gameObject)
         {
@@ -211,7 +224,6 @@ public partial class Game2GamePlayPanel : MonoBehaviour
         }
 
         //Invoke("CallSubscribeRoom", 0.1f);
-        UIManager.Instance.Current_Game_Number = 2;
         if (UIManager.Instance.isBreak)
         {
             UIManager.Instance.breakTimePopup.OpenPanel("null");
