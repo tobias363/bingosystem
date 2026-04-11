@@ -110,6 +110,25 @@ Disse seks testene er ikke full gameplay-verifisering, men de er nok til å fang
 - regressjoner i de mest endringsutsatte interaksjonsflatene: kjøp, lucky number, reconnect og minigame-entrypoints
 - regressjoner i faktiske UI-/state-overganger etter refaktor, som at Game4 mister riktig play/ticket-option-state eller Game5 mister play-/roulette-state
 
+## Eksterne Unity-avhengigheter
+
+Unity-prosjektet er fortsatt avhengig av flere tredjeparts-Assets som ikke er fullt tracket i git:
+
+- `Spillorama/Assets/Best HTTP`
+- `Spillorama/Assets/I2`
+- `Spillorama/Assets/Firebase`
+- `Spillorama/Assets/ExternalDependencyManager`
+- `Spillorama/Assets/GPM`
+- `Spillorama/Assets/Vuplex`
+- deler av `Spillorama/Assets/Plugins`
+
+Konsekvensen er:
+
+- ren checkout av bare tracket repo er ikke nok til full Unity-compile på en ny maskin
+- batch-smoke-scriptne støtter derfor `UNITY_PROJECT_PATH` og kan kjøres mot en lokal prosjektmappe som allerede har disse SDK-ene installert
+
+Dette er et kjent source-of-truth-gap. Det er mindre enn før, fordi authored gameplay-kode nå er tracket, men det er fortsatt ikke full pakkeparitet for hele Unity-prosjektet.
+
 ## Spilloversikt
 
 ### Game 1
