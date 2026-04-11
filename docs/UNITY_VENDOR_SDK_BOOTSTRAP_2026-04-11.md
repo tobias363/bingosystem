@@ -63,6 +63,7 @@ Repoet har nå også to praktiske bootstrap-script:
 
 - [`unity-bootstrap.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-bootstrap.sh)
 - [`unity-test-suite.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-test-suite.sh)
+- [`unity-vendor-sdk-publish-local.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-vendor-sdk-publish-local.sh)
 - [`unity-vendor-sdk-package.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-vendor-sdk-package.sh)
 - [`unity-vendor-sdk-restore.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-vendor-sdk-restore.sh)
 
@@ -120,6 +121,20 @@ Det gir:
 - ingen tunge vendor-artefakter i git
 - fortsatt støtte for eksplisitt override via env-var eller `--bundle`
 
+For å publisere en ny bundle til denne standardplasseringen fra en fungerende maskin:
+
+```bash
+bash scripts/unity-vendor-sdk-publish-local.sh
+```
+
+Dette:
+
+1. pakker en ny vendor-bundle fra lokal Unity-installasjon
+2. kopierer archive + manifest til `~/.spillorama/unity-vendor-bundles/`
+3. oppdaterer `latest.tar.gz` og `latest.manifest.tsv`
+
+Det er dermed denne kommandoen som skal brukes når teamet vil oppdatere den delte lokale bootstrap-kilden på en maskin.
+
 ## Batch-testkontrakt
 
 Alle Unity batch-scripts skal støtte:
@@ -170,6 +185,12 @@ Dette lager som standard:
 
 - `unity-vendor-bundles/unity-vendor-sdk-<timestamp>.tar.gz`
 - `unity-vendor-bundles/unity-vendor-sdk-<timestamp>.manifest.tsv`
+
+For å publisere direkte til standard team-plassering:
+
+```bash
+bash scripts/unity-vendor-sdk-publish-local.sh
+```
 
 For å restore bundle-filen inn i en ren prosjektmappe:
 
