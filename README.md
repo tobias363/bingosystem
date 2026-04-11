@@ -85,6 +85,16 @@ Det betyr ikke at `Spillorama-system` skal eie Candy gameplay eller Candy-backen
 - `docs/CANDY_UNITY_SHARED_WALLET_STATUS_2026-04-11.md`
 - `docs/UNITY_VENDOR_SDK_BOOTSTRAP_2026-04-11.md`
 
+## Standard Unity-verifisering
+
+For daglig verifisering av tracket Unity-kilde og vendor-SDK-oppsett, bruk:
+
+```bash
+bash scripts/unity-test-suite.sh
+```
+
+Det bootstrapper vendor-SDK-er ved behov og kjører hele Unity-suiten i riktig rekkefølge.
+
 Providervendt Candy-integrasjonsdokumentasjon eies ikke av dette repoet. Bruk:
 
 - `/Users/tobiashaugen/Projects/demo-backend/docs/CANDY_PROVIDER_INTEGRATION_IMPLEMENTATION_GUIDE_2026-04-11.md`
