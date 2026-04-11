@@ -61,6 +61,8 @@ Det betyr at en ny maskin nå får en presis bootstrap-feil i stedet for en ules
 
 Repoet har nå også to praktiske bootstrap-script:
 
+- [`unity-bootstrap.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-bootstrap.sh)
+- [`unity-test-suite.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-test-suite.sh)
 - [`unity-vendor-sdk-package.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-vendor-sdk-package.sh)
 - [`unity-vendor-sdk-restore.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-vendor-sdk-restore.sh)
 
@@ -68,8 +70,8 @@ Disse brukes slik:
 
 1. Pakk vendor-SDK-ene fra en kjent god Unity-installasjon til en intern bundle
 2. Del bundle-filen internt
-3. Restore bundle-filen inn i en ren Unity-prosjektmappe
-4. Kjør vendor-audit og Unity-smoke-testene
+3. Kjør `unity-bootstrap.sh` på ren maskin eller ren prosjektmappe
+4. La bootstrap-scriptet restore bundle, kjøre audit og eventuelt hele Unity-suiten
 
 Dette er valgt fordi full tracking av vendor-mappene i git er for tungt og delvis upraktisk:
 
@@ -80,6 +82,43 @@ Den praktiske modellen er derfor:
 
 - authored gameplay-kode i git
 - vendor-SDK-er som intern, eksplisitt bootstrap-bundle
+
+## Standard team-kommando
+
+Det finnes nå én standardkommando for daglig bruk:
+
+```bash
+bash scripts/unity-test-suite.sh
+```
+
+Den gjør dette i riktig rekkefølge:
+
+1. kjører `unity-bootstrap.sh`
+2. auditerer vendor-SDK-er
+3. restore-r bundle hvis de mangler
+4. kjører hele Unity-suiten
+
+Dette er kommandoen som skal brukes når målet er "bekreft at Unity-prosjektet er i orden", i stedet for å kjøre mange enkelt-script manuelt.
+
+## Foreslått intern lagringsplass
+
+Bootstrap-scriptet leter etter vendor-bundles i denne rekkefølgen:
+
+1. `UNITY_VENDOR_BUNDLE_PATH`
+2. `./unity-vendor-bundles/` i repoet
+3. `~/.spillorama/unity-vendor-bundles/`
+4. `~/Library/Application Support/Spillorama/unity-vendor-bundles/`
+
+Den anbefalte team-standarden er:
+
+- bundle-filer lagres utenfor git i `~/.spillorama/unity-vendor-bundles/`
+- repoets lokale `unity-vendor-bundles/` brukes kun til midlertidig pakking eller lokal testing
+
+Det gir:
+
+- ett stabilt standardsted per maskin
+- ingen tunge vendor-artefakter i git
+- fortsatt støtte for eksplisitt override via env-var eller `--bundle`
 
 ## Batch-testkontrakt
 
@@ -147,6 +186,36 @@ UNITY_VENDOR_RESTORE_FORCE=1 \
 UNITY_PROJECT_PATH=/absolute/path/to/Spillorama \
 bash scripts/unity-vendor-sdk-restore.sh \
 /absolute/path/to/unity-vendor-sdk-<timestamp>.tar.gz
+```
+
+For å bootstrappe en ren Unity-prosjektmappe med automatisk bundle-oppslag:
+
+```bash
+bash scripts/unity-bootstrap.sh
+```
+
+For å bootstrappe og deretter kjøre hele Unity-suiten:
+
+```bash
+bash scripts/unity-bootstrap.sh --with-tests
+```
+
+For standard daglig verifisering:
+
+```bash
+bash scripts/unity-test-suite.sh
+```
+
+For å bruke en eksplisitt bundle-fil:
+
+```bash
+bash scripts/unity-bootstrap.sh --bundle /absolute/path/to/unity-vendor-sdk.tar.gz --with-tests
+```
+
+For å kjøre standardpakken med eksplisitt bundle:
+
+```bash
+bash scripts/unity-test-suite.sh --bundle /absolute/path/to/unity-vendor-sdk.tar.gz
 ```
 
 ## Source-of-truth-gap som fortsatt gjenstår

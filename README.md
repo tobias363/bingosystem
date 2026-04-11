@@ -27,11 +27,10 @@ Det eier ikke Candy demo-login, Candy demo-admin eller Candy demo-settings.
 
 | Domene | Path | System | Betydning |
 |---|---|---|---|
-| `spillorama-system.onrender.com` | `/` | Live bingo | redirect til `/web/` |
-| `spillorama-system.onrender.com` | `/portal/` | Live bingo | portal |
+| `spillorama-system.onrender.com` | `/` | Live bingo | portal |
 | `spillorama-system.onrender.com` | `/admin/` | Live bingo | live admin |
 | `spillorama-system.onrender.com` | `/web/` | Live bingo | Unity-lobby / WebGL-host |
-| `candy-backend-ldvg.onrender.com` | `/` | demo-backend | Candy integrasjonsflate / testflate |
+| `candy-backend-ldvg.onrender.com` | `/` | demo-backend | Candy demo-login og testflate |
 | `candy-backend-ldvg.onrender.com` | `/admin/` | demo-backend | Candy demo-admin |
 
 Samme route-navn på to forskjellige domener betyr ikke samme system.
@@ -85,6 +84,16 @@ Det betyr ikke at `Spillorama-system` skal eie Candy gameplay eller Candy-backen
 - `docs/UNITY_JS_BRIDGE_CONTRACT.md`
 - `docs/CANDY_UNITY_SHARED_WALLET_STATUS_2026-04-11.md`
 - `docs/UNITY_VENDOR_SDK_BOOTSTRAP_2026-04-11.md`
+
+## Standard Unity-verifisering
+
+For daglig verifisering av tracket Unity-kilde og vendor-SDK-oppsett, bruk:
+
+```bash
+bash scripts/unity-test-suite.sh
+```
+
+Det bootstrapper vendor-SDK-er ved behov og kjører hele Unity-suiten i riktig rekkefølge.
 
 Providervendt Candy-integrasjonsdokumentasjon eies ikke av dette repoet. Bruk:
 
