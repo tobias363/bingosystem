@@ -1,0 +1,249 @@
+# Unity Game Architecture And Change Guide
+Dato: 11. april 2026
+Scope: `/Users/tobiashaugen/Projects/Spillorama-system/Spillorama`
+
+## Formål
+
+Dette dokumentet beskriver hvordan Unity-klienten i `Spillorama-system` er organisert, hvordan de fem Unity-spillene åpnes fra lobbyen, hvilke kodepunkter som faktisk styrer hver flyt, og hva som må endres når man skal gjøre endringer trygt.
+
+Dette er en arbeidsguide for utvikling, feilsøking og parity-arbeid mot leverandørkode.
+
+## Hovedstruktur
+
+Unity-klienten er delt i fire hovedlag:
+
+1. Global app- og panelstyring
+   - [`UIManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs)
+   - ansvar: aktivere paneler, topbar, login, lobby, Game1–Game5, split-screen, globale sprites og statusflagg
+
+2. Socket- og eventlag
+   - [`GameSocketManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/GameSocketManager.cs)
+   - [`EventManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/EventManager.cs)
+   - ansvar: socket-oppkobling, namespace-håndtering, auth refresh, event payloads mot backend
+
+3. Lobby- og spillrouting
+   - [`LobbyGameSelection.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/LobbyGameSelection.cs)
+   - [`GamePlanPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/GamePlanPanel.cs)
+   - ansvar: status i spillgrid, åpne riktige spill, hente romdata og sende spilleren inn i korrekt panel
+
+4. Spillspesifikke paneler
+   - `Panels/Game/Game 1/*`
+   - `Panels/Game/Game 2/*`
+   - `Panels/Game/Game 3/*`
+   - `Panels/Game/Game 4/*`
+   - `Panels/Game/Game 5/*`
+
+## Runtime-flyt
+
+Den faktiske flyten i klienten er:
+
+1. [`GameSocketManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/GameSocketManager.cs) kobler klienten til rot-socket og game namespaces.
+2. [`LoginPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Login%20Register/LoginPanel.cs) bruker [`EventManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/EventManager.cs) til `LoginPlayer`.
+3. Etter login åpnes lobbyen.
+4. [`LobbyGameSelection.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/LobbyGameSelection.cs) avgjør om et spill er tilgjengelig og sender spilleren videre.
+5. [`GamePlanPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/GamePlanPanel.cs) henter romdata for Game1–Game3 og åpner riktig gameplay-panel.
+6. Game4 og Game5 åpnes mer direkte fra lobbyen og henter sine data etter at panelet er aktivt.
+
+## Spilloversikt
+
+### Game 1
+
+Primære filer:
+- [`Game1Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1Panel.cs)
+- [`Game1GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.cs)
+- [`Game1PurchaseTicket.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1PurchaseTicket.cs)
+- [`Game1ViewPurchaseTicketUI.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1ViewPurchaseTicketUI.cs)
+
+Hvordan det åpnes:
+- lobby -> [`LobbyGameSelection.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/LobbyGameSelection.cs) -> [`GamePlanPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/GamePlanPanel.cs) -> `Game1Room`
+- deretter `OpenGame1(...)`
+- gameplay bruker `SubscribeRoom`
+
+Hva styrer opplevelsen:
+- game status og innsteg: `Game1Room`
+- full gameplay-state: `SubscribeRoom`
+- kjøp: `PurchaseGame1Tickets`
+- lucky number: `SetLuckyNumber` / `GetLuckyNumber`
+- ekstra flyter: Elvis replacement, voucher, cancel ticket
+
+Når du endrer Game 1, må du vanligvis sjekke:
+- [`GamePlanPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/GamePlanPanel.cs)
+- [`Game1Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1Panel.cs)
+- [`Game1GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.cs)
+- Game1-relaterte eventer i [`EventManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/EventManager.cs)
+
+### Game 2
+
+Primære filer:
+- [`Game2Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%202/Game2Panel.cs)
+- [`Game2GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%202/Game2GamePlayPanel.cs)
+- [`Game2TicketPurchasePanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%202/Game2TicketPurchasePanel.cs)
+- [`RocketTicketManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%202/RocketTicketManager.cs)
+
+Hvordan det åpnes:
+- lobby -> [`GamePlanPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/GamePlanPanel.cs) -> `Game2Room`
+- deretter `OpenGame2(...)`
+
+Hva styrer opplevelsen:
+- room bootstrap: `Game2Room`
+- subscribe: `SubscribeRoom`
+- kjøp: `Game2TicketPurchaseData`, `Game2BuyTickets`, `Game2BuyBlindTickets`, `CancelGameTickets`
+
+### Game 3
+
+Primære filer:
+- [`Game3Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%203/Game3Panel.cs)
+- [`Game3GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%203/Game3GamePlayPanel.cs)
+- [`Game3TicketPurchasePanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%203/Game3TicketPurchasePanel.cs)
+
+Hvordan det åpnes:
+- lobby -> [`GamePlanPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/GamePlanPanel.cs) -> `Game3Room`
+- deretter `OpenGame3(...)`
+
+Hva styrer opplevelsen:
+- room bootstrap: `Game3Room`
+- subscribe: `SubscribeRoom`
+- kjøp: `GetGame3PurchaseData`, `PurchaseGame3Tickets`, `CancelGameTickets`
+
+### Game 4
+
+Primære filer:
+- [`Game4Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%204/Game4Panel.cs)
+- [`Game4ThemeSelectionPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%204/Game4ThemeSelectionPanel.cs)
+- [`Game4GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%204/Game4GamePlayPanel.cs)
+
+Hvordan det åpnes:
+- lobby -> [`LobbyGameSelection.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/LobbyGameSelection.cs) -> `Game4()`
+- theme- og runtime-data hentes etter at panelene er åpne
+
+Hva styrer opplevelsen:
+- theme fetch: `Game4ThemesData`
+- active room data: `Game4Data`
+- ticket refresh: `Game4ChangeTickets`
+- spill: `Game4Play`
+- minigames i Game4: wheel, treasure chest, mystery
+
+Game 4 er mer UI-tung enn Game1–Game3. Endringer i layout og theme må nesten alltid verifiseres visuelt i Unity-editor eller WebGL.
+
+### Game 5
+
+Primære filer:
+- [`Game5Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%205/Game5Panel.cs)
+- [`Game5GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%205/Game5GamePlayPanel.cs)
+- [`Game5BetCoin.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%205/Game5BetCoin.cs)
+
+Hvordan det åpnes:
+- lobby -> [`LobbyGameSelection.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/LobbyGameSelection.cs) -> `Game5()`
+- gameplay-panelet henter selv `Game5Data`
+
+Hva styrer opplevelsen:
+- room bootstrap: `Game5Data`
+- spill: `Game5Play`
+- minigame-data: `WheelOfFortuneData`
+- jackpot wheel / roulette: `Game5WheelOfFortuneData`, `Game5RouletteWheelData`, `SelectRouletteAuto`
+
+Game 5 er tettere koblet til minigame- og rouletteflyt enn de andre spillene.
+
+## Candy i Unity-lobbyen
+
+Candy er ikke et native Unity-spill.
+
+Candy ligger i lobbyen via:
+- [`LobbyGameSelection.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/LobbyGameSelection.cs)
+
+Det som skjer:
+- Candy-tile opprettes eller gjenbrukes i lobby-grid
+- Unity kaller `Application.ExternalCall("OpenUrlInSameTab", "/candy/")` i WebGL
+- host-siden på `/web/` tar over og åpner Candy som iframe/overlay
+
+Det betyr:
+- endring i Candy gameplay gjøres ikke i Unity-klienten
+- endring i Candy-entry i lobby gjøres i Unity-klienten
+- endring i actual Candy-launch og wallet glue gjøres i host/backend, ikke i Game1–Game5-panelene
+
+## Hva må til for å gjøre endringer trygt
+
+### Endre status / åpning av spill
+
+Du må sjekke:
+- [`LobbyGameSelection.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/LobbyGameSelection.cs)
+- [`LandingScreenController.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/LandingScreenController.cs)
+- [`GamePlanPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/GamePlanPanel.cs)
+- backend-eventen som faktisk leverer status
+
+### Endre ticket purchase
+
+Du må sjekke:
+- gameplay panel for spillet
+- ticket purchase panel for spillet
+- eventnavn i [`EventManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/EventManager.cs)
+- backend-handler for samme event
+
+### Endre layout / plassering
+
+Du må sjekke:
+- gameplay-panelet
+- tilhørende prefab(er)
+- theme-/sprite-avhengigheter
+- split-screen-flyt der relevant
+
+UI-endringer skal ikke gjøres kun ut fra C#-kode. De må verifiseres i scene/prefab.
+
+### Endre auth eller socket
+
+Du må sjekke:
+- [`GameSocketManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/GameSocketManager.cs)
+- [`EventManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/EventManager.cs)
+- [`UIManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs)
+- login-panelene
+
+## Konkrete endringsregler
+
+1. Endre aldri bare Unity-klienten hvis eventnavn eller payload også kommer fra backend.
+2. Endre aldri bare gameplay-panel hvis problemet starter i lobby/status.
+3. Endre aldri bare prefab hvis logikken genererer objekter dynamisk.
+4. For Game4 og Game5 må minigames alltid tas med i vurderingen.
+5. For Candy må Unity-lobby, host-side og backend sees samlet.
+
+## Opprydding gjort i denne runden
+
+Denne runden ryddet bare lavrisiko dødkode i Unity-klienten:
+
+- fjernet gammel `LoginTmp`-bane i [`EventManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/EventManager.cs)
+- fjernet ubrukte dummy-simuleringsfelt og `DummyGamePlay()` i:
+  - [`Game1GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.cs)
+  - [`Game2GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%202/Game2GamePlayPanel.cs)
+  - [`Game3GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%203/Game3GamePlayPanel.cs)
+- fjernet store døde kommentarblokker i:
+  - [`UIManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs)
+  - [`Game4Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%204/Game4Panel.cs)
+  - [`Game5Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%205/Game5Panel.cs)
+
+Dette er en opprydding av kode som ikke hadde runtime-effekt. Det er ikke en full funksjonell refaktor av Game1–Game5.
+
+## Hva som fortsatt bør ryddes senere
+
+Disse områdene ser fortsatt tunge eller historisk lastet ut:
+
+- [`EventManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/EventManager.cs)
+  - veldig mange events i én stor klasse
+- [`UIManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs)
+  - for mange globale flags og panelreferanser i én singleton
+- Game1/Game2/Game3 gameplay-panelene
+  - store monolitter med både rendering, state, socket callbacks og UI-håndtering i samme klasse
+
+Den riktige neste oppryddingen er ikke mer “slett kommentarkode”, men modulær splitting:
+- socket adapters
+- view state
+- ticket rendering
+- minigame integrations
+
+## Anbefalt videre arbeid
+
+1. Del [`EventManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Socket%20Manager/EventManager.cs) i per-game adapters.
+2. Del [`UIManager.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs) i mindre ansvarlige managers.
+3. Gjør en parity-sammenligning mot leverandørens Unity-kode for layout-sensitive spill.
+4. Etabler en fast regel:
+   - Unity scene/prefab-endringer verifiseres visuelt
+   - socket-endringer verifiseres mot backend payloads
+   - lobby-endringer verifiseres fra login til faktisk åpning av spill
