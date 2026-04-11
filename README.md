@@ -95,6 +95,12 @@ bash scripts/unity-test-suite.sh
 
 Det bootstrapper vendor-SDK-er ved behov og kjører hele Unity-suiten i riktig rekkefølge.
 
+For å publisere oppdatert vendor-bundle til standard lokal team-plassering, bruk:
+
+```bash
+bash scripts/unity-vendor-sdk-publish-local.sh
+```
+
 Providervendt Candy-integrasjonsdokumentasjon eies ikke av dette repoet. Bruk:
 
 - `/Users/tobiashaugen/Projects/demo-backend/docs/CANDY_PROVIDER_INTEGRATION_IMPLEMENTATION_GUIDE_2026-04-11.md`
