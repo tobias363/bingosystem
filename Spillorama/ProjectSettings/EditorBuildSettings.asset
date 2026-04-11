@@ -14,15 +14,6 @@ EditorBuildSettings:
   - enabled: 0
     path: Assets/_Project/_Scenes/Admin Bingo Hall Display.unity
     guid: ff4b72a6f834b4d66b776ee24127ee95
-  - enabled: 0
-    path: Assets/_Project/_Scenes/SamplePhysics.unity
-    guid: 805bf6783f6db754486883670a40327e
-  - enabled: 0
-    path: Assets/_Project/_Scenes/Test.unity
-    guid: 381be53b77063874da9ef63c677bd686
-  - enabled: 0
-    path: Assets/StandaloneFileBrowser/Sample/BasicSampleScene.unity
-    guid: d97280fe82b874466870f709c3315d41
   m_configObjects:
     com.unity.addressableassets: {fileID: 11400000, guid: 03aef9c6f8a034e22b73adba1c3682dd,
       type: 2}

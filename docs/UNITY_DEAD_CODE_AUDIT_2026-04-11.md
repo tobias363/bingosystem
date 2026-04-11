@@ -1,7 +1,7 @@
 ## Unity Dead-Code Audit
 
 Dato: 11. april 2026
-Status: første sikre pass gjennomfort
+Status: andre sikre pass gjennomfort
 
 ### Fjernet i denne runden
 
@@ -10,6 +10,10 @@ Disse filene var beviselig ubrukte eller kun backup/testartefakter:
 - Unity-klient:
   - `Spillorama/Assets/_Project/_Scripts/Other/TestScript.cs`
   - `Spillorama/Assets/_Project/_Scripts/Other/Editor/TestEditor.cs`
+  - `Spillorama/Assets/_Project/_Scenes/SamplePhysics.unity`
+  - `Spillorama/Assets/_Project/_Scenes/Test.unity`
+  - `Spillorama/Assets/StandaloneFileBrowser/Sample/BasicSampleScene.unity`
+  - `Spillorama/Assets/_Project/_Scripts/Proto and Test/Skype Profile.png`
 
 - `unity-bingo-backend` controller:
   - `unity-bingo-backend/App/Controllers/GameController-old.js`
@@ -43,6 +47,9 @@ Disse filene var beviselig ubrukte eller kun backup/testartefakter:
 ### Hvorfor disse var trygge a fjerne
 
 - `TestScript.cs` og `TestEditor.cs` refererte bare til hverandre.
+- `SamplePhysics.unity`, `Test.unity` og `BasicSampleScene.unity` var disabled i `EditorBuildSettings` og hadde ingen andre prosjektreferanser enn build-listen.
+- `Skype Profile.png` hadde ingen GUID-referanser i prosjektet.
+- `download.png` i samme mappe ble ikke fjernet fordi den fortsatt brukes av `AIS_CustomSprite.mat`.
 - Backup-viewene i `unity-bingo-backend` hadde ingen runtime-referanser i controllere eller `res.render(...)`.
 - `addGroupHallTest.html` var bare nevnt i kommentert kode.
 - `GameController-old.js` hadde ingen referanser i runtime.
@@ -54,11 +61,10 @@ Disse kandidatene er fortsatt ikke bevist dode nok til automatisk sletting:
 
 - Unity-scener som ikke er i build:
   - `Spillorama/Assets/_Project/_Scenes/Custom Socket URL.unity`
-  - `Spillorama/Assets/_Project/_Scenes/SamplePhysics.unity`
-  - `Spillorama/Assets/_Project/_Scenes/Test.unity`
+  - `Spillorama/Assets/_Project/_Scenes/Admin Bingo Hall Display.unity`
 
 - debug-/prototype-assets:
-  - `Spillorama/Assets/_Project/_Scripts/Proto and Test/`
+  - `Spillorama/Assets/_Project/_Scripts/Proto and Test/download.png`
 
 - store authored runtimefiler som trolig trenger refaktor, ikke sletting:
   - `Spillorama/Assets/_Project/_Scripts/Socket Manager/EventManager.cs`
@@ -72,8 +78,8 @@ Disse kandidatene er fortsatt ikke bevist dode nok til automatisk sletting:
 Neste oppryddingsrunde bor deles i to:
 
 1. Unity-klient:
-   - verifisere om de tre disabled scenene fortsatt trengs for manuell drift/debug
-   - rydde prototype-assets som ikke refereres fra scener/prefabs
+   - verifisere om `Custom Socket URL.unity` og `Admin Bingo Hall Display.unity` fortsatt trengs for manuell drift/debug
+   - rydde prototype-assets som fortsatt ligger igjen hvis de mister siste material-/scene-referanse
 
 2. `unity-bingo-backend`:
    - fjerne kommenterte testbaner i controllere
