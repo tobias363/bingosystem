@@ -257,11 +257,6 @@ public class UIManager : MonoBehaviour
         MultiSelectionPanel.Close();
     }
 
-    public void OpenMultiSelectionPanel(string[] options)
-    {
-        MultiSelectionPanel.SetOptionListAndOpen(options);
-    }
-
     public Sprite GetBackgroundSprite(int id)
     {
         switch (id)
@@ -460,14 +455,6 @@ public class UIManager : MonoBehaviour
     {
         if (showLoader)
             loaderPanel.ShowLoader();
-        else
-            loaderPanel.HideLoader();
-    }
-
-    public void DisplayLoader(bool showLoader, string msg)
-    {
-        if (showLoader)
-            loaderPanel.ShowLoader(msg);
         else
             loaderPanel.HideLoader();
     }

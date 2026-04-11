@@ -1,7 +1,7 @@
 ## Unity Dead-Code Audit
 
 Dato: 11. april 2026
-Status: tredje sikre pass gjennomfort
+Status: fjerde sikre pass gjennomfort
 
 ### Fjernet i denne runden
 
@@ -16,6 +16,8 @@ Disse filene var beviselig ubrukte eller kun backup/testartefakter:
   - `Spillorama/Assets/_Project/_Scripts/Proto and Test/Skype Profile.png`
   - ubrukt tray-token helperkode i `Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs`
   - ubrukt `setVoiceLanguage(...)` i `Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs`
+  - ubrukt `OpenMultiSelectionPanel(...)` i `Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs`
+  - ubrukt `DisplayLoader(bool, string)` i `Spillorama/Assets/_Project/_Scripts/Manager/UIManager.cs`
   - foreldede kommentarspor og ubrukte imports i `Spillorama/Assets/_Project/_Scripts/Socket Manager/EventManager.cs`
 
 - `unity-bingo-backend` controller:
@@ -55,6 +57,8 @@ Disse filene var beviselig ubrukte eller kun backup/testartefakter:
 - `download.png` i samme mappe ble ikke fjernet fordi den fortsatt brukes av `AIS_CustomSprite.mat`.
 - `LoadFirebaseTokenFromTray()` og `LoadTokenFromTray()` hadde ingen kode-, scene- eller prefab-referanser.
 - `setVoiceLanguage(...)` hadde ingen referanser i kode, scene eller host.
+- `OpenMultiSelectionPanel(...)` hadde ingen kode-, scene-, prefab- eller host-referanser.
+- `DisplayLoader(bool, string)` hadde ingen kode-, scene-, prefab- eller host-referanser.
 - Cleanupen i `EventManager.cs` endret ikke runtime-signaturer; den fjernet bare dokumentert foreldet kommentarkode og imports som ikke lenger brukes.
 - Backup-viewene i `unity-bingo-backend` hadde ingen runtime-referanser i controllere eller `res.render(...)`.
 - `addGroupHallTest.html` var bare nevnt i kommentert kode.
