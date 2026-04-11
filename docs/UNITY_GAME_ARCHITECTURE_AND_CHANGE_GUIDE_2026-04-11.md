@@ -100,6 +100,10 @@ Det finnes nå seks grunnleggende Unity-sjekker som bør kjøres etter hver clea
    - [`GameRuntimeStateSmokeTests.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Other/Editor/GameRuntimeStateSmokeTests.cs)
    - formål: bekrefte faktiske state-overganger i de mest refaktorerte spillpanelene uten live socket, blant annet Game4 ticket-option/bet-state og Game5 play-/roulette-state
 
+8. Vendor SDK audit
+   - [`unity-vendor-sdk-audit.sh`](/Users/tobiashaugen/Projects/Spillorama-system/scripts/unity-vendor-sdk-audit.sh)
+   - formål: feile tidlig hvis obligatoriske tredjeparts Unity-SDK-er mangler, i stedet for å la batch-testene ende i store compile-logger
+
 Disse seks testene er ikke full gameplay-verifisering, men de er nok til å fange:
 
 - brutt scene-wiring etter prefab-/sceneendringer
@@ -128,6 +132,10 @@ Konsekvensen er:
 - batch-smoke-scriptne støtter derfor `UNITY_PROJECT_PATH` og kan kjøres mot en lokal prosjektmappe som allerede har disse SDK-ene installert
 
 Dette er et kjent source-of-truth-gap. Det er mindre enn før, fordi authored gameplay-kode nå er tracket, men det er fortsatt ikke full pakkeparitet for hele Unity-prosjektet.
+
+Se også:
+
+- [`UNITY_VENDOR_SDK_BOOTSTRAP_2026-04-11.md`](/Users/tobiashaugen/Projects/Spillorama-system/docs/UNITY_VENDOR_SDK_BOOTSTRAP_2026-04-11.md)
 
 ## Spilloversikt
 
