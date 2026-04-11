@@ -1,7 +1,7 @@
 ## Unity Dead-Code Audit
 
 Dato: 11. april 2026
-Status: fjortende sikre pass gjennomfort
+Status: femtende sikre pass gjennomfort
 
 ### Fjernet i denne runden
 
@@ -22,6 +22,7 @@ Disse filene var beviselig ubrukte eller kun backup/testartefakter:
   - `UIManager` splittet i partial-klasser for kjerne, notifikasjoner, spillpresentasjon og WebGL-host-bridge
   - `EventManager` splittet i partial-klasser for auth/profile, plattform/lobby og gameplay/socket-flyt
   - `Game1GamePlayPanel` splittet så socket/room-flyt ligger i `Game1GamePlayPanel.SocketFlow.cs`
+  - `Game1GamePlayPanel` splittet videre så interaksjoner, upcoming-game, chatlayout og minigames ligger i egne partial-filer
   - `Game2GamePlayPanel` splittet så room/socket-flyt ligger i `Game2GamePlayPanel.SocketFlow.cs`
   - `Game3GamePlayPanel` splittet så room/socket-flyt ligger i `Game3GamePlayPanel.SocketFlow.cs`
   - `Game4GamePlayPanel` splittet så transport/minigame/room-flyt ligger i `Game4GamePlayPanel.SocketFlow.cs`

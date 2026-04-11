@@ -112,6 +112,10 @@ Primære filer:
 - [`Game1Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1Panel.cs)
 - [`Game1GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.cs)
 - [`Game1GamePlayPanel.SocketFlow.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.SocketFlow.cs)
+- [`Game1GamePlayPanel.Interactions.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.Interactions.cs)
+- [`Game1GamePlayPanel.UpcomingGames.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.UpcomingGames.cs)
+- [`Game1GamePlayPanel.ChatLayout.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.ChatLayout.cs)
+- [`Game1GamePlayPanel.MiniGames.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1GamePlayPanel.MiniGames.cs)
 - [`Game1PurchaseTicket.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1PurchaseTicket.cs)
 - [`Game1ViewPurchaseTicketUI.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%201/Game1ViewPurchaseTicketUI.cs)
 
@@ -126,6 +130,14 @@ Hva styrer opplevelsen:
 - kjøp: `PurchaseGame1Tickets`
 - lucky number: `SetLuckyNumber` / `GetLuckyNumber`
 - ekstra flyter: Elvis replacement, voucher, cancel ticket
+
+Game 1 er nå referanseoppsettet for videre vedlikehold:
+- `Game1GamePlayPanel.cs` holder kjernepanel og render/state
+- `Game1GamePlayPanel.SocketFlow.cs` holder room/socket/broadcast
+- `Game1GamePlayPanel.Interactions.cs` holder lucky number, loader og små panelhandlinger
+- `Game1GamePlayPanel.UpcomingGames.cs` holder upcoming-game/purchase-setup
+- `Game1GamePlayPanel.ChatLayout.cs` holder chat-layout og animasjon
+- `Game1GamePlayPanel.MiniGames.cs` holder wheel/treasure/mystery/color-draft
 
 Når du endrer Game 1, må du vanligvis sjekke:
 - [`GamePlanPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Lobby/GamePlanPanel.cs)
