@@ -272,6 +272,22 @@
     return payload.data;
   }
 
+  function openProfilePanel() {
+    if (els.profileOverlay) els.profileOverlay.classList.add('is-open');
+  }
+
+  function closeProfilePanel() {
+    if (els.profileOverlay) els.profileOverlay.classList.remove('is-open');
+  }
+
+  window.ShowSpillvettPanel = function ShowSpillvettPanel() {
+    openProfilePanel();
+  };
+
+  window.HideSpillvettPanel = function HideSpillvettPanel() {
+    closeProfilePanel();
+  };
+
   function closeCandyOverlay() {
     if (!els.candyOverlay) return;
     if (state.candyEmbedOrigin && els.candyIframeEl && els.candyIframeEl.contentWindow) {
@@ -727,6 +743,9 @@
     }
 
     els.shell.classList.add("is-visible");
+    if (els.spillvettFab) {
+      els.spillvettFab.hidden = !state.token;
+    }
     renderHallSelector();
     renderGameButtons();
     renderSummary(state.compliance);
@@ -824,6 +843,20 @@
         safeStorageSet(storageKeys.period, nextPeriod);
         void refreshData();
       });
+    }
+
+    els.profileOverlay = getElement('profile-overlay');
+    els.spillvettFab = getElement('spillvett-fab');
+    const profileCloseBtn = getElement('profile-close');
+    const profileBackdrop = getElement('profile-backdrop');
+    if (profileCloseBtn) {
+      profileCloseBtn.addEventListener('click', closeProfilePanel);
+    }
+    if (profileBackdrop) {
+      profileBackdrop.addEventListener('click', closeProfilePanel);
+    }
+    if (els.spillvettFab) {
+      els.spillvettFab.addEventListener('click', openProfilePanel);
     }
 
     els.candyOverlay = getElement('candy-overlay');

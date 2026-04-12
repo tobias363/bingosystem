@@ -1,7 +1,7 @@
 <!--
   LIVE BINGO UNITY HOST
-  Denne filen er den operative /web/-hosten for Spillorama i Spillorama-system.
-  Kundevendt lobby, Spillvett og shell-UI skal ligge her rundt Unity-spillflaten.
+  Unity er fullskjerm-lobbyen kundene ser.
+  Spillvett, grenser og innstillinger ligger i profilpanelet (slide-in fra høyre).
 -->
 <!DOCTYPE html>
 <html lang="en-us">
@@ -15,83 +15,105 @@
   <link rel="stylesheet" href="spillvett.css">
 
   <style>
-    :root {
-      color-scheme: dark;
-    }
-
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background: url('TemplateData/bg.png') center / cover no-repeat fixed;
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    /* ── Spillvett floating button ─────────────────────────────────── */
+    .spillvett-fab {
+      position: fixed;
+      bottom: 18px;
+      left: 18px;
+      z-index: 4000;
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      padding: 10px 18px;
+      background: rgba(9, 14, 34, 0.88);
+      backdrop-filter: blur(12px);
       color: #f4f6fb;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      transition: background 120ms ease, transform 120ms ease;
     }
 
-    .host-page {
-      min-height: 100vh;
+    .spillvett-fab:hover {
+      background: rgba(9, 14, 34, 0.96);
+      transform: translateY(-1px);
+    }
+
+    .spillvett-fab[hidden] {
+      display: none;
+    }
+
+    /* ── Profile / Spillvett panel overlay ──────────────────────────── */
+    .profile-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 5000;
+      display: none;
+    }
+
+    .profile-overlay.is-open {
       display: flex;
-      flex-direction: column;
-      gap: 18px;
-      padding: 18px;
-      box-sizing: border-box;
-      background: linear-gradient(180deg, rgba(6, 10, 24, 0.78), rgba(7, 11, 27, 0.62));
     }
 
-    .host-topbar {
+    .profile-backdrop {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.45);
+    }
+
+    .profile-panel {
+      width: min(420px, 92vw);
+      height: 100%;
+      overflow-y: auto;
+      padding: 20px;
+      box-sizing: border-box;
+      background: rgba(9, 14, 34, 0.97);
+      border-left: 1px solid rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(20px);
+      color: #f4f6fb;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+    }
+
+    .profile-panel-header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      gap: 16px;
-      padding: 18px 22px;
-      border-radius: 24px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      background: rgba(9, 14, 34, 0.76);
-      backdrop-filter: blur(16px);
-      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.24);
-    }
-
-    .host-branding {
-      max-width: 700px;
-    }
-
-    .host-kicker {
-      margin: 0 0 8px;
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: rgba(200, 213, 255, 0.66);
-    }
-
-    .host-title {
-      margin: 0;
-      font-size: clamp(28px, 3vw, 40px);
-      line-height: 1.02;
-      letter-spacing: -0.04em;
-    }
-
-    .host-copy {
-      margin: 10px 0 0;
-      max-width: 60ch;
-      font-size: 15px;
-      line-height: 1.55;
-      color: rgba(227, 234, 255, 0.8);
-    }
-
-    .host-meta {
-      display: grid;
       gap: 12px;
-      min-width: min(360px, 100%);
+      margin-bottom: 20px;
     }
 
-    .host-meta-card {
-      padding: 14px 16px;
-      border-radius: 18px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.09);
+    .profile-panel-title {
+      margin: 4px 0 0;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
     }
 
-    .host-meta-label {
+    .profile-panel-close {
+      appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      padding: 8px 16px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #f4f6fb;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .profile-panel-close:hover {
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .profile-section {
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .profile-section-label {
       display: block;
       margin-bottom: 6px;
       font-size: 11px;
@@ -101,186 +123,36 @@
       color: rgba(195, 208, 255, 0.62);
     }
 
-    .host-meta-value {
+    .profile-section-value {
       display: block;
       font-size: 18px;
       font-weight: 800;
       color: #f8fbff;
     }
 
-    .host-meta-note {
+    .profile-section-note {
       margin-top: 6px;
       font-size: 13px;
       line-height: 1.45;
-      color: rgba(228, 234, 255, 0.72);
-    }
-
-    .host-layout {
-      flex: 1;
-      display: grid;
-      grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
-      gap: 18px;
-      min-height: 0;
-    }
-
-    .host-sidebar,
-    .host-main {
-      min-height: 0;
-    }
-
-    .host-main {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .unity-frame {
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      flex: 1;
-      padding: 16px;
-      border-radius: 24px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      background: rgba(9, 14, 34, 0.76);
-      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.24);
-      backdrop-filter: blur(16px);
-    }
-
-    .unity-frame-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 16px;
-      margin-bottom: 14px;
-    }
-
-    .unity-frame-title {
-      margin: 0;
-      font-size: 22px;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-    }
-
-    .unity-frame-copy {
-      margin: 6px 0 0;
-      font-size: 14px;
-      line-height: 1.5;
-      color: rgba(227, 234, 255, 0.76);
-      max-width: 62ch;
-    }
-
-    .host-chip-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 12px;
-    }
-
-    .host-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      font-size: 12px;
-      font-weight: 700;
-      color: rgba(245, 248, 255, 0.84);
-    }
-
-    .host-button {
-      appearance: none;
-      border: 0;
-      border-radius: 999px;
-      padding: 10px 14px;
-      font: inherit;
-      font-weight: 700;
-      cursor: pointer;
-      background: #edf3ff;
-      color: #163160;
-    }
-
-    .host-button.is-secondary {
-      background: rgba(255, 255, 255, 0.08);
-      color: #f6f8ff;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: rgba(228, 234, 255, 0.7);
     }
 
     .host-hall-select {
       width: 100%;
+      margin-top: 10px;
       padding: 12px 14px;
       border-radius: 14px;
       border: 1px solid rgba(255, 255, 255, 0.12);
       background: rgba(255, 255, 255, 0.06);
       color: #f7faff;
-      font: inherit;
+      font-family: inherit;
+      font-size: 14px;
       font-weight: 700;
     }
 
     .host-hall-select:disabled {
       opacity: 0.55;
       cursor: not-allowed;
-    }
-
-    .host-game-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }
-
-    .host-game-button {
-      appearance: none;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      background: rgba(255, 255, 255, 0.05);
-      color: #f5f8ff;
-      border-radius: 14px;
-      padding: 12px 10px;
-      font: inherit;
-      font-weight: 700;
-      cursor: pointer;
-    }
-
-    .host-game-button:hover {
-      background: rgba(255, 255, 255, 0.1);
-    }
-
-    .unity-stage {
-      position: relative;
-      min-height: 0;
-      flex: 1;
-      border-radius: 18px;
-      overflow: hidden;
-      background: rgba(0, 0, 0, 0.3);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-    }
-
-    #unity-container {
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-    }
-
-    @media (max-width: 1120px) {
-      .host-topbar,
-      .unity-frame-header {
-        flex-direction: column;
-      }
-
-      .host-layout {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 720px) {
-      .host-page {
-        padding: 12px;
-      }
-
-      .unity-frame {
-        padding: 12px;
-      }
     }
   </style>
 
@@ -289,157 +161,116 @@
 </head>
 
 <body>
-  <div class="host-page">
-    <header class="host-topbar">
-      <div class="host-branding">
-        <p class="host-kicker">Spillorama Lobby Shell</p>
-        <h1 class="host-title">Lobby, Spillvett og konto utenfor Unity</h1>
-        <p class="host-copy">
-          Dette er den riktige kundeflaten for hallvalg, spillegrenser og spillregnskap. Unity brukes videre som spillflate,
-          mens compliance og kundekontekst ligger i web-shellen rundt canvaset.
-        </p>
+  <!-- Unity fullscreen — nøyaktig som original template -->
+  <div id="unity-container" class="unity-desktop">
+    <canvas id="unity-canvas" width=960 height=600></canvas>
+    <div id="unity-loading-bar">
+      <div id="unity-logo"></div>
+      <div id="unity-progress-bar-empty">
+        <div id="unity-progress-bar-full"></div>
       </div>
-      <div class="host-meta">
-        <div class="host-meta-card">
-          <span class="host-meta-label">Aktiv hall</span>
-          <strong class="host-meta-value" id="host-active-hall">Venter på hall fra Spillorama</strong>
-          <div class="host-meta-note" id="host-session-state">
-            Logg inn i Spillorama og velg hall i lobbyen for å synkronisere Spillvett i hosten.
-          </div>
-        </div>
-        <div class="host-meta-card">
-          <label class="host-meta-label" for="host-hall-select">Velg hall i shellen</label>
-          <select id="host-hall-select" class="host-hall-select" disabled>
-            <option>Venter på haller fra Spillorama</option>
-          </select>
-          <div class="host-meta-note" id="host-hall-note">
-            Hallvelgeren i shellen blir aktiv når Unity har sendt godkjente haller til hosten.
-          </div>
-        </div>
-        <div class="host-meta-card">
-          <span class="host-meta-label">Spillnavigasjon</span>
-          <div class="host-game-grid">
-            <button class="host-game-button" type="button" data-host-game="0">Lobby</button>
-            <button class="host-game-button" type="button" data-host-game="1">Game 1</button>
-            <button class="host-game-button" type="button" data-host-game="2">Game 2</button>
-            <button class="host-game-button" type="button" data-host-game="3">Game 3</button>
-            <button class="host-game-button" type="button" data-host-game="4">Game 4</button>
-            <button class="host-game-button" type="button" data-host-game="5">Game 5</button>
-            <button class="host-game-button" type="button" data-host-game="6">Candy</button>
-          </div>
-          <div class="host-meta-note">Neste steg er å la shellen eie hele lobbynavigasjonen og bruke Unity kun til spillflaten.</div>
-        </div>
-        <div class="host-chip-row">
-          <span class="host-chip">Konto og Spillvett i shell</span>
-          <span class="host-chip">Spill og realtime i Unity</span>
-          <button class="host-button is-secondary" type="button" id="host-return-lobby">Til lobby i Unity</button>
-        </div>
-      </div>
-    </header>
-
-    <div class="host-layout">
-      <aside class="host-sidebar">
-        <section id="spillvett-shell" class="spillvett-shell">
-          <div class="spillvett-card">
-            <div class="spillvett-header">
-              <div>
-                <p class="spillvett-kicker">Spillvett</p>
-                <h2 class="spillvett-title">Grenser og spillregnskap</h2>
-                <p class="spillvett-subtitle" id="spillvett-hall-name">Venter på valgt hall</p>
-              </div>
-              <div class="spillvett-actions">
-                <button class="spillvett-button is-secondary" type="button" id="spillvett-toggle">Åpne spillregnskap</button>
-              </div>
-            </div>
-
-            <div class="spillvett-status-row" id="spillvett-status-row"></div>
-
-            <div class="spillvett-limits">
-              <article class="spillvett-limit">
-                <div class="spillvett-limit-head">
-                  <span class="spillvett-limit-label" id="spillvett-daily-label">Dagsgrense</span>
-                  <span class="spillvett-limit-value" id="spillvett-daily-value">0 kr igjen</span>
-                </div>
-                <div class="spillvett-meter">
-                  <div class="spillvett-meter-fill is-safe" id="spillvett-daily-fill"></div>
-                </div>
-                <div class="spillvett-limit-meta">
-                  <span id="spillvett-daily-used">Brukt: 0 kr</span>
-                  <span id="spillvett-daily-remaining">Grense: 0 kr</span>
-                </div>
-                <div class="spillvett-note" id="spillvett-daily-reset">Venter på data</div>
-              </article>
-
-              <article class="spillvett-limit">
-                <div class="spillvett-limit-head">
-                  <span class="spillvett-limit-label" id="spillvett-monthly-label">Månedsgrense</span>
-                  <span class="spillvett-limit-value" id="spillvett-monthly-value">0 kr igjen</span>
-                </div>
-                <div class="spillvett-meter">
-                  <div class="spillvett-meter-fill is-safe" id="spillvett-monthly-fill"></div>
-                </div>
-                <div class="spillvett-limit-meta">
-                  <span id="spillvett-monthly-used">Brukt: 0 kr</span>
-                  <span id="spillvett-monthly-remaining">Grense: 0 kr</span>
-                </div>
-                <div class="spillvett-note" id="spillvett-monthly-reset">Venter på data</div>
-              </article>
-            </div>
-
-            <p class="spillvett-note" id="spillvett-note">
-              Spillvett oppdateres når Unity har sendt aktiv hall og spiller-token til hosten.
-            </p>
-            <div class="spillvett-error" id="spillvett-inline-error" hidden></div>
-          </div>
-
-          <div class="spillvett-drawer" id="spillvett-drawer" hidden>
-            <h3 class="spillvett-section-title">Spillregnskap</h3>
-            <div class="spillvett-periods">
-              <button class="spillvett-period" type="button" data-period="today">I dag</button>
-              <button class="spillvett-period" type="button" data-period="last7">7 dager</button>
-              <button class="spillvett-period" type="button" data-period="last30">30 dager</button>
-              <button class="spillvett-period" type="button" data-period="last365">365 dager</button>
-            </div>
-            <div id="spillvett-report-content"></div>
-          </div>
-        </section>
-      </aside>
-
-      <main class="host-main">
-        <section class="unity-frame">
-          <div class="unity-frame-header">
-            <div>
-              <p class="host-kicker">Spillflate</p>
-              <h2 class="unity-frame-title">Unity brukes nå som spillmotor</h2>
-              <p class="unity-frame-copy">
-                Hallvalg styres fortsatt i dagens Unity-topbar og synkroniseres tilbake til web-shellen. Neste naturlige steg er å flytte
-                også hallvalg og annen lobby-navigasjon ut hit, slik at Unity bare håndterer spillopplevelsen.
-              </p>
-            </div>
-          </div>
-
-          <div class="unity-stage">
-            <div id="unity-container" class="unity-desktop">
-              <canvas id="unity-canvas" width=960 height=600></canvas>
-              <div id="unity-loading-bar">
-                <div id="unity-logo"></div>
-                <div id="unity-progress-bar-empty">
-                  <div id="unity-progress-bar-full"></div>
-                </div>
-              </div>
-              <div id="unity-warning"> </div>
-              <div id="unity-footer">
-                <div id="unity-webgl-logo"></div>
-                <div id="unity-fullscreen-button"></div>
-                <div id="unity-build-title">SPILLORAMA</div>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
+    </div>
+    <div id="unity-warning"> </div>
+    <div id="unity-footer">
+      <div id="unity-webgl-logo"></div>
+      <div id="unity-fullscreen-button"></div>
+      <div id="unity-build-title">SPILLORAMA</div>
     </div>
   </div>
 
+  <!-- Spillvett-knapp (vises etter innlogging) -->
+  <button id="spillvett-fab" class="spillvett-fab" type="button" hidden>Spillvett</button>
+
+  <!-- Profil / Spillvett panel (slide-in fra høyre) -->
+  <div id="profile-overlay" class="profile-overlay">
+    <div class="profile-backdrop" id="profile-backdrop"></div>
+    <aside class="profile-panel">
+      <div class="profile-panel-header">
+        <div>
+          <p class="spillvett-kicker">Min profil</p>
+          <h2 class="profile-panel-title">Spillvett og innstillinger</h2>
+        </div>
+        <button class="profile-panel-close" id="profile-close" type="button">Lukk</button>
+      </div>
+
+      <div class="profile-section">
+        <span class="profile-section-label">Aktiv hall</span>
+        <strong class="profile-section-value" id="host-active-hall">Venter på hall</strong>
+        <div class="profile-section-note" id="host-session-state"></div>
+        <select id="host-hall-select" class="host-hall-select" disabled>
+          <option>Venter på haller</option>
+        </select>
+        <div class="profile-section-note" id="host-hall-note"></div>
+      </div>
+
+      <section id="spillvett-shell" class="spillvett-shell">
+        <div class="spillvett-card">
+          <div class="spillvett-header">
+            <div>
+              <p class="spillvett-kicker">Spillvett</p>
+              <h2 class="spillvett-title">Grenser og spillregnskap</h2>
+              <p class="spillvett-subtitle" id="spillvett-hall-name">Venter på valgt hall</p>
+            </div>
+            <div class="spillvett-actions">
+              <button class="spillvett-button is-secondary" type="button" id="spillvett-toggle">Åpne spillregnskap</button>
+            </div>
+          </div>
+
+          <div class="spillvett-status-row" id="spillvett-status-row"></div>
+
+          <div class="spillvett-limits">
+            <article class="spillvett-limit">
+              <div class="spillvett-limit-head">
+                <span class="spillvett-limit-label" id="spillvett-daily-label">Dagsgrense</span>
+                <span class="spillvett-limit-value" id="spillvett-daily-value">0 kr igjen</span>
+              </div>
+              <div class="spillvett-meter">
+                <div class="spillvett-meter-fill is-safe" id="spillvett-daily-fill"></div>
+              </div>
+              <div class="spillvett-limit-meta">
+                <span id="spillvett-daily-used">Brukt: 0 kr</span>
+                <span id="spillvett-daily-remaining">Grense: 0 kr</span>
+              </div>
+              <div class="spillvett-note" id="spillvett-daily-reset">Venter på data</div>
+            </article>
+
+            <article class="spillvett-limit">
+              <div class="spillvett-limit-head">
+                <span class="spillvett-limit-label" id="spillvett-monthly-label">Månedsgrense</span>
+                <span class="spillvett-limit-value" id="spillvett-monthly-value">0 kr igjen</span>
+              </div>
+              <div class="spillvett-meter">
+                <div class="spillvett-meter-fill is-safe" id="spillvett-monthly-fill"></div>
+              </div>
+              <div class="spillvett-limit-meta">
+                <span id="spillvett-monthly-used">Brukt: 0 kr</span>
+                <span id="spillvett-monthly-remaining">Grense: 0 kr</span>
+              </div>
+              <div class="spillvett-note" id="spillvett-monthly-reset">Venter på data</div>
+            </article>
+          </div>
+
+          <p class="spillvett-note" id="spillvett-note">
+            Logg inn og velg hall for å se spillegrenser.
+          </p>
+          <div class="spillvett-error" id="spillvett-inline-error" hidden></div>
+        </div>
+
+        <div class="spillvett-drawer" id="spillvett-drawer" hidden>
+          <h3 class="spillvett-section-title">Spillregnskap</h3>
+          <div class="spillvett-periods">
+            <button class="spillvett-period" type="button" data-period="today">I dag</button>
+            <button class="spillvett-period" type="button" data-period="last7">7 dager</button>
+            <button class="spillvett-period" type="button" data-period="last30">30 dager</button>
+            <button class="spillvett-period" type="button" data-period="last365">365 dager</button>
+          </div>
+          <div id="spillvett-report-content"></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <!-- Candy iframe-overlay -->
   <div id="candy-overlay" class="candy-overlay">
     <div class="candy-overlay-bar">
       <span class="candy-overlay-title">Candy</span>
@@ -466,7 +297,6 @@
     var progressBarFull = document.querySelector("#unity-progress-bar-full");
     var fullscreenButton = document.querySelector("#unity-fullscreen-button");
     var warningBanner = document.querySelector("#unity-warning");
-    var returnLobbyButton = document.querySelector("#host-return-lobby");
 
     function unityShowBanner(msg, type) {
       function updateBannerVisibility() {
@@ -540,10 +370,6 @@
       }
     };
 
-    if (returnLobbyButton) {
-      returnLobbyButton.addEventListener('click', returnToUnityLobby);
-    }
-
     var script = document.createElement("script");
     script.src = loaderUrl;
     script.onload = () => {
@@ -576,7 +402,7 @@
         navigator.serviceWorker.register(swPath, {
           scope: swDir
         }).then((registration) => {
-          console.log("✅ Service worker registered");
+          console.log("Service worker registered");
           Notification.requestPermission().then((permission) => {
             if (permission === 'granted') {
               messaging.getToken({
