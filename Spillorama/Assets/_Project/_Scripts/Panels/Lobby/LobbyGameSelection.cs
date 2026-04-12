@@ -119,6 +119,37 @@ public class LobbyGameSelection : MonoBehaviour
 #endif
     }
 
+    public void LaunchGameFromHost(string gameNumber)
+    {
+        Debug.Log("LaunchGameFromHost: " + gameNumber);
+        UIManager.Instance.lobbyPanel.OpenHostShellLobbyState();
+
+        switch (gameNumber)
+        {
+            case "1":
+                UIManager.Instance.lobbyPanel.gamePlanPanel.Game1();
+                break;
+            case "2":
+                UIManager.Instance.lobbyPanel.gamePlanPanel.Game2();
+                break;
+            case "3":
+                UIManager.Instance.lobbyPanel.gamePlanPanel.Game3();
+                break;
+            case "4":
+                Game4();
+                break;
+            case "5":
+                Game5();
+                break;
+            case "6":
+                OnCandyButtonTap();
+                break;
+            default:
+                Debug.LogError("LaunchGameFromHost: invalid game number: " + gameNumber);
+                break;
+        }
+    }
+
     public IEnumerator OnGameButtonTap(string gameName)
     {
         Debug.Log("OnGameButtonTap : " + gameName);

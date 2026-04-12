@@ -1,5 +1,24 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
+
+[Serializable]
+public class ApprovedHallHostSyncItem
+{
+    public string hallId = "";
+    public string hallName = "";
+    public double totalLimitAvailable = 0;
+    public bool isSelected = false;
+}
+
+[Serializable]
+public class ApprovedHallHostSyncPayload
+{
+    public string activeHallId = "";
+    public string activeHallName = "";
+    public List<ApprovedHallHostSyncItem> halls = new List<ApprovedHallHostSyncItem>();
+}
 
 public partial class UIManager
 {
@@ -27,6 +46,45 @@ public partial class UIManager
     {
 #if UNITY_WEBGL && !UNITY_EDITOR
         Application.ExternalCall("ClearPlayerToken");
+        Application.ExternalCall("ClearApprovedHalls");
+#endif
+    }
+
+    public void SyncActiveHallToWebHost()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (!string.IsNullOrEmpty(Player_Hall_ID))
+            Application.ExternalCall("SetActiveHall", Player_Hall_ID, Player_Hall_Name ?? "");
+#endif
+    }
+
+    public void SyncApprovedHallsToWebHost()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        ApprovedHallHostSyncPayload payload = new ApprovedHallHostSyncPayload
+        {
+            activeHallId = Player_Hall_ID ?? "",
+            activeHallName = Player_Hall_Name ?? ""
+        };
+
+        if (topBarPanel != null && topBarPanel.ApprovedHalls != null)
+        {
+            foreach (ApprovedHalls hall in topBarPanel.ApprovedHalls)
+            {
+                if (hall == null)
+                    continue;
+
+                payload.halls.Add(new ApprovedHallHostSyncItem
+                {
+                    hallId = hall.hallId ?? "",
+                    hallName = hall.hallName ?? "",
+                    totalLimitAvailable = hall.totalLimitAvailable,
+                    isSelected = hall.isSelected || hall.hallId == Player_Hall_ID
+                });
+            }
+        }
+
+        Application.ExternalCall("SetApprovedHalls", JsonUtility.ToJson(payload));
 #endif
     }
 
@@ -61,8 +119,27 @@ public partial class UIManager
                 gameAssetData.TodaysBalance = response.result.realMoney.ToString("###,###,##0.00");
                 Player_Hall_ID = response.result.hall;
                 Player_Hall_Name = response.result.hallName;
+                SyncActiveHallToWebHost();
+                SyncApprovedHallsToWebHost();
             }
         );
+    }
+
+    public void SwitchActiveHallFromHost(string hallId)
+    {
+        if (string.IsNullOrEmpty(hallId))
+        {
+            Debug.LogWarning("SwitchActiveHallFromHost skipped: missing hallId.");
+            return;
+        }
+
+        if (topBarPanel == null)
+        {
+            Debug.LogWarning("SwitchActiveHallFromHost skipped: topBarPanel missing.");
+            return;
+        }
+
+        topBarPanel.SwitchHallFromHost(hallId);
     }
 
     public void NavigateToGame(string gameNumber)
@@ -75,51 +152,22 @@ public partial class UIManager
             return;
         }
 
-        lobbyPanel.OpenGameSelectionPanel();
-        StartCoroutine(NavigateToGameDelayed(gameNumber));
+        LobbyGameSelection gameSelection = lobbyPanel != null
+            ? lobbyPanel.GetComponentInChildren<LobbyGameSelection>(true)
+            : null;
+
+        if (gameSelection == null)
+        {
+            Debug.LogError("NavigateToGame: LobbyGameSelection not found in lobbyPanel");
+            return;
+        }
+
+        gameSelection.LaunchGameFromHost(gameNumber);
     }
 
     public void ReturnToLobby()
     {
         Debug.Log("ReturnToLobby called from JS");
         topBarPanel.OnGamesButtonTap();
-    }
-
-    private IEnumerator NavigateToGameDelayed(string gameNumber)
-    {
-        yield return null;
-
-        LobbyGameSelection gameSelection = lobbyPanel.GetComponentInChildren<LobbyGameSelection>(true);
-        if (gameSelection == null)
-        {
-            Debug.LogError("NavigateToGame: LobbyGameSelection not found in lobbyPanel");
-            yield break;
-        }
-
-        gameSelection.gameObject.SetActive(true);
-        switch (gameNumber)
-        {
-            case "1":
-                gameSelection.OnGame1ButtonTap();
-                break;
-            case "2":
-                gameSelection.OnGame2ButtonTap();
-                break;
-            case "3":
-                gameSelection.OnGame3ButtonTap();
-                break;
-            case "4":
-                gameSelection.OnGame4ButtonTap();
-                break;
-            case "5":
-                gameSelection.OnGame5ButtonTap();
-                break;
-            case "6":
-                gameSelection.OnCandyButtonTap();
-                break;
-            default:
-                Debug.LogError("NavigateToGame: invalid game number: " + gameNumber);
-                break;
-        }
     }
 }

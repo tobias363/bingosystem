@@ -22,6 +22,9 @@ public class LobbyPanel : MonoBehaviour
     {
         UIManager.Instance.topBarPanel.Open();
         Get_Game_1_Lucky_Number();
+
+        if (UIManager.Instance.isGameWebGL)
+            OpenHostShellLobbyState();
     }
 
     void Start()
@@ -37,6 +40,14 @@ public class LobbyPanel : MonoBehaviour
     #endregion
 
     #region PUBLIC_METHODS    
+
+    public void OpenHostShellLobbyState()
+    {
+        if (!this.isActiveAndEnabled)
+            this.Open();
+
+        CloseAllPanels();
+    }
 
     void Get_Game_1_Lucky_Number()
     {
@@ -60,6 +71,12 @@ public class LobbyPanel : MonoBehaviour
 
     public void OpenGameSelectionPanel()
     {
+        if (UIManager.Instance.isGameWebGL)
+        {
+            OpenHostShellLobbyState();
+            return;
+        }
+
         print($"Open Game Selection UI");
         if (!this.isActiveAndEnabled)
             this.Open();
