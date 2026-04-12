@@ -50,23 +50,52 @@ Merk at de to buildene bruker ulike `SendMessage(...)`-mål.
 
 Brukes av `/web/`-hosten til å lagre eller nullstille spiller-token som senere brukes mot Candy launch-endepunktet.
 
-### 2.3 `OpenUrlInSameTab(url)` (`/web/` only)
+### 2.3 `SetActiveHall(hallId, hallName)` (`/web/` only)
+
+Brukes av `/web/`-hosten til å vite hvilken hall som er aktiv i Unity-lobbyen akkurat nå.
+
+Denne brukes nå også av host-side `Spillvett`-visning for å hente:
+
+- `GET /api/wallet/me/compliance?hallId=...`
+- `GET /api/spillevett/report?hallId=...&period=...`
+
+### 2.4 `SetApprovedHalls(payloadJson)` og `ClearApprovedHalls()` (`/web/` only)
+
+Brukes av Unity til å sende hele listen med godkjente haller til host-shellen, slik at hallvelgeren kan ligge utenfor Unity-canvaset.
+
+Payloaden inneholder:
+
+- aktiv hall-ID og hallnavn
+- alle godkjente haller
+- tilgjengelig tapsgrense per hall
+- markering av valgt hall
+
+### 2.5 `SwitchActiveHallFromHost(hallId)` (`/web/` only)
+
+Brukes av host-shellen for å be Unity om å bytte aktiv hall når brukeren velger hall i shellens nedtrekk.
+
+### 2.6 `NavigateSpilloramaGame(gameNumber)` (`/web/` only)
+
+Brukes av host-shellen for å sende enkel spillnavigasjon tilbake inn i Unity.
+
+### 2.7 `OpenUrlInSameTab(url)` (`/web/` only)
 
 Kalles av Unity når lobbyen vil åpne en ekstern URL fra spillerhosten.
 
 Gjeldende live-host oppfører seg slik:
 
-- `/candy/` åpnes i iframe-overlay
-- andre URL-er kan fortsatt åpnes som vanlig navigasjon/fokus
-### 2.4 `requestGameData()` (`/view-game/` only)
+- `/candy/` og andre URL-er åpnes via `window.open(url, 'myUniqueTab')` — ny fane/vindu
+
+**Gap:** `CANDY_SPILLORAMA_API_CONTRACT.md` og `ARKITEKTUR.md` beskriver `/candy/` som et iframe-overlay. Dette er ikke implementert ennå. Når iframe-embedding er på plass skal denne seksjonen oppdateres til å beskrive overlay-flyten og `postMessage`-protokollen (se `CANDY_SPILLORAMA_API_CONTRACT.md` §5).
+### 2.8 `requestGameData()` (`/view-game/` only)
 
 Kalles av hall-display-builden for å hente visningsdata fra URL-token og validere dette mot backend.
 
-### 2.5 `sendDeviceTypeToUnity()` (`/view-game/` only)
+### 2.9 `sendDeviceTypeToUnity()` (`/view-game/` only)
 
 Sender `deviceType` fra querystring tilbake til `Panel - Bingo Hall Display`.
 
-### 2.6 `openSpilloramaTab()` og `CloseSpilloramaTvScreenTab()` (`/view-game/` only)
+### 2.10 `openSpilloramaTab()` og `CloseSpilloramaTvScreenTab()` (`/view-game/` only)
 
 Brukes av hall-displayet for fokus/lukking av TV-vindu.
 
@@ -98,6 +127,8 @@ Det som er lov i `Spillorama-system` er kun leverandorsiden av integrasjonen:
 - `POST /api/games/candy/launch`
 - `/api/ext-wallet/*`
 - `SetPlayerToken(token)` / `ClearPlayerToken()`
+- `SetApprovedHalls(payloadJson)` / `ClearApprovedHalls()`
+- host-side hallvelger og Spillvett-shell på `/web/`
 - iframe-overlay for Candy på `/web/`
 - host-side mottak av Candy `postMessage`
 

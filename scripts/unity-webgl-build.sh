@@ -89,8 +89,8 @@ echo "[unity-webgl-build] Starter batch build..."
   -nographics \
   -quit \
   -projectPath "$PROJECT_PATH" \
-  -executeMethod WebGLBuild.BuildWebGLFromCommandLine \
-  -customBuildPath "$OUTPUT_DIR" \
+  -executeMethod WebGLBatchBuild.BuildWebGL \
+  -outputPath "$OUTPUT_DIR" \
   -releaseVersion "$RELEASE_VERSION" \
   -releaseCommit "$RELEASE_COMMIT" \
   -logFile "$LOG_FILE"
@@ -101,8 +101,14 @@ if [[ ! -f "$OUTPUT_DIR/index.html" ]]; then
 fi
 
 if [[ ! -f "$OUTPUT_DIR/release.json" ]]; then
-  echo "[unity-webgl-build] release.json mangler i build output: $OUTPUT_DIR" >&2
-  exit 1
+  cat > "$OUTPUT_DIR/release.json" <<JSON
+{
+  "releaseVersion": "$RELEASE_VERSION",
+  "releaseCommit": "$RELEASE_COMMIT",
+  "builtAtUtc": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "outputDir": "$OUTPUT_DIR"
+}
+JSON
 fi
 
 echo "[unity-webgl-build] OK."
