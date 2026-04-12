@@ -84,7 +84,7 @@ public class PrefabBingoGame3Pattern : MonoBehaviour
                 Pattern_Indexes.Clear();
                 for (int i = 0; i < patternData.patternDataList.Count; i++)
                 {
-                    if (patternData.patternDataList[i] == 1 /*&& i != 12*/)
+                    if (patternData.patternDataList[i] == 1)
                     {
                         imgPatternBlocks[i].color = colorPatternFill;
                         imgPatternBlocks[i].sprite = bevelImg;
@@ -115,94 +115,58 @@ public class PrefabBingoGame3Pattern : MonoBehaviour
 
     IEnumerator One_Row_Animation()
     {
-    there:;
-        for (int i = 0; i < 5; i++)
+        while (true)
         {
-            for (int k = 0; k < 25; k++)
+            for (int i = 0; i < 5; i++)
             {
-                imgPatternBlocks[k].color = colorPatternNormal;
-                imgPatternBlocks[k].sprite = null;
-            }
-            for (int j = 0; j < 5; j++)
-            {
-                if ((i * 5) + j != 12)
+                for (int k = 0; k < 25; k++)
                 {
-                    imgPatternBlocks[(i * 5) + j].color = colorPatternFill;
-                    imgPatternBlocks[(i * 5) + j].sprite = bevelImg;
-                    LeanTween.scale(imgPatternBlocks[(i * 5) + j].gameObject, Vector3.one * 1.06f, 0.5f)
-                         .setEase(LeanTweenType.easeInOutSine)
-                         .setLoopPingPong(1);
+                    imgPatternBlocks[k].color = colorPatternNormal;
+                    imgPatternBlocks[k].sprite = null;
                 }
-            }
-            yield return new WaitForSeconds(1f);
-        }
-        for (int i = 0; i < 5; i++)
-        {
-            for (int k = 0; k < 25; k++)
-            {
-                imgPatternBlocks[k].color = colorPatternNormal;
-                imgPatternBlocks[k].sprite = null;
-            }
-            for (int j = 0; j < 5; j++)
-            {
-                if ((i * 5) + j != 12)
-                {
-                    imgPatternBlocks[(j * 5) + i].color = colorPatternFill;
-                    imgPatternBlocks[(j * 5) + i].sprite = bevelImg;
-                    LeanTween.scale(imgPatternBlocks[(j * 5) + i].gameObject, Vector3.one * 1.06f, 0.5f)
-                                .setEase(LeanTweenType.easeInOutSine)
-                                .setLoopPingPong(1);
-                }
-            }
-            yield return new WaitForSeconds(1f);
-        }
-        goto there;
-    }
-
-    IEnumerator Two_Row_Animation()
-    {
-    there:;
-        for (int l = 0; l < 4; l++)
-        {
-            for (int i = l + 1; i < 5; i++)
-            {
                 for (int j = 0; j < 5; j++)
                 {
-                    for (int k = 0; k < 5; k++)
+                    if ((i * 5) + j != 12)
                     {
-                        if (5 * j + k != 12)
-                        {
-                            //imgPatternBlocks[5 * j + k].color = (j == l || j == i) ? colorPatternFill : colorPatternNormal;
-                            if (j == l || j == i)
-                            {
-                                imgPatternBlocks[5 * j + k].color = colorPatternFill;
-                                imgPatternBlocks[5 * j + k].sprite = bevelImg;
-                                LeanTween.scale(imgPatternBlocks[5 * j + k].gameObject, Vector3.one * 1.06f, 0.5f)
-                                         .setEase(LeanTweenType.easeInOutSine)
-                                         .setLoopPingPong(1);
-                            }
-                            else
-                            {
-                                imgPatternBlocks[5 * j + k].color = colorPatternNormal;
-                                imgPatternBlocks[5 * j + k].sprite = null;
-                            }
-                        }
+                        imgPatternBlocks[(i * 5) + j].color = colorPatternFill;
+                        imgPatternBlocks[(i * 5) + j].sprite = bevelImg;
+                        LeanTween.scale(imgPatternBlocks[(i * 5) + j].gameObject, Vector3.one * 1.06f, 0.5f)
+                             .setEase(LeanTweenType.easeInOutSine)
+                             .setLoopPingPong(1);
+                    }
+                }
+                yield return new WaitForSeconds(1f);
+            }
+            for (int i = 0; i < 5; i++)
+            {
+                for (int k = 0; k < 25; k++)
+                {
+                    imgPatternBlocks[k].color = colorPatternNormal;
+                    imgPatternBlocks[k].sprite = null;
+                }
+                for (int j = 0; j < 5; j++)
+                {
+                    if ((i * 5) + j != 12)
+                    {
+                        imgPatternBlocks[(j * 5) + i].color = colorPatternFill;
+                        imgPatternBlocks[(j * 5) + i].sprite = bevelImg;
+                        LeanTween.scale(imgPatternBlocks[(j * 5) + i].gameObject, Vector3.one * 1.06f, 0.5f)
+                                    .setEase(LeanTweenType.easeInOutSine)
+                                    .setLoopPingPong(1);
                     }
                 }
                 yield return new WaitForSeconds(1f);
             }
         }
-        goto there;
     }
 
-    IEnumerator Three_Row_Animation()
+    IEnumerator Two_Row_Animation()
     {
-    there:;
-        for (int l = 0; l < 3; l++)
+        while (true)
         {
-            for (int m = l + 1; m < 5; m++)
+            for (int l = 0; l < 4; l++)
             {
-                for (int i = m + 1; i < 5; i++)
+                for (int i = l + 1; i < 5; i++)
                 {
                     for (int j = 0; j < 5; j++)
                     {
@@ -210,14 +174,13 @@ public class PrefabBingoGame3Pattern : MonoBehaviour
                         {
                             if (5 * j + k != 12)
                             {
-                                //imgPatternBlocks[5 * j + k].color = (j == l || j == i || j == m) ? colorPatternFill : colorPatternNormal;
-                                if (j == l || j == i || j == m)
+                                if (j == l || j == i)
                                 {
                                     imgPatternBlocks[5 * j + k].color = colorPatternFill;
                                     imgPatternBlocks[5 * j + k].sprite = bevelImg;
                                     LeanTween.scale(imgPatternBlocks[5 * j + k].gameObject, Vector3.one * 1.06f, 0.5f)
-         .setEase(LeanTweenType.easeInOutSine)
-         .setLoopPingPong(1);
+                                             .setEase(LeanTweenType.easeInOutSine)
+                                             .setLoopPingPong(1);
                                 }
                                 else
                                 {
@@ -231,43 +194,74 @@ public class PrefabBingoGame3Pattern : MonoBehaviour
                 }
             }
         }
-        goto there;
+    }
+
+    IEnumerator Three_Row_Animation()
+    {
+        while (true)
+        {
+            for (int l = 0; l < 3; l++)
+            {
+                for (int m = l + 1; m < 5; m++)
+                {
+                    for (int i = m + 1; i < 5; i++)
+                    {
+                        for (int j = 0; j < 5; j++)
+                        {
+                            for (int k = 0; k < 5; k++)
+                            {
+                                if (5 * j + k != 12)
+                                {
+                                    if (j == l || j == i || j == m)
+                                    {
+                                        imgPatternBlocks[5 * j + k].color = colorPatternFill;
+                                        imgPatternBlocks[5 * j + k].sprite = bevelImg;
+                                        LeanTween.scale(imgPatternBlocks[5 * j + k].gameObject, Vector3.one * 1.06f, 0.5f)
+                                            .setEase(LeanTweenType.easeInOutSine)
+                                            .setLoopPingPong(1);
+                                    }
+                                    else
+                                    {
+                                        imgPatternBlocks[5 * j + k].color = colorPatternNormal;
+                                        imgPatternBlocks[5 * j + k].sprite = null;
+                                    }
+                                }
+                            }
+                        }
+                        yield return new WaitForSeconds(1f);
+                    }
+                }
+            }
+        }
     }
 
     IEnumerator Four_Row_Animation()
     {
-    there:;
-        for (int i = 4; i > -1; i--)
+        while (true)
         {
-            for (int k = 0; k < 25; k++)
+            for (int i = 4; i > -1; i--)
             {
-                if (k != 12)
+                for (int k = 0; k < 25; k++)
                 {
-                    imgPatternBlocks[k].color = colorPatternFill;
-                    imgPatternBlocks[k].sprite = bevelImg;
-                    LeanTween.scale(imgPatternBlocks[k].gameObject, Vector3.one * 1.06f, 0.5f)
-.setEase(LeanTweenType.easeInOutSine)
-.setLoopPingPong(1);
+                    if (k != 12)
+                    {
+                        imgPatternBlocks[k].color = colorPatternFill;
+                        imgPatternBlocks[k].sprite = bevelImg;
+                        LeanTween.scale(imgPatternBlocks[k].gameObject, Vector3.one * 1.06f, 0.5f)
+                            .setEase(LeanTweenType.easeInOutSine)
+                            .setLoopPingPong(1);
+                    }
                 }
+                for (int j = 0; j < 5; j++)
+                {
+                    imgPatternBlocks[(i * 5) + j].color = colorPatternNormal;
+                    imgPatternBlocks[(i * 5) + j].sprite = null;
+                }
+                yield return new WaitForSeconds(1f);
             }
-            for (int j = 0; j < 5; j++)
-            {
-                imgPatternBlocks[(i * 5) + j].color = colorPatternNormal;
-                imgPatternBlocks[(i * 5) + j].sprite = null;
-            }
-            yield return new WaitForSeconds(1f);
         }
-        goto there;
     }
 
     #endregion
 
-    #region PRIVATE_METHODS
-    #endregion
-
-    #region COROUTINES
-    #endregion
-
-    #region GETTER_SETTER
-    #endregion
 }

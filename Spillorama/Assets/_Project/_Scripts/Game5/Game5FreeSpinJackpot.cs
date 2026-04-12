@@ -14,8 +14,9 @@ public class Game5FreeSpinJackpot : MonoBehaviour
     private string gameId = "";
     private string ticketId = "";
     private bool isSpinning;
-    public GameObject wheelObject;
-    int autoTurnTime = 10;
+    [SerializeField] private GameObject wheelObject;
+    private const int DefaultAutoTurnTime = 10;
+    private int autoTurnTime = DefaultAutoTurnTime;
 
     [Header("Wheel Prize List")]
     [SerializeField] private TMP_Text[] WheelPrizes;
@@ -27,7 +28,7 @@ public class Game5FreeSpinJackpot : MonoBehaviour
     [SerializeField] private int[] PlatesData;
     [SerializeField] private float[] PlatesVectorValues;
 
-    public int SampleInput;
+    [SerializeField] private int SampleInput;
     #endregion
 
     #region PUBLIC_METHODS
@@ -39,7 +40,7 @@ public class Game5FreeSpinJackpot : MonoBehaviour
         this.Open();
         SetWheelPrizesData(wheelOfFortuneData.prizeList);
         isSpinningWOF = false;
-        autoTurnTime = 10;
+        autoTurnTime = DefaultAutoTurnTime;
         StartAutoTurn();
     }
 
