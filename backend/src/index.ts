@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import cors from "cors";
 import express from "express";
+import { randomUUID } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import { URL, fileURLToPath } from "node:url";
@@ -9,11 +10,12 @@ import { createWalletAdapter } from "./adapters/createWalletAdapter.js";
 import { LocalBingoSystemAdapter } from "./adapters/LocalBingoSystemAdapter.js";
 import { PostgresBingoSystemAdapter } from "./adapters/PostgresBingoSystemAdapter.js";
 import { LocalKycAdapter } from "./adapters/LocalKycAdapter.js";
+import { BankIdKycAdapter } from "./adapters/BankIdKycAdapter.js";
 import { assertTicketsPerPlayerWithinHallLimit } from "./game/compliance.js";
 import { BingoEngine, DomainError, toPublicError } from "./game/BingoEngine.js";
 import { PostgresResponsibleGamingStore } from "./game/PostgresResponsibleGamingStore.js";
 import { generateTraditional75Ticket } from "./game/ticket.js";
-import type { ClaimType, RoomSnapshot, RoomSummary, Ticket } from "./game/types.js";
+import type { ClaimType, GameSnapshot, Player, RoomSnapshot, RoomSummary, Ticket } from "./game/types.js";
 import {
   ADMIN_ACCESS_POLICY,
   assertAdminPermission,
@@ -41,6 +43,7 @@ import {
 } from "./admin/settingsCatalog.js";
 import { DrawScheduler, type SchedulerSettings } from "./draw-engine/DrawScheduler.js";
 import { SocketRateLimiter } from "./middleware/socketRateLimit.js";
+import { HttpRateLimiter } from "./middleware/httpRateLimit.js";
 import { register as promRegister, metrics as promMetrics } from "./util/metrics.js";
 import { createExternalGameWalletRouter } from "./integration/externalGameWallet.js";
 
@@ -68,6 +71,7 @@ interface CreateRoomPayload extends AuthenticatedSocketPayload {
   playerName?: string;
   walletId?: string;
   hallId?: string;
+  gameSlug?: string;
 }
 
 interface JoinRoomPayload extends CreateRoomPayload {
@@ -104,6 +108,33 @@ interface RoomStatePayload extends AuthenticatedSocketPayload {
 interface ExtraDrawPayload extends RoomActionPayload {
   requestedCount?: number;
   packageId?: string;
+}
+
+interface ChatSendPayload extends RoomActionPayload {
+  message: string;
+  emojiId?: number;
+}
+
+interface ChatMessage {
+  id: string;
+  playerId: string;
+  playerName: string;
+  message: string;
+  emojiId: number;
+  createdAt: string;
+}
+
+interface LuckyNumberPayload extends RoomActionPayload {
+  luckyNumber: number;
+}
+
+interface LeaderboardPayload extends AuthenticatedSocketPayload {
+  roomCode?: string; // optional — if omitted, aggregates across all rooms
+}
+
+interface LeaderboardEntry {
+  nickname: string;
+  points: number;
 }
 
 interface BingoSchedulerSettings {
@@ -156,6 +187,15 @@ const corsOrigins: string[] | "*" = corsAllowedOriginsRaw
   : "*";
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json());
+
+// BIN-277: REST API rate limiting — sliding-window per IP per route tier
+const httpRateLimiter = new HttpRateLimiter();
+httpRateLimiter.start();
+app.use(httpRateLimiter.middleware());
+
+// BIN-278: Root redirects to web shell (must be before express.static)
+app.get("/", (_req, res) => { res.redirect("/web/"); });
+
 app.use(express.static(frontendDir));
 app.use(express.static(publicDir));
 
@@ -164,7 +204,8 @@ const io = new Server(server, {
   cors: {
     origin: corsOrigins,
     credentials: true
-  }
+  },
+  allowEIO3: true  // BestHTTP Unity client uses socket.io protocol v2/v3
 });
 
 const walletRuntime = createWalletAdapter(projectDir);
@@ -306,7 +347,9 @@ if (isProductionRuntime && !autoplayAllowed && (requestedAutoRoundStartEnabled |
 
 // BIN-159: Use PostgreSQL adapter for game checkpointing when a DB connection is available
 const checkpointConnectionString = process.env.APP_PG_CONNECTION_STRING?.trim() || process.env.WALLET_PG_CONNECTION_STRING?.trim() || "";
-const usePostgresBingoAdapter = parseBooleanEnv(process.env.BINGO_CHECKPOINT_ENABLED, false) && checkpointConnectionString.length > 0;
+// BIN-240: Default to true — checkpointing must be on in production to prevent
+// loss of game state on restart. Override with BINGO_CHECKPOINT_ENABLED=false only in dev/test.
+const usePostgresBingoAdapter = parseBooleanEnv(process.env.BINGO_CHECKPOINT_ENABLED, true) && checkpointConnectionString.length > 0;
 
 const localBingoAdapter = usePostgresBingoAdapter
   ? new PostgresBingoSystemAdapter({
@@ -359,17 +402,30 @@ const engine = new BingoEngine(localBingoAdapter, walletAdapter, {
   pauseDurationMs: bingoPauseDurationMs,
   selfExclusionMinMs: bingoSelfExclusionMinMs,
   maxDrawsPerRound: bingoMaxDrawsPerRound,
-  persistence: responsibleGamingStore
+  persistence: responsibleGamingStore,
+  roomStateStore // BIN-251: sync room structural mutations to Redis when enabled
 });
+
+// BIN-274: Configurable KYC provider
+const kycMinAge = Math.max(18, parsePositiveIntEnv(process.env.KYC_MIN_AGE_YEARS, 18));
+const kycProvider = process.env.KYC_PROVIDER?.trim().toLowerCase() ?? "local";
+const bankIdAdapter = kycProvider === "bankid"
+  ? new BankIdKycAdapter({
+      clientId: process.env.BANKID_CLIENT_ID ?? "",
+      clientSecret: process.env.BANKID_CLIENT_SECRET ?? "",
+      authority: process.env.BANKID_AUTHORITY ?? "https://login.bankid.no",
+      redirectUri: process.env.BANKID_REDIRECT_URI ?? "",
+      minAgeYears: kycMinAge,
+    })
+  : null;
+const kycAdapter = bankIdAdapter ?? new LocalKycAdapter({ minAgeYears: kycMinAge });
 
 const platformService = new PlatformService(walletAdapter, {
   connectionString: platformConnectionString,
   schema: process.env.APP_PG_SCHEMA?.trim() || process.env.WALLET_PG_SCHEMA?.trim() || "public",
   sessionTtlHours: parsePositiveIntEnv(process.env.AUTH_SESSION_TTL_HOURS, 24 * 7),
-  minAgeYears: Math.max(18, parsePositiveIntEnv(process.env.KYC_MIN_AGE_YEARS, 18)),
-  kycAdapter: new LocalKycAdapter({
-    minAgeYears: Math.max(18, parsePositiveIntEnv(process.env.KYC_MIN_AGE_YEARS, 18))
-  })
+  minAgeYears: kycMinAge,
+  kycAdapter,
 });
 
 const swedbankPayService = new SwedbankPayService(walletAdapter, {
@@ -1133,6 +1189,76 @@ async function emitWalletRoomUpdates(walletIds: string[]): Promise<void> {
   await emitManyRoomUpdates(affectedRooms);
 }
 
+/** In-memory chat history per room. Capped to last 100 messages. */
+const chatHistoryByRoom = new Map<string, ChatMessage[]>();
+const MAX_CHAT_MESSAGES_PER_ROOM = 100;
+
+function appendChatMessage(roomCode: string, msg: ChatMessage): void {
+  let history = chatHistoryByRoom.get(roomCode);
+  if (!history) {
+    history = [];
+    chatHistoryByRoom.set(roomCode, history);
+  }
+  history.push(msg);
+  if (history.length > MAX_CHAT_MESSAGES_PER_ROOM) {
+    history.splice(0, history.length - MAX_CHAT_MESSAGES_PER_ROOM);
+  }
+}
+
+/** Per-room lucky number selections: Map<roomCode, Map<playerId, luckyNumber>> */
+const luckyNumbersByRoom = new Map<string, Map<string, number>>();
+
+function setLuckyNumber(roomCode: string, playerId: string, number: number): void {
+  let roomMap = luckyNumbersByRoom.get(roomCode);
+  if (!roomMap) {
+    roomMap = new Map();
+    luckyNumbersByRoom.set(roomCode, roomMap);
+  }
+  roomMap.set(playerId, number);
+}
+
+function getLuckyNumbers(roomCode: string): Record<string, number> {
+  const roomMap = luckyNumbersByRoom.get(roomCode);
+  if (!roomMap) return {};
+  return Object.fromEntries(roomMap);
+}
+
+/** Build leaderboard from game history across rooms.
+ *  Points: LINE win = 1 pt, BINGO win = 2 pts. Sorted descending. */
+function buildLeaderboard(roomCode?: string): LeaderboardEntry[] {
+  const pointsByPlayer = new Map<string, { name: string; points: number }>();
+
+  const roomCodes = roomCode ? [roomCode] : engine.getAllRoomCodes();
+  for (const code of roomCodes) {
+    let snapshot: RoomSnapshot;
+    try { snapshot = engine.getRoomSnapshot(code); } catch { continue; }
+
+    // Player name lookup
+    const nameById = new Map<string, string>();
+    for (const p of snapshot.players) nameById.set(p.id, p.name);
+
+    for (const game of snapshot.gameHistory) {
+      for (const claim of game.claims) {
+        if (!claim.valid) continue;
+        const pts = claim.type === "BINGO" ? 2 : 1;
+        const existing = pointsByPlayer.get(claim.playerId);
+        const name = nameById.get(claim.playerId) ?? claim.playerId;
+        if (existing) {
+          existing.points += pts;
+          if (!existing.name || existing.name === claim.playerId) existing.name = name;
+        } else {
+          pointsByPlayer.set(claim.playerId, { name, points: pts });
+        }
+      }
+    }
+  }
+
+  return [...pointsByPlayer.values()]
+    .sort((a, b) => b.points - a.points)
+    .slice(0, 50)
+    .map(({ name, points }) => ({ nickname: name, points }));
+}
+
 const roomConfiguredEntryFeeByRoom = new Map<string, number>();
 /** Per-room set of player IDs who have armed their bet for the next round. */
 const armedPlayerIdsByRoom = new Map<string, Set<string>>();
@@ -1264,7 +1390,7 @@ function buildRoomSchedulerState(snapshot: RoomSnapshot, nowMs: number): Record<
 function buildRoomUpdatePayload(
   snapshot: RoomSnapshot,
   nowMs = Date.now()
-): RoomSnapshot & { scheduler: Record<string, unknown>; preRoundTickets: Record<string, Ticket[]>; serverTimestamp: number } {
+): RoomSnapshot & { scheduler: Record<string, unknown>; preRoundTickets: Record<string, Ticket[]>; luckyNumbers: Record<string, number>; serverTimestamp: number } {
   // Generate display tickets for players who are in the room but didn't
   // get game tickets (not armed). This ensures their boards always show
   // numbers — just without marking.
@@ -1278,6 +1404,7 @@ function buildRoomUpdatePayload(
   return {
     ...snapshot,
     preRoundTickets,
+    luckyNumbers: getLuckyNumbers(snapshot.code),
     scheduler: buildRoomSchedulerState(snapshot, nowMs),
     serverTimestamp: nowMs,
   };
@@ -1522,12 +1649,77 @@ app.post("/api/auth/register", async (req, res) => {
     const email = mustBeNonEmptyString(req.body?.email, "email");
     const password = mustBeNonEmptyString(req.body?.password, "password");
     const displayName = mustBeNonEmptyString(req.body?.displayName, "displayName");
+    const phone = typeof req.body?.phone === "string" && req.body.phone.trim()
+      ? req.body.phone.trim()
+      : undefined;
     const session = await platformService.register({
       email,
       password,
-      displayName
+      displayName,
+      phone
     });
     apiSuccess(res, session);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// ── BankID verification (BIN-274) ─────────────────────────────────────────
+app.post("/api/auth/bankid/init", async (req, res) => {
+  try {
+    if (!bankIdAdapter) {
+      apiSuccess(res, {
+        sessionId: `bankid-${Date.now()}`,
+        authUrl: null,
+        status: "NOT_CONFIGURED",
+        message: "BankID-integrasjon er ikke konfigurert. Bruk manuell verifisering."
+      });
+      return;
+    }
+    const user = await getAuthenticatedUser(req);
+    const { sessionId, authUrl } = bankIdAdapter.createAuthSession(user.id);
+    apiSuccess(res, { sessionId, authUrl, status: "PENDING" });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.get("/api/auth/bankid/callback", async (req, res) => {
+  try {
+    if (!bankIdAdapter) {
+      res.status(501).json({ error: "BankID ikke konfigurert" });
+      return;
+    }
+    const { code, state, session_id } = req.query as Record<string, string>;
+    if (!code || !state || !session_id) {
+      res.status(400).json({ error: "Mangler code, state eller session_id" });
+      return;
+    }
+    const result = await bankIdAdapter.handleCallback(session_id, code, state);
+    if (result.birthDate) {
+      await platformService.submitKycVerification({ userId: result.userId, birthDate: result.birthDate, nationalId: result.nationalId ?? undefined });
+    }
+    // Redirect user back to web shell after BankID verification
+    res.redirect("/web/?bankid=complete");
+  } catch (error) {
+    console.error("[BankID] Callback error:", error);
+    res.redirect("/web/?bankid=error");
+  }
+});
+
+app.get("/api/auth/bankid/status/:sessionId", async (req, res) => {
+  try {
+    if (!bankIdAdapter) {
+      apiSuccess(res, { sessionId: req.params.sessionId, status: "NOT_CONFIGURED", verified: false });
+      return;
+    }
+    // Check user's KYC status directly
+    const user = await getAuthenticatedUser(req);
+    apiSuccess(res, {
+      sessionId: req.params.sessionId,
+      status: user.kycStatus === "VERIFIED" ? "COMPLETE" : "PENDING",
+      verified: user.kycStatus === "VERIFIED",
+    });
   } catch (error) {
     apiFailure(res, error);
   }
@@ -1604,6 +1796,65 @@ app.get("/api/auth/me", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
     apiSuccess(res, user);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// ── Profile management ────────────────────────────────────────────────────
+
+app.put("/api/auth/me", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    const updated = await platformService.updateProfile(user.id, {
+      displayName: typeof req.body?.displayName === "string" ? req.body.displayName : undefined,
+      email: typeof req.body?.email === "string" ? req.body.email : undefined,
+      phone: typeof req.body?.phone === "string" ? req.body.phone : undefined
+    });
+    apiSuccess(res, updated);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.post("/api/auth/change-password", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    const currentPassword = mustBeNonEmptyString(req.body?.currentPassword, "currentPassword");
+    const newPassword = mustBeNonEmptyString(req.body?.newPassword, "newPassword");
+    await platformService.changePassword(user.id, { currentPassword, newPassword });
+    apiSuccess(res, { changed: true });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.delete("/api/auth/me", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    await platformService.deleteAccount(user.id);
+    apiSuccess(res, { deleted: true });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// ── Forgot password (stub — always returns success to avoid user enumeration) ──
+
+app.post("/api/auth/forgot-password", async (req, res) => {
+  // Always return success regardless of whether the email exists.
+  // In production, this would send an email with a reset link.
+  apiSuccess(res, { sent: true });
+});
+
+// ── Transaction history ───────────────────────────────────────────────────
+
+app.get("/api/wallet/me/transactions", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    const limit = parseLimit(req.query.limit, 50);
+    const transactions = await walletAdapter.listTransactions(user.walletId, limit);
+    apiSuccess(res, transactions);
   } catch (error) {
     apiFailure(res, error);
   }
@@ -1699,6 +1950,41 @@ app.get("/api/games", async (req, res) => {
     await getAuthenticatedUser(req);
     const games = await platformService.listGames({ includeDisabled: false });
     apiSuccess(res, games);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// BIN-266: Live game status per slug — used by web shell lobby to show Open/Closed/Starting badges.
+// Groups active rooms by gameSlug and picks the most "alive" status per game.
+app.get("/api/games/status", async (req, res) => {
+  try {
+    await getAuthenticatedUser(req);
+    const summaries = engine.listRoomSummaries();
+    type GameStatusEntry = { status: "OPEN" | "STARTING" | "CLOSED"; nextRoundAt: string | null };
+    const statusMap = new Map<string, GameStatusEntry>();
+
+    for (const s of summaries) {
+      const slug = s.gameSlug ?? "bingo";
+      const existing = statusMap.get(slug);
+      const nextRoundAtMs = drawScheduler.nextAutoStartAtByRoom.get(s.code);
+      const nextRoundAt = nextRoundAtMs ? new Date(nextRoundAtMs).toISOString() : null;
+      const status: GameStatusEntry["status"] =
+        s.gameStatus === "RUNNING" ? "OPEN"
+        : s.gameStatus === "WAITING" ? "STARTING"
+        : "CLOSED";
+
+      // Priority: OPEN > STARTING > CLOSED
+      if (!existing || status === "OPEN" || (status === "STARTING" && existing.status === "CLOSED")) {
+        statusMap.set(slug, { status, nextRoundAt });
+      }
+    }
+
+    const result: Record<string, GameStatusEntry> = {};
+    for (const [slug, info] of statusMap) {
+      result[slug] = info;
+    }
+    apiSuccess(res, result);
   } catch (error) {
     apiFailure(res, error);
   }
@@ -2119,13 +2405,15 @@ app.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
 
 app.post("/api/admin/rooms/:roomCode/draw-next", async (req, res) => {
   try {
-    await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+    // BIN-254: Capture actual admin actor for audit log — not just the room host ID
+    const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
     const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
     const snapshot = engine.getRoomSnapshot(roomCode);
     const drawResult = await engine.drawNextNumber({
       roomCode,
       actorPlayerId: snapshot.hostPlayerId
     });
+    console.log(`[BIN-254] Admin draw: room=${roomCode} number=${drawResult.number} adminWallet=${adminUser.walletId} adminName=${adminUser.displayName}`);
     io.to(roomCode).emit("draw:new", { number: drawResult.number, source: "admin", drawIndex: drawResult.drawIndex, gameId: drawResult.gameId });
     const updatedSnapshot = await emitRoomUpdate(roomCode);
     apiSuccess(res, {
@@ -2818,9 +3106,109 @@ app.get("/health/draw-engine", (_req, res) => {
   apiSuccess(res, detailed);
 });
 
-app.get("/api/rooms", (_req, res) => {
+app.get("/api/rooms", (req, res) => {
   try {
-    apiSuccess(res, engine.listRoomSummaries());
+    const hallIdFilter = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+    let summaries = engine.listRoomSummaries();
+    if (hallIdFilter) {
+      summaries = summaries.filter((s) => s.hallId === hallIdFilter);
+    }
+    const enriched = summaries.map((s) => ({
+      ...s,
+      roomCode: s.code,
+      status: s.gameStatus === "RUNNING" ? "PLAYING" : s.gameStatus === "NONE" ? "OPEN" : s.gameStatus,
+      gameName: s.gameSlug ?? "bingo",
+      gameSlug: s.gameSlug ?? "bingo",
+      nextRoundAt: drawScheduler.nextAutoStartAtByRoom.get(s.code)
+        ? new Date(drawScheduler.nextAutoStartAtByRoom.get(s.code)!).toISOString()
+        : null,
+    }));
+    apiSuccess(res, enriched);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// ── Leaderboard ──────────────────────────────────────────────────────────────
+
+app.get("/api/leaderboard", async (req, res) => {
+  try {
+    await getAuthenticatedUser(req);
+    const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+    const period = typeof req.query.period === "string" ? req.query.period.trim() : "week";
+
+    const now = Date.now();
+    let dateFrom: string | undefined;
+    if (period === "today") {
+      const d = new Date(now);
+      d.setHours(0, 0, 0, 0);
+      dateFrom = d.toISOString();
+    } else if (period === "week") {
+      dateFrom = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+    } else if (period === "month") {
+      dateFrom = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    const entries = engine.listComplianceLedgerEntries({
+      limit: 10_000,
+      hallId: hallId || undefined,
+      dateFrom,
+    });
+
+    // Aggregate prizes per walletId
+    const prizeByWallet = new Map<string, number>();
+    for (const entry of entries) {
+      if (entry.eventType === "PRIZE" || entry.eventType === "EXTRA_PRIZE") {
+        prizeByWallet.set(entry.walletId ?? "", (prizeByWallet.get(entry.walletId ?? "") ?? 0) + entry.amount);
+      }
+    }
+
+    // Resolve display names from active room players
+    const nameByWallet = new Map<string, string>();
+    for (const room of engine.listRoomSummaries()) {
+      try {
+        const snapshot = engine.getRoomSnapshot(room.code);
+        for (const player of snapshot.players) {
+          if (player.walletId && player.name) {
+            nameByWallet.set(player.walletId, player.name);
+          }
+        }
+      } catch {
+        // Room may have been destroyed between list and snapshot
+      }
+    }
+
+    const leaderboard = [...prizeByWallet.entries()]
+      .filter(([walletId]) => walletId)
+      .map(([walletId, points]) => ({
+        nickname: nameByWallet.get(walletId) ?? "Spiller",
+        displayName: nameByWallet.get(walletId) ?? "Spiller",
+        points: Math.round(points * 100) / 100,
+      }))
+      .sort((a, b) => b.points - a.points)
+      .slice(0, 50);
+
+    apiSuccess(res, leaderboard);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// ── Notifications (stub — V1 returns empty array) ────────────────────────────
+
+app.get("/api/notifications", async (req, res) => {
+  try {
+    await getAuthenticatedUser(req);
+    apiSuccess(res, []);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.post("/api/notifications/read", async (req, res) => {
+  try {
+    await getAuthenticatedUser(req);
+    apiSuccess(res, { ok: true });
   } catch (error) {
     apiFailure(res, error);
   }
@@ -2962,14 +3350,49 @@ app.post("/api/wallets/transfer", async (req, res) => {
 const socketRateLimiter = new SocketRateLimiter();
 socketRateLimiter.start();
 
+// BIN-237: Connection-time authentication middleware.
+// Clients that provide a token in the handshake are validated immediately;
+// an invalid token causes the connection to be rejected before it is established.
+// Unity (BestHTTP/EIO3) clients that don't send a handshake token are allowed to
+// connect but must authenticate per-event payload (existing behaviour).
+io.use(async (socket, next) => {
+  const handshakeToken =
+    (typeof socket.handshake.auth?.token === "string" ? socket.handshake.auth.token.trim() : "") ||
+    (typeof socket.handshake.query?.token === "string" ? (socket.handshake.query.token as string).trim() : "");
+
+  if (handshakeToken) {
+    try {
+      const user = await platformService.getUserFromAccessToken(handshakeToken);
+      socket.data.user = user;
+      socket.data.authenticated = true;
+    } catch {
+      return next(new Error("UNAUTHORIZED"));
+    }
+  } else {
+    // No handshake token — Unity clients authenticate per-payload.
+    socket.data.authenticated = false;
+  }
+  next();
+});
+
 io.on("connection", (socket: Socket) => {
-  /** BIN-164: Wrap a socket handler with rate limiting. */
+  /** BIN-164/BIN-247: Wrap a socket handler with rate limiting.
+   * Checks both by socket.id (unauthenticated events) and by walletId when available
+   * so reconnects don't reset rate limit counters for authenticated players. */
   function rateLimited<P, R>(
     eventName: string,
     handler: (payload: P, callback: (response: AckResponse<R>) => void) => Promise<void>
   ): (payload: P, callback: (response: AckResponse<R>) => void) => void {
     return (payload, callback) => {
+      // Always check by socket.id
       if (!socketRateLimiter.check(socket.id, eventName)) {
+        ackFailure(callback, new DomainError("RATE_LIMITED", "For mange foresporsler. Vent litt."));
+        return;
+      }
+      // BIN-247: Also check by walletId when authenticated — reconnects get a new socket.id
+      // but must not bypass rate limits by simply reconnecting
+      const walletId = socket.data.user?.walletId;
+      if (walletId && !socketRateLimiter.checkByKey(walletId, eventName)) {
         ackFailure(callback, new DomainError("RATE_LIMITED", "For mange foresporsler. Vent litt."));
         return;
       }
@@ -3034,7 +3457,8 @@ io.on("connection", (socket: Socket) => {
         walletId: identity.walletId,
         socketId: socket.id,
         // BIN-134: Use "BINGO1" as actual room code so SPA alias = real code
-        roomCode: enforceSingleRoomPerHall ? "BINGO1" : undefined
+        roomCode: enforceSingleRoomPerHall ? "BINGO1" : undefined,
+        gameSlug: typeof payload?.gameSlug === "string" ? payload.gameSlug : undefined
       });
       socket.join(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
@@ -3240,12 +3664,29 @@ io.on("connection", (socket: Socket) => {
       if (payload?.type !== "LINE" && payload?.type !== "BINGO") {
         throw new DomainError("INVALID_INPUT", "type må være LINE eller BINGO.");
       }
-      await engine.submitClaim({
+      const claim = await engine.submitClaim({
         roomCode,
         playerId,
         type: payload.type
       });
       const snapshot = await emitRoomUpdate(roomCode);
+      // Emit pattern:won if a pattern was completed by this claim
+      if (claim.valid) {
+        const wonPattern = snapshot.currentGame?.patternResults?.find(
+          (r) => r.claimId === claim.id && r.isWon
+        );
+        if (wonPattern) {
+          io.to(roomCode).emit("pattern:won", {
+            patternId: wonPattern.patternId,
+            patternName: wonPattern.patternName,
+            winnerId: wonPattern.winnerId,
+            wonAtDraw: wonPattern.wonAtDraw,
+            payoutAmount: wonPattern.payoutAmount,
+            claimType: wonPattern.claimType,
+            gameId: snapshot.currentGame?.id
+          });
+        }
+      }
       ackSuccess(callback, { snapshot });
     } catch (error) {
       ackFailure(callback, error);
@@ -3277,6 +3718,73 @@ io.on("connection", (socket: Socket) => {
     }
   }));
 
+  // ── Lucky number ──────────────────────────────────────────────────────────
+  socket.on("lucky:set", rateLimited("lucky:set", async (payload: LuckyNumberPayload, callback: (response: AckResponse<{ luckyNumber: number }>) => void) => {
+    try {
+      const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      const num = payload?.luckyNumber;
+      if (!Number.isInteger(num) || num < 1 || num > 60) {
+        throw new DomainError("INVALID_INPUT", "luckyNumber må være mellom 1 og 60.");
+      }
+      // Only allow setting before game starts or during waiting
+      const snapshot = engine.getRoomSnapshot(roomCode);
+      if (snapshot.currentGame?.status === "RUNNING") {
+        throw new DomainError("GAME_IN_PROGRESS", "Kan ikke endre lykketall mens spillet pågår.");
+      }
+      setLuckyNumber(roomCode, playerId, num);
+      await emitRoomUpdate(roomCode);
+      ackSuccess(callback, { luckyNumber: num });
+    } catch (error) {
+      ackFailure(callback, error);
+    }
+  }));
+
+  // ── Chat ─────────────────────────────────────────────────────────────────
+  socket.on("chat:send", rateLimited("chat:send", async (payload: ChatSendPayload, callback: (response: AckResponse<{ message: ChatMessage }>) => void) => {
+    try {
+      const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+      const message = (payload?.message ?? "").trim();
+      if (!message && (payload?.emojiId ?? 0) === 0) {
+        throw new DomainError("INVALID_INPUT", "Meldingen kan ikke være tom.");
+      }
+      const snapshot = engine.getRoomSnapshot(roomCode);
+      const player = snapshot.players.find((p) => p.id === playerId);
+      const chatMsg: ChatMessage = {
+        id: randomUUID(),
+        playerId,
+        playerName: player?.name ?? "Ukjent",
+        message: message.slice(0, 500),
+        emojiId: payload?.emojiId ?? 0,
+        createdAt: new Date().toISOString()
+      };
+      appendChatMessage(roomCode, chatMsg);
+      io.to(roomCode).emit("chat:message", chatMsg);
+      ackSuccess(callback, { message: chatMsg });
+    } catch (error) {
+      ackFailure(callback, error);
+    }
+  }));
+
+  socket.on("chat:history", rateLimited("chat:history", async (payload: RoomActionPayload, callback: (response: AckResponse<{ messages: ChatMessage[] }>) => void) => {
+    try {
+      const { roomCode } = await requireAuthenticatedPlayerAction(payload);
+      const messages = chatHistoryByRoom.get(roomCode) ?? [];
+      ackSuccess(callback, { messages });
+    } catch (error) {
+      ackFailure(callback, error);
+    }
+  }));
+
+  // ── Leaderboard ──────────────────────────────────────────────────────────
+  socket.on("leaderboard:get", rateLimited("leaderboard:get", async (payload: LeaderboardPayload, callback: (response: AckResponse<{ leaderboard: LeaderboardEntry[] }>) => void) => {
+    try {
+      const leaderboard = buildLeaderboard(payload?.roomCode);
+      ackSuccess(callback, { leaderboard });
+    } catch (error) {
+      ackFailure(callback, error);
+    }
+  }));
+
   socket.on("disconnect", () => {
     engine.detachSocket(socket.id);
     socketRateLimiter.cleanup(socket.id);
@@ -3292,6 +3800,7 @@ app.get("*", (_req, res) => {
     res.sendFile(path.join(publicDir, "web/index.html"));
     return;
   }
+  // Legacy frontend — still served for Unity iframe and direct links
   res.sendFile(path.join(frontendDir, "index.html"));
 });
 
@@ -3324,19 +3833,52 @@ hydrateBingoSettingsFromCatalog()
       }
     }
 
-    // BIN-159: Recover incomplete games from previous crash
+    // BIN-245: Crash recovery — restore game state from latest checkpoint snapshot.
+    // Replaces BIN-159 which always marked games ENDED; now we restore RUNNING games
+    // from their last checkpoint so draws can resume and players can reconnect.
     if (usePostgresBingoAdapter && localBingoAdapter instanceof PostgresBingoSystemAdapter) {
       try {
         const incompleteGames = await localBingoAdapter.findIncompleteGames();
+        let restored = 0;
+        let ended = 0;
         for (const game of incompleteGames) {
-          console.warn(`[BIN-159] Recovery: marking incomplete game ${game.gameId} in room ${game.roomCode} as ENDED (crash recovery)`);
-          await localBingoAdapter.markGameEnded(game.gameId, "CRASH_RECOVERY");
+          try {
+            const checkpointData = await localBingoAdapter.getLatestCheckpointData(game.gameId);
+            const snapshot = checkpointData?.snapshot as GameSnapshot | null;
+            const players = (Array.isArray(checkpointData?.players) ? checkpointData.players : []) as Player[];
+
+            // BIN-245: Restore if snapshot has a valid drawBag (BIN-243 required)
+            if (snapshot && Array.isArray(snapshot.drawBag)) {
+              const hostPlayerId = players[0]?.id ?? "recovered";
+              engine.restoreRoomFromSnapshot(
+                game.roomCode,
+                game.hallId ?? "",
+                hostPlayerId,
+                players,
+                snapshot
+              );
+              restored++;
+            } else {
+              // No valid snapshot — fall back to marking ended
+              console.warn(`[BIN-245] No snapshot for game ${game.gameId} in room ${game.roomCode} — marking ENDED`);
+              await localBingoAdapter.markGameEnded(game.gameId, "CRASH_RECOVERY");
+              ended++;
+            }
+          } catch (err) {
+            console.error(`[BIN-245] Failed to restore game ${game.gameId} in room ${game.roomCode}:`, err);
+            try {
+              await localBingoAdapter.markGameEnded(game.gameId, "CRASH_RECOVERY");
+            } catch {
+              // best effort
+            }
+            ended++;
+          }
         }
-        if (incompleteGames.length > 0) {
-          console.warn(`[BIN-159] Recovered ${incompleteGames.length} incomplete game(s) from previous session`);
+        if (restored + ended > 0) {
+          console.warn(`[BIN-245] Recovery complete: ${restored} game(s) restored, ${ended} game(s) ended`);
         }
       } catch (err) {
-        console.error("[BIN-159] Crash recovery failed:", err);
+        console.error("[BIN-245] Crash recovery failed:", err);
       }
     }
 
@@ -3366,6 +3908,9 @@ function handleShutdown(signal: string) {
   }
   shutdownStarted = true;
   console.info(`[shutdown] Received ${signal}. Starting graceful shutdown...`);
+
+  httpRateLimiter.stop();
+  socketRateLimiter.stop();
 
   drawScheduler.gracefulStop()
     .then(async () => {

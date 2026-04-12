@@ -63,14 +63,22 @@ export class SocketRateLimiter {
    * Returns true if allowed, false if rate-limited.
    */
   check(socketId: string, eventName: string, nowMs: number = Date.now()): boolean {
-    this.activeSockets.add(socketId);
-    const key = `${socketId}:${eventName}`;
+    return this.checkByKey(socketId, eventName, nowMs);
+  }
+
+  /**
+   * BIN-247: Check rate limit by an arbitrary key (e.g., walletId).
+   * Used in addition to socket-based checks so reconnects don't reset counters.
+   */
+  checkByKey(key: string, eventName: string, nowMs: number = Date.now()): boolean {
+    this.activeSockets.add(key);
+    const bucketKey = `${key}:${eventName}`;
     const config = this.limits[eventName] ?? this.fallback;
 
-    let timestamps = this.buckets.get(key);
+    let timestamps = this.buckets.get(bucketKey);
     if (!timestamps) {
       timestamps = [];
-      this.buckets.set(key, timestamps);
+      this.buckets.set(bucketKey, timestamps);
     }
 
     // Prune timestamps outside window
