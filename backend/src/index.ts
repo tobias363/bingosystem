@@ -11,6 +11,7 @@ import { PostgresBingoSystemAdapter } from "./adapters/PostgresBingoSystemAdapte
 import { LocalKycAdapter } from "./adapters/LocalKycAdapter.js";
 import { assertTicketsPerPlayerWithinHallLimit } from "./game/compliance.js";
 import { BingoEngine, DomainError, toPublicError } from "./game/BingoEngine.js";
+import { PostgresResponsibleGamingStore } from "./game/PostgresResponsibleGamingStore.js";
 import { generateTraditional75Ticket } from "./game/ticket.js";
 import type { ClaimType, RoomSnapshot, RoomSummary, Ticket } from "./game/types.js";
 import {
@@ -25,10 +26,13 @@ import {
   APP_USER_ROLES,
   PlatformService,
   type GameDefinition,
+  type HallDefinition,
   type PublicAppUser,
   type UserRole
 } from "./platform/PlatformService.js";
 import { SwedbankPayService } from "./payments/SwedbankPayService.js";
+import { buildPlayerReport, resolvePlayerReportRange, type PlayerReportPeriod } from "./spillevett/playerReport.js";
+import { emailPlayerReport, generatePlayerReportPdf } from "./spillevett/reportExport.js";
 import {
   buildBingoSettingsDefinition,
   buildDefaultGameSettingsDefinition,
@@ -337,6 +341,15 @@ if (roomStateProvider === "redis") {
 if (useRedisLock) {
   console.log("[BIN-171] Scheduler lock: Redis (distributed)");
 }
+const responsibleGamingStore =
+  platformConnectionString.length > 0
+    ? new PostgresResponsibleGamingStore({
+        connectionString: platformConnectionString,
+        schema: process.env.APP_PG_SCHEMA?.trim() || process.env.WALLET_PG_SCHEMA?.trim() || "public",
+        ssl: parseBooleanEnv(process.env.WALLET_PG_SSL, false)
+      })
+    : undefined;
+
 const engine = new BingoEngine(localBingoAdapter, walletAdapter, {
   minRoundIntervalMs: bingoMinRoundIntervalMs,
   minPlayersToStart: bingoMinPlayersToStart,
@@ -345,7 +358,8 @@ const engine = new BingoEngine(localBingoAdapter, walletAdapter, {
   playSessionLimitMs: bingoPlaySessionLimitMs,
   pauseDurationMs: bingoPauseDurationMs,
   selfExclusionMinMs: bingoSelfExclusionMinMs,
-  maxDrawsPerRound: bingoMaxDrawsPerRound
+  maxDrawsPerRound: bingoMaxDrawsPerRound,
+  persistence: responsibleGamingStore
 });
 
 const platformService = new PlatformService(walletAdapter, {
@@ -470,6 +484,20 @@ function parseOptionalLedgerChannel(value: unknown): "HALL" | "INTERNET" | undef
   const normalized = value.trim().toUpperCase();
   if (normalized !== "HALL" && normalized !== "INTERNET") {
     throw new DomainError("INVALID_INPUT", "channel må være HALL eller INTERNET.");
+  }
+  return normalized;
+}
+
+function parsePlayerReportPeriod(value: unknown, fallback: PlayerReportPeriod = "last7"): PlayerReportPeriod {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  if (typeof value !== "string") {
+    throw new DomainError("INVALID_INPUT", "period må være today, last7, last30 eller last365.");
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized !== "today" && normalized !== "last7" && normalized !== "last30" && normalized !== "last365") {
+    throw new DomainError("INVALID_INPUT", "period må være today, last7, last30 eller last365.");
   }
   return normalized;
 }
@@ -1052,6 +1080,35 @@ function apiFailure(res: express.Response, error: unknown): void {
   res.status(400).json({ ok: false, error: publicError });
 }
 
+async function buildAuthenticatedPlayerReport(input: {
+  walletId: string;
+  hallId?: string;
+  period: PlayerReportPeriod;
+  now?: Date;
+}): Promise<ReturnType<typeof buildPlayerReport>> {
+  const halls = await platformService.listHalls({ includeInactive: false });
+  const normalizedHallId = input.hallId?.trim() || undefined;
+  if (normalizedHallId && !halls.some((hall) => hall.id === normalizedHallId)) {
+    throw new DomainError("HALL_NOT_FOUND", "Valgt hall finnes ikke.");
+  }
+
+  const range = resolvePlayerReportRange(input.period, input.now ?? new Date());
+  const entries = engine.listComplianceLedgerEntries({
+    limit: 10_000,
+    dateFrom: range.from,
+    dateTo: range.to,
+    hallId: normalizedHallId,
+    walletId: input.walletId
+  });
+
+  return buildPlayerReport({
+    entries,
+    halls,
+    range,
+    hallId: normalizedHallId
+  });
+}
+
 async function emitRoomUpdate(roomCode: string): Promise<RoomSnapshot> {
   const snapshot = engine.getRoomSnapshot(roomCode);
   const payload = buildRoomUpdatePayload(snapshot);
@@ -1437,18 +1494,22 @@ async function runDailyReportSchedulerTick(nowMs: number): Promise<void> {
   if (dateKey === lastDailyReportDateKey) {
     return;
   }
-  const report = engine.runDailyReportJob({ date: dateKey });
+  const report = await engine.runDailyReportJob({ date: dateKey });
   lastDailyReportDateKey = dateKey;
   console.log(
     `[daily-report] generated date=${report.date} rows=${report.rows.length} turnover=${report.totals.grossTurnover} prizes=${report.totals.prizesPaid}`
   );
 }
 
-if (dailyReportJobEnabled) {
+let reportScheduler: NodeJS.Timeout | null = null;
+function startDailyReportScheduler(): void {
+  if (!dailyReportJobEnabled || reportScheduler) {
+    return;
+  }
   runDailyReportSchedulerTick(Date.now()).catch((error) => {
     console.error("[daily-report] initial run feilet", error);
   });
-  const reportScheduler = setInterval(() => {
+  reportScheduler = setInterval(() => {
     runDailyReportSchedulerTick(Date.now()).catch((error) => {
       console.error("[daily-report] scheduler feilet", error);
     });
@@ -2121,11 +2182,77 @@ app.get("/api/wallet/me/compliance", async (req, res) => {
   }
 });
 
+app.get("/api/spillevett/report", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    const period = parsePlayerReportPeriod(req.query.period, "last7");
+    const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+    const report = await buildAuthenticatedPlayerReport({
+      walletId: user.walletId,
+      hallId,
+      period
+    });
+    apiSuccess(res, report);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+app.post("/api/spillevett/report/export", async (req, res) => {
+  try {
+    const user = await getAuthenticatedUser(req);
+    const period = parsePlayerReportPeriod(req.body?.period, "last365");
+    const hallId = typeof req.body?.hallId === "string" ? req.body.hallId.trim() : undefined;
+    const delivery =
+      typeof req.body?.delivery === "string" && req.body.delivery.trim().toLowerCase() === "email"
+        ? "email"
+        : "download";
+    const report = await buildAuthenticatedPlayerReport({
+      walletId: user.walletId,
+      hallId,
+      period
+    });
+    const pdf = await generatePlayerReportPdf({
+      report,
+      playerName: user.displayName,
+      playerEmail: user.email
+    });
+
+    if (delivery === "email") {
+      const recipientEmail =
+        typeof req.body?.email === "string" && req.body.email.trim().length > 0
+          ? req.body.email.trim()
+          : user.email;
+      const result = await emailPlayerReport({
+        report,
+        playerName: user.displayName,
+        playerEmail: user.email,
+        recipientEmail,
+        pdf
+      });
+      apiSuccess(res, {
+        delivery: "email",
+        recipientEmail: result.recipientEmail,
+        period: report.range.period,
+        generatedAt: report.generatedAt
+      });
+      return;
+    }
+
+    const filenameBase = report.hallId ? `spillregnskap-${report.hallId}` : "spillregnskap";
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filenameBase}-${report.range.period}.pdf"`);
+    res.status(200).send(pdf);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.post("/api/wallet/me/timed-pause", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
     const durationMinutes = parseOptionalPositiveInteger(req.body?.durationMinutes, "durationMinutes");
-    const compliance = engine.setTimedPause({
+    const compliance = await engine.setTimedPause({
       walletId: user.walletId,
       durationMinutes: durationMinutes ?? 15
     });
@@ -2138,7 +2265,7 @@ app.post("/api/wallet/me/timed-pause", async (req, res) => {
 app.delete("/api/wallet/me/timed-pause", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
-    const compliance = engine.clearTimedPause(user.walletId);
+    const compliance = await engine.clearTimedPause(user.walletId);
     apiSuccess(res, compliance);
   } catch (error) {
     apiFailure(res, error);
@@ -2148,7 +2275,7 @@ app.delete("/api/wallet/me/timed-pause", async (req, res) => {
 app.post("/api/wallet/me/self-exclusion", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
-    const compliance = engine.setSelfExclusion(user.walletId);
+    const compliance = await engine.setSelfExclusion(user.walletId);
     apiSuccess(res, compliance);
   } catch (error) {
     apiFailure(res, error);
@@ -2158,7 +2285,7 @@ app.post("/api/wallet/me/self-exclusion", async (req, res) => {
 app.delete("/api/wallet/me/self-exclusion", async (req, res) => {
   try {
     const user = await getAuthenticatedUser(req);
-    const compliance = engine.clearSelfExclusion(user.walletId);
+    const compliance = await engine.clearSelfExclusion(user.walletId);
     apiSuccess(res, compliance);
   } catch (error) {
     apiFailure(res, error);
@@ -2174,7 +2301,7 @@ app.put("/api/wallet/me/loss-limits", async (req, res) => {
     if (dailyLossLimit === undefined && monthlyLossLimit === undefined) {
       throw new DomainError("INVALID_INPUT", "dailyLossLimit eller monthlyLossLimit må oppgis.");
     }
-    const compliance = engine.setPlayerLossLimits({
+    const compliance = await engine.setPlayerLossLimits({
       walletId: user.walletId,
       hallId,
       daily: dailyLossLimit,
@@ -2239,7 +2366,7 @@ app.put("/api/admin/wallets/:walletId/loss-limits", async (req, res) => {
     if (dailyLossLimit === undefined && monthlyLossLimit === undefined) {
       throw new DomainError("INVALID_INPUT", "dailyLossLimit eller monthlyLossLimit må oppgis.");
     }
-    const compliance = engine.setPlayerLossLimits({
+    const compliance = await engine.setPlayerLossLimits({
       walletId,
       hallId,
       daily: dailyLossLimit,
@@ -2256,7 +2383,7 @@ app.post("/api/admin/wallets/:walletId/timed-pause", async (req, res) => {
     await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
     const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
     const durationMinutes = parseOptionalPositiveInteger(req.body?.durationMinutes, "durationMinutes");
-    const compliance = engine.setTimedPause({
+    const compliance = await engine.setTimedPause({
       walletId,
       durationMinutes: durationMinutes ?? 15
     });
@@ -2270,7 +2397,7 @@ app.delete("/api/admin/wallets/:walletId/timed-pause", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
     const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
-    const compliance = engine.clearTimedPause(walletId);
+    const compliance = await engine.clearTimedPause(walletId);
     apiSuccess(res, compliance);
   } catch (error) {
     apiFailure(res, error);
@@ -2281,7 +2408,7 @@ app.post("/api/admin/wallets/:walletId/self-exclusion", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
     const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
-    const compliance = engine.setSelfExclusion(walletId);
+    const compliance = await engine.setSelfExclusion(walletId);
     apiSuccess(res, compliance);
   } catch (error) {
     apiFailure(res, error);
@@ -2292,7 +2419,7 @@ app.delete("/api/admin/wallets/:walletId/self-exclusion", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "WALLET_COMPLIANCE_WRITE");
     const walletId = mustBeNonEmptyString(req.params.walletId, "walletId");
-    const compliance = engine.clearSelfExclusion(walletId);
+    const compliance = await engine.clearSelfExclusion(walletId);
     apiSuccess(res, compliance);
   } catch (error) {
     apiFailure(res, error);
@@ -2330,7 +2457,7 @@ app.get("/api/admin/prize-policy/active", async (req, res) => {
 app.put("/api/admin/prize-policy", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "PRIZE_POLICY_WRITE");
-    const policy = engine.upsertPrizePolicy({
+    const policy = await engine.upsertPrizePolicy({
       gameType: "DATABINGO",
       hallId: typeof req.body?.hallId === "string" ? req.body.hallId : undefined,
       linkId: typeof req.body?.linkId === "string" ? req.body.linkId : undefined,
@@ -2445,7 +2572,7 @@ app.post("/api/admin/ledger/entries", async (req, res) => {
     if (eventTypeRaw !== "STAKE" && eventTypeRaw !== "PRIZE" && eventTypeRaw !== "EXTRA_PRIZE") {
       throw new DomainError("INVALID_INPUT", "eventType må være STAKE, PRIZE eller EXTRA_PRIZE.");
     }
-    const entry = engine.recordAccountingEvent({
+    const entry = await engine.recordAccountingEvent({
       hallId: mustBeNonEmptyString(req.body?.hallId, "hallId"),
       gameType: parseOptionalLedgerGameType(req.body?.gameType) ?? "DATABINGO",
       channel: parseOptionalLedgerChannel(req.body?.channel) ?? "INTERNET",
@@ -2469,7 +2596,7 @@ app.post("/api/admin/reports/daily/run", async (req, res) => {
     const hallId = typeof req.body?.hallId === "string" ? req.body.hallId.trim() : undefined;
     const gameType = parseOptionalLedgerGameType(req.body?.gameType);
     const channel = parseOptionalLedgerChannel(req.body?.channel);
-    const report = engine.runDailyReportJob({
+    const report = await engine.runDailyReportJob({
       date,
       hallId,
       gameType,
@@ -3174,6 +3301,17 @@ hydrateBingoSettingsFromCatalog()
     console.warn("[bingo] Oppstart med env/default settings pga last-feil.", error);
   })
   .finally(async () => {
+    try {
+      await engine.hydratePersistentState();
+      console.log("[responsible-gaming] persisted state hydrated");
+    } catch (error) {
+      console.error("[responsible-gaming] failed to hydrate persisted state", error);
+      process.exit(1);
+      return;
+    }
+
+    startDailyReportScheduler();
+
     // BIN-170: Load rooms from Redis on startup (if Redis provider)
     if (roomStateProvider === "redis") {
       try {
@@ -3221,7 +3359,12 @@ hydrateBingoSettingsFromCatalog()
   });
 
 // ── Graceful shutdown ──────────────────────────────────────────
+let shutdownStarted = false;
 function handleShutdown(signal: string) {
+  if (shutdownStarted) {
+    return;
+  }
+  shutdownStarted = true;
   console.info(`[shutdown] Received ${signal}. Starting graceful shutdown...`);
 
   drawScheduler.gracefulStop()
@@ -3229,6 +3372,7 @@ function handleShutdown(signal: string) {
       // BIN-170/171: Shutdown Redis stores
       await roomStateStore.shutdown();
       if (redisSchedulerLock) await redisSchedulerLock.shutdown();
+      if (responsibleGamingStore) await responsibleGamingStore.shutdown();
 
       server.close(() => {
         console.info("[shutdown] HTTP server closed. Exiting.");
