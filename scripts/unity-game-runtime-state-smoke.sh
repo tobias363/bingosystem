@@ -34,7 +34,6 @@ if [[ ! -d "$PROJECT_PATH" ]]; then
   exit 1
 fi
 
-"$ROOT_DIR/scripts/unity-vendor-sdk-audit.sh"
 echo "Running game runtime state smoke test..."
 "$UNITY_BIN" \
   -batchmode \

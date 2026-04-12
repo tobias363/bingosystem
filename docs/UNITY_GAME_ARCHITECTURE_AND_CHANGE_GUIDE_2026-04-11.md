@@ -133,10 +133,6 @@ Konsekvensen er:
 
 Dette er et kjent source-of-truth-gap. Det er mindre enn før, fordi authored gameplay-kode nå er tracket, men det er fortsatt ikke full pakkeparitet for hele Unity-prosjektet.
 
-Se også:
-
-- [`UNITY_VENDOR_SDK_BOOTSTRAP_2026-04-11.md`](/Users/tobiashaugen/Projects/Spillorama-system/docs/UNITY_VENDOR_SDK_BOOTSTRAP_2026-04-11.md)
-
 ## Spilloversikt
 
 ### Game 1
