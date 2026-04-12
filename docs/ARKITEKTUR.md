@@ -146,9 +146,10 @@ Web-shellen er **eier av all kundevendt ansvarlig-spill-logikk**. Dette er et be
 - Spillegrenser (netto tapsgrense per hall, dag og måned) håndheves sentralt i backend og vises proaktivt i shellen.
 - Spillregnskap hentes via `GET /api/spillevett/report` og vises som kortversjon i sidefeltet og full rapport i skuff.
 - Compliance-data (`GET /api/wallet/me/compliance`) inkluderer:
-  - Gjenstående tapsgrense (dag/mnd) for aktiv hall
+  - Gjenstående tapsgrense (dag/mnd) for aktiv hall — default 900 kr/dag og 4 400 kr/mnd (konfigurerbart via `BINGO_DAILY_LOSS_LIMIT` / `BINGO_MONTHLY_LOSS_LIMIT`)
+  - Obligatorisk 5-minutters pause etter 60 min sammenhengende spilling (§ 66) — konfigurert via `BINGO_PLAY_SESSION_LIMIT_MS` og `BINGO_PAUSE_DURATION_MS`
   - Karenstid ved grenseøkning
-  - Blokkeringsstatus (selvutestengelse, frivillig pause)
+  - Blokkeringsstatus (`restrictions.isBlocked`, dekker obligatorisk pause, frivillig pause og selvutestengelse)
 
 **Dataflyt ved hallbytte:**
 1. Bruker velger ny hall i shellens nedtrekksmeny.
@@ -170,7 +171,9 @@ Systemet er designet som **fail-closed** på alle compliance-relaterte punkter:
 | Compliance-tjeneste utilgjengelig | Fail-closed: `complianceAllowsPlay()` blokkerer alle spillknapper i shellen |
 | Token ikke sendt fra Unity ennå | Shell har ikke hallkontekst — spillknapper er deaktivert |
 | Shell-init feiler (nettverksfeil mot backend) | `state.error` settes → spillknapper forblir deaktivert; brukeren ser feilmelding og må refreshe |
+| Obligatorisk pause aktiv (60 min spilt) | `restrictions.isBlocked` er `true` → `complianceAllowsPlay()` returnerer `false` → spillknapper deaktivert; shell viser "Obligatorisk pause til HH:MM (§ 66)" |
 | Selvutestengelse eller frivillig pause aktiv | `complianceAllowsPlay()` returnerer `false` → spillknapper deaktivert i shellen (backend blokkerer også) |
+| Nærmer seg 60 min (>80% av grensen) | Shell viser proaktiv advarsel: "X min igjen til obligatorisk pause (§ 66)" |
 
 Fail-closed gjelder nå både backend-siden og shell-siden. `complianceAllowsPlay()` i `spillvett.js` krever at compliance er hentet og feilfri før spillnavigasjon er mulig.
 

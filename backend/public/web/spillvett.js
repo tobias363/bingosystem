@@ -94,9 +94,9 @@
     if (!state.token || !state.hallId) return false;
     // Compliance not yet fetched or fetch failed → fail-closed
     if (state.compliance === null || state.error) return false;
+    // restrictions.isBlocked covers all block types: MANDATORY_PAUSE, TIMED_PAUSE, SELF_EXCLUDED
     const r = state.compliance.restrictions;
-    if (r && r.selfExclusion && r.selfExclusion.isActive) return false;
-    if (r && r.timedPause && r.timedPause.isActive) return false;
+    if (r && r.isBlocked) return false;
     return true;
   }
 
@@ -315,21 +315,39 @@
       return pills;
     }
 
-    if (compliance.restrictions && compliance.restrictions.selfExclusion && compliance.restrictions.selfExclusion.isActive) {
+    const r = compliance.restrictions;
+    const p = compliance.pause;
+
+    if (r && r.selfExclusion && r.selfExclusion.isActive) {
       pills.push({
         tone: "is-danger",
-        label: `Selvutestengt til ${formatDateTime(compliance.restrictions.selfExclusion.minimumUntil)}`
+        label: `Selvutestengt til ${formatDateTime(r.selfExclusion.minimumUntil)}`
       });
-    } else if (compliance.restrictions && compliance.restrictions.timedPause && compliance.restrictions.timedPause.isActive) {
+    } else if (r && r.isBlocked && r.blockedBy === "MANDATORY_PAUSE") {
       pills.push({
         tone: "is-warning",
-        label: `Frivillig pause til ${formatDateTime(compliance.restrictions.timedPause.pauseUntil)}`
+        label: `Obligatorisk pause til ${formatDateTime(r.blockedUntil)} (§ 66)`
+      });
+    } else if (r && r.timedPause && r.timedPause.isActive) {
+      pills.push({
+        tone: "is-warning",
+        label: `Frivillig pause til ${formatDateTime(r.timedPause.pauseUntil)}`
       });
     } else {
       pills.push({
         tone: "is-safe",
         label: "Spilling tillatt i valgt hall"
       });
+      if (p && p.playSessionLimitMs > 0) {
+        const ratio = p.accumulatedPlayMs / p.playSessionLimitMs;
+        if (ratio >= 0.8) {
+          const remainingMin = Math.max(1, Math.round((p.playSessionLimitMs - p.accumulatedPlayMs) / 60000));
+          pills.push({
+            tone: "is-warning",
+            label: `${remainingMin} min igjen til obligatorisk pause (§ 66)`
+          });
+        }
+      }
     }
 
     if (compliance.pendingLossLimits) {
