@@ -149,9 +149,10 @@
     return data;
   }
 
-  async function registerRequest(displayName, surname, email, password, phone, birthDate) {
+  async function registerRequest(displayName, surname, email, password, phone, birthDate, complianceData) {
     const payload = { displayName, surname, email, password, birthDate };
     if (phone) payload.phone = phone;
+    if (complianceData) payload.complianceData = complianceData;
     const data = await apiFetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -279,17 +280,22 @@
       const step1 = document.getElementById('register-step-1');
       const step2 = document.getElementById('register-step-2');
       const step3 = document.getElementById('register-step-3');
+      const step4 = document.getElementById('register-step-4');
       const next1 = document.getElementById('register-next-1');
       const next2 = document.getElementById('register-next-2');
+      const next3 = document.getElementById('register-next-3');
       const back2 = document.getElementById('register-back-2');
       const back3 = document.getElementById('register-back-3');
+      const back4 = document.getElementById('register-back-4');
       const bankIdBtn = document.getElementById('register-bankid-btn');
       const pepRadios = document.querySelectorAll('input[name="register-pep"]');
+      const norwayRadios = document.querySelectorAll('input[name="register-norway"]');
 
       function showStep(n) {
         if (step1) step1.hidden = n !== 1;
         if (step2) step2.hidden = n !== 2;
         if (step3) step3.hidden = n !== 3;
+        if (step4) step4.hidden = n !== 4;
       }
 
       // Step navigation
@@ -318,9 +324,30 @@
         if (!pw || pw.length < 8) { showErr('Passord må være minst 8 tegn'); return; }
         showStep(2);
       });
-      if (next2) next2.addEventListener('click', function () { showStep(3); loadHallsForRegister(); });
+      if (next2) next2.addEventListener('click', function () { showStep(3); });
+      if (next3) next3.addEventListener('click', function () {
+        const errorEl = document.getElementById('register-error');
+        function showErr(msg) {
+          if (errorEl) { errorEl.textContent = msg; errorEl.hidden = false; }
+        }
+        if (errorEl) errorEl.hidden = true;
+        const addr = document.getElementById('register-address')?.value?.trim();
+        const zip = document.getElementById('register-zip')?.value?.trim();
+        const city = document.getElementById('register-city')?.value?.trim();
+        const inNorway = document.querySelector('input[name="register-norway"]:checked')?.value === 'yes';
+        if (inNorway && (!addr || !zip || !city)) {
+          showErr('Fyll ut gateadresse, postnummer og poststed.');
+          return;
+        }
+        const anyIncome = ['income-salary','income-sale','income-stocks','income-social','income-gifts','income-other']
+          .some(function(id) { return document.getElementById(id)?.checked; });
+        if (!anyIncome) { showErr('Velg minst én inntektskilde.'); return; }
+        showStep(4);
+        loadHallsForRegister();
+      });
       if (back2) back2.addEventListener('click', function () { showStep(1); });
       if (back3) back3.addEventListener('click', function () { showStep(2); });
+      if (back4) back4.addEventListener('click', function () { showStep(3); });
 
       // BankID button
       if (bankIdBtn) {
@@ -368,6 +395,14 @@
         });
       });
 
+      // Norway toggle — show/hide address fields
+      norwayRadios.forEach(function (radio) {
+        radio.addEventListener('change', function () {
+          const fields = document.getElementById('register-address-fields');
+          if (fields) fields.hidden = this.value !== 'yes';
+        });
+      });
+
       // Load halls for registration
       async function loadHallsForRegister() {
         const hallSelect = document.getElementById('register-hall');
@@ -400,6 +435,33 @@
         const submitBtn = document.getElementById('register-submit');
         const errorEl = document.getElementById('register-error');
 
+        // Collect compliance data
+        const isPep = document.querySelector('input[name="register-pep"]:checked')?.value === 'yes';
+        const inNorway = document.querySelector('input[name="register-norway"]:checked')?.value === 'yes';
+        const complianceData = {
+          pep: {
+            isPep,
+            name: isPep ? (document.getElementById('register-pep-name')?.value?.trim() || '') : '',
+            relation: isPep ? (document.getElementById('register-pep-relation')?.value?.trim() || '') : '',
+            dob: isPep ? (document.getElementById('register-pep-dob')?.value || '') : ''
+          },
+          address: {
+            inNorway,
+            street: document.getElementById('register-address')?.value?.trim() || '',
+            zip: document.getElementById('register-zip')?.value?.trim() || '',
+            city: document.getElementById('register-city')?.value?.trim() || ''
+          },
+          incomeSources: {
+            salary: !!(document.getElementById('income-salary')?.checked),
+            sale: !!(document.getElementById('income-sale')?.checked),
+            stocks: !!(document.getElementById('income-stocks')?.checked),
+            social: !!(document.getElementById('income-social')?.checked),
+            gifts: !!(document.getElementById('income-gifts')?.checked),
+            other: !!(document.getElementById('income-other')?.checked)
+          },
+          hall: document.getElementById('register-hall')?.value || ''
+        };
+
         if (!firstName) {
           if (errorEl) { errorEl.textContent = 'Fornavn er påkrevd'; errorEl.hidden = false; }
           return;
@@ -412,7 +474,7 @@
         if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Oppretter konto...'; }
 
         try {
-          const data = await registerRequest(firstName, lastName, email, password, phone, birthDate);
+          const data = await registerRequest(firstName, lastName, email, password, phone, birthDate, complianceData);
           sessionStorage.setItem('spillvett.token', data.accessToken);
           notifySpillvett(data.accessToken);
           showStep(1); // Reset form

@@ -19,6 +19,7 @@ export interface AppUser {
   displayName: string;
   surname?: string;
   phone?: string;
+  complianceData?: Record<string, unknown>;
   walletId: string;
   role: UserRole;
   kycStatus: KycStatus;
@@ -174,6 +175,7 @@ interface UserRow {
   birth_date: Date | string | null;
   kyc_verified_at: Date | string | null;
   kyc_provider_ref: string | null;
+  compliance_data: Record<string, unknown> | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -323,6 +325,7 @@ export class PlatformService {
     surname: string;
     phone?: string;
     birthDate: string;
+    complianceData?: Record<string, unknown>;
   }): Promise<SessionInfo> {
     await this.ensureInitialized();
     const email = normalizeEmail(input.email);
@@ -359,12 +362,13 @@ export class PlatformService {
       const userId = randomUUID();
       const walletId = `wallet-user-${userId}`;
       const phone = input.phone?.trim() || null;
+      const complianceData = input.complianceData ?? null;
       const { rows: createdRows } = await client.query<UserRow>(
         `INSERT INTO ${this.usersTable()}
-          (id, email, display_name, surname, password_hash, wallet_id, role, phone, birth_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date)
-         RETURNING id, email, display_name, surname, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at, phone`,
-        [userId, email, displayName, surname, passwordHash, walletId, role, phone, birthDate]
+          (id, email, display_name, surname, password_hash, wallet_id, role, phone, birth_date, compliance_data)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10::jsonb)
+         RETURNING id, email, display_name, surname, compliance_data, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at, phone`,
+        [userId, email, displayName, surname, passwordHash, walletId, role, phone, birthDate, complianceData ? JSON.stringify(complianceData) : null]
       );
       await client.query("COMMIT");
 
@@ -1239,6 +1243,7 @@ export class PlatformService {
       displayName: row.display_name,
       surname: row.surname ?? undefined,
       phone: row.phone ?? undefined,
+      complianceData: row.compliance_data ?? undefined,
       walletId: row.wallet_id,
       role: row.role,
       kycStatus: row.kyc_status,
@@ -1541,6 +1546,10 @@ export class PlatformService {
       await client.query(
         `ALTER TABLE ${this.usersTable()}
          ADD COLUMN IF NOT EXISTS surname TEXT NULL`
+      );
+      await client.query(
+        `ALTER TABLE ${this.usersTable()}
+         ADD COLUMN IF NOT EXISTS compliance_data JSONB NULL`
       );
       await this.ensureUserRoleConstraint(client);
 

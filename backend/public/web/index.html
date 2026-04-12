@@ -208,6 +208,22 @@
       color: #fff;
     }
 
+    .register-income-group {
+      display: flex; flex-direction: column; gap: 10px;
+      margin-top: 8px;
+    }
+    .register-income-group label {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 14px; font-weight: 600;
+      cursor: pointer; color: rgba(255,255,255,0.8);
+      text-transform: none; letter-spacing: 0;
+    }
+    .register-section-label {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+      color: rgba(255,255,255,0.5); text-transform: uppercase;
+      margin: 16px 0 8px;
+    }
+
     .register-checkbox {
       display: flex; align-items: flex-start; gap: 8px;
       margin: 16px 0 8px;
@@ -1053,7 +1069,7 @@
 
             <!-- Step 1: Personal info -->
             <div id="register-step-1">
-              <div class="register-step-title">Steg 1 av 3 &mdash; Personopplysninger</div>
+              <div class="register-step-title">Steg 1 av 4 &mdash; Personopplysninger</div>
               <div class="login-field">
                 <label for="register-firstname">Fornavn *</label>
                 <input type="text" id="register-firstname" placeholder="Ola" required>
@@ -1083,7 +1099,7 @@
 
             <!-- Step 2: Verification -->
             <div id="register-step-2" hidden>
-              <div class="register-step-title">Steg 2 av 3 &mdash; Verifisering</div>
+              <div class="register-step-title">Steg 2 av 4 &mdash; Verifisering</div>
               <p class="profile-section-note" style="margin-bottom:14px">Norsk lov krever identitetsverifisering for pengespill.</p>
               <button type="button" id="register-bankid-btn" class="login-btn-secondary">Verifiser med BankID</button>
               <div id="register-bankid-status" class="register-verify-status" hidden></div>
@@ -1098,8 +1114,16 @@
                 </div>
                 <div id="register-pep-details" hidden>
                   <div class="login-field">
-                    <label for="register-pep-role">PEP-rolle / beskrivelse</label>
-                    <input type="text" id="register-pep-role" placeholder="Beskriv din rolle">
+                    <label for="register-pep-name">Fullt navn på PEP</label>
+                    <input type="text" id="register-pep-name" placeholder="Fullt navn">
+                  </div>
+                  <div class="login-field">
+                    <label for="register-pep-relation">Din relasjon til PEP</label>
+                    <input type="text" id="register-pep-relation" placeholder="F.eks. ektefelle, nær slektning">
+                  </div>
+                  <div class="login-field">
+                    <label for="register-pep-dob">PEPs fødselsdato</label>
+                    <input type="date" id="register-pep-dob">
                   </div>
                 </div>
               </div>
@@ -1110,9 +1134,52 @@
               </div>
             </div>
 
-            <!-- Step 3: Hall & terms -->
+            <!-- Step 3: Address & income -->
             <div id="register-step-3" hidden>
-              <div class="register-step-title">Steg 3 av 3 &mdash; Velg hall</div>
+              <div class="register-step-title">Steg 3 av 4 &mdash; Adresse og inntekt</div>
+
+              <div class="register-section-label">Bostedsadresse</div>
+              <div class="login-field">
+                <label>Bor du i Norge?</label>
+                <div class="register-pep-group">
+                  <label><input type="radio" name="register-norway" value="yes" checked> Ja</label>
+                  <label><input type="radio" name="register-norway" value="no"> Nei</label>
+                </div>
+              </div>
+              <div id="register-address-fields">
+                <div class="login-field">
+                  <label for="register-address">Gateadresse *</label>
+                  <input type="text" id="register-address" placeholder="Storgata 1">
+                </div>
+                <div class="login-field">
+                  <label for="register-zip">Postnummer *</label>
+                  <input type="text" id="register-zip" placeholder="0001">
+                </div>
+                <div class="login-field">
+                  <label for="register-city">Poststed *</label>
+                  <input type="text" id="register-city" placeholder="Oslo">
+                </div>
+              </div>
+
+              <div class="register-section-label">Inntektskilder (velg alle som gjelder) *</div>
+              <div class="register-income-group">
+                <label><input type="checkbox" id="income-salary"> Lønn / arbeidsinntekt</label>
+                <label><input type="checkbox" id="income-sale"> Salg / utleie av eiendom</label>
+                <label><input type="checkbox" id="income-stocks"> Aksjer / investeringer</label>
+                <label><input type="checkbox" id="income-social"> Sosiale ytelser / trygd</label>
+                <label><input type="checkbox" id="income-gifts"> Gaver / arv</label>
+                <label><input type="checkbox" id="income-other"> Annet</label>
+              </div>
+
+              <div class="register-step-nav">
+                <button type="button" id="register-back-3" class="login-btn-secondary">Tilbake</button>
+                <button type="button" id="register-next-3" class="login-btn">Neste</button>
+              </div>
+            </div>
+
+            <!-- Step 4: Hall & terms -->
+            <div id="register-step-4" hidden>
+              <div class="register-step-title">Steg 4 av 4 &mdash; Velg hall</div>
               <div class="login-field">
                 <label for="register-hall">Bingohall</label>
                 <select id="register-hall" class="login-field select">
@@ -1121,10 +1188,10 @@
               </div>
               <div class="register-checkbox">
                 <input type="checkbox" id="register-terms">
-                <label for="register-terms">Jeg godtar <a href="#" onclick="showInfoPanel('terms');return false">vilkarene</a> og bekrefter at jeg er over 18 ar.</label>
+                <label for="register-terms">Jeg godtar <a href="#" onclick="showInfoPanel('terms');return false">vilkårene</a> og bekrefter at jeg er over 18 år.</label>
               </div>
               <div class="register-step-nav">
-                <button type="button" id="register-back-3" class="login-btn-secondary">Tilbake</button>
+                <button type="button" id="register-back-4" class="login-btn-secondary">Tilbake</button>
                 <button type="submit" id="register-submit" class="login-btn">Opprett konto</button>
               </div>
             </div>
