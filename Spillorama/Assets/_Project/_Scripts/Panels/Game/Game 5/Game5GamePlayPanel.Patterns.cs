@@ -11,6 +11,26 @@ public partial class Game5GamePlayPanel
         ClearMssingList();
         CheckMissIndies(data, playSound);
         WinPatternBlinking();
+        UpdateOTGTicketBorders();
+    }
+
+    private void UpdateOTGTicketBorders()
+    {
+        // Collect all tickets that are OTG for at least one pattern
+        var otgTickets = new System.Collections.Generic.HashSet<PrefabBingoGame5Ticket3x3>();
+        foreach (var pattern in patternList)
+        {
+            foreach (var ticket in pattern.MissingTickets)
+                otgTickets.Add(ticket);
+        }
+
+        foreach (var ticket in ticketList)
+        {
+            if (otgTickets.Contains(ticket))
+                ticket.StartOTGBorderPulse();
+            else
+                ticket.StopOTGBorderPulse();
+        }
     }
 
     private void WithdrawBingoBallAction(BingoNumberData newBingoNumberData)

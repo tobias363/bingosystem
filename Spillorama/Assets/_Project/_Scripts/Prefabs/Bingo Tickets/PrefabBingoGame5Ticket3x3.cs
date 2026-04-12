@@ -92,6 +92,7 @@ public class PrefabBingoGame5Ticket3x3 : MonoBehaviour, IDropHandler
 
     private int _betValue = 0;
     private int _MaxbetValue = 0;
+    private int _otgBorderTweenId = -1;
 
     public int[] yourArray = new int[9];
 
@@ -183,6 +184,7 @@ public class PrefabBingoGame5Ticket3x3 : MonoBehaviour, IDropHandler
 
     public void Reset()
     {
+        StopOTGBorderPulse();
         ResetMarkedWithdrawNumber();
         UnblockTicketActions();
         BetValue = 0;
@@ -192,6 +194,38 @@ public class PrefabBingoGame5Ticket3x3 : MonoBehaviour, IDropHandler
             _isTicketPurchased = true;
         else
             _isTicketPurchased = false;
+    }
+
+    public void StartOTGBorderPulse()
+    {
+        if (!_isTicketPurchased || imgTicketController == null) return;
+        StopOTGBorderPulse();
+
+        Color baseColor = UIManager.Instance.game5Panel.game5GamePlayPanel
+            .PickColor(ticketList.color);
+        Color glowColor = Color.Lerp(baseColor, Color.white, 0.45f);
+
+        _otgBorderTweenId = LeanTween.value(gameObject, 0f, 1f, 0.9f)
+            .setEase(LeanTweenType.easeInOutSine)
+            .setLoopPingPong()
+            .setOnUpdate((float t) =>
+            {
+                if (imgTicketController != null)
+                    imgTicketController.color = Color.Lerp(baseColor, glowColor, t);
+            })
+            .id;
+    }
+
+    public void StopOTGBorderPulse()
+    {
+        if (_otgBorderTweenId >= 0)
+        {
+            LeanTween.cancel(_otgBorderTweenId);
+            _otgBorderTweenId = -1;
+        }
+        if (imgTicketController != null && ticketList != null)
+            imgTicketController.color = UIManager.Instance.game5Panel.game5GamePlayPanel
+                .PickColor(ticketList.color);
     }
 
     public void ResetMarkedWithdrawNumber()

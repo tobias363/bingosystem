@@ -25,6 +25,10 @@ public class PrefabBingoGame5Pattern : MonoBehaviour
     [SerializeField] private Color32 colorPatternBlock;
     [SerializeField] private Color32 colorPatternBlink;
 
+    [Header("OTG Border")]
+    [SerializeField] private Image imgCardBorder;
+    [SerializeField] private Color32 colorBorderDefault = new Color32(255, 255, 255, 46);
+
     [Header("GameObject")]
     [SerializeField] private GameObject BonusText;
 
@@ -41,6 +45,7 @@ public class PrefabBingoGame5Pattern : MonoBehaviour
     Coroutine CoroutineHighlightMissingPatternCell;
     public bool highlightEnable = false;
     private float blinkAnimationTime = 0.25f;
+    private int _otgBorderTweenId = -1;
     public List<List<int>> missingIndicesList { get; set; } = new List<List<int>>();
     #endregion
 
@@ -54,10 +59,25 @@ public class PrefabBingoGame5Pattern : MonoBehaviour
     public void SetData(PatternList patternData)
     {
         this.patternData = patternData;
-        if(patternData.extraWinningsType == "Bonus")
+        if (patternData.extraWinningsType == "Bonus")
         {
-            BonusText.GetComponent<TextMeshProUGUI>().text = "BONUS";
+            var tmp = BonusText.GetComponent<TextMeshProUGUI>();
+            tmp.color = Color.white;
+            tmp.text = "BONUS";
             BonusText.SetActive(true);
+        }
+        else if (patternData.extraWinningsType == "Jackpot")
+        {
+            var tmp = BonusText.GetComponent<TextMeshProUGUI>();
+            tmp.text = "JACKPOT!";
+            BonusText.SetActive(true);
+            Color gold       = new Color32(255, 215,   0, 255);
+            Color brightGold = new Color32(255, 245, 160, 255);
+            tmp.color = gold;
+            LeanTween.value(gameObject, 0f, 1f, 1.6f)
+                .setEase(LeanTweenType.easeInOutSine)
+                .setLoopPingPong()
+                .setOnUpdate((float t) => { if (tmp != null) tmp.color = Color.Lerp(gold, brightGold, t); });
         }
         else
         {
@@ -118,21 +138,50 @@ public class PrefabBingoGame5Pattern : MonoBehaviour
     public void stopAnimateTicketActionCall()
     {
         if (CoroutineZoomEffect != null)
-        {
             StopCoroutine(CoroutineZoomEffect);
-        }
 
         if (CoroutineHighlightAction != null)
-        {
             StopCoroutine(CoroutineHighlightAction);
-        }
+
         if (CoroutineHighlightMissingPatternCell != null)
         {
             highlightEnable = false;
             StopCoroutine(CoroutineHighlightMissingPatternCell);
         }
 
+        StopOTGBorderPulse();
         ModifyCellColor();
+    }
+
+    private void StartOTGBorderPulse(Color ticketColor)
+    {
+        if (imgCardBorder == null) return;
+        StopOTGBorderPulse();
+
+        Color dimColor  = new Color(ticketColor.r, ticketColor.g, ticketColor.b, 0.25f);
+        Color fullColor = new Color(ticketColor.r, ticketColor.g, ticketColor.b, 1f);
+        imgCardBorder.color = dimColor;
+
+        _otgBorderTweenId = LeanTween.value(gameObject, 0f, 1f, 0.9f)
+            .setEase(LeanTweenType.easeInOutSine)
+            .setLoopPingPong()
+            .setOnUpdate((float t) =>
+            {
+                if (imgCardBorder != null)
+                    imgCardBorder.color = Color.Lerp(dimColor, fullColor, t);
+            })
+            .id;
+    }
+
+    private void StopOTGBorderPulse()
+    {
+        if (_otgBorderTweenId >= 0)
+        {
+            LeanTween.cancel(_otgBorderTweenId);
+            _otgBorderTweenId = -1;
+        }
+        if (imgCardBorder != null)
+            imgCardBorder.color = colorBorderDefault;
     }
 
 
@@ -146,64 +195,36 @@ public class PrefabBingoGame5Pattern : MonoBehaviour
 
     private IEnumerator HighlightAction()
     {
-        for (int t = 0; t < MissingTickets.Count; t++)
-        {
-            var ticket = MissingTickets[t];
-            HighlightMissingPatternCell(false, 0);
-            List<int> innerList = missingIndicesList[t];
+        if (MissingTickets.Count == 0) yield break;
 
-            for (int j = 0; j < innerList.Count; j++)
-            {
-                int item = innerList[j];
-                HighlightMissingPatternCell(true, item);
-            }
+        // Start border pulse in the colour of the first OTG ticket
+        Color firstTicketColor = UIManager.Instance.game5Panel.game5GamePlayPanel
+            .PickColor(MissingTickets[0].ticketList.color);
+        StartOTGBorderPulse(firstTicketColor);
 
-            for (int i = 0; i < imgPatternBlocks.Count; i++)
-            {
-                imgPatternBlocks[i].GetComponent<Image>().color = UIManager.Instance.game5Panel.game5GamePlayPanel.PickColor(ticket.ticketList.color);
-            }
-
-            // Zoom in effect
-            CoroutineZoomEffect = StartCoroutine(ZoomEffect(gameObject.GetComponent<Image>(), 1.2f)); // You can adjust the zoom factor (e.g., 1.5f)
-            yield return new WaitForSeconds(1);
-
-            // Zoom out effect
-            CoroutineZoomEffect = StartCoroutine(ZoomEffect(gameObject.GetComponent<Image>(), 1.0f)); // Reset to normal size
-            yield return new WaitForSeconds(1);
-        }
-
-        int repeatCount = 3;
-
-        for (int i = 0; i < repeatCount; i++)
+        // Cycle through OTG tickets continuously until stopped
+        while (true)
         {
             for (int t = 0; t < MissingTickets.Count; t++)
             {
                 var ticket = MissingTickets[t];
+                List<int> innerList = missingIndicesList.Count > t ? missingIndicesList[t] : new List<int>();
 
-                List<int> innerList = missingIndicesList[t];
                 HighlightMissingPatternCell(false, 0);
-                for (int j = 0; j < innerList.Count; j++)
-                {
-                    int item = innerList[j];
-                    //Debug.Log($"{item} ");
+                foreach (int item in innerList)
                     HighlightMissingPatternCell(true, item);
-                }
 
-                for (int j = 0; j < imgPatternBlocks.Count; j++)
-                {
-                    imgPatternBlocks[j].GetComponent<Image>().color = UIManager.Instance.game5Panel.game5GamePlayPanel.PickColor(ticket.ticketList.color);
-                }
+                for (int i = 0; i < imgPatternBlocks.Count; i++)
+                    imgPatternBlocks[i].color = UIManager.Instance.game5Panel.game5GamePlayPanel
+                        .PickColor(ticket.ticketList.color);
 
-                // Zoom in effect
-                CoroutineZoomEffect = StartCoroutine(ZoomEffect(gameObject.GetComponent<Image>(), 1.2f)); // You can adjust the zoom factor (e.g., 1.5f)
-                yield return new WaitForSeconds(1);
+                CoroutineZoomEffect = StartCoroutine(ZoomEffect(gameObject.GetComponent<Image>(), 1.1f));
+                yield return new WaitForSeconds(0.8f);
 
-                // Zoom out effect
-                CoroutineZoomEffect = StartCoroutine(ZoomEffect(gameObject.GetComponent<Image>(), 1.0f)); // Reset to normal size
-                yield return new WaitForSeconds(1);
+                CoroutineZoomEffect = StartCoroutine(ZoomEffect(gameObject.GetComponent<Image>(), 1.0f));
+                yield return new WaitForSeconds(0.8f);
             }
         }
-
     }
     public void HighlightMissingPatternCell(bool highlight, int number)
     {
