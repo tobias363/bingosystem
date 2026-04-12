@@ -24,6 +24,21 @@ import type {
   RoomSummary,
   Ticket
 } from "./types.js";
+import type {
+  PersistedComplianceLedgerEntry,
+  PersistedDailyReport,
+  PersistedExtraPrizeEntry,
+  PersistedLossEntry,
+  PersistedLossLimit,
+  PersistedMandatoryBreakSummary,
+  PersistedPendingLossLimitChange,
+  PersistedPayoutAuditEvent,
+  PersistedPlaySessionState,
+  PersistedPrizePolicy,
+  PersistedRestrictionState,
+  ResponsibleGamingPersistenceAdapter,
+  ResponsibleGamingPersistenceSnapshot
+} from "./ResponsibleGamingPersistence.js";
 
 export class DomainError extends Error {
   public readonly code: string;
@@ -89,11 +104,22 @@ interface ComplianceOptions {
   pauseDurationMs?: number;
   selfExclusionMinMs?: number;
   maxDrawsPerRound?: number;
+  persistence?: ResponsibleGamingPersistenceAdapter;
 }
 
 interface LossLimits {
   daily: number;
   monthly: number;
+}
+
+interface PendingLossLimitField {
+  value: number;
+  effectiveFromMs: number;
+}
+
+interface PendingLossLimitChange {
+  daily?: PendingLossLimitField;
+  monthly?: PendingLossLimitField;
 }
 
 interface LossLedgerEntry {
@@ -124,7 +150,7 @@ interface RestrictionState {
   selfExclusionMinimumUntilMs?: number;
 }
 
-type GameplayBlockType = "TIMED_PAUSE" | "SELF_EXCLUDED";
+type GameplayBlockType = "TIMED_PAUSE" | "SELF_EXCLUDED" | "MANDATORY_PAUSE";
 
 interface GameplayBlockState {
   type: GameplayBlockType;
@@ -173,11 +199,11 @@ interface ExtraDrawDenialAudit {
   metadata?: Record<string, unknown>;
 }
 
-type LedgerGameType = "MAIN_GAME" | "DATABINGO";
-type LedgerChannel = "HALL" | "INTERNET";
-type LedgerEventType = "STAKE" | "PRIZE" | "EXTRA_PRIZE" | "ORG_DISTRIBUTION";
+export type LedgerGameType = "MAIN_GAME" | "DATABINGO";
+export type LedgerChannel = "HALL" | "INTERNET";
+export type LedgerEventType = "STAKE" | "PRIZE" | "EXTRA_PRIZE" | "ORG_DISTRIBUTION";
 
-interface ComplianceLedgerEntry {
+export interface ComplianceLedgerEntry {
   id: string;
   createdAt: string;
   createdAtMs: number;
@@ -284,6 +310,16 @@ interface PlayerComplianceSnapshot {
   hallId?: string;
   regulatoryLossLimits: LossLimits;
   personalLossLimits: LossLimits;
+  pendingLossLimits?: {
+    daily?: {
+      value: number;
+      effectiveFrom: string;
+    };
+    monthly?: {
+      value: number;
+      effectiveFrom: string;
+    };
+  };
   netLoss: LossLimits;
   pause: {
     isOnPause: boolean;
@@ -328,6 +364,7 @@ export class BingoEngine {
   private readonly roomLastRoundStartMs = new Map<string, number>();
   private readonly lossEntriesByScope = new Map<string, LossLedgerEntry[]>();
   private readonly personalLossLimitsByScope = new Map<string, LossLimits>();
+  private readonly pendingLossLimitChangesByScope = new Map<string, PendingLossLimitChange>();
   private readonly playStateByWallet = new Map<string, PlaySessionState>();
   private readonly restrictionsByWallet = new Map<string, RestrictionState>();
   private readonly prizePoliciesByScope = new Map<string, PrizePolicyVersion[]>();
@@ -346,6 +383,7 @@ export class BingoEngine {
   private readonly pauseDurationMs: number;
   private readonly selfExclusionMinMs: number;
   private readonly maxDrawsPerRound: number;
+  private readonly persistence?: ResponsibleGamingPersistenceAdapter;
 
   constructor(
     private readonly bingoAdapter: BingoSystemAdapter,
@@ -403,8 +441,9 @@ export class BingoEngine {
     this.pauseDurationMs = Math.floor(pauseDurationMs);
     this.selfExclusionMinMs = Math.floor(selfExclusionMinMs);
     this.maxDrawsPerRound = Math.floor(maxDrawsPerRound);
+    this.persistence = options.persistence;
 
-    this.upsertPrizePolicy({
+    this.applyPrizePolicy({
       gameType: "DATABINGO",
       hallId: POLICY_WILDCARD,
       linkId: POLICY_WILDCARD,
@@ -412,6 +451,263 @@ export class BingoEngine {
       singlePrizeCap: 2500,
       dailyExtraPrizeCap: 12000
     });
+  }
+
+  async hydratePersistentState(): Promise<void> {
+    if (!this.persistence) {
+      return;
+    }
+
+    await this.persistence.ensureInitialized();
+    const snapshot = await this.persistence.loadSnapshot();
+    const defaultPolicies = snapshot.prizePolicies.length === 0 ? [...this.prizePoliciesByScope.values()].flat() : [];
+    this.hydrateSnapshot(snapshot);
+
+    if (snapshot.prizePolicies.length === 0) {
+      for (const policy of defaultPolicies) {
+        this.applyPersistedPrizePolicy(this.toPersistedPrizePolicy(policy));
+        await this.persistence.upsertPrizePolicy(this.toPersistedPrizePolicy(policy));
+      }
+    }
+  }
+
+  private hydrateSnapshot(snapshot: ResponsibleGamingPersistenceSnapshot): void {
+    this.lossEntriesByScope.clear();
+    this.personalLossLimitsByScope.clear();
+    this.pendingLossLimitChangesByScope.clear();
+    this.playStateByWallet.clear();
+    this.restrictionsByWallet.clear();
+    if (snapshot.prizePolicies.length > 0) {
+      this.prizePoliciesByScope.clear();
+    }
+    this.extraPrizeEntriesByScope.clear();
+    this.payoutAuditTrail.length = 0;
+    this.complianceLedger.length = 0;
+    this.dailyReportArchive.clear();
+
+    for (const lossLimit of snapshot.personalLossLimits) {
+      this.personalLossLimitsByScope.set(this.makeLossScopeKey(lossLimit.walletId, lossLimit.hallId), {
+        daily: Math.floor(lossLimit.daily),
+        monthly: Math.floor(lossLimit.monthly)
+      });
+    }
+
+    for (const pendingChange of snapshot.pendingLossLimitChanges) {
+      const next: PendingLossLimitChange = {};
+      if (
+        pendingChange.dailyPendingValue !== undefined &&
+        pendingChange.dailyEffectiveFromMs !== undefined
+      ) {
+        next.daily = {
+          value: Math.floor(pendingChange.dailyPendingValue),
+          effectiveFromMs: pendingChange.dailyEffectiveFromMs
+        };
+      }
+      if (
+        pendingChange.monthlyPendingValue !== undefined &&
+        pendingChange.monthlyEffectiveFromMs !== undefined
+      ) {
+        next.monthly = {
+          value: Math.floor(pendingChange.monthlyPendingValue),
+          effectiveFromMs: pendingChange.monthlyEffectiveFromMs
+        };
+      }
+      if (next.daily || next.monthly) {
+        this.pendingLossLimitChangesByScope.set(
+          this.makeLossScopeKey(pendingChange.walletId, pendingChange.hallId),
+          next
+        );
+      }
+    }
+
+    for (const restriction of snapshot.restrictions) {
+      const state: RestrictionState = {
+        timedPauseUntilMs: restriction.timedPauseUntilMs,
+        timedPauseSetAtMs: restriction.timedPauseSetAtMs,
+        selfExcludedAtMs: restriction.selfExcludedAtMs,
+        selfExclusionMinimumUntilMs: restriction.selfExclusionMinimumUntilMs
+      };
+      const hasAnyRestriction = Object.values(state).some((value) => value !== undefined);
+      if (hasAnyRestriction) {
+        this.restrictionsByWallet.set(restriction.walletId, state);
+      }
+    }
+
+    for (const playState of snapshot.playStates) {
+      const hasLastMandatoryBreak = Boolean(playState.lastMandatoryBreak);
+      if (
+        playState.accumulatedMs > 0 ||
+        playState.activeFromMs !== undefined ||
+        playState.pauseUntilMs !== undefined ||
+        hasLastMandatoryBreak
+      ) {
+        this.playStateByWallet.set(playState.walletId, {
+          accumulatedMs: Math.max(0, Math.floor(playState.accumulatedMs)),
+          activeFromMs: playState.activeFromMs,
+          pauseUntilMs: playState.pauseUntilMs,
+          lastMandatoryBreak: playState.lastMandatoryBreak
+            ? {
+                triggeredAtMs: playState.lastMandatoryBreak.triggeredAtMs,
+                pauseUntilMs: playState.lastMandatoryBreak.pauseUntilMs,
+                totalPlayMs: playState.lastMandatoryBreak.totalPlayMs,
+                hallId: playState.lastMandatoryBreak.hallId,
+                netLoss: {
+                  daily: playState.lastMandatoryBreak.netLoss.daily,
+                  monthly: playState.lastMandatoryBreak.netLoss.monthly
+                }
+              }
+            : undefined
+        });
+      }
+    }
+
+    for (const entry of snapshot.lossEntries) {
+      const scopeKey = this.makeLossScopeKey(entry.walletId, entry.hallId);
+      const existing = this.lossEntriesByScope.get(scopeKey) ?? [];
+      existing.push({
+        type: entry.type,
+        amount: entry.amount,
+        createdAtMs: entry.createdAtMs
+      });
+      this.lossEntriesByScope.set(scopeKey, existing);
+    }
+
+    for (const policy of snapshot.prizePolicies) {
+      this.applyPersistedPrizePolicy(policy);
+    }
+
+    for (const entry of snapshot.extraPrizeEntries) {
+      const scopeKey = this.makeExtraPrizeScopeKey(entry.hallId, entry.linkId);
+      const existing = this.extraPrizeEntriesByScope.get(scopeKey) ?? [];
+      existing.push({
+        amount: entry.amount,
+        createdAtMs: entry.createdAtMs,
+        policyId: entry.policyId
+      });
+      this.extraPrizeEntriesByScope.set(scopeKey, existing);
+    }
+
+    for (const event of snapshot.payoutAuditTrail) {
+      this.payoutAuditTrail.push({
+        ...event,
+        txIds: [...event.txIds]
+      });
+    }
+    this.lastPayoutAuditHash = this.payoutAuditTrail[0]?.eventHash ?? "GENESIS";
+
+    for (const entry of snapshot.complianceLedger) {
+      this.complianceLedger.push({
+        ...entry,
+        metadata: entry.metadata ? { ...entry.metadata } : undefined
+      });
+    }
+
+    for (const report of snapshot.dailyReports) {
+      this.dailyReportArchive.set(report.date, {
+        ...report,
+        rows: report.rows.map((row) => ({ ...row })),
+        totals: { ...report.totals }
+      });
+    }
+  }
+
+  private applyPersistedPrizePolicy(policy: PersistedPrizePolicy): void {
+    const scopeKey = this.makePrizePolicyScopeKey(policy.gameType, policy.hallId, policy.linkId);
+    const existing = this.prizePoliciesByScope.get(scopeKey) ?? [];
+    const withoutSameId = existing.filter((entry) => entry.id !== policy.id);
+    withoutSameId.push({
+      id: policy.id,
+      gameType: policy.gameType,
+      hallId: policy.hallId,
+      linkId: policy.linkId,
+      effectiveFromMs: policy.effectiveFromMs,
+      singlePrizeCap: policy.singlePrizeCap,
+      dailyExtraPrizeCap: policy.dailyExtraPrizeCap,
+      createdAtMs: policy.createdAtMs
+    });
+    withoutSameId.sort((a, b) => a.effectiveFromMs - b.effectiveFromMs);
+    this.prizePoliciesByScope.set(scopeKey, withoutSameId);
+  }
+
+  private toPersistedPrizePolicy(policy: PrizePolicyVersion): PersistedPrizePolicy {
+    return {
+      id: policy.id,
+      gameType: policy.gameType,
+      hallId: policy.hallId,
+      linkId: policy.linkId,
+      effectiveFromMs: policy.effectiveFromMs,
+      singlePrizeCap: policy.singlePrizeCap,
+      dailyExtraPrizeCap: policy.dailyExtraPrizeCap,
+      createdAtMs: policy.createdAtMs
+    };
+  }
+
+  private toPersistedRestrictionState(walletId: string, state: RestrictionState): PersistedRestrictionState {
+    return {
+      walletId,
+      timedPauseUntilMs: state.timedPauseUntilMs,
+      timedPauseSetAtMs: state.timedPauseSetAtMs,
+      selfExcludedAtMs: state.selfExcludedAtMs,
+      selfExclusionMinimumUntilMs: state.selfExclusionMinimumUntilMs
+    };
+  }
+
+  private toPersistedPlaySessionState(walletId: string, state: PlaySessionState): PersistedPlaySessionState {
+    return {
+      walletId,
+      accumulatedMs: Math.max(0, Math.floor(state.accumulatedMs)),
+      activeFromMs: state.activeFromMs,
+      pauseUntilMs: state.pauseUntilMs,
+      lastMandatoryBreak: state.lastMandatoryBreak
+        ? this.toPersistedMandatoryBreakSummary(state.lastMandatoryBreak)
+        : undefined
+    };
+  }
+
+  private toPersistedMandatoryBreakSummary(summary: MandatoryBreakSummary): PersistedMandatoryBreakSummary {
+    return {
+      triggeredAtMs: summary.triggeredAtMs,
+      pauseUntilMs: summary.pauseUntilMs,
+      totalPlayMs: Math.max(0, Math.floor(summary.totalPlayMs)),
+      hallId: summary.hallId,
+      netLoss: {
+        daily: summary.netLoss.daily,
+        monthly: summary.netLoss.monthly
+      }
+    };
+  }
+
+  private toPersistedPendingLossLimitChange(
+    walletId: string,
+    hallId: string,
+    change: PendingLossLimitChange
+  ): PersistedPendingLossLimitChange {
+    return {
+      walletId,
+      hallId,
+      dailyPendingValue: change.daily?.value,
+      dailyEffectiveFromMs: change.daily?.effectiveFromMs,
+      monthlyPendingValue: change.monthly?.value,
+      monthlyEffectiveFromMs: change.monthly?.effectiveFromMs
+    };
+  }
+
+  private toPersistedLossEntry(walletId: string, hallId: string, entry: LossLedgerEntry): PersistedLossEntry {
+    return {
+      walletId,
+      hallId,
+      type: entry.type,
+      amount: entry.amount,
+      createdAtMs: entry.createdAtMs
+    };
+  }
+
+  private toPersistedDailyReport(report: DailyComplianceReport): PersistedDailyReport {
+    return {
+      ...report,
+      rows: report.rows.map((row) => ({ ...row })),
+      totals: { ...report.totals }
+    };
   }
 
   async createRoom(input: CreateRoomInput): Promise<{ roomCode: string; playerId: string }> {
@@ -528,7 +824,6 @@ export class BingoEngine {
       if (armedSet && !armedSet.has(player.id)) return false;
       if (this.isPlayerInAnotherRunningGame(room.code, player)) return false;
       if (this.isPlayerBlockedByRestriction(player, nowMs)) return false;
-      if (this.isPlayerOnRequiredPause(player, nowMs)) return false;
       return true;
     });
     if (ticketCandidates.length > 0) {
@@ -552,12 +847,12 @@ export class BingoEngine {
           `Bingo buy-in ${room.code}`
         );
         player.balance -= entryFee;
-        this.recordLossEntry(player.walletId, room.hallId, {
+        await this.recordLossEntry(player.walletId, room.hallId, {
           type: "BUYIN",
           amount: entryFee,
           createdAtMs: nowMs
         });
-        this.recordComplianceLedgerEvent({
+        await this.recordComplianceLedgerEvent({
           hallId: room.hallId,
           gameType,
           channel,
@@ -615,7 +910,7 @@ export class BingoEngine {
       tickets,
       marks,
       claims: [],
-      startedAt: new Date().toISOString()
+      startedAt: new Date(nowMs).toISOString()
     };
 
     room.currentGame = game;
@@ -633,7 +928,7 @@ export class BingoEngine {
     }, "RNG draw bag generated");
 
     for (const player of eligiblePlayers) {
-      this.startPlaySession(player.walletId, nowMs);
+      await this.startPlaySession(player.walletId, nowMs);
     }
     // BIN-159: Checkpoint at game start — captures initial state for crash recovery
     if (this.bingoAdapter.onCheckpoint) {
@@ -667,21 +962,23 @@ export class BingoEngine {
     this.assertWalletAllowedForGameplay(host.walletId, Date.now());
     const game = this.requireRunningGame(room);
     if (game.drawnNumbers.length >= this.maxDrawsPerRound) {
-      const endedAt = new Date();
+      const endedAtMs = Date.now();
+      const endedAt = new Date(endedAtMs);
       game.status = "ENDED";
       game.endedAt = endedAt.toISOString();
       game.endedReason = "MAX_DRAWS_REACHED";
-      this.finishPlaySessionsForGame(room, game, endedAt.getTime());
+      await this.finishPlaySessionsForGame(room, game, endedAtMs);
       throw new DomainError("NO_MORE_NUMBERS", `Maks antall trekk (${this.maxDrawsPerRound}) er nådd.`);
     }
 
     const nextNumber = game.drawBag.shift();
     if (!nextNumber) {
-      const endedAt = new Date();
+      const endedAtMs = Date.now();
+      const endedAt = new Date(endedAtMs);
       game.status = "ENDED";
       game.endedAt = endedAt.toISOString();
       game.endedReason = "DRAW_BAG_EMPTY";
-      this.finishPlaySessionsForGame(room, game, endedAt.getTime());
+      await this.finishPlaySessionsForGame(room, game, endedAtMs);
       throw new DomainError("NO_MORE_NUMBERS", "Ingen tall igjen i trekken.");
     }
 
@@ -695,11 +992,12 @@ export class BingoEngine {
       });
     }
     if (game.drawnNumbers.length >= this.maxDrawsPerRound) {
-      const endedAt = new Date();
+      const endedAtMs = Date.now();
+      const endedAt = new Date(endedAtMs);
       game.status = "ENDED";
       game.endedAt = endedAt.toISOString();
       game.endedReason = "MAX_DRAWS_REACHED";
-      this.finishPlaySessionsForGame(room, game, endedAt.getTime());
+      await this.finishPlaySessionsForGame(room, game, endedAtMs);
     }
     return { number: nextNumber, drawIndex: game.drawnNumbers.length, gameId: game.id };
   }
@@ -840,12 +1138,12 @@ export class BingoEngine {
         player.balance += payout;
         game.remainingPrizePool = roundCurrency(Math.max(0, game.remainingPrizePool - payout));
         game.remainingPayoutBudget = roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
-        this.recordLossEntry(player.walletId, room.hallId, {
+        await this.recordLossEntry(player.walletId, room.hallId, {
           type: "PAYOUT",
           amount: payout,
           createdAtMs: Date.now()
         });
-        this.recordComplianceLedgerEvent({
+        await this.recordComplianceLedgerEvent({
           hallId: room.hallId,
           gameType,
           channel,
@@ -860,7 +1158,7 @@ export class BingoEngine {
           targetAccountId: transfer.toTx.accountId,
           policyVersion: cappedLinePayout.policy.id
         });
-        this.appendPayoutAuditEvent({
+        await this.appendPayoutAuditEvent({
           kind: "CLAIM_PRIZE",
           claimId: claim.id,
           gameId: game.id,
@@ -908,7 +1206,8 @@ export class BingoEngine {
     }
 
     if (valid && input.type === "BINGO") {
-      const endedAt = new Date();
+      const endedAtMs = Date.now();
+      const endedAt = new Date(endedAtMs);
       game.bingoWinnerId = player.id;
       const rtpBudgetBefore = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       const requestedPayout = game.remainingPrizePool;
@@ -930,12 +1229,12 @@ export class BingoEngine {
           `Bingo prize ${room.code}`
         );
         player.balance += payout;
-        this.recordLossEntry(player.walletId, room.hallId, {
+        await this.recordLossEntry(player.walletId, room.hallId, {
           type: "PAYOUT",
           amount: payout,
           createdAtMs: Date.now()
         });
-        this.recordComplianceLedgerEvent({
+        await this.recordComplianceLedgerEvent({
           hallId: room.hallId,
           gameType,
           channel,
@@ -950,7 +1249,7 @@ export class BingoEngine {
           targetAccountId: transfer.toTx.accountId,
           policyVersion: cappedBingoPayout.policy.id
         });
-        this.appendPayoutAuditEvent({
+        await this.appendPayoutAuditEvent({
           kind: "CLAIM_PRIZE",
           claimId: claim.id,
           gameId: game.id,
@@ -989,7 +1288,7 @@ export class BingoEngine {
       game.status = "ENDED";
       game.endedAt = endedAt.toISOString();
       game.endedReason = "BINGO_CLAIMED";
-      this.finishPlaySessionsForGame(room, game, endedAt.getTime());
+      await this.finishPlaySessionsForGame(room, game, endedAtMs);
       const rtpBudgetAfter = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       claim.payoutAmount = payout;
       claim.payoutPolicyVersion = cappedBingoPayout.policy.id;
@@ -1020,11 +1319,12 @@ export class BingoEngine {
     this.assertWalletAllowedForGameplay(host.walletId, Date.now());
     const game = this.requireRunningGame(room);
 
-    const endedAt = new Date();
+    const endedAtMs = Date.now();
+    const endedAt = new Date(endedAtMs);
     game.status = "ENDED";
     game.endedAt = endedAt.toISOString();
     game.endedReason = input.reason?.trim() || "MANUAL_END";
-    this.finishPlaySessionsForGame(room, game, endedAt.getTime());
+    await this.finishPlaySessionsForGame(room, game, endedAtMs);
 
     // BIN-48: Synchronous checkpoint after game end
     if (this.bingoAdapter.onCheckpoint) {
@@ -1090,10 +1390,13 @@ export class BingoEngine {
     const normalizedHallId = hallId?.trim() || undefined;
 
     const nowMs = Date.now();
-    const personalLossLimits = this.getEffectiveLossLimits(normalizedWalletId, normalizedHallId);
+    const personalLossLimits = this.getEffectiveLossLimits(normalizedWalletId, normalizedHallId, nowMs);
+    const pendingLossLimits = normalizedHallId
+      ? this.getPendingLossLimitChangeSnapshot(normalizedWalletId, normalizedHallId, nowMs)
+      : undefined;
     const netLoss = this.calculateNetLoss(normalizedWalletId, nowMs, normalizedHallId);
-    const pauseState = this.getPlaySessionState(normalizedWalletId, nowMs);
     const restrictionState = this.getRestrictionState(normalizedWalletId, nowMs);
+    const playState = this.getPlaySessionState(normalizedWalletId, nowMs);
     const blockState = this.resolveGameplayBlock(normalizedWalletId, nowMs);
 
     return {
@@ -1101,23 +1404,27 @@ export class BingoEngine {
       hallId: normalizedHallId,
       regulatoryLossLimits: { ...this.regulatoryLossLimits },
       personalLossLimits,
+      pendingLossLimits,
       netLoss,
       pause: {
-        isOnPause: pauseState.pauseUntilMs !== undefined && pauseState.pauseUntilMs > nowMs,
+        isOnPause: playState.pauseUntilMs !== undefined && playState.pauseUntilMs > nowMs,
         pauseUntil:
-          pauseState.pauseUntilMs !== undefined && pauseState.pauseUntilMs > nowMs
-            ? new Date(pauseState.pauseUntilMs).toISOString()
+          playState.pauseUntilMs !== undefined && playState.pauseUntilMs > nowMs
+            ? new Date(playState.pauseUntilMs).toISOString()
             : undefined,
-        accumulatedPlayMs: pauseState.accumulatedMs,
+        accumulatedPlayMs: playState.accumulatedMs,
         playSessionLimitMs: this.playSessionLimitMs,
         pauseDurationMs: this.pauseDurationMs,
-        lastMandatoryBreak: pauseState.lastMandatoryBreak
+        lastMandatoryBreak: playState.lastMandatoryBreak
           ? {
-              triggeredAt: new Date(pauseState.lastMandatoryBreak.triggeredAtMs).toISOString(),
-              pauseUntil: new Date(pauseState.lastMandatoryBreak.pauseUntilMs).toISOString(),
-              totalPlayMs: pauseState.lastMandatoryBreak.totalPlayMs,
-              hallId: pauseState.lastMandatoryBreak.hallId,
-              netLoss: { ...pauseState.lastMandatoryBreak.netLoss }
+              triggeredAt: new Date(playState.lastMandatoryBreak.triggeredAtMs).toISOString(),
+              pauseUntil: new Date(playState.lastMandatoryBreak.pauseUntilMs).toISOString(),
+              totalPlayMs: playState.lastMandatoryBreak.totalPlayMs,
+              hallId: playState.lastMandatoryBreak.hallId,
+              netLoss: {
+                daily: playState.lastMandatoryBreak.netLoss.daily,
+                monthly: playState.lastMandatoryBreak.netLoss.monthly
+              }
             }
           : undefined
       },
@@ -1158,12 +1465,12 @@ export class BingoEngine {
     };
   }
 
-  setPlayerLossLimits(input: {
+  async setPlayerLossLimits(input: {
     walletId: string;
     hallId: string;
     daily?: number;
     monthly?: number;
-  }): PlayerComplianceSnapshot {
+  }): Promise<PlayerComplianceSnapshot> {
     const walletId = input.walletId.trim();
     if (!walletId) {
       throw new DomainError("INVALID_INPUT", "walletId mangler.");
@@ -1173,7 +1480,9 @@ export class BingoEngine {
       throw new DomainError("INVALID_INPUT", "hallId mangler.");
     }
 
-    const current = this.getEffectiveLossLimits(walletId, hallId);
+    const nowMs = Date.now();
+    const current = this.getEffectiveLossLimits(walletId, hallId, nowMs);
+    const currentPending = this.getPendingLossLimitChange(walletId, hallId, nowMs);
     const daily = input.daily ?? current.daily;
     const monthly = input.monthly ?? current.monthly;
 
@@ -1196,19 +1505,51 @@ export class BingoEngine {
       );
     }
 
-    this.personalLossLimitsByScope.set(this.makeLossScopeKey(walletId, hallId), {
-      daily: Math.floor(daily),
-      monthly: Math.floor(monthly)
-    });
+    const nextLimits: LossLimits = {
+      daily: current.daily,
+      monthly: current.monthly
+    };
+    const nextPending: PendingLossLimitChange = {
+      daily: currentPending?.daily ? { ...currentPending.daily } : undefined,
+      monthly: currentPending?.monthly ? { ...currentPending.monthly } : undefined
+    };
 
+    if (input.daily !== undefined) {
+      const normalizedDaily = Math.floor(daily);
+      if (normalizedDaily <= current.daily) {
+        nextLimits.daily = normalizedDaily;
+        delete nextPending.daily;
+      } else if (!nextPending.daily || nextPending.daily.value !== normalizedDaily) {
+        nextPending.daily = {
+          value: normalizedDaily,
+          effectiveFromMs: this.startOfNextLocalDayMs(nowMs)
+        };
+      }
+    }
+
+    if (input.monthly !== undefined) {
+      const normalizedMonthly = Math.floor(monthly);
+      if (normalizedMonthly <= current.monthly) {
+        nextLimits.monthly = normalizedMonthly;
+        delete nextPending.monthly;
+      } else if (!nextPending.monthly || nextPending.monthly.value !== normalizedMonthly) {
+        nextPending.monthly = {
+          value: normalizedMonthly,
+          effectiveFromMs: this.startOfNextLocalMonthMs(nowMs)
+        };
+      }
+    }
+
+    this.personalLossLimitsByScope.set(this.makeLossScopeKey(walletId, hallId), nextLimits);
+    await this.persistLossLimitState(walletId, hallId, nextLimits, nextPending);
     return this.getPlayerCompliance(walletId, hallId);
   }
 
-  setTimedPause(input: {
+  async setTimedPause(input: {
     walletId: string;
     durationMs?: number;
     durationMinutes?: number;
-  }): PlayerComplianceSnapshot {
+  }): Promise<PlayerComplianceSnapshot> {
     const walletId = input.walletId.trim();
     if (!walletId) {
       throw new DomainError("INVALID_INPUT", "walletId mangler.");
@@ -1227,11 +1568,11 @@ export class BingoEngine {
     const state = this.getRestrictionState(walletId, nowMs);
     state.timedPauseSetAtMs = nowMs;
     state.timedPauseUntilMs = Math.max(untilMs, state.timedPauseUntilMs ?? 0);
-    this.restrictionsByWallet.set(walletId, state);
+    await this.persistRestrictionState(walletId, state);
     return this.getPlayerCompliance(walletId);
   }
 
-  clearTimedPause(walletIdInput: string): PlayerComplianceSnapshot {
+  async clearTimedPause(walletIdInput: string): Promise<PlayerComplianceSnapshot> {
     const walletId = walletIdInput.trim();
     if (!walletId) {
       throw new DomainError("INVALID_INPUT", "walletId mangler.");
@@ -1247,11 +1588,11 @@ export class BingoEngine {
 
     state.timedPauseUntilMs = undefined;
     state.timedPauseSetAtMs = undefined;
-    this.persistRestrictionState(walletId, state);
+    await this.persistRestrictionState(walletId, state);
     return this.getPlayerCompliance(walletId);
   }
 
-  setSelfExclusion(walletIdInput: string): PlayerComplianceSnapshot {
+  async setSelfExclusion(walletIdInput: string): Promise<PlayerComplianceSnapshot> {
     const walletId = walletIdInput.trim();
     if (!walletId) {
       throw new DomainError("INVALID_INPUT", "walletId mangler.");
@@ -1264,11 +1605,11 @@ export class BingoEngine {
 
     state.selfExcludedAtMs = nowMs;
     state.selfExclusionMinimumUntilMs = nowMs + this.selfExclusionMinMs;
-    this.restrictionsByWallet.set(walletId, state);
+    await this.persistRestrictionState(walletId, state);
     return this.getPlayerCompliance(walletId);
   }
 
-  clearSelfExclusion(walletIdInput: string): PlayerComplianceSnapshot {
+  async clearSelfExclusion(walletIdInput: string): Promise<PlayerComplianceSnapshot> {
     const walletId = walletIdInput.trim();
     if (!walletId) {
       throw new DomainError("INVALID_INPUT", "walletId mangler.");
@@ -1287,7 +1628,7 @@ export class BingoEngine {
 
     state.selfExcludedAtMs = undefined;
     state.selfExclusionMinimumUntilMs = undefined;
-    this.persistRestrictionState(walletId, state);
+    await this.persistRestrictionState(walletId, state);
     return this.getPlayerCompliance(walletId);
   }
 
@@ -1308,20 +1649,47 @@ export class BingoEngine {
       );
     }
 
+    if (blockState.type === "MANDATORY_PAUSE") {
+      const playState = this.getPlaySessionState(walletId, nowMs);
+      const summary = playState.lastMandatoryBreak;
+      const summaryText = summary
+        ? ` Pause utløst i hall ${summary.hallId}. Netto tap: dag=${summary.netLoss.daily}, måned=${summary.netLoss.monthly}.`
+        : "";
+      throw new DomainError(
+        "PLAYER_REQUIRED_PAUSE",
+        `Spiller har pålagt pause til ${new Date(blockState.untilMs).toISOString()}.${summaryText}`
+      );
+    }
+
     throw new DomainError(
       "PLAYER_SELF_EXCLUDED",
       `Spiller er selvutestengt minst til ${new Date(blockState.untilMs).toISOString()}.`
     );
   }
 
-  upsertPrizePolicy(input: {
+  async upsertPrizePolicy(input: {
     gameType?: PrizeGameType;
     hallId?: string;
     linkId?: string;
     effectiveFrom: string;
     singlePrizeCap?: number;
     dailyExtraPrizeCap?: number;
-  }): PrizePolicySnapshot {
+  }): Promise<PrizePolicySnapshot> {
+    const policy = this.applyPrizePolicy(input);
+    if (this.persistence) {
+      await this.persistence.upsertPrizePolicy(this.toPersistedPrizePolicy(policy));
+    }
+    return this.toPrizePolicySnapshot(policy);
+  }
+
+  private applyPrizePolicy(input: {
+    gameType?: PrizeGameType;
+    hallId?: string;
+    linkId?: string;
+    effectiveFrom: string;
+    singlePrizeCap?: number;
+    dailyExtraPrizeCap?: number;
+  }): PrizePolicyVersion {
     const nowMs = Date.now();
     const gameType = input.gameType ?? "DATABINGO";
     const hallId = this.normalizePolicyDimension(input.hallId);
@@ -1372,7 +1740,7 @@ export class BingoEngine {
     withoutSameEffectiveFrom.push(policy);
     withoutSameEffectiveFrom.sort((a, b) => a.effectiveFromMs - b.effectiveFromMs);
     this.prizePoliciesByScope.set(scopeKey, withoutSameEffectiveFrom);
-    return this.toPrizePolicySnapshot(policy);
+    return policy;
   }
 
   getActivePrizePolicy(input: {
@@ -1455,12 +1823,12 @@ export class BingoEngine {
       amount,
       input.reason?.trim() || `Extra prize ${hallId}/${linkId}`
     );
-    this.recordLossEntry(walletId, hallId, {
+    await this.recordLossEntry(walletId, hallId, {
       type: "PAYOUT",
       amount,
       createdAtMs: nowMs
     });
-    this.recordComplianceLedgerEvent({
+    await this.recordComplianceLedgerEvent({
       hallId,
       gameType,
       channel,
@@ -1474,7 +1842,7 @@ export class BingoEngine {
         linkId
       }
     });
-    this.appendPayoutAuditEvent({
+    await this.appendPayoutAuditEvent({
       kind: "EXTRA_PRIZE",
       hallId,
       policyVersion: policy.id,
@@ -1489,6 +1857,15 @@ export class BingoEngine {
       policyId: policy.id
     });
     this.extraPrizeEntriesByScope.set(scopeKey, existingEntries);
+    if (this.persistence) {
+      await this.persistence.insertExtraPrizeEntry({
+        hallId,
+        linkId,
+        amount,
+        createdAtMs: nowMs,
+        policyId: policy.id
+      });
+    }
     return {
       walletId,
       hallId,
@@ -1585,13 +1962,15 @@ export class BingoEngine {
     dateFrom?: string;
     dateTo?: string;
     hallId?: string;
+    walletId?: string;
     gameType?: LedgerGameType;
     channel?: LedgerChannel;
   }): ComplianceLedgerEntry[] {
-    const limit = Number.isFinite(input?.limit) ? Math.max(1, Math.min(2000, Math.floor(input!.limit!))) : 200;
+    const limit = Number.isFinite(input?.limit) ? Math.max(1, Math.min(10_000, Math.floor(input!.limit!))) : 200;
     const fromMs = input?.dateFrom ? this.assertIsoTimestampMs(input.dateFrom, "dateFrom") : undefined;
     const toMs = input?.dateTo ? this.assertIsoTimestampMs(input.dateTo, "dateTo") : undefined;
     const hallId = input?.hallId?.trim();
+    const walletId = input?.walletId?.trim();
     const gameType = input?.gameType ? this.assertLedgerGameType(input.gameType) : undefined;
     const channel = input?.channel ? this.assertLedgerChannel(input.channel) : undefined;
 
@@ -1606,6 +1985,9 @@ export class BingoEngine {
         if (hallId && entry.hallId !== hallId) {
           return false;
         }
+        if (walletId && entry.walletId !== walletId) {
+          return false;
+        }
         if (gameType && entry.gameType !== gameType) {
           return false;
         }
@@ -1618,15 +2000,15 @@ export class BingoEngine {
       .map((entry) => ({ ...entry }));
   }
 
-  recordAccountingEvent(input: {
+  async recordAccountingEvent(input: {
     hallId: string;
     gameType: LedgerGameType;
     channel: LedgerChannel;
     eventType: "STAKE" | "PRIZE" | "EXTRA_PRIZE";
     amount: number;
     metadata?: Record<string, unknown>;
-  }): ComplianceLedgerEntry {
-    this.recordComplianceLedgerEvent({
+  }): Promise<ComplianceLedgerEntry> {
+    await this.recordComplianceLedgerEvent({
       hallId: input.hallId,
       gameType: input.gameType,
       channel: input.channel,
@@ -1735,12 +2117,12 @@ export class BingoEngine {
     };
   }
 
-  runDailyReportJob(input?: {
+  async runDailyReportJob(input?: {
     date?: string;
     hallId?: string;
     gameType?: LedgerGameType;
     channel?: LedgerChannel;
-  }): DailyComplianceReport {
+  }): Promise<DailyComplianceReport> {
     const date = input?.date ?? this.dateKeyFromMs(Date.now());
     const report = this.generateDailyReport({
       date,
@@ -1749,6 +2131,9 @@ export class BingoEngine {
       channel: input?.channel
     });
     this.dailyReportArchive.set(report.date, report);
+    if (this.persistence) {
+      await this.persistence.upsertDailyReport(this.toPersistedDailyReport(report));
+    }
     return report;
   }
 
@@ -1887,7 +2272,7 @@ export class BingoEngine {
         };
         transfers.push(record);
 
-        this.recordComplianceLedgerEvent({
+        await this.recordComplianceLedgerEvent({
           hallId: row.hallId,
           gameType: row.gameType,
           channel: row.channel,
@@ -2154,14 +2539,8 @@ export class BingoEngine {
   }
 
   private isPlayerOnRequiredPause(player: Player, nowMs: number): boolean {
-    const state = this.playStateByWallet.get(player.walletId);
-    if (!state?.pauseUntilMs) return false;
-    if (state.pauseUntilMs > nowMs) return true;
-    // Pause expired — clear it
-    state.pauseUntilMs = undefined;
-    state.accumulatedMs = 0;
-    this.playStateByWallet.set(player.walletId, state);
-    return false;
+    const playState = this.getPlaySessionState(player.walletId, nowMs);
+    return playState.pauseUntilMs !== undefined && playState.pauseUntilMs > nowMs;
   }
 
   private isPlayerBlockedByRestriction(player: Player, nowMs: number): boolean {
@@ -2179,27 +2558,16 @@ export class BingoEngine {
   }
 
   private assertPlayersNotOnRequiredPause(players: Player[], nowMs: number): void {
-    for (const player of players) {
-      const state = this.playStateByWallet.get(player.walletId);
-      if (!state?.pauseUntilMs) {
-        continue;
-      }
-
-      if (state.pauseUntilMs > nowMs) {
-        const summary = state.lastMandatoryBreak;
-        const summaryText = summary
-          ? ` Påkrevd pause trigget etter ${Math.ceil(summary.totalPlayMs / 60000)} min spill. Netto tap i hall ${summary.hallId}: dag ${summary.netLoss.daily}, måned ${summary.netLoss.monthly}.`
-          : "";
-        throw new DomainError(
-          "PLAYER_ON_REQUIRED_PAUSE",
-          `Spiller ${player.name} må ha pause til ${new Date(state.pauseUntilMs).toISOString()}.${summaryText}`
-        );
-      }
-
-      state.pauseUntilMs = undefined;
-      state.accumulatedMs = 0;
-      this.playStateByWallet.set(player.walletId, state);
+    const pausedPlayer = players.find((player) => this.isPlayerOnRequiredPause(player, nowMs));
+    if (!pausedPlayer) {
+      return;
     }
+    const playState = this.getPlaySessionState(pausedPlayer.walletId, nowMs);
+    const untilMs = playState.pauseUntilMs ?? nowMs;
+    throw new DomainError(
+      "PLAYER_REQUIRED_PAUSE",
+      `Spiller har pålagt pause til ${new Date(untilMs).toISOString()}.`
+    );
   }
 
   private async assertLossLimitsBeforeBuyIn(
@@ -2231,17 +2599,88 @@ export class BingoEngine {
     }
   }
 
-  private getEffectiveLossLimits(walletId: string, hallId?: string): LossLimits {
+  private getEffectiveLossLimits(walletId: string, hallId?: string, nowMs = Date.now()): LossLimits {
     if (!hallId) {
       return { ...this.regulatoryLossLimits };
     }
-    const customLimits = this.personalLossLimitsByScope.get(this.makeLossScopeKey(walletId, hallId));
-    if (!customLimits) {
-      return { ...this.regulatoryLossLimits };
+    const resolved = this.resolveLossLimitState(walletId, hallId, nowMs);
+    return {
+      daily: Math.min(resolved.daily, this.regulatoryLossLimits.daily),
+      monthly: Math.min(resolved.monthly, this.regulatoryLossLimits.monthly)
+    };
+  }
+
+  private resolveLossLimitState(walletIdInput: string, hallIdInput: string, nowMs: number): LossLimits {
+    const walletId = walletIdInput.trim();
+    const hallId = hallIdInput.trim();
+    const scopeKey = this.makeLossScopeKey(walletId, hallId);
+    const active = this.personalLossLimitsByScope.get(scopeKey) ?? { ...this.regulatoryLossLimits };
+    const pending = this.pendingLossLimitChangesByScope.get(scopeKey);
+    if (!pending) {
+      return { ...active };
+    }
+
+    const nextActive: LossLimits = { ...active };
+    const nextPending: PendingLossLimitChange = {
+      daily: pending.daily ? { ...pending.daily } : undefined,
+      monthly: pending.monthly ? { ...pending.monthly } : undefined
+    };
+    let didChange = false;
+
+    if (nextPending.daily && nextPending.daily.effectiveFromMs <= nowMs) {
+      nextActive.daily = nextPending.daily.value;
+      delete nextPending.daily;
+      didChange = true;
+    }
+    if (nextPending.monthly && nextPending.monthly.effectiveFromMs <= nowMs) {
+      nextActive.monthly = nextPending.monthly.value;
+      delete nextPending.monthly;
+      didChange = true;
+    }
+
+    if (didChange) {
+      this.personalLossLimitsByScope.set(scopeKey, nextActive);
+      if (nextPending.daily || nextPending.monthly) {
+        this.pendingLossLimitChangesByScope.set(scopeKey, nextPending);
+      } else {
+        this.pendingLossLimitChangesByScope.delete(scopeKey);
+      }
+      this.schedulePersistLossLimitState(walletId, hallId, nextActive, nextPending);
+    }
+
+    return nextActive;
+  }
+
+  private getPendingLossLimitChange(walletIdInput: string, hallIdInput: string, nowMs: number): PendingLossLimitChange | undefined {
+    this.resolveLossLimitState(walletIdInput, hallIdInput, nowMs);
+    const pending = this.pendingLossLimitChangesByScope.get(this.makeLossScopeKey(walletIdInput, hallIdInput));
+    if (!pending) {
+      return undefined;
     }
     return {
-      daily: Math.min(customLimits.daily, this.regulatoryLossLimits.daily),
-      monthly: Math.min(customLimits.monthly, this.regulatoryLossLimits.monthly)
+      daily: pending.daily ? { ...pending.daily } : undefined,
+      monthly: pending.monthly ? { ...pending.monthly } : undefined
+    };
+  }
+
+  private getPendingLossLimitChangeSnapshot(walletIdInput: string, hallIdInput: string, nowMs: number) {
+    const pending = this.getPendingLossLimitChange(walletIdInput, hallIdInput, nowMs);
+    if (!pending) {
+      return undefined;
+    }
+    return {
+      daily: pending.daily
+        ? {
+            value: pending.daily.value,
+            effectiveFrom: new Date(pending.daily.effectiveFromMs).toISOString()
+          }
+        : undefined,
+      monthly: pending.monthly
+        ? {
+            value: pending.monthly.value,
+            effectiveFrom: new Date(pending.monthly.effectiveFromMs).toISOString()
+          }
+        : undefined
     };
   }
 
@@ -2306,7 +2745,7 @@ export class BingoEngine {
     return `${walletId.trim()}::${hallId.trim()}`;
   }
 
-  private recordLossEntry(walletId: string, hallId: string, entry: LossLedgerEntry): void {
+  private async recordLossEntry(walletId: string, hallId: string, entry: LossLedgerEntry): Promise<void> {
     const normalizedWalletId = walletId.trim();
     const normalizedHallId = hallId.trim();
     if (!normalizedWalletId) {
@@ -2319,31 +2758,93 @@ export class BingoEngine {
     const existing = this.lossEntriesByScope.get(scopeKey) ?? [];
     existing.push(entry);
     this.lossEntriesByScope.set(scopeKey, existing);
+    if (this.persistence) {
+      await this.persistence.insertLossEntry(this.toPersistedLossEntry(normalizedWalletId, normalizedHallId, entry));
+    }
   }
 
-  private startPlaySession(walletId: string, nowMs: number): void {
-    const state = this.playStateByWallet.get(walletId) ?? { accumulatedMs: 0 };
-    if (state.pauseUntilMs !== undefined && state.pauseUntilMs <= nowMs) {
-      state.pauseUntilMs = undefined;
-      state.accumulatedMs = 0;
+  private async persistLossLimitState(
+    walletIdInput: string,
+    hallIdInput: string,
+    limits: LossLimits,
+    pending: PendingLossLimitChange
+  ): Promise<void> {
+    const walletId = walletIdInput.trim();
+    const hallId = hallIdInput.trim();
+    if (!walletId || !hallId) {
+      return;
     }
-    if (state.activeFromMs === undefined) {
-      state.activeFromMs = nowMs;
+    const scopeKey = this.makeLossScopeKey(walletId, hallId);
+    this.personalLossLimitsByScope.set(scopeKey, {
+      daily: Math.floor(limits.daily),
+      monthly: Math.floor(limits.monthly)
+    });
+
+    const hasPending = Boolean(pending.daily || pending.monthly);
+    if (hasPending) {
+      this.pendingLossLimitChangesByScope.set(scopeKey, {
+        daily: pending.daily ? { ...pending.daily } : undefined,
+        monthly: pending.monthly ? { ...pending.monthly } : undefined
+      });
+    } else {
+      this.pendingLossLimitChangesByScope.delete(scopeKey);
     }
-    this.playStateByWallet.set(walletId, state);
+
+    if (!this.persistence) {
+      return;
+    }
+
+    await this.persistence.upsertLossLimit({
+      walletId,
+      hallId,
+      daily: Math.floor(limits.daily),
+      monthly: Math.floor(limits.monthly)
+    });
+    if (hasPending) {
+      await this.persistence.upsertPendingLossLimitChange(
+        this.toPersistedPendingLossLimitChange(walletId, hallId, pending)
+      );
+      return;
+    }
+    await this.persistence.deletePendingLossLimitChange(walletId, hallId);
   }
 
-  private finishPlaySessionsForGame(room: RoomState, game: GameState, endedAtMs: number): void {
-    const walletToHall = new Map<string, string>();
+  private schedulePersistLossLimitState(
+    walletId: string,
+    hallId: string,
+    limits: LossLimits,
+    pending: PendingLossLimitChange
+  ): void {
+    void this.persistLossLimitState(walletId, hallId, limits, pending).catch((error) => {
+      logger.error({ err: error, walletId, hallId }, "failed to persist resolved loss limit state");
+    });
+  }
+
+  private async startPlaySession(walletIdInput: string, nowMs: number): Promise<void> {
+    const walletId = walletIdInput.trim();
+    if (!walletId) {
+      return;
+    }
+    const state = this.getPlaySessionState(walletId, nowMs);
+    if (state.pauseUntilMs !== undefined && state.pauseUntilMs > nowMs) {
+      return;
+    }
+    if (state.activeFromMs !== undefined) {
+      return;
+    }
+    await this.persistPlaySessionState(walletId, {
+      ...state,
+      activeFromMs: nowMs
+    });
+  }
+
+  private async finishPlaySessionsForGame(room: RoomState, game: GameState, endedAtMs: number): Promise<void> {
     for (const playerId of game.tickets.keys()) {
       const player = room.players.get(playerId);
-      if (player) {
-        walletToHall.set(player.walletId, room.hallId);
+      if (!player) {
+        continue;
       }
-    }
-
-    for (const [walletId, hallId] of walletToHall.entries()) {
-      this.finishPlaySession(walletId, hallId, endedAtMs);
+      await this.finishPlaySession(player.walletId, room.hallId, endedAtMs);
     }
 
     // Fire onGameEnded callback (non-blocking).
@@ -2363,41 +2864,95 @@ export class BingoEngine {
     }
   }
 
-  private finishPlaySession(walletId: string, hallId: string, endedAtMs: number): void {
-    const state = this.playStateByWallet.get(walletId);
-    if (!state || state.activeFromMs === undefined) {
+  private async finishPlaySession(walletIdInput: string, hallIdInput: string, endedAtMs: number): Promise<void> {
+    const walletId = walletIdInput.trim();
+    const hallId = hallIdInput.trim();
+    if (!walletId || !hallId) {
+      return;
+    }
+    const existing = this.playStateByWallet.get(walletId);
+    const state: PlaySessionState = existing
+      ? {
+          accumulatedMs: existing.accumulatedMs,
+          activeFromMs: existing.activeFromMs,
+          pauseUntilMs: existing.pauseUntilMs,
+          lastMandatoryBreak: existing.lastMandatoryBreak
+            ? {
+                triggeredAtMs: existing.lastMandatoryBreak.triggeredAtMs,
+                pauseUntilMs: existing.lastMandatoryBreak.pauseUntilMs,
+                totalPlayMs: existing.lastMandatoryBreak.totalPlayMs,
+                hallId: existing.lastMandatoryBreak.hallId,
+                netLoss: {
+                  daily: existing.lastMandatoryBreak.netLoss.daily,
+                  monthly: existing.lastMandatoryBreak.netLoss.monthly
+                }
+              }
+            : undefined
+        }
+      : { accumulatedMs: 0 };
+    if (state.activeFromMs === undefined) {
       return;
     }
 
     const elapsedMs = Math.max(0, endedAtMs - state.activeFromMs);
-    state.activeFromMs = undefined;
-    state.accumulatedMs += elapsedMs;
-    if (state.accumulatedMs >= this.playSessionLimitMs) {
+    const totalPlayMs = state.accumulatedMs + elapsedMs;
+    if (totalPlayMs >= this.playSessionLimitMs) {
       const pauseUntilMs = endedAtMs + this.pauseDurationMs;
-      state.pauseUntilMs = pauseUntilMs;
-      state.lastMandatoryBreak = {
-        triggeredAtMs: endedAtMs,
+      await this.persistPlaySessionState(walletId, {
+        accumulatedMs: 0,
+        activeFromMs: undefined,
         pauseUntilMs,
-        totalPlayMs: state.accumulatedMs,
-        hallId,
-        netLoss: this.calculateNetLoss(walletId, endedAtMs, hallId)
-      };
-      state.accumulatedMs = 0;
+        lastMandatoryBreak: {
+          triggeredAtMs: endedAtMs,
+          pauseUntilMs,
+          totalPlayMs,
+          hallId,
+          netLoss: this.calculateNetLoss(walletId, endedAtMs, hallId)
+        }
+      });
+      return;
     }
 
-    this.playStateByWallet.set(walletId, state);
+    await this.persistPlaySessionState(walletId, {
+      ...state,
+      accumulatedMs: totalPlayMs,
+      activeFromMs: undefined
+    });
   }
 
-  private getPlaySessionState(walletId: string, nowMs: number): PlaySessionState {
-    const state = this.playStateByWallet.get(walletId) ?? { accumulatedMs: 0 };
-    if (state.pauseUntilMs !== undefined && state.pauseUntilMs <= nowMs) {
-      state.pauseUntilMs = undefined;
-      state.accumulatedMs = 0;
+  private getPlaySessionState(walletIdInput: string, nowMs: number): PlaySessionState {
+    const walletId = walletIdInput.trim();
+    if (!walletId) {
+      return {
+        accumulatedMs: 0
+      };
     }
-    const activeMs = state.activeFromMs !== undefined ? Math.max(0, nowMs - state.activeFromMs) : 0;
+
+    const existing = this.playStateByWallet.get(walletId);
+    if (!existing) {
+      return {
+        accumulatedMs: 0
+      };
+    }
+
+    const activeElapsedMs =
+      existing.activeFromMs !== undefined ? Math.max(0, nowMs - existing.activeFromMs) : 0;
     return {
-      ...state,
-      accumulatedMs: state.accumulatedMs + activeMs
+      accumulatedMs: Math.max(0, existing.accumulatedMs + activeElapsedMs),
+      activeFromMs: existing.activeFromMs,
+      pauseUntilMs: existing.pauseUntilMs,
+      lastMandatoryBreak: existing.lastMandatoryBreak
+        ? {
+            triggeredAtMs: existing.lastMandatoryBreak.triggeredAtMs,
+            pauseUntilMs: existing.lastMandatoryBreak.pauseUntilMs,
+            totalPlayMs: existing.lastMandatoryBreak.totalPlayMs,
+            hallId: existing.lastMandatoryBreak.hallId,
+            netLoss: {
+              daily: existing.lastMandatoryBreak.netLoss.daily,
+              monthly: existing.lastMandatoryBreak.netLoss.monthly
+            }
+          }
+        : undefined
     };
   }
 
@@ -2405,7 +2960,7 @@ export class BingoEngine {
     return `house-${hallId.trim()}-${gameType.toLowerCase()}-${channel.toLowerCase()}`;
   }
 
-  private recordComplianceLedgerEvent(input: {
+  private async recordComplianceLedgerEvent(input: {
     hallId: string;
     gameType: LedgerGameType;
     channel: LedgerChannel;
@@ -2421,7 +2976,7 @@ export class BingoEngine {
     policyVersion?: string;
     batchId?: string;
     metadata?: Record<string, unknown>;
-  }): void {
+  }): Promise<void> {
     const nowMs = Date.now();
     const entry: ComplianceLedgerEntry = {
       id: randomUUID(),
@@ -2448,9 +3003,15 @@ export class BingoEngine {
     if (this.complianceLedger.length > 50_000) {
       this.complianceLedger.length = 50_000;
     }
+    if (this.persistence) {
+      await this.persistence.insertComplianceLedgerEntry({
+        ...entry,
+        metadata: entry.metadata ? { ...entry.metadata } : undefined
+      });
+    }
   }
 
-  private appendPayoutAuditEvent(input: {
+  private async appendPayoutAuditEvent(input: {
     kind: "CLAIM_PRIZE" | "EXTRA_PRIZE";
     claimId?: string;
     gameId?: string;
@@ -2462,7 +3023,7 @@ export class BingoEngine {
     playerId?: string;
     sourceAccountId?: string;
     txIds: string[];
-  }): void {
+  }): Promise<void> {
     const now = new Date().toISOString();
     const normalizedTxIds = input.txIds.map((txId) => txId.trim()).filter(Boolean);
     const chainIndex = this.payoutAuditTrail.length + 1;
@@ -2507,6 +3068,12 @@ export class BingoEngine {
     if (this.payoutAuditTrail.length > 10_000) {
       this.payoutAuditTrail.length = 10_000;
     }
+    if (this.persistence) {
+      await this.persistence.insertPayoutAuditEvent({
+        ...event,
+        txIds: [...event.txIds]
+      });
+    }
   }
 
   private getRestrictionState(walletId: string, nowMs: number): RestrictionState {
@@ -2516,11 +3083,20 @@ export class BingoEngine {
       next.timedPauseUntilMs = undefined;
       next.timedPauseSetAtMs = undefined;
     }
-    this.persistRestrictionState(walletId, next);
+    const hasAnyRestriction =
+      next.timedPauseUntilMs !== undefined ||
+      next.timedPauseSetAtMs !== undefined ||
+      next.selfExcludedAtMs !== undefined ||
+      next.selfExclusionMinimumUntilMs !== undefined;
+    if (!hasAnyRestriction) {
+      this.restrictionsByWallet.delete(walletId);
+      return {};
+    }
+    this.restrictionsByWallet.set(walletId, next);
     return next;
   }
 
-  private persistRestrictionState(walletId: string, state: RestrictionState): void {
+  private async persistRestrictionState(walletId: string, state: RestrictionState): Promise<void> {
     const hasAnyRestriction =
       state.timedPauseUntilMs !== undefined ||
       state.timedPauseSetAtMs !== undefined ||
@@ -2528,9 +3104,57 @@ export class BingoEngine {
       state.selfExclusionMinimumUntilMs !== undefined;
     if (!hasAnyRestriction) {
       this.restrictionsByWallet.delete(walletId);
+      if (this.persistence) {
+        await this.persistence.deleteRestriction(walletId);
+      }
       return;
     }
     this.restrictionsByWallet.set(walletId, state);
+    if (this.persistence) {
+      await this.persistence.upsertRestriction(this.toPersistedRestrictionState(walletId, state));
+    }
+  }
+
+  private async persistPlaySessionState(walletIdInput: string, state: PlaySessionState): Promise<void> {
+    const walletId = walletIdInput.trim();
+    if (!walletId) {
+      return;
+    }
+
+    const normalized: PlaySessionState = {
+      accumulatedMs: Math.max(0, Math.floor(state.accumulatedMs ?? 0)),
+      activeFromMs: state.activeFromMs,
+      pauseUntilMs: state.pauseUntilMs,
+      lastMandatoryBreak: state.lastMandatoryBreak
+        ? {
+            triggeredAtMs: state.lastMandatoryBreak.triggeredAtMs,
+            pauseUntilMs: state.lastMandatoryBreak.pauseUntilMs,
+            totalPlayMs: Math.max(0, Math.floor(state.lastMandatoryBreak.totalPlayMs)),
+            hallId: state.lastMandatoryBreak.hallId,
+            netLoss: {
+              daily: state.lastMandatoryBreak.netLoss.daily,
+              monthly: state.lastMandatoryBreak.netLoss.monthly
+            }
+          }
+        : undefined
+    };
+    const isEmpty =
+      normalized.accumulatedMs <= 0 &&
+      normalized.activeFromMs === undefined &&
+      normalized.pauseUntilMs === undefined &&
+      normalized.lastMandatoryBreak === undefined;
+    if (isEmpty) {
+      this.playStateByWallet.delete(walletId);
+      if (this.persistence) {
+        await this.persistence.deletePlaySessionState(walletId);
+      }
+      return;
+    }
+
+    this.playStateByWallet.set(walletId, normalized);
+    if (this.persistence) {
+      await this.persistence.upsertPlaySessionState(this.toPersistedPlaySessionState(walletId, normalized));
+    }
   }
 
   private resolveGameplayBlock(walletId: string, nowMs: number): GameplayBlockState | undefined {
@@ -2545,6 +3169,13 @@ export class BingoEngine {
       return {
         type: "TIMED_PAUSE",
         untilMs: state.timedPauseUntilMs
+      };
+    }
+    const playState = this.getPlaySessionState(walletId, nowMs);
+    if (playState.pauseUntilMs !== undefined && playState.pauseUntilMs > nowMs) {
+      return {
+        type: "MANDATORY_PAUSE",
+        untilMs: playState.pauseUntilMs
       };
     }
     return undefined;
@@ -2770,9 +3401,19 @@ export class BingoEngine {
     return new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
   }
 
+  private startOfNextLocalDayMs(referenceMs: number): number {
+    const reference = new Date(referenceMs);
+    return new Date(reference.getFullYear(), reference.getMonth(), reference.getDate() + 1).getTime();
+  }
+
   private startOfLocalMonthMs(referenceMs: number): number {
     const reference = new Date(referenceMs);
     return new Date(reference.getFullYear(), reference.getMonth(), 1).getTime();
+  }
+
+  private startOfNextLocalMonthMs(referenceMs: number): number {
+    const reference = new Date(referenceMs);
+    return new Date(reference.getFullYear(), reference.getMonth() + 1, 1).getTime();
   }
 
   private requireRoom(roomCode: string): RoomState {
