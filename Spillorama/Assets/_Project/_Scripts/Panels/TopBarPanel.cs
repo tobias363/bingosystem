@@ -174,20 +174,63 @@ public class TopBarPanel : MonoBehaviour
 
     void CallPlayerHallLimitEvent()
     {
-        EventManager.Instance.PlayerHallLimit((socket, packet, args) =>
-        {
-            Debug.Log("PlayerHallLimit: " + packet.ToString());
-            EventResponse<PlayerApprovedHallsResponse> response = JsonUtility.FromJson<EventResponse<PlayerApprovedHallsResponse>>(Utility.Instance.GetPacketString(packet));
-            if (response.status == Constants.EventStatus.SUCCESS)
+        CallPlayerHallLimit_Spillorama();
+    }
+
+    private void CallPlayerHallLimit_Spillorama()
+    {
+        if (SpilloramaApiClient.Instance == null) return;
+
+        SpilloramaApiClient.Instance.GetHalls(
+            (SpilloramaHall[] halls) =>
             {
-                UIManager.Instance.topBarPanel.SetSwitchHallDropdown(response.result.approvedHalls);
-            }
-            else
+                if (halls == null || halls.Length == 0) return;
+
+                var approvedHalls = new System.Collections.Generic.List<ApprovedHalls>();
+                foreach (var hall in halls)
+                {
+                    if (!hall.isActive) continue;
+                    approvedHalls.Add(new ApprovedHalls
+                    {
+                        hallId = hall.id,
+                        hallName = hall.name,
+                        totalLimitAvailable = 0,
+                        isSelected = hall.id == UIManager.Instance.Player_Hall_ID
+                    });
+                }
+
+                // Fetch compliance for current hall to get remaining limit
+                string currentHallId = UIManager.Instance.Player_Hall_ID ?? "";
+                if (!string.IsNullOrEmpty(currentHallId))
+                {
+                    SpilloramaApiClient.Instance.GetCompliance(currentHallId,
+                        (SpilloramaComplianceData compliance) =>
+                        {
+                            // Update the current hall's limit display
+                            foreach (var h in approvedHalls)
+                            {
+                                if (h.hallId == currentHallId)
+                                    h.totalLimitAvailable = (double)compliance.limits.monthlyLossRemaining;
+                            }
+                            UIManager.Instance.topBarPanel.SetSwitchHallDropdown(approvedHalls);
+                        },
+                        (string code, string msg) =>
+                        {
+                            // Show halls even without compliance data
+                            UIManager.Instance.topBarPanel.SetSwitchHallDropdown(approvedHalls);
+                        }
+                    );
+                }
+                else
+                {
+                    UIManager.Instance.topBarPanel.SetSwitchHallDropdown(approvedHalls);
+                }
+            },
+            (string code, string message) =>
             {
-                Debug.Log("PlayerHallLimit: " + response.message);
-                UIManager.Instance.messagePopup.DisplayMessagePopup(response.message);
+                Debug.LogWarning($"[TopBarPanel] GetHalls failed: {code} — {message}");
             }
-        });
+        );
     }
 
     private void RequestHallSwitch(ApprovedHalls hall)
@@ -199,27 +242,24 @@ public class TopBarPanel : MonoBehaviour
         }
 
         Debug.Log($"Selected Hall: {hall.hallName}");
-        EventManager.Instance.SwitchHall(hall.hallId, (socket, packet, args) =>
-        {
-            Debug.Log($"SwitchHall Response: {packet}");
-            EventResponse<SwitchHallResponse> response = JsonUtility.FromJson<EventResponse<SwitchHallResponse>>(Utility.Instance.GetPacketString(packet));
-            if (response.status == Constants.EventStatus.SUCCESS)
-            {
-                currentHall = hall;
-                UIManager.Instance.gameAssetData.PlayerId = response.result.playerId;
-                UIManager.Instance.Player_Hall_ID = response.result.hall;
-                UIManager.Instance.Player_Hall_Name = response.result.hallName;
-                UIManager.Instance.gameAssetData.RealMoney = response.result.realMoney.ToString();
-                CallPlayerHallLimitEvent();
-                ApplyCurrentHallVisuals(currentHall);
-                SyncHallContextToHost();
-                OnGamesButtonTap();
-            }
-            else
-            {
-                UIManager.Instance.messagePopup.DisplayMessagePopup(response.message);
-            }
-        });
+
+        RequestHallSwitch_Spillorama(hall);
+    }
+
+    private void RequestHallSwitch_Spillorama(ApprovedHalls hall)
+    {
+        // In Spillorama, hall switching is client-side — no server roundtrip needed.
+        // Set the active hall and refresh compliance/balance from REST.
+        currentHall = hall;
+        UIManager.Instance.Player_Hall_ID = hall.hallId;
+        UIManager.Instance.Player_Hall_Name = hall.hallName;
+
+        // Refresh balance and compliance for new hall
+        UIManager.Instance.RefreshPlayerWalletFromHost();
+        CallPlayerHallLimit_Spillorama();
+        ApplyCurrentHallVisuals(currentHall);
+        SyncHallContextToHost();
+        OnGamesButtonTap();
     }
 
     private void ApplyCurrentHallVisuals(ApprovedHalls hall)
@@ -241,22 +281,9 @@ public class TopBarPanel : MonoBehaviour
 
     public void OnBingoBtnTap()
     {
-        isButtonTap = true;
-        EventManager.Instance.StopGameByPlayers((socket, packet, args) =>
-        {
-            Debug.Log($"StopGameByPlayers Response: {packet}");
-            EventResponse response = JsonUtility.FromJson<EventResponse>(Utility.Instance.GetPacketString(packet));
-            if (response.status.Equals("success"))
-            {
-                isButtonTap = false;
-                // SoundManager.Instance.BingoSound();
-                UIManager.Instance.messagePopup.DisplayMessagePopupAutoHide(response.message, true);
-            }
-            else
-            {
-                UIManager.Instance.messagePopup.DisplayMessagePopupAutoHide(response.message, true);
-            }
-        });
+        // Bingo claims are handled via SpilloramaSocketManager (claim:submit event).
+        // This button is kept for UI compatibility but no longer calls AIS StopGameByPlayers.
+        Debug.Log("[TopBarPanel] OnBingoBtnTap: handled via Spillorama game flow");
     }
     public void OnWalletButtonTap()
     {
@@ -358,29 +385,9 @@ public class TopBarPanel : MonoBehaviour
         // }
 
         btnMiniGamePlan.gameObject.SetActive(false);
-        if (UIManager.Instance.isGameWebGL)
-        {
-            RunningGamesButtonEnable = UIManager.Instance.splitScreenGameManager.SplitScreenRunningGameCount() > 0;
-            UIManager.Instance.CloseAllPanels();
-            UIManager.Instance.lobbyPanel.OpenHostShellLobbyState();
-            return;
-        }
-
-        if (UIManager.Instance.splitScreenGameManager.SplitScreenRunningGameCount() > 0)
-        {
-            Debug.Log("IF");
-            RunningGamesButtonEnable = true;
-            UIManager.Instance.lobbyPanel.OpenGameSelectionPanel();
-            UIManager.Instance.game4Panel.Close();
-            UIManager.Instance.game5Panel.Close();
-            //Debug.Log("1");
-        }
-        else
-        {
-            Debug.Log("ELSE");
-            UIManager.Instance.CloseAllPanels();
-            UIManager.Instance.lobbyPanel.OpenGameSelectionPanel();
-        }
+        RunningGamesButtonEnable = UIManager.Instance.splitScreenGameManager.SplitScreenRunningGameCount() > 0;
+        UIManager.Instance.CloseAllPanels();
+        UIManager.Instance.lobbyPanel.OpenHostShellLobbyState();
     }
 
     public void OpenGameSelectionPanel()
