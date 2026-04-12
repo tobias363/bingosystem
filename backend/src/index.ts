@@ -2314,6 +2314,127 @@ app.put("/api/admin/halls/:hallId/game-config/:gameSlug", async (req, res) => {
   }
 });
 
+// ── Spilleplan — public & admin (§ 64) ─────────────────────────────────────
+
+// Public: today's schedule for a hall (filtered by day of week)
+app.get("/api/halls/:hallId/schedule", async (req, res) => {
+  try {
+    await getAuthenticatedUser(req);
+    const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+    const todayDow = new Date().getDay(); // 0=Sun..6=Sat
+    const slots = await platformService.listScheduleSlots(hallId, {
+      dayOfWeek: todayDow,
+      activeOnly: true
+    });
+    apiSuccess(res, slots);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// Admin: full schedule for a hall (all days, all states)
+app.get("/api/admin/halls/:hallId/schedule", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "HALL_READ");
+    const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+    const activeOnly = parseBooleanQueryValue(req.query.activeOnly, false);
+    const slots = await platformService.listScheduleSlots(hallId, { activeOnly });
+    apiSuccess(res, slots);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// Admin: create schedule slot
+app.post("/api/admin/halls/:hallId/schedule", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "HALL_WRITE");
+    const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+    const slot = await platformService.createScheduleSlot(hallId, {
+      gameType: mustBeNonEmptyString(req.body?.gameType, "gameType"),
+      displayName: mustBeNonEmptyString(req.body?.displayName, "displayName"),
+      startTime: mustBeNonEmptyString(req.body?.startTime, "startTime"),
+      dayOfWeek: req.body?.dayOfWeek !== undefined ? req.body.dayOfWeek : null,
+      prizeDescription: req.body?.prizeDescription ?? "",
+      maxTickets: req.body?.maxTickets,
+      isActive: req.body?.isActive,
+      sortOrder: req.body?.sortOrder
+    });
+    res.status(201).json({ ok: true, data: slot });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// Admin: update schedule slot
+app.put("/api/admin/halls/:hallId/schedule/:slotId", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "HALL_WRITE");
+    const slotId = mustBeNonEmptyString(req.params.slotId, "slotId");
+    const slot = await platformService.updateScheduleSlot(slotId, {
+      gameType: req.body?.gameType,
+      displayName: req.body?.displayName,
+      startTime: req.body?.startTime,
+      dayOfWeek: req.body?.dayOfWeek,
+      prizeDescription: req.body?.prizeDescription,
+      maxTickets: req.body?.maxTickets,
+      isActive: req.body?.isActive,
+      sortOrder: req.body?.sortOrder
+    });
+    apiSuccess(res, slot);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// Admin: delete schedule slot
+app.delete("/api/admin/halls/:hallId/schedule/:slotId", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "HALL_WRITE");
+    const slotId = mustBeNonEmptyString(req.params.slotId, "slotId");
+    await platformService.deleteScheduleSlot(slotId);
+    apiSuccess(res, { deleted: true });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// Admin: log a completed scheduled game (audit trail)
+app.post("/api/admin/halls/:hallId/schedule/:slotId/log", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "HALL_WRITE");
+    const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+    const slotId = mustBeNonEmptyString(req.params.slotId, "slotId");
+    const entry = await platformService.logScheduledGame({
+      hallId,
+      scheduleSlotId: slotId,
+      gameSessionId: req.body?.gameSessionId,
+      endedAt: req.body?.endedAt,
+      playerCount: req.body?.playerCount,
+      totalPayout: req.body?.totalPayout,
+      notes: req.body?.notes
+    });
+    res.status(201).json({ ok: true, data: entry });
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
+// Admin: view schedule audit log for a hall
+app.get("/api/admin/halls/:hallId/schedule-log", async (req, res) => {
+  try {
+    await requireAdminPermissionUser(req, "HALL_READ");
+    const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+    const limit = parseOptionalInteger(req.query.limit, "limit");
+    const entries = await platformService.listScheduleLog(hallId, {
+      limit: limit !== undefined ? Number(limit) : undefined
+    });
+    apiSuccess(res, entries);
+  } catch (error) {
+    apiFailure(res, error);
+  }
+});
+
 app.get("/api/admin/rooms", async (req, res) => {
   try {
     await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
