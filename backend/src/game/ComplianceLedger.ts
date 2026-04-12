@@ -6,6 +6,7 @@ import type { WalletAdapter } from "../adapters/WalletAdapter.js";
 import type {
   PersistedComplianceLedgerEntry,
   PersistedDailyReport,
+  PersistedOverskuddBatch,
   ResponsibleGamingPersistenceAdapter,
   ResponsibleGamingPersistenceSnapshot
 } from "./ResponsibleGamingPersistence.js";
@@ -550,6 +551,9 @@ export class ComplianceLedger {
       allocations: allocations.map((allocation) => ({ ...allocation }))
     };
     this.overskuddBatches.set(batchId, batch);
+    if (this.persistence) {
+      await this.persistence.insertOverskuddBatch(this.toPersistedOverskuddBatch(batch));
+    }
     return batch;
   }
 
@@ -569,6 +573,129 @@ export class ComplianceLedger {
     };
   }
 
+  listOverskuddDistributionBatches(input?: {
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+  }): OverskuddDistributionBatch[] {
+    const limit = Number.isFinite(input?.limit) ? Math.max(1, Math.min(1000, Math.floor(input!.limit!))) : 200;
+    const hallId = input?.hallId?.trim();
+    const gameType = input?.gameType ? this.assertLedgerGameType(input.gameType) : undefined;
+    const channel = input?.channel ? this.assertLedgerChannel(input.channel) : undefined;
+    const dateFrom = input?.dateFrom?.trim();
+    const dateTo = input?.dateTo?.trim();
+
+    const allBatches = [...this.overskuddBatches.values()].sort((a, b) => b.date.localeCompare(a.date));
+
+    return allBatches
+      .filter((batch) => {
+        if (hallId && batch.hallId !== hallId) {
+          return false;
+        }
+        if (gameType && batch.gameType !== gameType) {
+          return false;
+        }
+        if (channel && batch.channel !== channel) {
+          return false;
+        }
+        if (dateFrom && batch.date < dateFrom) {
+          return false;
+        }
+        if (dateTo && batch.date > dateTo) {
+          return false;
+        }
+        return true;
+      })
+      .slice(0, limit)
+      .map((batch) => ({
+        ...batch,
+        transfers: batch.transfers.map((transfer) => ({ ...transfer, txIds: [...transfer.txIds] })),
+        allocations: batch.allocations.map((allocation) => ({ ...allocation }))
+      }));
+  }
+
+  previewOverskuddDistribution(input: {
+    date: string;
+    allocations: OrganizationAllocationInput[];
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+  }): OverskuddDistributionBatch {
+    const date = this.assertDateKey(input.date, "date");
+    const allocations = this.assertOrganizationAllocations(input.allocations);
+    const report = this.generateDailyReport({
+      date,
+      hallId: input.hallId,
+      gameType: input.gameType,
+      channel: input.channel
+    });
+
+    const rowsWithMinimum = report.rows
+      .map((row) => {
+        const minimumPercent = row.gameType === "DATABINGO" ? 0.3 : 0.15;
+        const net = Math.max(0, row.net);
+        const minimumAmount = roundCurrency(net * minimumPercent);
+        return {
+          row,
+          minimumPercent,
+          minimumAmount
+        };
+      })
+      .filter((entry) => entry.minimumAmount > 0);
+
+    const requiredMinimum = roundCurrency(
+      rowsWithMinimum.reduce((sum, entry) => sum + entry.minimumAmount, 0)
+    );
+
+    const transfers: OverskuddDistributionTransfer[] = [];
+    const createdAt = new Date().toISOString();
+
+    for (const { row, minimumAmount } of rowsWithMinimum) {
+      const sourceAccountId = this.makeHouseAccountId(row.hallId, row.gameType, row.channel);
+      const parts = this.allocateAmountByShares(minimumAmount, allocations.map((allocation) => allocation.sharePercent));
+      for (let i = 0; i < allocations.length; i += 1) {
+        const amount = parts[i];
+        if (amount <= 0) {
+          continue;
+        }
+        const allocation = allocations[i];
+        const record: OverskuddDistributionTransfer = {
+          id: randomUUID(),
+          batchId: "PREVIEW",
+          createdAt,
+          date,
+          hallId: row.hallId,
+          gameType: row.gameType,
+          channel: row.channel,
+          sourceAccountId,
+          organizationId: allocation.organizationId,
+          organizationAccountId: allocation.organizationAccountId,
+          amount,
+          txIds: []
+        };
+        transfers.push(record);
+      }
+    }
+
+    const distributedAmount = roundCurrency(transfers.reduce((sum, transfer) => sum + transfer.amount, 0));
+
+    return {
+      id: "PREVIEW",
+      createdAt,
+      date,
+      hallId: input.hallId?.trim() || undefined,
+      gameType: input.gameType ? this.assertLedgerGameType(input.gameType) : undefined,
+      channel: input.channel ? this.assertLedgerChannel(input.channel) : undefined,
+      requiredMinimum,
+      distributedAmount,
+      transfers,
+      allocations: allocations.map((allocation) => ({ ...allocation }))
+    };
+  }
+
   // ── Private helpers ─────────────────────────────────────────────
 
   makeHouseAccountId(hallId: string, gameType: LedgerGameType, channel: LedgerChannel): string {
@@ -580,6 +707,21 @@ export class ComplianceLedger {
       ...report,
       rows: report.rows.map((row) => ({ ...row })),
       totals: { ...report.totals }
+    };
+  }
+
+  private toPersistedOverskuddBatch(batch: OverskuddDistributionBatch): PersistedOverskuddBatch {
+    return {
+      id: batch.id,
+      createdAt: batch.createdAt,
+      date: batch.date,
+      hallId: batch.hallId,
+      gameType: batch.gameType,
+      channel: batch.channel,
+      requiredMinimum: batch.requiredMinimum,
+      distributedAmount: batch.distributedAmount,
+      transfersJson: JSON.stringify(batch.transfers),
+      allocationsJson: JSON.stringify(batch.allocations)
     };
   }
 

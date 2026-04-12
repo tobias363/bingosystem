@@ -142,6 +142,35 @@ export interface PersistedDailyReport {
   };
 }
 
+// Persisted overskudd batch (flat for DB-lagring, transfers og allocations som JSON)
+export interface PersistedOverskuddBatch {
+  id: string;
+  createdAt: string;
+  date: string;
+  hallId?: string;
+  gameType?: string;
+  channel?: string;
+  requiredMinimum: number;
+  distributedAmount: number;
+  transfersJson: string;   // JSON array av OverskuddDistributionTransfer
+  allocationsJson: string; // JSON array av OrganizationAllocationInput
+}
+
+// Org allokering per hall
+export interface PersistedHallOrganizationAllocation {
+  id: string;
+  hallId: string;
+  organizationId: string;
+  organizationName: string;
+  organizationAccountId: string;
+  sharePercent: number;
+  gameType: "MAIN_GAME" | "DATABINGO" | null; // null = gjelder begge
+  channel: "HALL" | "INTERNET" | null; // null = gjelder begge
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ResponsibleGamingPersistenceSnapshot {
   personalLossLimits: PersistedLossLimit[];
   pendingLossLimitChanges: PersistedPendingLossLimitChange[];
@@ -171,5 +200,11 @@ export interface ResponsibleGamingPersistenceAdapter {
   insertPayoutAuditEvent(event: PersistedPayoutAuditEvent): Promise<void>;
   insertComplianceLedgerEntry(entry: PersistedComplianceLedgerEntry): Promise<void>;
   upsertDailyReport(report: PersistedDailyReport): Promise<void>;
+  insertOverskuddBatch(batch: PersistedOverskuddBatch): Promise<void>;
+  getOverskuddBatch(batchId: string): Promise<PersistedOverskuddBatch | null>;
+  listOverskuddBatches(input: { hallId?: string; gameType?: string; channel?: string; dateFrom?: string; dateTo?: string; limit?: number }): Promise<PersistedOverskuddBatch[]>;
+  upsertHallOrganizationAllocation(alloc: PersistedHallOrganizationAllocation): Promise<void>;
+  listHallOrganizationAllocations(hallId?: string): Promise<PersistedHallOrganizationAllocation[]>;
+  deleteHallOrganizationAllocation(id: string): Promise<void>;
   shutdown(): Promise<void>;
 }

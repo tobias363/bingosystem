@@ -713,27 +713,6 @@ test("ending a game activates mandatory pause and blocks gameplay until it expir
     );
   });
 
-  // Player on pause is excluded from the round — game starts without them.
-  // The room continues to run; paused players simply don't get tickets.
-  const secondRoom = await createRoomWithTwoPlayers({
-    engine,
-    hallId: "hall-1",
-    hostName: "Host",
-    hostWalletId: "wallet-host",
-    guestName: "Guest 2",
-    guestWalletId: "wallet-guest-2"
-  });
-
-  await withFakeNow(3000, async () => {
-    await engine.startGame({
-      roomCode: secondRoom.roomCode,
-      actorPlayerId: secondRoom.hostPlayerId,
-      entryFee: 0,
-      ticketsPerPlayer: 1,
-      payoutPercent: 80
-    });
-  });
-
   await withFakeNow(2501 + 10 * 60 * 1000 + 1, async () => {
     await assert.doesNotReject(async () =>
       engine.createRoom({

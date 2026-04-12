@@ -1385,6 +1385,27 @@ export class BingoEngine {
     return this.ledger.getOverskuddDistributionBatch(batchIdInput);
   }
 
+  listOverskuddDistributionBatches(input?: {
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+  }): OverskuddDistributionBatch[] {
+    return this.ledger.listOverskuddDistributionBatches(input);
+  }
+
+  previewOverskuddDistribution(input: {
+    date: string;
+    allocations: OrganizationAllocationInput[];
+    hallId?: string;
+    gameType?: LedgerGameType;
+    channel?: LedgerChannel;
+  }): OverskuddDistributionBatch {
+    return this.ledger.previewOverskuddDistribution(input);
+  }
+
   async refreshPlayerBalancesForWallet(walletId: string): Promise<string[]> {
     const normalizedWalletId = walletId.trim();
     if (!normalizedWalletId) {

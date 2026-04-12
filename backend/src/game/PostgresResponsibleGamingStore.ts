@@ -6,6 +6,8 @@ import type {
   PersistedExtraPrizeEntry,
   PersistedLossEntry,
   PersistedLossLimit,
+  PersistedOverskuddBatch,
+  PersistedHallOrganizationAllocation,
   PersistedPendingLossLimitChange,
   PersistedPayoutAuditEvent,
   PersistedPlaySessionState,
@@ -383,6 +385,240 @@ export class PostgresResponsibleGamingStore implements ResponsibleGamingPersiste
        DO UPDATE SET generated_at = EXCLUDED.generated_at,
                      report_json = EXCLUDED.report_json`,
       [report.date, report.generatedAt, JSON.stringify(report)]
+    );
+  }
+
+  async insertOverskuddBatch(batch: PersistedOverskuddBatch): Promise<void> {
+    await this.ensureInitialized();
+    await this.pool.query(
+      `INSERT INTO ${this.overskuddBatchesTable()} (
+         id, created_at, date, hall_id, game_type, channel,
+         required_minimum, distributed_amount, transfers_json, allocations_json
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        batch.id,
+        batch.createdAt,
+        batch.date,
+        batch.hallId ?? null,
+        batch.gameType ?? null,
+        batch.channel ?? null,
+        batch.requiredMinimum,
+        batch.distributedAmount,
+        batch.transfersJson,
+        batch.allocationsJson
+      ]
+    );
+  }
+
+  async getOverskuddBatch(batchId: string): Promise<PersistedOverskuddBatch | null> {
+    await this.ensureInitialized();
+    const { rows } = await this.pool.query<{
+      id: string;
+      created_at: string;
+      date: string;
+      hall_id: string | null;
+      game_type: string | null;
+      channel: string | null;
+      required_minimum: number;
+      distributed_amount: number;
+      transfers_json: string;
+      allocations_json: string;
+    }>(
+      `SELECT id, created_at, date, hall_id, game_type, channel,
+              required_minimum, distributed_amount, transfers_json, allocations_json
+       FROM ${this.overskuddBatchesTable()}
+       WHERE id = $1`,
+      [batchId]
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+    const row = rows[0];
+    return {
+      id: row.id,
+      createdAt: row.created_at,
+      date: row.date,
+      hallId: row.hall_id ?? undefined,
+      gameType: row.game_type ?? undefined,
+      channel: row.channel ?? undefined,
+      requiredMinimum: Number(row.required_minimum),
+      distributedAmount: Number(row.distributed_amount),
+      transfersJson: row.transfers_json,
+      allocationsJson: row.allocations_json
+    };
+  }
+
+  async listOverskuddBatches(input: {
+    hallId?: string;
+    gameType?: string;
+    channel?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+  }): Promise<PersistedOverskuddBatch[]> {
+    await this.ensureInitialized();
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    let paramIndex = 1;
+
+    if (input.hallId) {
+      conditions.push(`hall_id = $${paramIndex++}`);
+      params.push(input.hallId);
+    }
+    if (input.gameType) {
+      conditions.push(`game_type = $${paramIndex++}`);
+      params.push(input.gameType);
+    }
+    if (input.channel) {
+      conditions.push(`channel = $${paramIndex++}`);
+      params.push(input.channel);
+    }
+    if (input.dateFrom) {
+      conditions.push(`date >= $${paramIndex++}`);
+      params.push(input.dateFrom);
+    }
+    if (input.dateTo) {
+      conditions.push(`date <= $${paramIndex++}`);
+      params.push(input.dateTo);
+    }
+
+    const limit = Number.isFinite(input.limit) && (input.limit ?? 0) > 0 ? Math.min(1000, Math.floor(input.limit!)) : 200;
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const { rows } = await this.pool.query<{
+      id: string;
+      created_at: string;
+      date: string;
+      hall_id: string | null;
+      game_type: string | null;
+      channel: string | null;
+      required_minimum: number;
+      distributed_amount: number;
+      transfers_json: string;
+      allocations_json: string;
+    }>(
+      `SELECT id, created_at, date, hall_id, game_type, channel,
+              required_minimum, distributed_amount, transfers_json, allocations_json
+       FROM ${this.overskuddBatchesTable()}
+       ${where}
+       ORDER BY date DESC
+       LIMIT ${limit}`,
+      params
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      date: row.date,
+      hallId: row.hall_id ?? undefined,
+      gameType: row.game_type ?? undefined,
+      channel: row.channel ?? undefined,
+      requiredMinimum: Number(row.required_minimum),
+      distributedAmount: Number(row.distributed_amount),
+      transfersJson: row.transfers_json,
+      allocationsJson: row.allocations_json
+    }));
+  }
+
+  async upsertHallOrganizationAllocation(alloc: PersistedHallOrganizationAllocation): Promise<void> {
+    await this.ensureInitialized();
+    await this.pool.query(
+      `INSERT INTO ${this.hallOrganizationsTable()} (
+         id, hall_id, organization_id, organization_name, organization_account_id,
+         share_percent, game_type, channel, is_active, created_at, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ON CONFLICT (id)
+       DO UPDATE SET
+         hall_id = EXCLUDED.hall_id,
+         organization_id = EXCLUDED.organization_id,
+         organization_name = EXCLUDED.organization_name,
+         organization_account_id = EXCLUDED.organization_account_id,
+         share_percent = EXCLUDED.share_percent,
+         game_type = EXCLUDED.game_type,
+         channel = EXCLUDED.channel,
+         is_active = EXCLUDED.is_active,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        alloc.id,
+        alloc.hallId,
+        alloc.organizationId,
+        alloc.organizationName,
+        alloc.organizationAccountId,
+        alloc.sharePercent,
+        alloc.gameType ?? null,
+        alloc.channel ?? null,
+        alloc.isActive ? 1 : 0,
+        alloc.createdAt,
+        alloc.updatedAt
+      ]
+    );
+  }
+
+  async listHallOrganizationAllocations(hallId?: string): Promise<PersistedHallOrganizationAllocation[]> {
+    await this.ensureInitialized();
+    const { rows } = hallId
+      ? await this.pool.query<{
+          id: string;
+          hall_id: string;
+          organization_id: string;
+          organization_name: string;
+          organization_account_id: string;
+          share_percent: number;
+          game_type: string | null;
+          channel: string | null;
+          is_active: number;
+          created_at: string;
+          updated_at: string;
+        }>(
+          `SELECT id, hall_id, organization_id, organization_name, organization_account_id,
+                  share_percent, game_type, channel, is_active, created_at, updated_at
+           FROM ${this.hallOrganizationsTable()}
+           WHERE hall_id = $1
+           ORDER BY created_at ASC`,
+          [hallId]
+        )
+      : await this.pool.query<{
+          id: string;
+          hall_id: string;
+          organization_id: string;
+          organization_name: string;
+          organization_account_id: string;
+          share_percent: number;
+          game_type: string | null;
+          channel: string | null;
+          is_active: number;
+          created_at: string;
+          updated_at: string;
+        }>(
+          `SELECT id, hall_id, organization_id, organization_name, organization_account_id,
+                  share_percent, game_type, channel, is_active, created_at, updated_at
+           FROM ${this.hallOrganizationsTable()}
+           ORDER BY created_at ASC`
+        );
+
+    return rows.map((row) => ({
+      id: row.id,
+      hallId: row.hall_id,
+      organizationId: row.organization_id,
+      organizationName: row.organization_name,
+      organizationAccountId: row.organization_account_id,
+      sharePercent: Number(row.share_percent),
+      gameType: (row.game_type as "MAIN_GAME" | "DATABINGO" | null) ?? null,
+      channel: (row.channel as "HALL" | "INTERNET" | null) ?? null,
+      isActive: row.is_active !== 0,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+  }
+
+  async deleteHallOrganizationAllocation(id: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.pool.query(
+      `DELETE FROM ${this.hallOrganizationsTable()} WHERE id = $1`,
+      [id]
     );
   }
 
@@ -814,6 +1050,45 @@ export class PostgresResponsibleGamingStore implements ResponsibleGamingPersiste
         )`
       );
 
+      await client.query(
+        `CREATE TABLE IF NOT EXISTS ${this.overskuddBatchesTable()} (
+          id TEXT PRIMARY KEY,
+          created_at TEXT NOT NULL,
+          date TEXT NOT NULL,
+          hall_id TEXT,
+          game_type TEXT,
+          channel TEXT,
+          required_minimum REAL NOT NULL,
+          distributed_amount REAL NOT NULL,
+          transfers_json TEXT NOT NULL,
+          allocations_json TEXT NOT NULL
+        )`
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_rg_overskudd_batches_date
+         ON ${this.overskuddBatchesTable()} (date DESC)`
+      );
+
+      await client.query(
+        `CREATE TABLE IF NOT EXISTS ${this.hallOrganizationsTable()} (
+          id TEXT PRIMARY KEY,
+          hall_id TEXT NOT NULL,
+          organization_id TEXT NOT NULL,
+          organization_name TEXT NOT NULL,
+          organization_account_id TEXT NOT NULL,
+          share_percent REAL NOT NULL,
+          game_type TEXT,
+          channel TEXT,
+          is_active INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )`
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_rg_hall_organizations_hall
+         ON ${this.hallOrganizationsTable()} (hall_id)`
+      );
+
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");
@@ -861,5 +1136,13 @@ export class PostgresResponsibleGamingStore implements ResponsibleGamingPersiste
 
   private dailyReportsTable(): string {
     return `${this.schema}.app_rg_daily_reports`;
+  }
+
+  private overskuddBatchesTable(): string {
+    return `${this.schema}.app_rg_overskudd_batches`;
+  }
+
+  private hallOrganizationsTable(): string {
+    return `${this.schema}.app_rg_hall_organizations`;
   }
 }
