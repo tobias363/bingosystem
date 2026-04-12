@@ -84,9 +84,9 @@ Kalles av Unity når lobbyen vil åpne en ekstern URL fra spillerhosten.
 
 Gjeldende live-host oppfører seg slik:
 
-- `/candy/` og andre URL-er åpnes via `window.open(url, 'myUniqueTab')` — ny fane/vindu
-
-**Gap:** `CANDY_SPILLORAMA_API_CONTRACT.md` og `ARKITEKTUR.md` beskriver `/candy/` som et iframe-overlay. Dette er ikke implementert ennå. Når iframe-embedding er på plass skal denne seksjonen oppdateres til å beskrive overlay-flyten og `postMessage`-protokollen (se `CANDY_SPILLORAMA_API_CONTRACT.md` §5).
+- `/candy/` fanges opp og åpnes i et fullskjerms iframe-overlay via `window.launchCandyOverlay()` i `spillvett.js`
+- Overlayets `POST /api/games/candy/launch` henter `embedUrl` med token + hallId, setter iframe `src` og validerer `event.origin` på innkommende `postMessage`-hendelser
+- Andre URL-er åpnes via `window.open(url, 'myUniqueTab')`
 ### 2.8 `requestGameData()` (`/view-game/` only)
 
 Kalles av hall-display-builden for å hente visningsdata fra URL-token og validere dette mot backend.

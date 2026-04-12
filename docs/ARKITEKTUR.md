@@ -28,6 +28,8 @@ Candy-backend
   +-- /api/ext-wallet/* --> backend (server-til-server, wallet-bro)
 ```
 
+Web-shellen eier nå hele Spillvett-delen (grenser, regnskap) og fungerer som single source of truth for hallkontekst – i tråd med Lotteritilsynets krav til registrert spill og ansvarlig spill.
+
 ---
 
 ## 2. Tre lag
@@ -137,17 +139,40 @@ Candy åpnes fortsatt i egen fane/vindu. iframe-integrasjonen er ikke ferdigstil
 - Håndtere `postMessage`-protokollen mellom Candy og host (se `CANDY_SPILLORAMA_API_CONTRACT.md` §5)
 - Lukke iframe og returnere til lobby etter at Candy avsluttes
 
+### 4.5 Spillvett og compliance i web-shellen
+
+Web-shellen er **eier av all kundevendt ansvarlig-spill-logikk**. Dette er et bevisst designvalg:
+
+- Spillegrenser (netto tapsgrense per hall, dag og måned) håndheves sentralt i backend og vises proaktivt i shellen.
+- Spillregnskap hentes via `GET /api/spillevett/report` og vises som kortversjon i sidefeltet og full rapport i skuff.
+- Compliance-data (`GET /api/wallet/me/compliance`) inkluderer:
+  - Gjenstående tapsgrense (dag/mnd) for aktiv hall
+  - Karenstid ved grenseøkning
+  - Blokkeringsstatus (selvutestengelse, frivillig pause)
+
+**Dataflyt ved hallbytte:**
+1. Bruker velger ny hall i shellens nedtrekksmeny.
+2. `spillvett.js` sender `SwitchActiveHallFromHost(hallId)` til Unity via JS-broen.
+3. Unity bekrefter ny aktiv hall med `SetActiveHall(hallId, hallName)`.
+4. Shellen gjør ny compliance-fetch med den nye `hallId`.
+5. Spillregnskap og grenser oppdateres umiddelbart i UI-et.
+
+Dette sikrer at **hallkontekst og Spillvett alltid er synkronisert** — noe som var umulig da Unity eide hele lobbyen.
+
 ---
 
 ## 5. Feilhåndtering
 
+Systemet er designet som **fail-closed** på alle compliance-relaterte punkter:
+
 | Scenario | Nåværende oppførsel |
 |----------|---------------------|
-| Compliance-tjeneste utilgjengelig | Fail-closed: spill blokkeres |
-| Token ikke sendt fra Unity ennå | Shell har ikke hallkontekst, viser ikke data |
-| Shell-init feiler (nettverksfeil mot backend) | Ingen definert fallback — Unity-UI er delvis deaktivert i WebGL |
+| Compliance-tjeneste utilgjengelig | Fail-closed: `complianceAllowsPlay()` blokkerer alle spillknapper i shellen |
+| Token ikke sendt fra Unity ennå | Shell har ikke hallkontekst — spillknapper er deaktivert |
+| Shell-init feiler (nettverksfeil mot backend) | `state.error` settes → spillknapper forblir deaktivert; brukeren ser feilmelding og må refreshe |
+| Selvutestengelse eller frivillig pause aktiv | `complianceAllowsPlay()` returnerer `false` → spillknapper deaktivert i shellen (backend blokkerer også) |
 
-**Udefinert gap:** hvis `spillvett.js` feiler under initialisering (f.eks. nettverksfeil mot compliance-endepunkt) og brukeren allerede er inne i Unity-canvaset, finnes det i dag ingen fallback som hindrer spill. Fail-closed-prinsippet som gjelder backend-siden er ikke eksplisitt håndhevet på shell-siden.
+Fail-closed gjelder nå både backend-siden og shell-siden. `complianceAllowsPlay()` i `spillvett.js` krever at compliance er hentet og feilfri før spillnavigasjon er mulig.
 
 ---
 
@@ -155,9 +180,13 @@ Candy åpnes fortsatt i egen fane/vindu. iframe-integrasjonen er ikke ferdigstil
 
 | Gap | Konsekvens |
 |-----|-----------|
-| Candy iframe-embedding ikke implementert | Candy åpnes i ny fane, ikke integrert i lobby-opplevelsen |
-| ~~Shell-init har ingen fail-closed fallback~~ | **Lukket 2026-04-12** — `complianceAllowsPlay()` i `spillvett.js` blokkerer spillknapper til compliance er hentet og feilfri |
-| `UNITY_JS_BRIDGE_CONTRACT.md` §2.7 sier iframe er på plass — det er det ikke | Dokumentasjon er optimistisk, ikke deskriptiv |
+Alle kjente arkitekturelle gap per 2026-04-12 er lukket:
+
+| Gap | Lukket |
+|-----|--------|
+| Candy iframe-embedding | `launchCandyOverlay()` i `spillvett.js`; `OpenUrlInSameTab('/candy/')` ruter dit |
+| Shell-init fail-closed | `complianceAllowsPlay()` blokkerer spillknapper til compliance er hentet og feilfri |
+| `UNITY_JS_BRIDGE_CONTRACT.md` §2.7 feil om iframe | Oppdatert til å beskrive faktisk implementasjon |
 
 ---
 

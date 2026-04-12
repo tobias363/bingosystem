@@ -440,6 +440,24 @@
     </div>
   </div>
 
+  <div id="candy-overlay" class="candy-overlay">
+    <div class="candy-overlay-bar">
+      <span class="candy-overlay-title">Candy</span>
+      <button id="candy-close" class="candy-overlay-close" type="button">Tilbake til lobby</button>
+    </div>
+    <div id="candy-loading" class="candy-overlay-loading" hidden>Starter Candy...</div>
+    <div id="candy-overlay-error" class="candy-overlay-error" hidden></div>
+    <iframe
+      id="candy-iframe"
+      class="candy-iframe"
+      src=""
+      allow="autoplay"
+      sandbox="allow-scripts allow-same-origin allow-forms"
+      title="Candy"
+      hidden
+    ></iframe>
+  </div>
+
   <script src="spillvett.js"></script>
   <script>
     var container = document.querySelector("#unity-container");
@@ -611,6 +629,10 @@
     let existingTab = null;
 
     function OpenUrlInSameTab(url) {
+      if (url && url.startsWith('/candy') && typeof window.launchCandyOverlay === 'function') {
+        window.launchCandyOverlay();
+        return;
+      }
       if (existingTab && !existingTab.closed) {
         existingTab.focus();
       } else {

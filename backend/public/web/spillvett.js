@@ -21,7 +21,8 @@
     compliance: null,
     pendingHostHallId: "",
     syncTimer: null,
-    refreshIntervalId: null
+    refreshIntervalId: null,
+    candyEmbedOrigin: ""
   };
 
   const els = {};
@@ -269,6 +270,23 @@
       );
     }
     return payload.data;
+  }
+
+  function closeCandyOverlay() {
+    if (!els.candyOverlay) return;
+    if (state.candyEmbedOrigin && els.candyIframeEl && els.candyIframeEl.contentWindow) {
+      try {
+        els.candyIframeEl.contentWindow.postMessage({ type: 'host:closeGame' }, state.candyEmbedOrigin);
+      } catch (_) {}
+    }
+    els.candyOverlay.classList.remove('is-open');
+    state.candyEmbedOrigin = '';
+    window.setTimeout(function () {
+      if (els.candyIframeEl && !els.candyOverlay.classList.contains('is-open')) {
+        els.candyIframeEl.src = '';
+        els.candyIframeEl.hidden = true;
+      }
+    }, 100);
   }
 
   function scheduleSync() {
@@ -790,6 +808,33 @@
       });
     }
 
+    els.candyOverlay = getElement('candy-overlay');
+    els.candyIframeEl = getElement('candy-iframe');
+    els.candyLoading = getElement('candy-loading');
+    els.candyOverlayError = getElement('candy-overlay-error');
+    const candyCloseBtn = getElement('candy-close');
+    if (candyCloseBtn) {
+      candyCloseBtn.addEventListener('click', closeCandyOverlay);
+    }
+
+    window.addEventListener('message', function (event) {
+      if (!state.candyEmbedOrigin || event.origin !== state.candyEmbedOrigin) return;
+      const msg = event.data;
+      if (!msg || typeof msg.type !== 'string') return;
+      switch (msg.type) {
+        case 'candy:gameEnded':
+        case 'candy:balanceChanged':
+          void refreshData({ silent: true });
+          break;
+        case 'candy:error':
+          if (els.candyOverlayError) {
+            els.candyOverlayError.textContent = (msg.payload && msg.payload.message) || 'Feil i Candy-spillet.';
+            els.candyOverlayError.hidden = false;
+          }
+          break;
+      }
+    });
+
     state.token = safeStorageGet(storageKeys.token);
     state.hallId = safeStorageGet(storageKeys.hallId);
     state.hallName = safeStorageGet(storageKeys.hallName);
@@ -803,6 +848,34 @@
       scheduleSync();
     }
   }
+
+  window.launchCandyOverlay = async function launchCandyOverlay() {
+    if (!els.candyOverlay || !state.token || !state.hallId) return;
+    els.candyOverlay.classList.add('is-open');
+    if (els.candyLoading) els.candyLoading.hidden = false;
+    if (els.candyOverlayError) els.candyOverlayError.hidden = true;
+    if (els.candyIframeEl) els.candyIframeEl.hidden = true;
+
+    try {
+      const data = await apiRequest('/api/games/candy/launch', {
+        method: 'POST',
+        body: JSON.stringify({ hallId: state.hallId })
+      });
+      const parsedUrl = new URL(data.embedUrl);
+      state.candyEmbedOrigin = parsedUrl.origin;
+      if (els.candyIframeEl) {
+        els.candyIframeEl.src = data.embedUrl;
+        els.candyIframeEl.hidden = false;
+      }
+      if (els.candyLoading) els.candyLoading.hidden = true;
+    } catch (error) {
+      if (els.candyLoading) els.candyLoading.hidden = true;
+      if (els.candyOverlayError) {
+        els.candyOverlayError.textContent = normalizeApiError(error);
+        els.candyOverlayError.hidden = false;
+      }
+    }
+  };
 
   window.SetPlayerToken = function SetPlayerToken(token) {
     state.token = token || "";
