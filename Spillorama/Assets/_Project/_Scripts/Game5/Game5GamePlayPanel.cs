@@ -9,10 +9,6 @@ using UnityEngine.UI;
 
 public partial class Game5GamePlayPanel : MonoBehaviour
 {
-    #region PUBLIC_VARIABLES
-
-    #endregion
-
     #region PRIVATE_VARIABLES
     [Header("Text")]
     [SerializeField] private TextMeshProUGUI txtLastWithdrawNumber;
@@ -113,9 +109,6 @@ public partial class Game5GamePlayPanel : MonoBehaviour
 
     #endregion
 
-    #region DELEGATE_CALLBACKS
-    #endregion
-
     #region PUBLIC_METHODS
 
     public void SetData(Game5Data game5data = null)
@@ -138,17 +131,6 @@ public partial class Game5GamePlayPanel : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// This is a custom UI handling function. Code normalization is remain.
-    /// </summary>
-    /// <param name="totalActiveGames"></param>
-    #endregion
-
-    #region PRIVATE_METHODS
-
-    #endregion
-
-    #region COROUTINES
     #endregion
 
     #region GETTER_SETTER

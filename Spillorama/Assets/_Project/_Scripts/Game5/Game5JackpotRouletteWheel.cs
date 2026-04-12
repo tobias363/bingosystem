@@ -18,7 +18,8 @@ public class Game5JackpotRouletteWheel : MonoBehaviour
     private bool callbackInvoked = false;
     private int spinCount = 0;
     private int totalSpins = 0;
-    private int autoTurnTime = 10;
+    private const int DefaultAutoTurnTime = 10;
+    private int autoTurnTime = DefaultAutoTurnTime;
     private List<GameObject> spinHistoryGameObjectList = new List<GameObject>();
 
     [Header("Text")]
@@ -82,7 +83,7 @@ public class Game5JackpotRouletteWheel : MonoBehaviour
             }
         }
 
-        autoTurnTime = 10;
+        autoTurnTime = DefaultAutoTurnTime;
         StartAutoTurn();
     }
 
@@ -164,16 +165,12 @@ public class Game5JackpotRouletteWheel : MonoBehaviour
         txtTimer.text = "";
     }
 
+    private const float AutoBackDelay = 4f;
+
     IEnumerator Auto_Back_To_Lobby()
     {
-        float time = 4f;
         DeactiveMinigamesObjects();
-
-        while (time > 0f)
-        {
-            time -= Time.deltaTime;
-            yield return new WaitForEndOfFrame();
-        }
+        yield return new WaitForSeconds(AutoBackDelay);
         if (gameObject.activeSelf)
         {
             OnBackButtonTap();

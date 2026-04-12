@@ -36,17 +36,12 @@ public class BallPathRottate : MonoBehaviour
 
     public void StartSpin(int i)
     {
-        SpinWheel(i, 10, () =>
-        {
-            Debug.Log("Completed Spin");
-        });
+        SpinWheel(i, 10);
     }
 
 
     public void SpinWheel(int inputNumber, float rouletteTime , Action onCompleteCallback = null, bool isSpinningForce = false)
     {
-        this.onCompleteCallback = null;
-
         this.onCompleteCallback = onCompleteCallback;
 
         int roulletePathIndex = GetTargetPlateIndex(inputNumber);
@@ -132,7 +127,6 @@ public class BallPathRottate : MonoBehaviour
             // Check if we need to stop at this waypoint
             if (currentWaypointIndex == stopAtWaypointIndex)
             {
-                //onCompleteCallback?.Invoke();
                 rotatingObject.StopRotation();
                 ballSpin = false;
                 return;
@@ -151,7 +145,7 @@ public class BallPathRottate : MonoBehaviour
 
         if (index == -1)
         {
-            Debug.Log($"Value {valueToFind} not found in the array.");
+            Debug.LogWarning($"[BallPathRottate] Value {valueToFind} not found in PlatesData.");
             return 0;
         }
 

@@ -7,7 +7,7 @@ public class PanelWheelCompnentContainer : MonoBehaviour
     [Header("Game5RouletteWheelController")]
     [SerializeField] private Game5RouletteWheelController game5RouletteWheelController;
 
-    public int SampleInput;
+    [SerializeField] private int SampleInput;
 
     public void StartSpin()
     {
