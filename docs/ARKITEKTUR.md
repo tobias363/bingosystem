@@ -1,7 +1,7 @@
 # Spillorama-system: Arkitektur
 
-**Dato:** 12. april 2026
-**Status:** Nåværende tilstand
+**Dato:** 12. april 2026 (oppdatert)
+**Status:** Shell-first lobby — Unity kun for gameplay
 
 Dette dokumentet beskriver systemet slik det faktisk er bygget. Det er ment å leses av nye utviklere, konsulenter og revisorer som trenger et startpunkt. Detaljerte kontrakter og implementasjonsguider finnes i egne filer referert til under.
 
@@ -12,14 +12,17 @@ Dette dokumentet beskriver systemet slik det faktisk er bygget. Det er ment å l
 ```
 Kunde (nettleser)
   |
-  +-- HTTPS --> /web/  (web-shell + Unity WebGL canvas)
+  +-- HTTPS --> /web/
   |               |
-  |               |-- JS-bro --> Unity WebGL (spillmotor)
+  |               +-- Login/Registrering (auth.js)
+  |               +-- Lobby med spillfliser (lobby.js)
+  |               +-- Spillvett/profil (spillvett.js)
+  |               |
+  |               +-- [Ved spillstart] --> Unity WebGL (kun spillmotor)
   |               |
   |               +-- HTTPS --> backend/src/index.ts
   |                               |
-  |                               +-- PostgreSQL (wallet, limits, ledger)
-  |                               +-- Firebase (auth)
+  |                               +-- PostgreSQL (brukere, wallet, limits, ledger)
   |                               +-- POST /api/games/candy/launch
   |                                       |
   |                                       +--> Candy-backend (server-til-server)
@@ -28,7 +31,7 @@ Candy-backend
   +-- /api/ext-wallet/* --> backend (server-til-server, wallet-bro)
 ```
 
-Web-shellen eier nå hele Spillvett-delen (grenser, regnskap) og fungerer som single source of truth for hallkontekst – i tråd med Lotteritilsynets krav til registrert spill og ansvarlig spill.
+Web-shellen eier **hele kundeopplevelsen**: login, registrering, lobby, hallvalg, saldo, Spillvett og profil. Unity lastes **kun når spilleren klikker et spill** — tilsvarende modellen norsk-tipping.no og andre store spillselskaper bruker. AIS legacy-backend fases ut til fordel for Spillorama-backend som eneste backend.
 
 ---
 
@@ -53,59 +56,63 @@ Systemet er **fail-closed**: hvis compliance-tjenesten er utilgjengelig, blokker
 
 ### 2.2 Web-shell (`backend/public/web/`)
 
-Kundens primære lobbyflate. Eier lobby, hallkontekst og Spillvett. Unity-canvaset rendres inne i denne siden.
+Eier hele kundeopplevelsen. Unity lastes **ikke** ved sideinnlasting — kun når spilleren velger et spill.
 
 | Ansvar | Fil |
 |--------|-----|
-| Lobby-skjelett og Unity-canvas | `index.html` |
-| Hallvelger, Spillvett, spillregnskap | `spillvett.js` |
-| Spill-knapper som åpner spill direkte | `spillvett.js` → `NavigateSpilloramaGame()` |
-| Retur til lobby | → `LobbyPanel` shell-first tilstand |
+| Login og registrering | `auth.js` |
+| Lobby med spillfliser, hallvalg, saldo | `lobby.js` |
+| Profilpanel med Spillvett, hallvelger, spillregnskap | `spillvett.js` |
+| Compliance-sjekk (fail-closed) | `spillvett.js` → `complianceAllowsPlay()` + `lobby.js` → `canPlay()` |
+| Candy iframe-overlay | `spillvett.js` → `launchCandyOverlay()` |
+| On-demand Unity-lasting | `index.html` → `_initUnity()` |
 
-Shell-en henter all compliance- og regnskapsdata fra backend direkte, med spillerens token og aktiv `hallId` som kontekst.
+**Flyten:**
+1. Bruker åpner `/web/` → ser login/registrering
+2. Etter innlogging → lobbyen vises med spillfliser, saldo, hallvalg
+3. Bruker klikker et spill → Unity lastes on-demand, spillet startes
+4. "Tilbake til lobby"-knapp → Unity skjules, lobbyen vises igjen
 
 ### 2.3 Unity WebGL (`Spillorama/`)
 
-Spillmotor. Kjører i canvaset inne i web-shellen. Eier ikke lobby, konto eller Spillvett.
+**Ren spillmotor.** Lastes kun ved spillstart. Eier ikke login, lobby, konto eller Spillvett.
 
 | Ansvar | Fil |
 |--------|-----|
 | JS-bro mot host | `UIManager.WebHostBridge.cs` |
-| Skjuler kundevendt hallvelger i WebGL | `TopBarPanel.cs` |
-| Shell-first lobby-tilstand | `LobbyPanel.cs` |
 | Direkte spilllansering fra host | `LobbyGameSelection.cs` |
 
-**Hva Unity sender til hosten:**
-- Spiller-token (`SetPlayerToken`)
-- Aktiv hall (`SetActiveHall`)
-- Liste over godkjente haller med tapsgrenser (`SetApprovedHalls`)
+**Hva hosten sender til Unity ved spillstart:**
+- Auth-token (via `SetShellToken` / sessionStorage)
+- Aktiv hall (via `SetActiveHall`)
+- Spillnavigasjon (`NavigateSpilloramaGame(gameNumber)`)
 
-**Hva hosten sender til Unity:**
-- Bytt aktiv hall (`SwitchActiveHallFromHost`)
-- Åpne spill (`NavigateSpilloramaGame`)
-- Gå til lobby (`LobbyPanel` shell-first)
+**Hva Unity sender tilbake til hosten:**
+- Hallbekreftelse (`SetActiveHall`)
+- Returnér til lobby (`returnToShellLobby`)
 
 ---
 
 ## 3. Hallkontekst-flyt
 
 ```
-1. Spiller logger inn i Unity
-2. Unity → host: SetPlayerToken(token)
-3. Unity → host: SetActiveHall(hallId, hallName)
-4. Unity → host: SetApprovedHalls(payloadJson)
-5. Host → backend: GET /api/wallet/me/compliance?hallId=...
-6. Host → backend: GET /api/spillevett/report?hallId=...
-7. Shell viser Spillvett og spillregnskap for aktiv hall
+1. Spiller logger inn via web shell (auth.js → POST /api/auth/login)
+2. Shell → backend: GET /api/halls (henter tilgjengelige haller)
+3. Shell → backend: GET /api/wallet/me (henter saldo)
+4. Spiller velger hall i shell-lobbyen
+5. Shell → backend: GET /api/wallet/me/compliance?hallId=...
+6. Shell viser Spillvett og spillregnskap for aktiv hall
+7. Spiller klikker spill → Unity lastes on-demand
+8. Shell → Unity: SetActiveHall(hallId, hallName) + auth-token via sessionStorage
+9. Unity kobler til spillserver med riktig hall og token
 
-Hallbytte (fra shell-nedtrekk):
-8. Host → Unity: SwitchActiveHallFromHost(nyHallId)
-9. Unity oppdaterer intern hall
-10. Unity → host: SetActiveHall(nyHallId, ...) (bekreftelse)
-11. Host henter compliance + regnskap på nytt for ny hall
+Hallbytte (i lobby):
+10. Spiller velger ny hall i shell-nedtrekk
+11. Shell henter compliance + regnskap for ny hall
+12. Hvis Unity kjører: Shell → Unity: SwitchActiveHallFromHost(nyHallId)
 ```
 
-Hallvalg er den eneste kilden til hvilke grenser og hvilket regnskap som vises. Spill og Spillvett er alltid i samme hallkontekst.
+Hallvalg eies av shellen — Unity mottar hallkontekst fra shellen, ikke omvendt.
 
 ---
 
@@ -181,24 +188,53 @@ Fail-closed gjelder nå både backend-siden og shell-siden. `complianceAllowsPla
 
 ## 6. Gjenstående gap (prioritert)
 
-| Gap | Konsekvens |
-|-----|-----------|
-Alle kjente arkitekturelle gap per 2026-04-12 er lukket:
+| Gap | Status | Konsekvens |
+|-----|--------|-----------|
+| AIS game panel-kobling (Phase 2 del 2) | In progress | Game1Panel/Game2Panel/Game3Panel lytter fortsatt på AIS broadcasts. Må kobles til `SpilloramaSocketManager.OnRoomUpdate` / `OnDrawNew`. |
+| AIS socket-credentials transitional | Transitional | `socketUser`/`socketPass` i sessionStorage fjernes når alle game panels er koblet til Spillorama socket |
+| Brukermigrasjon AIS → Spillorama | Planlagt | AIS-brukere må importeres til Spillorama PostgreSQL |
+| BankID-integrasjon (Phase 3) | Planlagt | Kun basic KYC finnes — full BankID-verifisering mangler |
+
+Lukkede gap:
 
 | Gap | Lukket |
 |-----|--------|
-| Candy iframe-embedding | `launchCandyOverlay()` i `spillvett.js`; `OpenUrlInSameTab('/candy/')` ruter dit |
-| Shell-init fail-closed | `complianceAllowsPlay()` blokkerer spillknapper til compliance er hentet og feilfri |
-| `UNITY_JS_BRIDGE_CONTRACT.md` §2.7 feil om iframe | Oppdatert til å beskrive faktisk implementasjon |
+| Web shell login/registrering | `auth.js` med login + registrering mot Spillorama backend |
+| Shell-first lobby | `lobby.js` med spillfliser, hallvalg, saldo — Unity lastes on-demand |
+| Candy iframe-embedding | `launchCandyOverlay()` i `spillvett.js` |
+| Shell-init fail-closed | `complianceAllowsPlay()` blokkerer spillknapper |
+| **Phase 1: JWT auth-frakobling** | `ReceiveShellToken` i Unity — brukerdata fra Spillorama REST, ikke AIS. `RefreshPlayerWalletFromHost` bruker `GET /api/wallet/me`. `SplashScreenPanel` blokkerer ikke på AIS socket i host-modus. |
+| **Phase 2 del 1: Spillorama socket + REST-klient** | `SpilloramaSocketManager.cs` — ny Socket.IO-klient mot Spillorama (JWT i payload, `room:join`/`ticket:mark`/`claim:submit`/`draw:next`). `SpilloramaApiClient.cs` — REST-klient for auth, halls, wallet, compliance, transaksjoner, grenser. Socket kobles automatisk etter `ReceiveShellToken`. `LobbyPanel` joiner rom ved `OnEnable` i host-modus. |
+
+### Phase 2 del 1: nye filer
+
+| Fil | Ansvar |
+|-----|--------|
+| `Spillorama/Assets/_Project/_Scripts/Manager/SpilloramaApiClient.cs` | REST-klient — erstatter Category A AIS socket-events |
+| `Spillorama/Assets/_Project/_Scripts/Socket Manager/SpilloramaSocketManager.cs` | Socket.IO-klient — `room:update`, `draw:new`, emit-API |
+
+### Phase 2 del 2: gjenstående kobling
+
+Disse AIS-broadcastene må erstattes med `SpilloramaSocketManager`-events i game panels:
+
+| AIS BroadcastName | Spillorama-event | Mottaker |
+|-------------------|-----------------|----------|
+| `WithdrawBingoBall` | `OnDrawNew` | Game1Panel, Game2Panel, Game3Panel |
+| `GameStart`, `GameStartWaiting`, `countDownToStartTheGame` | `OnRoomUpdate` (status=IN_PROGRESS) | Alle game panels |
+| `GameFinish` | `OnRoomUpdate` (status=FINISHED) | Alle game panels |
+| `PatternWin`, `BingoWinning` | `OnRoomUpdate` (claims[]) | Alle game panels |
+| `TicketCompleted` | `OnRoomUpdate` (marks[]) | Ticket views |
+| `SubscribeRoom` | `room:join` ack + `OnRoomUpdate` | LobbyPanel, game panels |
 
 ---
 
 ## 7. Utviklingsregler
 
-1. Hvis sluttbrukeren skal se funksjonen som del av lobby, konto eller Spillvett → bygg den i `/web/`-hosten, ikke i Unity.
+1. Hvis sluttbrukeren skal se funksjonen som del av lobby, konto, profil eller Spillvett → bygg den i `/web/`-shellen (HTML/JS), **aldri** i Unity.
 2. Hvis funksjonen er administrativ → bygg den i `frontend/admin/` eller backend-admin.
-3. Hvis funksjonen er del av selve spillopplevelsen → kan bygges i `Spillorama/`.
-4. Backend er alltid source of truth for grenser, saldo og blokkeringer.
+3. Hvis funksjonen er del av selve spillopplevelsen (bingo-brett, trekk, chat i spill) → bygges i `Spillorama/` (Unity).
+4. Spillorama-backend (`backend/src/`) er **eneste backend** og source of truth for brukere, saldo, grenser og blokkeringer. AIS-backend fases ut.
+5. Unity skal **aldri** laste seg selv ved sideinnlasting — kun ved spillstart fra lobbyen.
 
 ---
 

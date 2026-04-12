@@ -27,13 +27,18 @@ Kalles av Unity ved oppstart for å få backendens origin.
 **`backend/public/web/index.html`**
 
 ```javascript
+var pendingDomainData = false;
 function requestDomainData() {
   var serverUrl = window.location.origin;
-  if (typeof unityInstanceRef !== 'undefined' && unityInstanceRef) {
-    unityInstanceRef.SendMessage('GameSocketManager', 'DomainDataCall', serverUrl);
+  if (unityInstanceRef) {
+    unityInstanceRef.SendMessage('Socket And Event Manager', 'DomainDataCall', serverUrl);
+  } else {
+    pendingDomainData = true;  // flushed i .then() etter createUnityInstance
   }
 }
 ```
+
+Unity kaller `requestDomainData()` fra `GameSocketManager.Awake()` via `Application.ExternalCall` — dette skjer FØR `createUnityInstance`-Promisen resolves, så `unityInstanceRef` er `null` på dette tidspunktet. Deferred-patternen lagrer forespørselen og flusher den i `.then()`-callbacken.
 
 **`backend/public/view-game/index.html`**
 
@@ -44,7 +49,7 @@ function requestDomainData() {
 }
 ```
 
-Merk at de to buildene bruker ulike `SendMessage(...)`-mål.
+Begge host-sidene bruker nå `"Socket And Event Manager"` som SendMessage-mål (GameObjectet i Unity-scenen).
 
 ### 2.2 `SetPlayerToken(token)` og `ClearPlayerToken()` (`/web/` only)
 
@@ -103,12 +108,32 @@ Brukes av hall-displayet for fokus/lukking av TV-vindu.
 
 | SendMessage-kall | Host-side | Når |
 |-----------------|-----------|-----|
-| `SendMessage('GameSocketManager', 'DomainDataCall', serverUrl)` | `/web/` | Etter `requestDomainData()` |
+| `SendMessage('UIManager', 'ReceiveShellToken', jwt)` | `/web/` | **Phase 1 (primær)** — ved `OnUnityReady`, `ProvideShellCredentials`, og ved token-refresh. Unity validerer mot `GET /api/auth/me` og setter brukerdata. |
+| `SendMessage('UIManager', 'ReceiveHostCredentials', 'email\|pass')` | `/web/` | **Transitional** — AIS socket-auth for game events. Fjernes i Phase 2. |
+| `SendMessage('UIManager', 'NavigateToGame', gameNumber)` | `/web/` | Når bruker klikker et spill i shell-lobbyen |
+| `SendMessage('UIManager', 'SwitchActiveHallFromHost', hallId)` | `/web/` | Når bruker bytter hall i shellens nedtrekk |
+| `SendMessage('Socket And Event Manager', 'DomainDataCall', serverUrl)` | `/web/` | Etter `requestDomainData()` (deferred) |
 | `SendMessage('FirebaseManager', 'OnWebTokenReceived', token)` | `/web/` | Etter vellykket FCM-token |
 | `SendMessage('FirebaseManager', 'OnWebMessageReceived', payload)` | `/web/` | Ved foreground push |
 | `SendMessage('Socket And Event Manager', 'DomainDataCall', host)` | `/view-game/` | Etter `requestDomainData()` |
 | `SendMessage('Panel - Bingo Hall Display', 'AdminHallDisplayRoomIdCall', jsonData)` | `/view-game/` | Etter `requestGameData()` |
 | `SendMessage('Panel - Bingo Hall Display', 'ReceiveDeviceType', deviceType)` | `/view-game/` | Etter `sendDeviceTypeToUnity()` |
+
+### 3.1 Phase 1 auth-flyt (`/web/`)
+
+```
+Shell login → JWT i sessionStorage['spillorama.accessToken']
+            ↓
+Unity OnUnityReady / ProvideShellCredentials
+            ↓
+SendMessage('UIManager', 'ReceiveShellToken', jwt)   ← primær
+SendMessage('UIManager', 'ReceiveHostCredentials', …) ← transitional (AIS game events)
+            ↓
+Unity: GET /api/auth/me → gameAssetData populated (IsLoggedIn=true)
+Unity: ProcessPendingHostGame()
+```
+
+`ProvideShellToken()` — global JS-funksjon kalt av `auth.js` etter token-refresh. Sender ny JWT til Unity hvis den kjører.
 
 ## 4. Det som fortsatt ikke skal ligge i `Spillorama-system`
 
