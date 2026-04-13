@@ -1,9 +1,15 @@
 import { Container, Text } from "pixi.js";
 import type { Ticket } from "@spillorama/shared-types/game";
-import { BingoGrid } from "../../../components/BingoGrid.js";
+import { BingoGrid, type GridSize } from "../../../components/BingoGrid.js";
+
+export interface TicketCardOptions {
+  gridSize?: GridSize;
+  cellSize?: number;
+}
 
 /**
- * A single ticket card: BingoGrid (3x5) + "to-go" counter + ticket index label.
+ * A single ticket card: BingoGrid + "to-go" counter + ticket index label.
+ * Supports 3x5 (Game 2) and 5x5 (Game 1, 3) grids.
  */
 export class TicketCard extends Container {
   readonly grid: BingoGrid;
@@ -11,8 +17,10 @@ export class TicketCard extends Container {
   private indexText: Text;
   private ticket: Ticket | null = null;
 
-  constructor(index: number) {
+  constructor(index: number, options?: TicketCardOptions) {
     super();
+    const gridSize = options?.gridSize ?? "3x5";
+    const cellSize = options?.cellSize ?? (gridSize === "5x5" ? 40 : 48);
 
     // Ticket index label
     this.indexText = new Text({
@@ -23,8 +31,8 @@ export class TicketCard extends Container {
     this.indexText.y = 0;
     this.addChild(this.indexText);
 
-    // Bingo grid (3x5)
-    this.grid = new BingoGrid({ gridSize: "3x5", cellSize: 48, gap: 3 });
+    // Bingo grid
+    this.grid = new BingoGrid({ gridSize, cellSize, gap: 3 });
     this.grid.y = 22;
     this.addChild(this.grid);
 

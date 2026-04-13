@@ -32,4 +32,5 @@ export function createGame(slug: string, deps: GameDeps): GameController | null 
 }
 
 // Game registrations (side-effect imports)
+import("./game1/Game1Controller.js").catch(() => {});
 import("./game2/Game2Controller.js").catch(() => {});
