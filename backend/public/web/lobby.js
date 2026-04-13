@@ -95,7 +95,8 @@
             gameNumber: settings.gameNumber || 0,
             slug: g.slug,
             title: g.title,
-            description: g.description
+            description: g.description,
+            settings: settings
           };
         });
       } else {
@@ -156,8 +157,37 @@
       window.SetActiveHall(hallId, hall ? hall.name : hallId);
     }
 
+    // Notify Unity if it's running (game bar hall switch)
+    if (typeof window.SwitchActiveHallFromHost === 'function') {
+      window.SwitchActiveHallFromHost(hallId);
+    }
+
     await loadCompliance();
     renderLobby();
+  }
+
+  // Populates any hall <select> element with current lobbyState.halls
+  function renderHallSelect(el) {
+    if (!el) return;
+    if (el.value === lobbyState.activeHallId && el.options.length > 1) return;
+    el.innerHTML = '';
+    if (lobbyState.halls.length === 0) {
+      const opt = document.createElement('option');
+      opt.textContent = 'Ingen haller tilgjengelig';
+      opt.value = '';
+      el.appendChild(opt);
+      el.disabled = true;
+    } else {
+      lobbyState.halls.forEach(function (hall) {
+        const opt = document.createElement('option');
+        opt.value = hall.id;
+        opt.textContent = hall.name;
+        opt.selected = hall.id === lobbyState.activeHallId;
+        el.appendChild(opt);
+      });
+      el.disabled = false;
+      el.value = lobbyState.activeHallId;
+    }
   }
 
   // ── Game launch ──────────────────────────────────────────────────────────
@@ -188,8 +218,80 @@
       return;
     }
 
+    // BIN-330: Feature flag — web game client or Unity
+    console.log('[lobby] launchGame called with slug:', game.slug);
+    if (shouldUseWebClient(game)) {
+      loadWebGame(game);
+      return;
+    }
+
     // For bingo games — load Unity and navigate to the game
     loadUnityAndStartGame(game);
+  }
+
+  // ── Web game client (PixiJS) ────────────────────────────────────────────
+
+  /**
+   * Check if a game should use the new web client instead of Unity.
+   * Controlled via game.settings.clientEngine in the database (from GET /api/games).
+   * Default is Unity during pilot — web is opt-in per game via admin.
+   */
+  function shouldUseWebClient(game) {
+    // Check game-level setting from backend
+    if (game.settings && game.settings.clientEngine === 'web') return true;
+
+    // Override via URL param for testing: ?webClient=game_2
+    var params = new URLSearchParams(window.location.search);
+    var webClientParam = params.get('webClient');
+    console.log('[lobby] shouldUseWebClient:', game.slug, 'webClientParam:', webClientParam);
+    if (webClientParam === game.slug || webClientParam === 'all') return true;
+
+    // Also match by game number for convenience (?webClient=game_2 matches slug "rocket" via gameNumber 2)
+    if (webClientParam && webClientParam.startsWith('game_') && game.gameNumber === parseInt(webClientParam.split('_')[1])) return true;
+
+    return false;
+  }
+
+  var webGameLoading = false;
+
+  async function loadWebGame(game) {
+    if (webGameLoading) return;
+    webGameLoading = true;
+
+    var lobbyEl = document.getElementById('lobby-screen');
+    var webContainer = document.getElementById('web-game-container');
+    var unityContainer = document.getElementById('unity-container');
+    var backBar = document.getElementById('lobby-back-bar');
+
+    // Hide lobby and Unity, show web container
+    if (lobbyEl) lobbyEl.style.display = 'none';
+    if (unityContainer) unityContainer.style.display = 'none';
+    if (webContainer) webContainer.style.display = 'block';
+    if (backBar) backBar.classList.add('is-visible');
+    if (typeof window.syncGameBar === 'function') window.syncGameBar();
+    startGameBarBalancePoll();
+
+    try {
+      // Dynamic import of the web game client (stable path, no hash)
+      var module = await import('/web/games/main.js');
+      if (module.mountGame) {
+        module.mountGame(webContainer, {
+          gameSlug: game.slug,
+          accessToken: getToken(),
+          hallId: lobbyState.activeHallId,
+          serverUrl: window.location.origin,
+        });
+      }
+    } catch (err) {
+      console.error('[lobby] Failed to load web game client:', err);
+      // Fallback to Unity on load failure
+      if (webContainer) webContainer.style.display = 'none';
+      webGameLoading = false;
+      loadUnityAndStartGame(game);
+      return;
+    }
+
+    webGameLoading = false;
   }
 
   function loadUnityAndStartGame(game) {
@@ -202,8 +304,10 @@
     if (lobbyState.unityLoaded) {
       // Unity already loaded, just navigate
       if (lobbyEl) lobbyEl.style.display = 'none';
-      if (unityContainer) unityContainer.style.display = '';
+      if (unityContainer) unityContainer.style.display = 'block';
       if (backBar) backBar.classList.add('is-visible');
+      if (typeof window.syncGameBar === 'function') window.syncGameBar();
+      startGameBarBalancePoll();
       navigateUnityToGame(game);
       return;
     }
@@ -213,8 +317,10 @@
 
     // Show Unity container with loading bar
     if (lobbyEl) lobbyEl.style.display = 'none';
-    if (unityContainer) unityContainer.style.display = '';
+    if (unityContainer) unityContainer.style.display = 'block';
     if (backBar) backBar.classList.add('is-visible');
+    if (typeof window.syncGameBar === 'function') window.syncGameBar();
+    startGameBarBalancePoll();
 
     // Load Unity loader script
     window._pendingGame = game;
@@ -236,15 +342,58 @@
     }
   }
 
+  // ── Game-bar saldo polling ────────────────────────────────────────────────
+  // While Unity is running the lobby's 30s status refresh keeps #lobby-balance
+  // updated (and renderLobby copies it to #game-bar-balance). We also run a
+  // dedicated wallet poll every 30 s so balance reflects recent round results.
+  var _gameBarWalletInterval = null;
+
+  function startGameBarBalancePoll() {
+    if (_gameBarWalletInterval) return; // already running
+    _gameBarWalletInterval = setInterval(async function () {
+      try {
+        var wallet = await apiFetch('/api/wallet/me');
+        if (wallet?.account) {
+          lobbyState.wallet = wallet;
+          var formatted = formatKr(wallet.account.balance);
+          var lobbyBal = document.getElementById('lobby-balance');
+          var gameBal  = document.getElementById('game-bar-balance');
+          if (lobbyBal) lobbyBal.textContent = formatted;
+          if (gameBal)  gameBal.textContent  = formatted;
+        }
+      } catch { /* network hiccup — ignore */ }
+    }, 30000);
+  }
+
+  function stopGameBarBalancePoll() {
+    if (_gameBarWalletInterval) {
+      clearInterval(_gameBarWalletInterval);
+      _gameBarWalletInterval = null;
+    }
+  }
+
   // Called from Unity/host when returning to lobby
   window.returnToShellLobby = function returnToShellLobby() {
     const lobbyEl = document.getElementById('lobby-screen');
     const unityContainer = document.getElementById('unity-container');
+    const webContainer = document.getElementById('web-game-container');
     const backBar = document.getElementById('lobby-back-bar');
     if (lobbyEl) lobbyEl.style.display = '';
     if (unityContainer) unityContainer.style.display = 'none';
     if (backBar) backBar.classList.remove('is-visible');
-    // Refresh data
+
+    // Unmount web game client if active
+    if (webContainer) {
+      webContainer.style.display = 'none';
+      if (window.__spilloramaGameClient && typeof window.__spilloramaGameClient.unmountGame === 'function') {
+        window.__spilloramaGameClient.unmountGame();
+      }
+    }
+    // Clear game name in bar
+    var gameBarName = document.getElementById('game-bar-name');
+    if (gameBarName) gameBarName.textContent = '';
+    // Stop game-bar wallet poll and refresh lobby data
+    stopGameBarBalancePoll();
     loadLobbyData();
   };
 
@@ -263,34 +412,19 @@
       balanceEl.textContent = formatKr(lobbyState.wallet.account.balance);
     }
 
+    // Keep game-bar balance in sync whenever lobby data refreshes
+    var gameBarBalEl = document.getElementById('game-bar-balance');
+    if (gameBarBalEl && lobbyState.wallet?.account) {
+      gameBarBalEl.textContent = formatKr(lobbyState.wallet.account.balance);
+    }
+
     if (userNameEl && lobbyState.user) {
       userNameEl.textContent = lobbyState.user.displayName || lobbyState.user.email || '';
     }
 
-    // Hall selector
-    if (hallSelectEl) {
-      const currentVal = hallSelectEl.value;
-      if (currentVal !== lobbyState.activeHallId || hallSelectEl.options.length <= 1) {
-        hallSelectEl.innerHTML = '';
-        if (lobbyState.halls.length === 0) {
-          const opt = document.createElement('option');
-          opt.textContent = 'Ingen haller tilgjengelig';
-          opt.value = '';
-          hallSelectEl.appendChild(opt);
-          hallSelectEl.disabled = true;
-        } else {
-          lobbyState.halls.forEach(function (hall) {
-            const opt = document.createElement('option');
-            opt.value = hall.id;
-            opt.textContent = hall.name;
-            opt.selected = hall.id === lobbyState.activeHallId;
-            hallSelectEl.appendChild(opt);
-          });
-          hallSelectEl.disabled = false;
-          hallSelectEl.value = lobbyState.activeHallId;
-        }
-      }
-    }
+    // Hall selectors — lobby + game bar
+    renderHallSelect(hallSelectEl);
+    renderHallSelect(document.getElementById('game-bar-hall-select'));
 
     // Game grid
     const gridEl = document.getElementById('lobby-game-grid');
@@ -328,12 +462,12 @@
         '<div class="lobby-tile-icon">' + icon + '</div>' +
         '<div class="lobby-tile-info">' +
           '<div class="lobby-tile-title-row">' +
-            '<span class="lobby-tile-title">' + escapeHtml(game.title) + '</span>' +
             badge +
+            '<span class="lobby-tile-title">' + escapeHtml(game.title) + '</span>' +
           '</div>' +
           (desc ? '<span class="lobby-tile-desc">' + escapeHtml(desc) + '</span>' : '') +
         '</div>' +
-        '<div class="lobby-tile-arrow">&#8250;</div>';
+        (allowed ? '<div class="lobby-tile-play-btn">Spill n&#229;</div>' : '');
 
       tile.addEventListener('click', function () {
         launchGame(game);
@@ -365,7 +499,7 @@
   // BIN-265: Status badge — reflects live state from GET /api/games/status
   function buildStatusBadge(slug) {
     var s = lobbyState.gameStatus[slug];
-    if (!s) return '<span class="lobby-tile-status lobby-tile-status--closed">Stengt</span>';
+    if (!s) return '<span class="lobby-tile-status lobby-tile-status--open">&#9679; Åpen</span>';
     if (s.status === 'OPEN') {
       return '<span class="lobby-tile-status lobby-tile-status--open">&#9679; Åpen</span>';
     }
@@ -398,16 +532,26 @@
   }
 
   function getGameIcon(slug) {
-    // Bingo ball style icons matching the Spillorama brand
-    var icons = {
-      'game_1': '<svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="#c62828"/><circle cx="24" cy="24" r="16" fill="#e53935"/><circle cx="24" cy="22" r="13" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/><text x="24" y="29" text-anchor="middle" fill="#fff" font-size="18" font-weight="900">1</text></svg>',
-      'game_2': '<svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="#1565c0"/><circle cx="24" cy="24" r="16" fill="#1e88e5"/><circle cx="24" cy="22" r="13" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/><text x="24" y="29" text-anchor="middle" fill="#fff" font-size="18" font-weight="900">2</text></svg>',
-      'game_3': '<svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="#2e7d32"/><circle cx="24" cy="24" r="16" fill="#43a047"/><circle cx="24" cy="22" r="13" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/><text x="24" y="29" text-anchor="middle" fill="#fff" font-size="18" font-weight="900">3</text></svg>',
-      'game_4': '<svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="#6a1b9a"/><circle cx="24" cy="24" r="16" fill="#8e24aa"/><circle cx="24" cy="22" r="13" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/><text x="24" y="29" text-anchor="middle" fill="#fff" font-size="18" font-weight="900">4</text></svg>',
-      'game_5': '<svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="#e65100"/><circle cx="24" cy="24" r="16" fill="#f57c00"/><circle cx="24" cy="22" r="13" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/><text x="24" y="29" text-anchor="middle" fill="#fff" font-size="18" font-weight="900">5</text></svg>',
-      'candy':  '<svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="#ad1457"/><circle cx="24" cy="24" r="16" fill="#d81b60"/><circle cx="24" cy="22" r="13" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/><text x="24" y="29" text-anchor="middle" fill="#fff" font-size="16" font-weight="900">C</text></svg>'
+    var thumbs = {
+      'bingo':        'game_thumb_1.jpg',
+      'rocket':       'game_thumb_2.jpg',
+      'monsterbingo': 'game_thumb_3.jpg',
+      'temabingo':    'game_thumb_4.jpg',
+      'spillorama':   'game_thumb_5.jpg',
+      'candy':        'game_thumb_candy.png',
+      // fallback for old game_N slugs
+      'game_1': 'game_thumb_1.jpg',
+      'game_2': 'game_thumb_2.jpg',
+      'game_3': 'game_thumb_3.jpg',
+      'game_4': 'game_thumb_4.jpg',
+      'game_5': 'game_thumb_5.jpg',
     };
-    return icons[slug] || '<svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="#424242"/><circle cx="24" cy="24" r="16" fill="#616161"/><text x="24" y="29" text-anchor="middle" fill="#fff" font-size="18" font-weight="900">' + (slug ? slug.charAt(0).toUpperCase() : '?') + '</text></svg>';
+    var src = thumbs[slug];
+    if (src) {
+      return '<img class="lobby-tile-thumb" src="' + src + '" alt="">';
+    }
+    // Fallback: bingo ball SVG
+    return '<svg viewBox="0 0 48 48" width="48" height="48"><circle cx="24" cy="24" r="22" fill="#424242"/><circle cx="24" cy="24" r="16" fill="#616161"/><text x="24" y="29" text-anchor="middle" fill="#fff" font-size="18" font-weight="900">' + (slug ? slug.charAt(0).toUpperCase() : '?') + '</text></svg>';
   }
 
   function escapeHtml(str) {
@@ -419,12 +563,11 @@
   // ── Init ─────────────────────────────────────────────────────────────────
 
   function initLobby() {
-    const hallSelectEl = document.getElementById('lobby-hall-select');
-    if (hallSelectEl) {
-      hallSelectEl.addEventListener('change', function () {
-        switchHall(this.value);
-      });
-    }
+    // Hall selectors — lobby topbar + game bar
+    ['lobby-hall-select', 'game-bar-hall-select'].forEach(function (id) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', function () { switchHall(this.value); });
+    });
 
     const profileBtn = document.getElementById('lobby-profile-btn');
     if (profileBtn) {
@@ -438,7 +581,45 @@
     const depositBtn = document.getElementById('lobby-deposit-btn');
     if (depositBtn) {
       depositBtn.addEventListener('click', function () {
-        // Open profile panel to wallet section
+        // Open profile panel to wallet/deposit section
+        if (typeof window.ShowSpillvettPanel === 'function') {
+          window.ShowSpillvettPanel();
+          // Scroll to deposit section after panel opens
+          setTimeout(() => {
+            const depositSection = document.getElementById('profile-deposit-btn');
+            if (depositSection) depositSection.click();
+          }, 150);
+        }
+      });
+    }
+
+    // Lommebok button — open profile/wallet panel
+    const walletBtn = document.getElementById('lobby-wallet-btn');
+    if (walletBtn) {
+      walletBtn.addEventListener('click', function () {
+        if (typeof window.ShowSpillvettPanel === 'function') {
+          window.ShowSpillvettPanel();
+        }
+      });
+    }
+
+    // Alle Spill button — scroll lobby to top / return to lobby if in game
+    const allGamesBtn = document.getElementById('lobby-all-games-btn');
+    if (allGamesBtn) {
+      allGamesBtn.addEventListener('click', function () {
+        if (typeof window.returnToShellLobby === 'function') {
+          window.returnToShellLobby();
+        } else {
+          const grid = document.getElementById('lobby-game-grid');
+          if (grid) grid.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    }
+
+    // Settings button — open profile panel (same as profile for now)
+    const settingsBtn = document.getElementById('lobby-settings-btn');
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', function () {
         if (typeof window.ShowSpillvettPanel === 'function') {
           window.ShowSpillvettPanel();
         }

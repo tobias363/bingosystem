@@ -1,0 +1,31 @@
+{
+  "name": "@spillorama/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./game": {
+      "types": "./src/game.ts",
+      "import": "./dist/game.js"
+    },
+    "./socket-events": {
+      "types": "./src/socket-events.ts",
+      "import": "./dist/socket-events.js"
+    },
+    "./api": {
+      "types": "./src/api.ts",
+      "import": "./dist/api.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.2"
+  }
+}
