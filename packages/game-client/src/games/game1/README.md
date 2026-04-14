@@ -69,7 +69,7 @@ Identisk med Game 2, pluss chat:
 - **Mini-spill utsatt** — Lykkehjul og skattekiste krever backend endpoints som ikke er implementert
 - **Mønstervisualisering utsatt** — De 5 Unity design-typene (rad, 2-rader, 3-rader, etc.) er UI-only, ikke claim-logikk
 - **3 billettyper utsatt** — Farge/trafikklys/elvis-varianter er visuell styling
-- **Chat bruker prompt()** — Midlertidig — byttes til PixiJS TextInput senere
+- **Chat bruker HTML overlay input** — Fungerer, men posisjonering kan forbedres ved resize
 - **Visuell polish mangler** — Placeholder-grafikk
 
 ### Testing
