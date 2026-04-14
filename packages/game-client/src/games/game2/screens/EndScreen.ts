@@ -32,13 +32,13 @@ export class EndScreen extends Container {
 
     const bg = new Graphics();
     bg.roundRect(0, 0, w, h, 16);
-    bg.fill(0x2a2a4a);
-    bg.stroke({ color: 0x444466, width: 2 });
+    bg.fill(0x2e0000);
+    bg.stroke({ color: 0x790001, width: 2 });
     panel.addChild(bg);
 
     const title = new Text({
       text: "Spill avsluttet!",
-      style: { fontFamily: "Arial", fontSize: 28, fontWeight: "bold", fill: 0xffffff },
+      style: { fontFamily: "Arial, Helvetica, sans-serif", fontSize: 28, fontWeight: "bold", fill: 0xffe83d },
     });
     title.anchor.set(0.5, 0);
     title.x = w / 2;
@@ -55,7 +55,7 @@ export class EndScreen extends Container {
         style: {
           fontFamily: "Arial",
           fontSize: 18,
-          fill: result.isWon ? 0x4caf50 : 0x888888,
+          fill: result.isWon ? 0xffe83d : 0x666666,
         },
       });
       text.x = 30;
@@ -78,7 +78,7 @@ export class EndScreen extends Container {
     const nextBtn = new Container();
     const nextBg = new Graphics();
     nextBg.roundRect(0, 0, 200, 44, 8);
-    nextBg.fill(0x4caf50);
+    nextBg.fill(0xa00020);
     nextBtn.addChild(nextBg);
     const nextText = new Text({
       text: "Neste spill",

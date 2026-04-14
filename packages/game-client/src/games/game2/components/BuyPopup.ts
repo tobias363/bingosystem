@@ -21,14 +21,14 @@ export class BuyPopup extends Container {
     // Background
     this.bg = new Graphics();
     this.bg.roundRect(0, 0, width, height, 12);
-    this.bg.fill(0x2a2a4a);
-    this.bg.stroke({ color: 0x444466, width: 2 });
+    this.bg.fill(0x2e0000); // Dark maroon
+    this.bg.stroke({ color: 0x790001, width: 2 });
     this.addChild(this.bg);
 
     // Title
     this.titleText = new Text({
       text: "Kjøp billetter",
-      style: { fontFamily: "Arial", fontSize: 22, fontWeight: "bold", fill: 0xffffff },
+      style: { fontFamily: "Arial, Helvetica, sans-serif", fontSize: 22, fontWeight: "bold", fill: 0xffe83d },
     });
     this.titleText.x = width / 2;
     this.titleText.y = 20;
@@ -36,7 +36,7 @@ export class BuyPopup extends Container {
     this.addChild(this.titleText);
 
     // Minus button
-    const minusBtn = this.createButton("-", 40, 40, 0x555577);
+    const minusBtn = this.createButton("-", 40, 40, 0x790001);
     minusBtn.x = 40;
     minusBtn.y = 75;
     minusBtn.on("pointerdown", () => this.adjustCount(-1));
@@ -53,7 +53,7 @@ export class BuyPopup extends Container {
     this.addChild(this.countText);
 
     // Plus button
-    const plusBtn = this.createButton("+", 40, 40, 0x555577);
+    const plusBtn = this.createButton("+", 40, 40, 0x790001);
     plusBtn.x = width - 80;
     plusBtn.y = 75;
     plusBtn.on("pointerdown", () => this.adjustCount(1));
@@ -70,7 +70,7 @@ export class BuyPopup extends Container {
     this.addChild(this.priceText);
 
     // Buy button
-    const buyBtn = this.createButton("Kjøp", 200, 44, 0x4caf50);
+    const buyBtn = this.createButton("Kjøp", 200, 44, 0xa00020);
     buyBtn.x = (width - 200) / 2;
     buyBtn.y = 160;
     buyBtn.on("pointerdown", () => {

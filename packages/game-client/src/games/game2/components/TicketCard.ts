@@ -1,4 +1,4 @@
-import { Container, Text } from "pixi.js";
+import { Container, Graphics, Text } from "pixi.js";
 import type { Ticket } from "@spillorama/shared-types/game";
 import { BingoGrid, type GridSize } from "../../../components/BingoGrid.js";
 
@@ -8,40 +8,98 @@ export interface TicketCardOptions {
 }
 
 /**
- * A single ticket card: BingoGrid + "to-go" counter + ticket index label.
- * Supports 3x5 (Game 2) and 5x5 (Game 1, 3) grids.
+ * Ticket card with Unity-matching design: header bar + BingoGrid + to-go counter.
  */
 export class TicketCard extends Container {
   readonly grid: BingoGrid;
+  private cardBg: Graphics;
+  private headerBg: Graphics;
+  private headerText: Text;
+  private priceText: Text;
   private toGoText: Text;
-  private indexText: Text;
   private ticket: Ticket | null = null;
+  private cardW: number;
+  private cardH: number;
+
+  // Unity colors
+  private static readonly CARD_BG = 0xfff2ce;       // Light cream
+  private static readonly HEADER_BG = 0x790001;      // Dark maroon
+  private static readonly HEADER_TEXT = 0xffe83d;     // Bright yellow
+  private static readonly TOGO_NORMAL = 0x790001;     // Maroon
+  private static readonly TOGO_CLOSE = 0xe63946;      // Red when close
 
   constructor(index: number, options?: TicketCardOptions) {
     super();
     const gridSize = options?.gridSize ?? "3x5";
-    const cellSize = options?.cellSize ?? (gridSize === "5x5" ? 40 : 48);
+    const cellSize = options?.cellSize ?? (gridSize === "5x5" ? 36 : 44);
 
-    // Ticket index label
-    this.indexText = new Text({
-      text: `#${index + 1}`,
-      style: { fontFamily: "Arial", fontSize: 14, fill: 0x999999 },
+    // Grid first to get dimensions
+    this.grid = new BingoGrid({ gridSize, cellSize, gap: 2 });
+    this.cardW = this.grid.gridWidth + 16;
+    const headerH = 28;
+    const toGoH = 24;
+    this.cardH = headerH + this.grid.gridHeight + toGoH + 20;
+
+    // Card background
+    this.cardBg = new Graphics();
+    this.cardBg.roundRect(0, 0, this.cardW, this.cardH, 8);
+    this.cardBg.fill(TicketCard.CARD_BG);
+    this.addChild(this.cardBg);
+
+    // Header bar (maroon)
+    this.headerBg = new Graphics();
+    this.headerBg.roundRect(0, 0, this.cardW, headerH, 8);
+    this.headerBg.fill(TicketCard.HEADER_BG);
+    this.addChild(this.headerBg);
+
+    // Header text (ticket number)
+    this.headerText = new Text({
+      text: `${index + 1}-standard`,
+      style: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 13,
+        fontWeight: "bold",
+        fill: TicketCard.HEADER_TEXT,
+      },
     });
-    this.indexText.x = 0;
-    this.indexText.y = 0;
-    this.addChild(this.indexText);
+    this.headerText.x = 8;
+    this.headerText.y = 5;
+    this.addChild(this.headerText);
 
-    // Bingo grid
-    this.grid = new BingoGrid({ gridSize, cellSize, gap: 3 });
-    this.grid.y = 22;
+    // Price text (right side of header)
+    this.priceText = new Text({
+      text: "20kr",
+      style: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 13,
+        fontWeight: "bold",
+        fill: TicketCard.HEADER_TEXT,
+      },
+    });
+    this.priceText.anchor.set(1, 0);
+    this.priceText.x = this.cardW - 8;
+    this.priceText.y = 5;
+    this.addChild(this.priceText);
+
+    // Grid
+    this.grid.x = 8;
+    this.grid.y = headerH + 4;
     this.addChild(this.grid);
 
-    // "To go" text below grid
+    // "To go" text
     this.toGoText = new Text({
       text: "",
-      style: { fontFamily: "Arial", fontSize: 16, fill: 0xcccccc, align: "center" },
+      style: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 14,
+        fontWeight: "bold",
+        fill: TicketCard.TOGO_NORMAL,
+        align: "center",
+      },
     });
-    this.toGoText.y = this.grid.y + this.grid.gridHeight + 8;
+    this.toGoText.anchor.set(0.5, 0);
+    this.toGoText.x = this.cardW / 2;
+    this.toGoText.y = headerH + this.grid.gridHeight + 8;
     this.addChild(this.toGoText);
   }
 
@@ -68,9 +126,7 @@ export class TicketCard extends Container {
 
   highlightLuckyNumber(luckyNumber: number): void {
     const cell = this.grid.getCell(luckyNumber);
-    if (cell) {
-      cell.setHighlight(true);
-    }
+    if (cell) cell.setHighlight(true);
   }
 
   reset(): void {
@@ -79,16 +135,21 @@ export class TicketCard extends Container {
   }
 
   get cardWidth(): number {
-    return this.grid.gridWidth;
+    return this.cardW;
   }
 
   get cardHeight(): number {
-    return 22 + this.grid.gridHeight + 30;
+    return this.cardH;
   }
 
   private updateToGo(): void {
     const remaining = this.grid.getRemainingCount();
-    this.toGoText.text = remaining > 0 ? `${remaining} igjen` : "Ferdig!";
-    this.toGoText.style.fill = remaining <= 1 ? 0xffc107 : 0xcccccc;
+    if (remaining === 0) {
+      this.toGoText.text = "Ferdig!";
+      this.toGoText.style.fill = 0x2a9d8f;
+    } else {
+      this.toGoText.text = `${remaining} ToGo`;
+      this.toGoText.style.fill = remaining <= 2 ? TicketCard.TOGO_CLOSE : TicketCard.TOGO_NORMAL;
+    }
   }
 }

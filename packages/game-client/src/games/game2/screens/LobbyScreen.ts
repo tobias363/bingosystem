@@ -35,10 +35,10 @@ export class LobbyScreen extends Container {
     this.statusText = new Text({
       text: "Venter på spill...",
       style: {
-        fontFamily: "Arial",
-        fontSize: 32,
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 28,
         fontWeight: "bold",
-        fill: 0xffffff,
+        fill: 0xffe83d, // Yellow like Unity
         align: "center",
       },
     });

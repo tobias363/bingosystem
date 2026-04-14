@@ -9,11 +9,12 @@ export interface BingoCellOptions {
 
 /**
  * A single cell in a bingo grid.
- * Handles rendering, marking, blinking (1-to-go), and pattern highlighting.
+ * Visual design matches Unity Spillorama: cream/tan cells with maroon markers.
  */
 export class BingoCell extends Container {
   readonly cellNumber: number;
   private bg: Graphics;
+  private marker: Graphics;
   private numberText: Text;
   private marked = false;
   private blinking = false;
@@ -22,12 +23,15 @@ export class BingoCell extends Container {
   private size: number;
   private isFreeSpace: boolean;
 
-  // Colors
-  private static readonly BG_DEFAULT = 0x2a2a4a;
-  private static readonly BG_MARKED = 0x4caf50;
-  private static readonly BG_HIGHLIGHT = 0xffc107;
-  private static readonly BG_FREE = 0x666688;
-  private static readonly TEXT_COLOR = 0xffffff;
+  // Unity color palette
+  private static readonly BG_DEFAULT = 0xffd6a7; // Peachy tan (#FFD6A7)
+  private static readonly BG_FREE = 0xffe83d;     // Bright yellow
+  private static readonly BG_HIGHLIGHT = 0xffe83d; // Yellow highlight
+  private static readonly MARKER_COLOR = 0x7e001b; // Deep maroon marker (#7E001B)
+  private static readonly TEXT_DEFAULT = 0x1a0a0a; // Near black
+  private static readonly TEXT_MARKED = 0xffd6a7;  // Tan (matches cell bg for contrast)
+  private static readonly TEXT_FREE = 0x790001;    // Dark maroon
+  private static readonly BORDER_COLOR = 0xd4a574; // Subtle border
 
   constructor(options: BingoCellOptions) {
     super();
@@ -35,18 +39,24 @@ export class BingoCell extends Container {
     this.size = options.size;
     this.isFreeSpace = options.isFreeSpace ?? false;
 
-    // Background
+    // Cell background
     this.bg = new Graphics();
     this.drawBg(this.isFreeSpace ? BingoCell.BG_FREE : BingoCell.BG_DEFAULT);
     this.addChild(this.bg);
 
-    // Number label
+    // Marker circle (hidden until marked)
+    this.marker = new Graphics();
+    this.marker.visible = false;
+    this.addChild(this.marker);
+
+    // Number text
+    const fontSize = Math.floor(this.size * 0.42);
     this.numberText = new Text({
       text: this.isFreeSpace ? "F" : String(options.number),
       style: {
-        fontFamily: "Arial",
-        fontSize: Math.floor(this.size * 0.4),
-        fill: BingoCell.TEXT_COLOR,
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize,
+        fill: this.isFreeSpace ? BingoCell.TEXT_FREE : BingoCell.TEXT_DEFAULT,
         fontWeight: "bold",
         align: "center",
       },
@@ -56,17 +66,13 @@ export class BingoCell extends Container {
     this.numberText.y = this.size / 2;
     this.addChild(this.numberText);
 
-    // Free space is always marked
     if (this.isFreeSpace) {
       this.marked = true;
     }
 
-    // Make interactive for click-to-mark
     this.eventMode = "static";
     this.cursor = "pointer";
   }
-
-  // ── State ─────────────────────────────────────────────────────────────
 
   isMarked(): boolean {
     return this.marked;
@@ -75,14 +81,13 @@ export class BingoCell extends Container {
   mark(): void {
     if (this.marked) return;
     this.marked = true;
-    this.drawBg(BingoCell.BG_MARKED);
+    this.showMarker();
     this.stopBlink();
 
-    // Pulse animation
     gsap.to(this.scale, {
-      x: 1.15,
-      y: 1.15,
-      duration: 0.15,
+      x: 1.12,
+      y: 1.12,
+      duration: 0.12,
       yoyo: true,
       repeat: 1,
       ease: "power2.out",
@@ -92,18 +97,17 @@ export class BingoCell extends Container {
   unmark(): void {
     if (!this.marked || this.isFreeSpace) return;
     this.marked = false;
-    this.drawBg(BingoCell.BG_DEFAULT);
+    this.hideMarker();
     this.stopBlink();
   }
 
-  /** Start 1-to-go blink animation. */
   startBlink(): void {
     if (this.blinking || this.marked) return;
     this.blinking = true;
     this.blinkTween = gsap.to(this.scale, {
-      x: 1.12,
-      y: 1.12,
-      duration: 0.4,
+      x: 1.15,
+      y: 1.15,
+      duration: 0.5,
       yoyo: true,
       repeat: -1,
       ease: "sine.inOut",
@@ -120,23 +124,27 @@ export class BingoCell extends Container {
     gsap.to(this.scale, { x: 1, y: 1, duration: 0.15 });
   }
 
-  /** Highlight cell as part of a winning pattern. */
   setHighlight(on: boolean): void {
     this.highlighted = on;
     if (on) {
       this.drawBg(BingoCell.BG_HIGHLIGHT);
+      this.numberText.style.fill = BingoCell.TEXT_FREE;
+    } else if (this.marked) {
+      this.showMarker();
     } else {
-      this.drawBg(this.marked ? BingoCell.BG_MARKED : BingoCell.BG_DEFAULT);
+      this.drawBg(BingoCell.BG_DEFAULT);
+      this.numberText.style.fill = BingoCell.TEXT_DEFAULT;
     }
   }
 
-  /** Reset to initial state. */
   reset(): void {
     this.stopBlink();
     this.highlighted = false;
     if (!this.isFreeSpace) {
       this.marked = false;
+      this.hideMarker();
       this.drawBg(BingoCell.BG_DEFAULT);
+      this.numberText.style.fill = BingoCell.TEXT_DEFAULT;
     }
   }
 
@@ -144,7 +152,26 @@ export class BingoCell extends Container {
 
   private drawBg(color: number): void {
     this.bg.clear();
-    this.bg.roundRect(1, 1, this.size - 2, this.size - 2, 6);
+    // Outer border
+    this.bg.roundRect(0, 0, this.size, this.size, 4);
+    this.bg.fill(BingoCell.BORDER_COLOR);
+    // Inner fill
+    this.bg.roundRect(1, 1, this.size - 2, this.size - 2, 3);
     this.bg.fill(color);
+  }
+
+  private showMarker(): void {
+    const radius = (this.size - 6) / 2;
+    this.marker.clear();
+    this.marker.circle(this.size / 2, this.size / 2, radius);
+    this.marker.fill(BingoCell.MARKER_COLOR);
+    this.marker.visible = true;
+    this.numberText.style.fill = BingoCell.TEXT_MARKED;
+  }
+
+  private hideMarker(): void {
+    this.marker.visible = false;
+    this.marker.clear();
+    this.numberText.style.fill = BingoCell.TEXT_DEFAULT;
   }
 }

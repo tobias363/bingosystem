@@ -42,7 +42,7 @@ export class GameApp {
     // Init PixiJS
     await this.app.init({
       resizeTo: container,
-      background: 0x1a1a2e,
+      background: 0x1a0a0a, // Dark maroon — matches Unity Spillorama
       antialias: true,
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
