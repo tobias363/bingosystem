@@ -72,6 +72,16 @@ export interface JackpotState {
   isComplete: boolean;
 }
 
+export type MiniGameType = "wheelOfFortune" | "treasureChest";
+
+export interface MiniGameState {
+  playerId: string;
+  type: MiniGameType;
+  prizeList: number[];
+  isPlayed: boolean;
+  result?: { segmentIndex: number; prizeAmount: number };
+}
+
 export interface GameState {
   id: string;
   status: GameStatus;
@@ -95,6 +105,8 @@ export interface GameState {
   patternResults?: PatternResult[];
   /** Game 5 jackpot mini-game (activated after BINGO win). */
   jackpot?: JackpotState;
+  /** Game 1 mini-game (wheel of fortune / treasure chest, activated after BINGO win). */
+  miniGame?: MiniGameState;
   startedAt: string;
   endedAt?: string;
   endedReason?: string;

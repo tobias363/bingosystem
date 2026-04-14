@@ -24,12 +24,14 @@ export const SocketEvents = {
   CHAT_HISTORY: "chat:history",
   LEADERBOARD_GET: "leaderboard:get",
   JACKPOT_SPIN: "jackpot:spin",
+  MINIGAME_PLAY: "minigame:play",
   // Server → Client (broadcast)
   ROOM_UPDATE: "room:update",
   DRAW_NEW: "draw:new",
   PATTERN_WON: "pattern:won",
   CHAT_MESSAGE: "chat:message",
   JACKPOT_ACTIVATED: "jackpot:activated",
+  MINIGAME_ACTIVATED: "minigame:activated",
 } as const;
 
 // ── Generic ack response ────────────────────────────────────────────────────
@@ -156,6 +158,32 @@ export interface JackpotSpinEntry {
   spinNumber: number;
   segmentIndex: number;
   prizeAmount: number;
+}
+
+// ── Mini-games (Game 1 — Wheel of Fortune / Treasure Chest) ──────────────────
+
+export type MiniGameType = "wheelOfFortune" | "treasureChest";
+
+export interface MiniGameActivatedPayload {
+  gameId: string;
+  playerId: string;
+  type: MiniGameType;
+  prizeList: number[];
+}
+
+export interface MiniGamePlayPayload extends RoomActionPayload {
+  /** For treasureChest: which chest the player picked (0-based index). */
+  selectedIndex?: number;
+}
+
+export interface MiniGamePlayResult {
+  type: MiniGameType;
+  /** Index of the winning segment/chest. */
+  segmentIndex: number;
+  /** Prize amount won. */
+  prizeAmount: number;
+  /** Full prize list revealed (all segments/chests). */
+  prizeList: number[];
 }
 
 // ── Scheduler settings (sent inside room:update scheduler field) ────────────

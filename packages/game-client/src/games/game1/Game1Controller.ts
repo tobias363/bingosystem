@@ -2,18 +2,20 @@ import { Container, Text } from "pixi.js";
 import type { GameDeps, GameController } from "../registry.js";
 import { registerGame } from "../registry.js";
 import type { GameState } from "../../bridge/GameBridge.js";
-import type { PatternWonPayload } from "@spillorama/shared-types/socket-events";
+import type { PatternWonPayload, MiniGameActivatedPayload } from "@spillorama/shared-types/socket-events";
 import { telemetry } from "../../telemetry/Telemetry.js";
 import { LobbyScreen } from "../game2/screens/LobbyScreen.js";
 import { PlayScreen } from "./screens/PlayScreen.js";
 import { EndScreen } from "../game2/screens/EndScreen.js";
+import { WheelOverlay } from "./components/WheelOverlay.js";
+import { TreasureChestOverlay } from "./components/TreasureChestOverlay.js";
 
 type Phase = "LOADING" | "LOBBY" | "PLAYING" | "ENDED";
 
 /**
  * Game 1 (Classic Bingo) controller.
  * Reuses Game 2 architecture with 5x5 grids + chat panel.
- * Mini-games (Wheel of Fortune, Treasure Chest) deferred — backend endpoints not yet implemented.
+ * Mini-games: Wheel of Fortune + Treasure Chest after BINGO win.
  */
 class Game1Controller implements GameController {
   private deps: GameDeps;
@@ -23,6 +25,7 @@ class Game1Controller implements GameController {
   private lobbyScreen: LobbyScreen | null = null;
   private playScreen: PlayScreen | null = null;
   private endScreen: EndScreen | null = null;
+  private miniGameOverlay: WheelOverlay | TreasureChestOverlay | null = null;
   private myPlayerId: string | null = null;
   private actualRoomCode: string = "";
   private unsubs: (() => void)[] = [];
@@ -89,6 +92,7 @@ class Game1Controller implements GameController {
       bridge.on("gameEnded", (state) => this.onGameEnded(state)),
       bridge.on("numberDrawn", (num, idx, state) => this.onNumberDrawn(num, idx, state)),
       bridge.on("patternWon", (result, state) => this.onPatternWon(result, state)),
+      bridge.on("minigameActivated", (data) => this.onMiniGameActivated(data)),
     );
 
     // Unlock audio
@@ -114,6 +118,8 @@ class Game1Controller implements GameController {
   destroy(): void {
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
+    this.miniGameOverlay?.destroy({ children: true });
+    this.miniGameOverlay = null;
     this.clearScreen();
     this.root.destroy({ children: true });
   }
@@ -220,6 +226,53 @@ class Game1Controller implements GameController {
     console.log("[Game1] Submitting claim:", type);
     const result = await this.deps.socket.submitClaim({ roomCode: this.actualRoomCode, type });
     if (!result.ok) console.error("[Game1] Claim failed:", result.error);
+  }
+
+  // ── Mini-game handlers ────────────────────────────────────────────────
+
+  private onMiniGameActivated(data: MiniGameActivatedPayload): void {
+    console.log("[Game1] Mini-game activated!", data.type);
+    const w = this.deps.app.app.screen.width;
+    const h = this.deps.app.app.screen.height;
+
+    if (data.type === "wheelOfFortune") {
+      const overlay = new WheelOverlay(w, h);
+      overlay.setOnPlay(() => this.handleMiniGamePlay());
+      overlay.setOnDismiss(() => this.dismissMiniGame());
+      this.miniGameOverlay = overlay;
+      this.root.addChild(overlay);
+      overlay.show(data);
+    } else {
+      const overlay = new TreasureChestOverlay(w, h);
+      overlay.setOnPlay((idx) => this.handleMiniGamePlay(idx));
+      overlay.setOnDismiss(() => this.dismissMiniGame());
+      this.miniGameOverlay = overlay;
+      this.root.addChild(overlay);
+      overlay.show(data);
+    }
+
+    telemetry.trackEvent("minigame_activated", { type: data.type });
+  }
+
+  private async handleMiniGamePlay(selectedIndex?: number): Promise<void> {
+    const result = await this.deps.socket.playMiniGame({
+      roomCode: this.actualRoomCode,
+      selectedIndex,
+    });
+    if (result.ok && result.data) {
+      this.miniGameOverlay?.animateResult(result.data);
+      telemetry.trackEvent("minigame_played", {
+        type: result.data.type,
+        prizeAmount: result.data.prizeAmount,
+      });
+    } else {
+      console.error("[Game1] Mini-game play failed:", result.error);
+    }
+  }
+
+  private dismissMiniGame(): void {
+    this.miniGameOverlay?.destroy({ children: true });
+    this.miniGameOverlay = null;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────

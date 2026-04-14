@@ -19,6 +19,8 @@ import type {
   GameSnapshot,
   GameState,
   JackpotState,
+  MiniGameState,
+  MiniGameType,
   PatternDefinition,
   PatternResult,
   Player,
@@ -1124,6 +1126,114 @@ export class BingoEngine {
       totalSpins: jackpot.totalSpins,
       isComplete: jackpot.isComplete,
       spinHistory: jackpot.spinHistory,
+    };
+  }
+
+  // ── Mini-games (Game 1 — Wheel of Fortune / Treasure Chest) ─────────────
+
+  /** Default prize segments for Game 1 mini-games (in kr). */
+  private static readonly MINIGAME_PRIZES = [5, 10, 15, 20, 25, 50, 10, 15];
+
+  /** Mini-game type counter — alternates between wheel and chest per room. */
+  private miniGameCounter = 0;
+
+  /**
+   * Activate a mini-game for a player (called after BINGO win in Game 1).
+   * Alternates between wheelOfFortune and treasureChest.
+   */
+  activateMiniGame(roomCode: string, playerId: string): MiniGameState | null {
+    const room = this.requireRoom(roomCode);
+    const game = room.currentGame;
+    if (!game) return null;
+    if (game.miniGame) return game.miniGame; // Already activated
+
+    const type: MiniGameType = this.miniGameCounter % 2 === 0
+      ? "wheelOfFortune"
+      : "treasureChest";
+    this.miniGameCounter += 1;
+
+    const miniGame: MiniGameState = {
+      playerId,
+      type,
+      prizeList: [...BingoEngine.MINIGAME_PRIZES],
+      isPlayed: false,
+    };
+    game.miniGame = miniGame;
+    return miniGame;
+  }
+
+  /**
+   * Play the mini-game. Server picks the winning segment/chest.
+   * For treasureChest, selectedIndex is the player's pick (cosmetic only — prize is server-determined).
+   */
+  async playMiniGame(roomCode: string, playerId: string, _selectedIndex?: number): Promise<{
+    type: MiniGameType;
+    segmentIndex: number;
+    prizeAmount: number;
+    prizeList: number[];
+  }> {
+    const room = this.requireRoom(roomCode);
+    const game = room.currentGame;
+    if (!game || !game.miniGame) {
+      throw new DomainError("NO_MINIGAME", "Ingen aktiv mini-game.");
+    }
+    const miniGame = game.miniGame;
+    if (miniGame.playerId !== playerId) {
+      throw new DomainError("NOT_MINIGAME_PLAYER", "Mini-game tilhører en annen spiller.");
+    }
+    if (miniGame.isPlayed) {
+      throw new DomainError("MINIGAME_PLAYED", "Mini-game er allerede spilt.");
+    }
+
+    // Server-authoritative random segment
+    const segmentIndex = Math.floor(Math.random() * miniGame.prizeList.length);
+    const prizeAmount = miniGame.prizeList[segmentIndex];
+    miniGame.isPlayed = true;
+    miniGame.result = { segmentIndex, prizeAmount };
+
+    // Credit prize to player balance
+    if (prizeAmount > 0) {
+      const player = this.requirePlayer(room, playerId);
+      const gameType = "DATABINGO" as const;
+      const channel = "INTERNET" as const;
+      const houseAccountId = this.ledger.makeHouseAccountId(room.hallId, gameType, channel);
+
+      const transfer = await this.walletAdapter.transfer(
+        houseAccountId,
+        player.walletId,
+        prizeAmount,
+        `Mini-game ${miniGame.type} prize ${room.code}`,
+        { idempotencyKey: `minigame-${game.id}-${miniGame.type}` },
+      );
+      player.balance += prizeAmount;
+
+      await this.compliance.recordLossEntry(player.walletId, room.hallId, {
+        type: "PAYOUT",
+        amount: prizeAmount,
+        createdAtMs: Date.now(),
+      });
+      await this.ledger.recordComplianceLedgerEvent({
+        hallId: room.hallId,
+        gameType,
+        channel,
+        eventType: "PRIZE",
+        amount: prizeAmount,
+        roomCode: room.code,
+        gameId: game.id,
+        claimId: `minigame-${game.id}-${miniGame.type}`,
+        playerId,
+        walletId: player.walletId,
+        sourceAccountId: transfer.fromTx.accountId,
+        targetAccountId: transfer.toTx.accountId,
+        policyVersion: "minigame-v1",
+      });
+    }
+
+    return {
+      type: miniGame.type,
+      segmentIndex,
+      prizeAmount,
+      prizeList: miniGame.prizeList,
     };
   }
 

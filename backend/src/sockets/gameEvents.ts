@@ -632,6 +632,18 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
               gameId: snapshot.currentGame?.id
             });
           }
+          // Game 1 (Classic Bingo): activate mini-game after BINGO win
+          if (payload.type === "BINGO" && snapshot.gameSlug === "bingo") {
+            const miniGame = engine.activateMiniGame(roomCode, playerId);
+            if (miniGame) {
+              socket.emit("minigame:activated", {
+                gameId: snapshot.currentGame?.id,
+                playerId,
+                type: miniGame.type,
+                prizeList: miniGame.prizeList,
+              });
+            }
+          }
           // Game 5 (Spillorama): activate jackpot after BINGO win
           if (payload.type === "BINGO" && snapshot.gameSlug === "spillorama") {
             const jackpot = engine.activateJackpot(roomCode, playerId);
@@ -680,6 +692,18 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
       try {
         const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
         const result = await engine.spinJackpot(roomCode, playerId);
+        ackSuccess(callback, result);
+      } catch (error) {
+        ackFailure(callback, error);
+      }
+    }));
+
+    // ── Mini-game (Game 1 — Wheel of Fortune / Treasure Chest) ─────────────
+    socket.on("minigame:play", rateLimited("minigame:play", async (payload: RoomActionPayload & { selectedIndex?: number }, callback: (response: AckResponse<unknown>) => void) => {
+      try {
+        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+        const selectedIndex = typeof payload?.selectedIndex === "number" ? payload.selectedIndex : undefined;
+        const result = await engine.playMiniGame(roomCode, playerId, selectedIndex);
         ackSuccess(callback, result);
       } catch (error) {
         ackFailure(callback, error);
