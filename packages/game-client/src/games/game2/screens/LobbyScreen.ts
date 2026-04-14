@@ -1,4 +1,4 @@
-import { Container, Text } from "pixi.js";
+import { Container, Text, Sprite, Assets, Texture } from "pixi.js";
 import type { GameState } from "../../../bridge/GameBridge.js";
 import { CountdownTimer } from "../components/CountdownTimer.js";
 import { BuyPopup } from "../components/BuyPopup.js";
@@ -79,6 +79,27 @@ export class LobbyScreen extends Container {
     this.luckyPicker = new LuckyNumberPicker(screenWidth, screenHeight);
     this.luckyPicker.setOnSelect((n) => this.onLuckyNumber?.(n));
     this.addChild(this.luckyPicker);
+
+    // Rocket decoration (async sprite load)
+    this.loadRocket();
+  }
+
+  private async loadRocket(): Promise<void> {
+    try {
+      const tex = await Assets.load<Texture>(import.meta.env.BASE_URL + "assets/game2/rocket.png");
+      const rocket = new Sprite(tex);
+      rocket.anchor.set(0.5);
+      const rocketHeight = this.screenHeight * 0.3;
+      const scale = rocketHeight / tex.height;
+      rocket.scale.set(scale);
+      rocket.x = this.screenWidth - 80;
+      rocket.y = this.screenHeight / 2 - 40;
+      rocket.alpha = 0.6;
+      // Insert behind UI elements
+      this.addChildAt(rocket, 1);
+    } catch {
+      // Silently fall back — rocket is decorative
+    }
   }
 
   setOnBuy(callback: (count: number) => void): void {
