@@ -2,11 +2,12 @@ import { Container, Text } from "pixi.js";
 import type { GameDeps, GameController } from "../registry.js";
 import { registerGame } from "../registry.js";
 import type { GameState } from "../../bridge/GameBridge.js";
-import type { PatternWonPayload } from "@spillorama/shared-types/socket-events";
+import type { PatternWonPayload, JackpotActivatedPayload } from "@spillorama/shared-types/socket-events";
 import { telemetry } from "../../telemetry/Telemetry.js";
 import { LobbyScreen } from "../game2/screens/LobbyScreen.js";
 import { PlayScreen } from "./screens/PlayScreen.js";
 import { EndScreen } from "../game2/screens/EndScreen.js";
+import { JackpotOverlay } from "./components/JackpotOverlay.js";
 
 type Phase = "LOADING" | "LOBBY" | "PLAYING" | "ENDED";
 
@@ -23,6 +24,7 @@ class Game5Controller implements GameController {
   private lobbyScreen: LobbyScreen | null = null;
   private playScreen: PlayScreen | null = null;
   private endScreen: EndScreen | null = null;
+  private jackpotOverlay: JackpotOverlay | null = null;
   private myPlayerId: string | null = null;
   private actualRoomCode: string = "";
   private unsubs: (() => void)[] = [];
@@ -82,6 +84,7 @@ class Game5Controller implements GameController {
       bridge.on("gameEnded", (s) => this.onGameEnded(s)),
       bridge.on("numberDrawn", (n, i, s) => this.onNumberDrawn(n, i, s)),
       bridge.on("patternWon", (r, s) => this.onPatternWon(r, s)),
+      bridge.on("jackpotActivated", (data) => this.onJackpotActivated(data)),
     );
 
     this.root.eventMode = "static";
@@ -101,6 +104,8 @@ class Game5Controller implements GameController {
   destroy(): void {
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
+    this.jackpotOverlay?.destroy({ children: true });
+    this.jackpotOverlay = null;
     this.clearScreen();
     this.root.destroy({ children: true });
   }
@@ -173,6 +178,31 @@ class Game5Controller implements GameController {
 
   private async handleClaim(type: "LINE" | "BINGO"): Promise<void> {
     await this.deps.socket.submitClaim({ roomCode: this.actualRoomCode, type });
+  }
+
+  private onJackpotActivated(data: JackpotActivatedPayload): void {
+    console.log("[Game5] Jackpot activated!", data);
+    const w = this.deps.app.app.screen.width;
+    const h = this.deps.app.app.screen.height;
+
+    this.jackpotOverlay = new JackpotOverlay(w, h);
+    this.jackpotOverlay.setOnSpin(() => this.handleJackpotSpin());
+    this.jackpotOverlay.setOnDismiss(() => {
+      this.jackpotOverlay?.destroy({ children: true });
+      this.jackpotOverlay = null;
+    });
+    this.root.addChild(this.jackpotOverlay);
+    this.jackpotOverlay.show(data);
+  }
+
+  private async handleJackpotSpin(): Promise<void> {
+    const result = await this.deps.socket.spinJackpot({ roomCode: this.actualRoomCode });
+    if (result.ok && result.data) {
+      this.jackpotOverlay?.animateResult(result.data);
+      telemetry.trackEvent("jackpot_spin", { prizeAmount: result.data.prizeAmount });
+    } else {
+      console.error("[Game5] Jackpot spin failed:", result.error);
+    }
   }
 
   private setScreen(screen: Container): void { this.currentScreen = screen; this.root.addChild(screen); }

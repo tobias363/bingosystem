@@ -3,6 +3,7 @@ import type {
   DrawNewPayload,
   PatternWonPayload,
   ChatMessage,
+  JackpotActivatedPayload,
 } from "@spillorama/shared-types/socket-events";
 import type {
   RoomSnapshot,
@@ -68,6 +69,7 @@ export interface GameBridgeEvents {
   numberDrawn: (number: number, drawIndex: number, state: GameState) => void;
   patternWon: (result: PatternWonPayload, state: GameState) => void;
   chatMessage: (message: ChatMessage) => void;
+  jackpotActivated: (data: JackpotActivatedPayload) => void;
 }
 
 type EventMap = {
@@ -96,6 +98,7 @@ export class GameBridge {
     numberDrawn: new Set(),
     patternWon: new Set(),
     chatMessage: new Set(),
+    jackpotActivated: new Set(),
   };
 
   constructor(socket: SpilloramaSocket) {
@@ -114,6 +117,7 @@ export class GameBridge {
       this.socket.on("drawNew", (payload) => this.handleDrawNew(payload)),
       this.socket.on("patternWon", (payload) => this.handlePatternWon(payload)),
       this.socket.on("chatMessage", (msg) => this.emit("chatMessage", msg)),
+      this.socket.on("jackpotActivated", (data) => this.emit("jackpotActivated", data)),
     );
   }
 

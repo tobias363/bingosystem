@@ -63,6 +63,15 @@ export interface ClaimRecord {
   createdAt: string;
 }
 
+export interface JackpotState {
+  playerId: string;
+  prizeList: number[];
+  totalSpins: number;
+  playedSpins: number;
+  spinHistory: { spinNumber: number; segmentIndex: number; prizeAmount: number }[];
+  isComplete: boolean;
+}
+
 export interface GameState {
   id: string;
   status: GameStatus;
@@ -84,6 +93,8 @@ export interface GameState {
   participatingPlayerIds?: string[];
   patterns?: PatternDefinition[];
   patternResults?: PatternResult[];
+  /** Game 5 jackpot mini-game (activated after BINGO win). */
+  jackpot?: JackpotState;
   startedAt: string;
   endedAt?: string;
   endedReason?: string;

@@ -632,6 +632,21 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
               gameId: snapshot.currentGame?.id
             });
           }
+          // Game 5 (Spillorama): activate jackpot after BINGO win
+          if (payload.type === "BINGO" && snapshot.gameSlug === "spillorama") {
+            const jackpot = engine.activateJackpot(roomCode, playerId);
+            if (jackpot) {
+              // Send jackpot activation to the winning player only
+              socket.emit("jackpot:activated", {
+                gameId: snapshot.currentGame?.id,
+                playerId,
+                prizeList: jackpot.prizeList,
+                totalSpins: jackpot.totalSpins,
+                playedSpins: jackpot.playedSpins,
+                spinHistory: jackpot.spinHistory,
+              });
+            }
+          }
         }
         ackSuccess(callback, { snapshot });
       } catch (error) {
@@ -655,6 +670,17 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
         setLuckyNumber(roomCode, playerId, num);
         await emitRoomUpdate(roomCode);
         ackSuccess(callback, { luckyNumber: num });
+      } catch (error) {
+        ackFailure(callback, error);
+      }
+    }));
+
+    // ── Jackpot (Game 5 Free Spin) ─────────────────────────────────────────
+    socket.on("jackpot:spin", rateLimited("jackpot:spin", async (payload: RoomActionPayload, callback: (response: AckResponse<unknown>) => void) => {
+      try {
+        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
+        const result = await engine.spinJackpot(roomCode, playerId);
+        ackSuccess(callback, result);
       } catch (error) {
         ackFailure(callback, error);
       }

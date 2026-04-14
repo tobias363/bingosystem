@@ -23,11 +23,13 @@ export const SocketEvents = {
   CHAT_SEND: "chat:send",
   CHAT_HISTORY: "chat:history",
   LEADERBOARD_GET: "leaderboard:get",
+  JACKPOT_SPIN: "jackpot:spin",
   // Server → Client (broadcast)
   ROOM_UPDATE: "room:update",
   DRAW_NEW: "draw:new",
   PATTERN_WON: "pattern:won",
   CHAT_MESSAGE: "chat:message",
+  JACKPOT_ACTIVATED: "jackpot:activated",
 } as const;
 
 // ── Generic ack response ────────────────────────────────────────────────────
@@ -126,6 +128,34 @@ export interface ChatMessage {
 export interface LeaderboardEntry {
   nickname: string;
   points: number;
+}
+
+// ── Jackpot (Game 5 Free Spin) ─────────────────────────────────────────────
+
+export interface JackpotActivatedPayload {
+  gameId: string;
+  playerId: string;
+  prizeList: number[];
+  totalSpins: number;
+  playedSpins: number;
+  spinHistory: JackpotSpinEntry[];
+}
+
+export interface JackpotSpinPayload extends RoomActionPayload {}
+
+export interface JackpotSpinResult {
+  segmentIndex: number;
+  prizeAmount: number;
+  playedSpins: number;
+  totalSpins: number;
+  isComplete: boolean;
+  spinHistory: JackpotSpinEntry[];
+}
+
+export interface JackpotSpinEntry {
+  spinNumber: number;
+  segmentIndex: number;
+  prizeAmount: number;
 }
 
 // ── Scheduler settings (sent inside room:update scheduler field) ────────────

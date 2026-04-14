@@ -15,6 +15,8 @@ import type {
   LuckyNumberPayload,
   ChatSendPayload,
   LeaderboardEntry,
+  JackpotActivatedPayload,
+  JackpotSpinResult,
 } from "@spillorama/shared-types/socket-events";
 import type { RoomSnapshot } from "@spillorama/shared-types/game";
 import { SocketEvents } from "@spillorama/shared-types/socket-events";
@@ -36,6 +38,7 @@ export interface SpilloramaSocketListeners {
   drawNew: (payload: DrawNewPayload) => void;
   patternWon: (payload: PatternWonPayload) => void;
   chatMessage: (payload: ChatMessage) => void;
+  jackpotActivated: (payload: JackpotActivatedPayload) => void;
   connectionStateChanged: ConnectionListener;
 }
 
@@ -70,6 +73,7 @@ export class SpilloramaSocket {
     drawNew: new Set(),
     patternWon: new Set(),
     chatMessage: new Set(),
+    jackpotActivated: new Set(),
     connectionStateChanged: new Set(),
   };
 
@@ -128,6 +132,10 @@ export class SpilloramaSocket {
 
     this.socket.on(SocketEvents.CHAT_MESSAGE, (payload: ChatMessage) => {
       this.listeners.chatMessage.forEach((fn) => fn(payload));
+    });
+
+    this.socket.on(SocketEvents.JACKPOT_ACTIVATED, (payload: JackpotActivatedPayload) => {
+      this.listeners.jackpotActivated.forEach((fn) => fn(payload));
     });
   }
 
@@ -232,6 +240,10 @@ export class SpilloramaSocket {
 
   async getLeaderboard(payload: { roomCode?: string }): Promise<AckResponse<{ leaderboard: LeaderboardEntry[] }>> {
     return this.emit(SocketEvents.LEADERBOARD_GET, payload);
+  }
+
+  async spinJackpot(payload: { roomCode: string }): Promise<AckResponse<JackpotSpinResult>> {
+    return this.emit(SocketEvents.JACKPOT_SPIN, payload);
   }
 
   // ── Private ───────────────────────────────────────────────────────────

@@ -18,6 +18,7 @@ import type {
   ClaimType,
   GameSnapshot,
   GameState,
+  JackpotState,
   PatternDefinition,
   PatternResult,
   Player,
@@ -418,8 +419,8 @@ export class BingoEngine {
       throw new DomainError("INVALID_ENTRY_FEE", "entryFee kan ikke overstige 10 000 kr.");
     }
     const ticketsPerPlayer = input.ticketsPerPlayer ?? 1;
-    if (!Number.isInteger(ticketsPerPlayer) || ticketsPerPlayer < 1 || ticketsPerPlayer > 5) {
-      throw new DomainError("INVALID_TICKETS_PER_PLAYER", "ticketsPerPlayer må være et heltall mellom 1 og 5.");
+    if (!Number.isInteger(ticketsPerPlayer) || ticketsPerPlayer < 1 || ticketsPerPlayer > 30) {
+      throw new DomainError("INVALID_TICKETS_PER_PLAYER", "ticketsPerPlayer må være et heltall mellom 1 og 30.");
     }
     // BIN-252: Explicit payoutPercent required — ?? 100 default removed to prevent accidental 100% payout
     if (input.payoutPercent === undefined || input.payoutPercent === null) {
@@ -563,7 +564,7 @@ export class BingoEngine {
     // BIN-161/BIN-241: Log SHA-256 hash of drawBag only — full sequence is preserved in PostgreSQL checkpoint (BIN-243).
     // Plaintext drawBag removed to prevent insiders from predicting future draws via log access.
     const drawBagHash = createHash("sha256").update(JSON.stringify(game.drawBag)).digest("hex");
-    logger.info({
+    logger.debug({
       event: "RNG_DRAW_BAG_HASH",
       gameId,
       roomCode: room.code,
@@ -863,21 +864,7 @@ export class BingoEngine {
         claim.payoutTransactionIds = [transfer.fromTx.id, transfer.toTx.id];
         // BIN-48: Synchronous checkpoint after payout — ensures state is persisted
         if (this.bingoAdapter.onCheckpoint) {
-          try {
-            await this.bingoAdapter.onCheckpoint({
-              roomCode: room.code,
-              gameId: game.id,
-              reason: "PAYOUT",
-              claimId: claim.id,
-              payoutAmount: payout,
-              transactionIds: [transfer.fromTx.id, transfer.toTx.id],
-              snapshot: this.serializeGameForRecovery(game),
-              players: [...room.players.values()],
-              hallId: room.hallId
-            });
-          } catch (err) {
-            logger.error({ err, claimId: claim.id, gameId: game.id }, "CRITICAL: Checkpoint failed after LINE payout");
-          }
+          await this.writePayoutCheckpointWithRetry(room, game, claim.id, payout, [transfer.fromTx.id, transfer.toTx.id], "LINE");
         }
         // HOEY-7: Persist after LINE payout
         await this.rooms.persist(room.code);
@@ -973,21 +960,7 @@ export class BingoEngine {
         claim.payoutTransactionIds = [transfer.fromTx.id, transfer.toTx.id];
         // BIN-48: Synchronous checkpoint after payout — ensures state is persisted
         if (this.bingoAdapter.onCheckpoint) {
-          try {
-            await this.bingoAdapter.onCheckpoint({
-              roomCode: room.code,
-              gameId: game.id,
-              reason: "PAYOUT",
-              claimId: claim.id,
-              payoutAmount: payout,
-              transactionIds: [transfer.fromTx.id, transfer.toTx.id],
-              snapshot: this.serializeGameForRecovery(game),
-              players: [...room.players.values()],
-              hallId: room.hallId
-            });
-          } catch (err) {
-            logger.error({ err, claimId: claim.id, gameId: game.id }, "CRITICAL: Checkpoint failed after BINGO payout");
-          }
+          await this.writePayoutCheckpointWithRetry(room, game, claim.id, payout, [transfer.fromTx.id, transfer.toTx.id], "BINGO");
         }
         // HOEY-7: Persist after BINGO payout
         await this.rooms.persist(room.code);
@@ -1034,6 +1007,124 @@ export class BingoEngine {
     }
 
     return claim;
+  }
+
+  // ── Jackpot (Game 5 Free Spin) ──────────────────────────────────────────
+
+  /** Default prize segments for the jackpot wheel (in kr). */
+  private static readonly JACKPOT_PRIZES = [5, 10, 15, 20, 25, 50, 10, 15];
+
+  /**
+   * Activate jackpot mini-game for a player (called after BINGO win in Game 5).
+   * Returns the jackpot state, or null if not applicable.
+   */
+  activateJackpot(roomCode: string, playerId: string): JackpotState | null {
+    const room = this.requireRoom(roomCode);
+    const game = room.currentGame;
+    if (!game) return null;
+    if (game.jackpot) return game.jackpot; // Already activated
+
+    const jackpot: JackpotState = {
+      playerId,
+      prizeList: [...BingoEngine.JACKPOT_PRIZES],
+      totalSpins: 1,
+      playedSpins: 0,
+      spinHistory: [],
+      isComplete: false,
+    };
+    game.jackpot = jackpot;
+    return jackpot;
+  }
+
+  /**
+   * Process a jackpot spin. Server picks a random segment.
+   * Returns the spin result with prize amount.
+   */
+  async spinJackpot(roomCode: string, playerId: string): Promise<{
+    segmentIndex: number;
+    prizeAmount: number;
+    playedSpins: number;
+    totalSpins: number;
+    isComplete: boolean;
+    spinHistory: JackpotState["spinHistory"];
+  }> {
+    const room = this.requireRoom(roomCode);
+    const game = room.currentGame;
+    if (!game || !game.jackpot) {
+      throw new DomainError("NO_JACKPOT", "Ingen aktiv jackpot.");
+    }
+    const jackpot = game.jackpot;
+    if (jackpot.playerId !== playerId) {
+      throw new DomainError("NOT_JACKPOT_PLAYER", "Jackpot tilhører en annen spiller.");
+    }
+    if (jackpot.isComplete) {
+      throw new DomainError("JACKPOT_COMPLETE", "Jackpot er allerede fullført.");
+    }
+    if (jackpot.playedSpins >= jackpot.totalSpins) {
+      throw new DomainError("NO_SPINS_LEFT", "Ingen spinn igjen.");
+    }
+
+    // Server-authoritative random segment
+    const segmentIndex = Math.floor(Math.random() * jackpot.prizeList.length);
+    const prizeAmount = jackpot.prizeList[segmentIndex];
+    jackpot.playedSpins += 1;
+
+    jackpot.spinHistory.push({
+      spinNumber: jackpot.playedSpins,
+      segmentIndex,
+      prizeAmount,
+    });
+
+    if (jackpot.playedSpins >= jackpot.totalSpins) {
+      jackpot.isComplete = true;
+    }
+
+    // Credit prize to player balance
+    if (prizeAmount > 0) {
+      const player = this.requirePlayer(room, playerId);
+      const gameType = "DATABINGO" as const;
+      const channel = "INTERNET" as const;
+      const houseAccountId = this.ledger.makeHouseAccountId(room.hallId, gameType, channel);
+
+      const transfer = await this.walletAdapter.transfer(
+        houseAccountId,
+        player.walletId,
+        prizeAmount,
+        `Jackpot prize ${room.code}`,
+        { idempotencyKey: `jackpot-${game.id}-spin-${jackpot.playedSpins}` },
+      );
+      player.balance += prizeAmount;
+
+      await this.compliance.recordLossEntry(player.walletId, room.hallId, {
+        type: "PAYOUT",
+        amount: prizeAmount,
+        createdAtMs: Date.now(),
+      });
+      await this.ledger.recordComplianceLedgerEvent({
+        hallId: room.hallId,
+        gameType,
+        channel,
+        eventType: "PRIZE",
+        amount: prizeAmount,
+        roomCode: room.code,
+        gameId: game.id,
+        claimId: `jackpot-${game.id}-spin-${jackpot.playedSpins}`,
+        playerId,
+        walletId: player.walletId,
+        sourceAccountId: transfer.fromTx.accountId,
+        targetAccountId: transfer.toTx.accountId,
+        policyVersion: "jackpot-v1",
+      });
+    }
+
+    return {
+      segmentIndex,
+      prizeAmount,
+      playedSpins: jackpot.playedSpins,
+      totalSpins: jackpot.totalSpins,
+      isComplete: jackpot.isComplete,
+      spinHistory: jackpot.spinHistory,
+    };
   }
 
   async endGame(input: EndGameInput): Promise<void> {
@@ -1929,6 +2020,38 @@ export class BingoEngine {
     }
     // HOEY-7: Persist room state to backing store after game end
     await this.rooms.persist(room.code);
+  }
+
+  /** Write payout checkpoint with one retry. Logs CRITICAL on final failure but does not throw. */
+  private async writePayoutCheckpointWithRetry(
+    room: RoomState,
+    game: GameState,
+    claimId: string,
+    payoutAmount: number,
+    transactionIds: string[],
+    prizeType: "LINE" | "BINGO"
+  ): Promise<void> {
+    const payload = {
+      roomCode: room.code,
+      gameId: game.id,
+      reason: "PAYOUT" as const,
+      claimId,
+      payoutAmount,
+      transactionIds,
+      snapshot: this.serializeGameForRecovery(game),
+      players: [...room.players.values()],
+      hallId: room.hallId
+    };
+    try {
+      await this.bingoAdapter.onCheckpoint!(payload);
+    } catch (firstErr) {
+      logger.warn({ err: firstErr, claimId, gameId: game.id }, `Checkpoint failed after ${prizeType} payout — retrying once`);
+      try {
+        await this.bingoAdapter.onCheckpoint!(payload);
+      } catch (retryErr) {
+        logger.error({ err: retryErr, claimId, gameId: game.id }, `CRITICAL: Checkpoint failed after ${prizeType} payout (retry exhausted)`);
+      }
+    }
   }
 
   private serializeGame(game: GameState): GameSnapshot {
