@@ -5,7 +5,7 @@ import type { GameState } from "../../bridge/GameBridge.js";
 import type { PatternWonPayload } from "@spillorama/shared-types/socket-events";
 import { telemetry } from "../../telemetry/Telemetry.js";
 import { LobbyScreen } from "../game2/screens/LobbyScreen.js";
-import { PlayScreen } from "../game2/screens/PlayScreen.js";
+import { PlayScreen } from "./screens/PlayScreen.js";
 import { EndScreen } from "../game2/screens/EndScreen.js";
 
 type Phase = "LOADING" | "LOBBY" | "PLAYING" | "ENDED";
