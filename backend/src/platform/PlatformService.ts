@@ -156,6 +156,8 @@ export interface ScheduleSlot {
   maxTickets: number;
   isActive: boolean;
   sortOrder: number;
+  /** BIN-436: Variant config with ticket types, patterns, prices. */
+  variantConfig: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -315,6 +317,7 @@ interface ScheduleSlotRow {
   max_tickets: number;
   is_active: boolean;
   sort_order: number;
+  variant_config?: Record<string, unknown>;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -487,7 +490,7 @@ export class PlatformService {
     await this.ensureInitialized();
     const email = normalizeEmail(input.email);
     this.assertEmail(email);
-    this.assertPassword(input.password);
+    this.assertLoginPassword(input.password);
 
     const { rows } = await this.pool.query<
       UserRow & {
@@ -839,7 +842,7 @@ export class PlatformService {
     }
     const { rows } = await this.pool.query<ScheduleSlotRow>(
       `SELECT id, hall_id, game_type, display_name, day_of_week, start_time::text,
-              prize_description, max_tickets, is_active, sort_order, created_at, updated_at
+              prize_description, max_tickets, is_active, sort_order, variant_config, created_at, updated_at
        FROM ${this.scheduleTable()} WHERE ${conditions.join(" AND ")}
        ORDER BY sort_order ASC, start_time ASC`,
       params
@@ -1400,6 +1403,11 @@ export class PlatformService {
   }
 
   assertUserEligibleForGameplay(user: PublicAppUser): void {
+    // DEV: skip KYC/age checks in development mode
+    if (process.env.NODE_ENV !== "production") {
+      return;
+    }
+
     if (user.kycStatus !== "VERIFIED") {
       throw new DomainError("KYC_REQUIRED", "KYC må verifiseres før spill kan startes.");
     }
@@ -1578,6 +1586,7 @@ export class PlatformService {
       maxTickets: Number(row.max_tickets),
       isActive: row.is_active,
       sortOrder: Number(row.sort_order),
+      variantConfig: row.variant_config ?? {},
       createdAt: asIso(row.created_at),
       updatedAt: asIso(row.updated_at)
     };
@@ -1739,7 +1748,7 @@ export class PlatformService {
     await client.query(
       `INSERT INTO ${this.hallGameConfigTable()}
         (hall_id, game_slug, is_enabled, max_tickets_per_player, min_round_interval_ms)
-       SELECT $1, g.slug, true, 5, 30000
+       SELECT $1, g.slug, true, 30, 30000
        FROM ${this.gamesTable()} g
        ON CONFLICT (hall_id, game_slug) DO NOTHING`,
       [hallId]
@@ -1750,7 +1759,7 @@ export class PlatformService {
     await client.query(
       `INSERT INTO ${this.hallGameConfigTable()}
         (hall_id, game_slug, is_enabled, max_tickets_per_player, min_round_interval_ms)
-       SELECT h.id, g.slug, true, 5, 30000
+       SELECT h.id, g.slug, true, 30, 30000
        FROM ${this.hallsTable()} h
        CROSS JOIN ${this.gamesTable()} g
        ON CONFLICT (hall_id, game_slug) DO NOTHING`
@@ -1925,7 +1934,7 @@ export class PlatformService {
           hall_id TEXT NOT NULL REFERENCES ${this.hallsTable()}(id) ON DELETE CASCADE,
           game_slug TEXT NOT NULL REFERENCES ${this.gamesTable()}(slug) ON DELETE CASCADE,
           is_enabled BOOLEAN NOT NULL DEFAULT true,
-          max_tickets_per_player INTEGER NOT NULL DEFAULT 5 CHECK (max_tickets_per_player >= 1 AND max_tickets_per_player <= 5),
+          max_tickets_per_player INTEGER NOT NULL DEFAULT 30 CHECK (max_tickets_per_player >= 1 AND max_tickets_per_player <= 30),
           min_round_interval_ms INTEGER NOT NULL DEFAULT 30000 CHECK (min_round_interval_ms >= 30000),
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2104,8 +2113,24 @@ export class PlatformService {
   }
 
   private assertPassword(password: string): void {
-    if (password.length < 8 || password.length > 128) {
-      throw new DomainError("INVALID_PASSWORD", "Passord må være mellom 8 og 128 tegn.");
+    if (password.length < 12 || password.length > 128) {
+      throw new DomainError("INVALID_PASSWORD", "Passord må være mellom 12 og 128 tegn.");
+    }
+    if (!/[A-Z]/.test(password)) {
+      throw new DomainError("INVALID_PASSWORD", "Passord må inneholde minst én stor bokstav.");
+    }
+    if (!/[a-z]/.test(password)) {
+      throw new DomainError("INVALID_PASSWORD", "Passord må inneholde minst én liten bokstav.");
+    }
+    if (!/[0-9]/.test(password)) {
+      throw new DomainError("INVALID_PASSWORD", "Passord må inneholde minst ett siffer.");
+    }
+  }
+
+  /** Light check used only at login — avoids locking out existing users with legacy passwords. */
+  private assertLoginPassword(password: string): void {
+    if (!password || password.length > 128) {
+      throw new DomainError("INVALID_PASSWORD", "Passord mangler eller er for langt.");
     }
   }
 
