@@ -339,6 +339,11 @@ export class PlayScreen extends Container {
     this.centerTop.updatePatterns(state.patterns, state.patternResults, state.prizePool);
   }
 
+  /** BIN-451: Disable buy-more button (Unity: buyMoreTicket.interactable = false after N balls). */
+  disableBuyMore(): void {
+    this.centerTop.showButtonFeedback("buyMore", false);
+  }
+
   onNumberDrawn(number: number, _drawIndex: number, state: GameState): void {
     this.lastState = state;
 

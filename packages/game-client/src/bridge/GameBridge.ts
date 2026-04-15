@@ -54,6 +54,10 @@ export interface GameState {
   millisUntilNextStart: number | null;
   autoDrawEnabled: boolean;
 
+  // BIN-460: Game pause state
+  isPaused: boolean;
+  pauseMessage: string | null;
+
   // Pre-round display tickets (for unarmed players)
   preRoundTickets: Ticket[];
 
@@ -174,6 +178,14 @@ export class GameBridge {
     this.state.serverTimestamp = payload.serverTimestamp;
     this.state.luckyNumbers = payload.luckyNumbers;
 
+    // Push balance to host page (game-bar sync)
+    if (this.myPlayerId) {
+      const me = payload.players.find((p: Player) => p.id === this.myPlayerId);
+      if (me && typeof me.balance === "number") {
+        window.dispatchEvent(new CustomEvent("spillorama:balanceChanged", { detail: { balance: me.balance } }));
+      }
+    }
+
     // Lucky number for this player
     if (this.myPlayerId && payload.luckyNumbers[this.myPlayerId] !== undefined) {
       this.state.myLuckyNumber = payload.luckyNumbers[this.myPlayerId];
@@ -254,15 +266,13 @@ export class GameBridge {
     this.state.entryFee = game.entryFee;
     this.state.patterns = game.patterns || [];
     this.state.patternResults = game.patternResults || [];
+    this.state.isPaused = game.isPaused ?? false;
+    this.state.pauseMessage = game.pauseMessage ?? null;
 
     // My tickets and marks
     if (this.myPlayerId) {
       this.state.myTickets = game.tickets[this.myPlayerId] || [];
       this.state.myMarks = game.marks[this.myPlayerId] || [];
-      console.log("[GameBridge] applyGameSnapshot: playerId=", this.myPlayerId,
-        "ticketKeys=", Object.keys(game.tickets),
-        "myTickets=", this.state.myTickets.length,
-        "myMarks=", this.state.myMarks.length);
     }
   }
 
@@ -289,6 +299,8 @@ export class GameBridge {
       luckyNumbers: {},
       millisUntilNextStart: null,
       autoDrawEnabled: false,
+      isPaused: false,
+      pauseMessage: null,
       preRoundTickets: [],
       serverTimestamp: 0,
     };

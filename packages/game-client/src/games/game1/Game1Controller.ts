@@ -11,6 +11,7 @@ import { TreasureChestOverlay } from "./components/TreasureChestOverlay.js";
 import { LuckyNumberPicker } from "./components/LuckyNumberPicker.js";
 import { LoadingOverlay } from "./components/LoadingOverlay.js";
 import { ToastNotification } from "./components/ToastNotification.js";
+import { PauseOverlay } from "./components/PauseOverlay.js";
 
 type Phase = "LOADING" | "WAITING" | "PLAYING" | "ENDED";
 
@@ -46,6 +47,7 @@ class Game1Controller implements GameController {
   private luckyPicker: LuckyNumberPicker | null = null;
   private loader: LoadingOverlay | null = null;
   private toast: ToastNotification | null = null;
+  private pauseOverlay: PauseOverlay | null = null;
 
   constructor(deps: GameDeps) {
     this.deps = deps;
@@ -61,6 +63,7 @@ class Game1Controller implements GameController {
     this.loader = new LoadingOverlay(overlayContainer);
     this.loader.show("Kobler til...");
     this.toast = new ToastNotification(overlayContainer);
+    this.pauseOverlay = new PauseOverlay(overlayContainer);
 
     // Connect socket
     socket.connect();
@@ -164,6 +167,8 @@ class Game1Controller implements GameController {
     this.loader = null;
     this.toast?.destroy();
     this.toast = null;
+    this.pauseOverlay?.destroy();
+    this.pauseOverlay = null;
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
     this.miniGameOverlay?.destroy({ children: true });
@@ -239,6 +244,14 @@ class Game1Controller implements GameController {
     if (this.phase === "PLAYING" && this.playScreen) {
       this.playScreen.updateInfo(state);
     }
+
+    // BIN-460: Show/hide pause overlay based on game state
+    if (state.isPaused && !this.pauseOverlay?.isShowing()) {
+      this.pauseOverlay?.show(state.pauseMessage ?? undefined);
+    } else if (!state.isPaused && this.pauseOverlay?.isShowing()) {
+      this.pauseOverlay?.hide();
+      this.toast?.info("Spillet er gjenopptatt");
+    }
   }
 
   private onGameStarted(state: GameState): void {
@@ -246,6 +259,7 @@ class Game1Controller implements GameController {
     if (this.endScreenTimer) { clearTimeout(this.endScreenTimer); this.endScreenTimer = null; }
 
     this.gameRoundCount++;
+    this.buyMoreDisabled = false;
 
     if (state.myTickets.length > 0) {
       this.transitionTo("PLAYING", state);
@@ -277,9 +291,17 @@ class Game1Controller implements GameController {
     this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true });
   }
 
+  private buyMoreDisabled = false;
+
   private onNumberDrawn(number: number, drawIndex: number, state: GameState): void {
     if (this.phase === "PLAYING" && this.playScreen) {
       this.playScreen.onNumberDrawn(number, drawIndex, state);
+
+      // BIN-451: Disable buy-more after ~80% of draws (Unity: BuyMoreDisableFlagVal)
+      if (!this.buyMoreDisabled && state.drawCount >= Math.floor(state.totalDrawCapacity * 0.8)) {
+        this.buyMoreDisabled = true;
+        this.playScreen.disableBuyMore();
+      }
     } else if (this.phase === "WAITING" && this.playScreen) {
       // Spectator mode — animate ball in tube but no ticket marking
       this.playScreen.onSpectatorNumberDrawn(number, state);
