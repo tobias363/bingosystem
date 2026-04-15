@@ -14,6 +14,9 @@ import { LuckyNumberPicker } from "./components/LuckyNumberPicker.js";
 import { LoadingOverlay } from "./components/LoadingOverlay.js";
 import { ToastNotification } from "./components/ToastNotification.js";
 import { PauseOverlay } from "./components/PauseOverlay.js";
+import { SettingsPanel } from "./components/SettingsPanel.js";
+import { MarkerBackgroundPanel } from "./components/MarkerBackgroundPanel.js";
+import { GamePlanPanel } from "./components/GamePlanPanel.js";
 
 type Phase = "LOADING" | "WAITING" | "PLAYING" | "ENDED";
 
@@ -50,6 +53,9 @@ class Game1Controller implements GameController {
   private loader: LoadingOverlay | null = null;
   private toast: ToastNotification | null = null;
   private pauseOverlay: PauseOverlay | null = null;
+  private settingsPanel: SettingsPanel | null = null;
+  private markerBgPanel: MarkerBackgroundPanel | null = null;
+  private gamePlanPanel: GamePlanPanel | null = null;
 
   constructor(deps: GameDeps) {
     this.deps = deps;
@@ -66,6 +72,9 @@ class Game1Controller implements GameController {
     this.loader.show("Kobler til...");
     this.toast = new ToastNotification(overlayContainer);
     this.pauseOverlay = new PauseOverlay(overlayContainer);
+    this.settingsPanel = new SettingsPanel(overlayContainer);
+    this.markerBgPanel = new MarkerBackgroundPanel(overlayContainer);
+    this.gamePlanPanel = new GamePlanPanel(overlayContainer);
 
     // Connect socket
     socket.connect();
@@ -171,6 +180,12 @@ class Game1Controller implements GameController {
     this.toast = null;
     this.pauseOverlay?.destroy();
     this.pauseOverlay = null;
+    this.settingsPanel?.destroy();
+    this.settingsPanel = null;
+    this.markerBgPanel?.destroy();
+    this.markerBgPanel = null;
+    this.gamePlanPanel?.destroy();
+    this.gamePlanPanel = null;
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
     this.miniGameOverlay?.destroy({ children: true });
@@ -198,6 +213,8 @@ class Game1Controller implements GameController {
         this.playScreen.setOnBuy(() => this.handleBuy());
         this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
         this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
+        this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
+        this.playScreen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
         this.playScreen.subscribeChatToBridge((listener) =>
           this.deps.bridge.on("chatMessage", listener),
         );
@@ -214,6 +231,8 @@ class Game1Controller implements GameController {
         this.playScreen.setOnBuy(() => this.handleBuy());
         this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
         this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
+        this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
+        this.playScreen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
         this.playScreen.subscribeChatToBridge((listener) =>
           this.deps.bridge.on("chatMessage", listener),
         );

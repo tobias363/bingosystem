@@ -8,6 +8,8 @@ export interface CenterTopCallbacks {
   onCancelTickets?: () => void;
   onBuyMoreTickets?: () => void;
   onSelectLuckyNumber?: () => void;
+  onOpenSettings?: () => void;
+  onOpenMarkerBg?: () => void;
 }
 
 /**
@@ -81,6 +83,8 @@ export class CenterTopPanel {
       { label: "Forhåndskjøp", key: "onPreBuy", ref: "preBuy" },
       { label: "Heldig tall", key: "onSelectLuckyNumber" },
       { label: "Kjøp flere brett", key: "onBuyMoreTickets", ref: "buyMore" },
+      { label: "Markør/bakgrunn", key: "onOpenMarkerBg" },
+      { label: "Innstillinger", key: "onOpenSettings" },
       { label: "Avbestill bonger", key: "onCancelTickets", ref: "cancel" },
     ];
 

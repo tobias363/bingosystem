@@ -60,6 +60,8 @@ export class PlayScreen extends Container {
   // Callbacks (set by controller)
   private onLuckyNumberTap: (() => void) | null = null;
   private onCancelTickets: (() => void) | null = null;
+  private onOpenSettings: (() => void) | null = null;
+  private onOpenMarkerBg: (() => void) | null = null;
 
   // Inline ticket display
   private inlineScroller: TicketScroller;
@@ -175,6 +177,12 @@ export class PlayScreen extends Container {
       onCancelTickets: () => {
         this.onCancelTickets?.();
       },
+      onOpenSettings: () => {
+        this.onOpenSettings?.();
+      },
+      onOpenMarkerBg: () => {
+        this.onOpenMarkerBg?.();
+      },
     });
 
     // Chat panel (right sidebar)
@@ -196,6 +204,14 @@ export class PlayScreen extends Container {
   /** Unity: delete button cancels tickets (disarms player). */
   setOnCancelTickets(callback: () => void): void {
     this.onCancelTickets = callback;
+  }
+
+  setOnOpenSettings(callback: () => void): void {
+    this.onOpenSettings = callback;
+  }
+
+  setOnOpenMarkerBg(callback: () => void): void {
+    this.onOpenMarkerBg = callback;
   }
 
   subscribeChatToBridge(
