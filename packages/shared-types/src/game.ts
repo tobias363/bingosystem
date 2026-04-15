@@ -42,8 +42,14 @@ export interface Player {
 }
 
 export interface Ticket {
-  // 3x5 grid (3 rows, 5 columns), numbers 1-60. No free space.
+  // Grid of numbers. Format depends on game type:
+  // - Databingo60: 3x5 grid (3 rows, 5 cols), numbers 1-60, no free space.
+  // - Bingo75:     5x5 grid (5 rows, 5 cols), numbers 1-75, center=0 (free).
   grid: number[][];
+  /** Display color name matching Unity TicketColorManager, e.g. "Small Yellow", "Elvis 1". */
+  color?: string;
+  /** Ticket type code for variant logic: "small", "large", "elvis", "traffic-red", etc. */
+  type?: string;
 }
 
 // ── Claims ──────────────────────────────────────────────────────────────────

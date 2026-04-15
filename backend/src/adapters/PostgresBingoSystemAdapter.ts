@@ -39,8 +39,12 @@ export class PostgresBingoSystemAdapter implements BingoSystemAdapter {
     this.schema = options.schema || "public";
   }
 
-  async createTicket(_input: CreateTicketInput): Promise<Ticket> {
-    return generateDatabingo60Ticket();
+  async createTicket(input: CreateTicketInput): Promise<Ticket> {
+    // TODO: Use gameSlug to determine 75-ball vs 60-ball (same as LocalBingoSystemAdapter)
+    const ticket = generateDatabingo60Ticket();
+    if (input.color) ticket.color = input.color;
+    if (input.type) ticket.type = input.type;
+    return ticket;
   }
 
   async onGameStarted(_input: GameStartedInput): Promise<void> {

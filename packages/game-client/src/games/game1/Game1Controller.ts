@@ -4,31 +4,46 @@ import { registerGame } from "../registry.js";
 import type { GameState } from "../../bridge/GameBridge.js";
 import type { PatternWonPayload, MiniGameActivatedPayload } from "@spillorama/shared-types/socket-events";
 import { telemetry } from "../../telemetry/Telemetry.js";
-import { LobbyScreen } from "../game2/screens/LobbyScreen.js";
 import { PlayScreen } from "./screens/PlayScreen.js";
 import { EndScreen } from "../game2/screens/EndScreen.js";
 import { WheelOverlay } from "./components/WheelOverlay.js";
 import { TreasureChestOverlay } from "./components/TreasureChestOverlay.js";
+import { LuckyNumberPicker } from "./components/LuckyNumberPicker.js";
+import { LoadingOverlay } from "./components/LoadingOverlay.js";
 
-type Phase = "LOADING" | "LOBBY" | "PLAYING" | "ENDED";
+type Phase = "LOADING" | "WAITING" | "PLAYING" | "ENDED";
+
+/** Auto-dismiss delay for end screen before transitioning to waiting (ms). */
+const END_SCREEN_AUTO_DISMISS_MS = 5000;
 
 /**
  * Game 1 (Classic Bingo) controller.
- * Reuses Game 2 architecture with 5x5 grids + chat panel.
- * Mini-games: Wheel of Fortune + Treasure Chest after BINGO win.
+ *
+ * Unlike Game 2, Game 1 does NOT show a separate lobby screen.
+ * The PlayScreen is shown immediately — in waiting mode it displays
+ * a countdown in the center ball and a buy popup. This matches Unity.
+ *
+ * Game transition matches Unity's Game1GamePlayPanel.SocketFlow.cs:
+ *   OnGameFinish → stop animations, clear balls, show timer
+ *   OnScheduler → countdown seconds
+ *   OnGameStart → rebuild tickets/patterns from fresh snapshot
  */
 class Game1Controller implements GameController {
   private deps: GameDeps;
   private root: Container;
   private phase: Phase = "LOADING";
   private currentScreen: Container | null = null;
-  private lobbyScreen: LobbyScreen | null = null;
   private playScreen: PlayScreen | null = null;
   private endScreen: EndScreen | null = null;
   private miniGameOverlay: WheelOverlay | TreasureChestOverlay | null = null;
   private myPlayerId: string | null = null;
   private actualRoomCode: string = "";
   private unsubs: (() => void)[] = [];
+  private lastMiniGamePrize = 0;
+  private endScreenTimer: ReturnType<typeof setTimeout> | null = null;
+  private gameRoundCount = 0;
+  private luckyPicker: LuckyNumberPicker | null = null;
+  private loader: LoadingOverlay | null = null;
 
   constructor(deps: GameDeps) {
     this.deps = deps;
@@ -39,40 +54,53 @@ class Game1Controller implements GameController {
     const { app, socket, bridge } = this.deps;
     app.stage.addChild(this.root);
 
+    // Loading overlay (Unity: DisplayLoader)
+    const loaderContainer = app.app.canvas.parentElement ?? document.body;
+    this.loader = new LoadingOverlay(loaderContainer);
+    this.loader.show("Kobler til...");
+
     // Connect socket
-    console.log("[Game1] Connecting socket...");
     socket.connect();
 
     const connected = await new Promise<boolean>((resolve) => {
       if (socket.isConnected()) { resolve(true); return; }
       const timeout = setTimeout(() => { resolve(false); }, 10000);
       const unsub = socket.on("connectionStateChanged", (state) => {
-        console.log("[Game1] Socket state:", state);
         if (state === "connected") { unsub(); clearTimeout(timeout); resolve(true); }
       });
     });
 
     if (!connected) {
+      this.loader.hide();
       this.showError("Kunne ikke koble til server");
       return;
     }
-    console.log("[Game1] Socket connected");
 
     this.unsubs.push(
       socket.on("connectionStateChanged", (state) => {
-        if (state === "reconnecting") telemetry.trackReconnect();
-        if (state === "disconnected") telemetry.trackDisconnect("socket");
+        if (state === "reconnecting") {
+          telemetry.trackReconnect();
+          this.loader?.show("Kobler til igjen...");
+        }
+        if (state === "connected" && this.loader?.isShowing()) {
+          this.loader.hide();
+        }
+        if (state === "disconnected") {
+          telemetry.trackDisconnect("socket");
+          this.loader?.show("Frakoblet — prøver igjen...");
+        }
       }),
     );
 
     // Join or create room
-    console.log("[Game1] Joining room, hallId:", this.deps.hallId);
+    this.loader.show("Joiner rom...");
     const joinResult = await socket.createRoom({
       hallId: this.deps.hallId,
       gameSlug: "bingo",
     });
 
     if (!joinResult.ok || !joinResult.data) {
+      this.loader.hide();
       console.error("[Game1] Room join failed:", joinResult.error);
       this.showError(joinResult.error?.message || "Kunne ikke joine rom");
       return;
@@ -80,7 +108,6 @@ class Game1Controller implements GameController {
 
     this.myPlayerId = joinResult.data.playerId;
     this.actualRoomCode = joinResult.data.roomCode;
-    console.log("[Game1] Joined room:", this.actualRoomCode, "playerId:", this.myPlayerId);
 
     // Start bridge
     bridge.start(this.myPlayerId);
@@ -95,27 +122,43 @@ class Game1Controller implements GameController {
       bridge.on("minigameActivated", (data) => this.onMiniGameActivated(data)),
     );
 
+    // Lucky number picker (persists across screen transitions)
+    const pickerContainer = this.deps.app.app.canvas.parentElement ?? document.body;
+    this.luckyPicker = new LuckyNumberPicker(pickerContainer);
+    this.luckyPicker.setOnSelect((n) => this.handleLuckyNumber(n));
+
     // Unlock audio
     this.root.eventMode = "static";
     this.root.on("pointerdown", () => this.deps.audio.unlock(), { once: true });
 
     // Auto-arm
-    console.log("[Game1] Auto-arming...");
-    const armResult = await socket.armBet({ roomCode: this.actualRoomCode, armed: true });
-    console.log("[Game1] Arm result:", armResult.ok);
+    await socket.armBet({ roomCode: this.actualRoomCode, armed: true });
+
+    // Hide loader — game is ready (Unity: DisplayLoader(false))
+    this.loader.hide();
 
     // Transition based on state
     const state = bridge.getState();
-    console.log("[Game1] Initial state:", state.gameStatus, "tickets:", state.myTickets.length);
 
     if (state.gameStatus === "RUNNING" && state.myTickets.length > 0) {
       this.transitionTo("PLAYING", state);
     } else {
-      this.transitionTo("LOBBY", state);
+      this.transitionTo("WAITING", state);
+    }
+  }
+
+  resize(width: number, height: number): void {
+    if (this.playScreen) {
+      this.playScreen.resize(width, height);
     }
   }
 
   destroy(): void {
+    if (this.endScreenTimer) { clearTimeout(this.endScreenTimer); this.endScreenTimer = null; }
+    this.luckyPicker?.destroy();
+    this.luckyPicker = null;
+    this.loader?.destroy();
+    this.loader = null;
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
     this.miniGameOverlay?.destroy({ children: true });
@@ -127,7 +170,6 @@ class Game1Controller implements GameController {
   // ── State transitions ─────────────────────────────────────────────────
 
   private transitionTo(phase: Phase, state: GameState): void {
-    console.log("[Game1] Transition:", this.phase, "→", phase);
     this.phase = phase;
     this.clearScreen();
 
@@ -135,18 +177,29 @@ class Game1Controller implements GameController {
     const h = this.deps.app.app.screen.height;
 
     switch (phase) {
-      case "LOBBY":
-        this.lobbyScreen = new LobbyScreen(w, h);
-        this.lobbyScreen.setOnBuy(() => this.handleBuy());
-        this.lobbyScreen.setOnLuckyNumber((n) => this.handleLuckyNumber(n));
-        this.lobbyScreen.update(state);
-        this.lobbyScreen.showBuyPopup(state.entryFee || 10);
-        this.setScreen(this.lobbyScreen);
-        break;
-
-      case "PLAYING":
-        this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode);
+      case "WAITING": {
+        // Show PlayScreen in waiting mode — countdown + buy popup, no separate lobby
+        this.lastMiniGamePrize = 0;
+        const container = this.deps.app.app.canvas.parentElement ?? document.body;
+        this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container);
         this.playScreen.setOnClaim((type) => this.handleClaim(type));
+        this.playScreen.setOnBuy(() => this.handleBuy());
+        this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
+        this.playScreen.subscribeChatToBridge((listener) =>
+          this.deps.bridge.on("chatMessage", listener),
+        );
+        this.playScreen.enterWaitingMode(state);
+        this.setScreen(this.playScreen);
+        break;
+      }
+
+      case "PLAYING": {
+        this.lastMiniGamePrize = 0;
+        const container = this.deps.app.app.canvas.parentElement ?? document.body;
+        this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container);
+        this.playScreen.setOnClaim((type) => this.handleClaim(type));
+        this.playScreen.setOnBuy(() => this.handleBuy());
+        this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
         this.playScreen.subscribeChatToBridge((listener) =>
           this.deps.bridge.on("chatMessage", listener),
         );
@@ -154,13 +207,17 @@ class Game1Controller implements GameController {
         this.playScreen.updateInfo(state);
         this.setScreen(this.playScreen);
         break;
+      }
 
       case "ENDED":
         this.endScreen = new EndScreen(w, h);
         this.endScreen.setOnDismiss(() => {
-          this.transitionTo("LOBBY", this.deps.bridge.getState());
+          this.transitionTo("WAITING", this.deps.bridge.getState());
         });
         this.endScreen.show(state);
+        if (this.lastMiniGamePrize > 0) {
+          this.endScreen.showMiniGameBonus(this.lastMiniGamePrize);
+        }
         this.setScreen(this.endScreen);
         break;
     }
@@ -169,31 +226,56 @@ class Game1Controller implements GameController {
   // ── Bridge event handlers ─────────────────────────────────────────────
 
   private onStateChanged(state: GameState): void {
-    if (this.phase === "LOBBY" && this.lobbyScreen) this.lobbyScreen.update(state);
-    if (this.phase === "PLAYING" && this.playScreen) this.playScreen.updateInfo(state);
+    if (this.phase === "WAITING" && this.playScreen) {
+      this.playScreen.updateWaitingState(state);
+    }
+    if (this.phase === "PLAYING" && this.playScreen) {
+      this.playScreen.updateInfo(state);
+    }
   }
 
   private onGameStarted(state: GameState): void {
-    console.log("[Game1] Game started, tickets:", state.myTickets.length);
+    // Clear any pending end screen auto-dismiss
+    if (this.endScreenTimer) { clearTimeout(this.endScreenTimer); this.endScreenTimer = null; }
+
+    this.gameRoundCount++;
+
     if (state.myTickets.length > 0) {
       this.transitionTo("PLAYING", state);
+    } else {
+      // Spectator: go to waiting mode so they can see the game in progress
+      // (Unity stays on the same panel and just hides the buy UI)
+      this.transitionTo("WAITING", state);
     }
   }
 
   private onGameEnded(state: GameState): void {
-    console.log("[Game1] Game ended");
+    // Dismiss any active mini-game overlay so it doesn't block the EndScreen
+    this.dismissMiniGame();
+
     if (this.phase === "PLAYING") {
       this.transitionTo("ENDED", state);
+
+      // Auto-dismiss EndScreen after a delay — matches Unity's immediate
+      // transition to waiting mode with countdown timer.
+      this.endScreenTimer = setTimeout(() => {
+        this.endScreenTimer = null;
+        if (this.phase === "ENDED") {
+          this.transitionTo("WAITING", this.deps.bridge.getState());
+        }
+      }, END_SCREEN_AUTO_DISMISS_MS);
     } else {
-      this.transitionTo("LOBBY", state);
+      this.transitionTo("WAITING", state);
     }
-    this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true })
-      .then(r => console.log("[Game1] Re-armed:", r.ok));
+    this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true });
   }
 
   private onNumberDrawn(number: number, drawIndex: number, state: GameState): void {
     if (this.phase === "PLAYING" && this.playScreen) {
       this.playScreen.onNumberDrawn(number, drawIndex, state);
+    } else if (this.phase === "WAITING" && this.playScreen) {
+      // Spectator mode — animate ball in tube but no ticket marking
+      this.playScreen.onSpectatorNumberDrawn(number, state);
     }
   }
 
@@ -209,29 +291,44 @@ class Game1Controller implements GameController {
   // ── User actions ──────────────────────────────────────────────────────
 
   private async handleBuy(): Promise<void> {
-    console.log("[Game1] Arming bet, roomCode:", this.actualRoomCode);
     const result = await this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true });
     if (result.ok) {
-      this.lobbyScreen?.hideBuyPopup();
+      this.playScreen?.hideBuyPopup();
     } else {
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");
     }
   }
 
-  private async handleLuckyNumber(number: number): Promise<void> {
-    await this.deps.socket.setLuckyNumber({ roomCode: this.actualRoomCode, luckyNumber: number });
-  }
-
   private async handleClaim(type: "LINE" | "BINGO"): Promise<void> {
-    console.log("[Game1] Submitting claim:", type);
     const result = await this.deps.socket.submitClaim({ roomCode: this.actualRoomCode, type });
     if (!result.ok) console.error("[Game1] Claim failed:", result.error);
+  }
+
+  private async handleLuckyNumber(n: number): Promise<void> {
+    const result = await this.deps.socket.setLuckyNumber({
+      roomCode: this.actualRoomCode,
+      luckyNumber: n,
+    });
+    if (result.ok) {
+      // Highlight on all tickets in current PlayScreen
+      if (this.playScreen && n > 0) {
+        for (const card of this.playScreen.getInlineCards()) {
+          card.highlightLuckyNumber(n);
+        }
+      }
+    } else {
+      console.error("[Game1] setLuckyNumber failed:", result.error);
+    }
+  }
+
+  private openLuckyPicker(): void {
+    const state = this.deps.bridge.getState();
+    this.luckyPicker?.show(state.myLuckyNumber);
   }
 
   // ── Mini-game handlers ────────────────────────────────────────────────
 
   private onMiniGameActivated(data: MiniGameActivatedPayload): void {
-    console.log("[Game1] Mini-game activated!", data.type);
     const w = this.deps.app.app.screen.width;
     const h = this.deps.app.app.screen.height;
 
@@ -260,6 +357,7 @@ class Game1Controller implements GameController {
       selectedIndex,
     });
     if (result.ok && result.data) {
+      this.lastMiniGamePrize = result.data.prizeAmount;
       this.miniGameOverlay?.animateResult(result.data);
       telemetry.trackEvent("minigame_played", {
         type: result.data.type,
@@ -287,7 +385,6 @@ class Game1Controller implements GameController {
       this.currentScreen.destroy({ children: true });
       this.currentScreen = null;
     }
-    this.lobbyScreen = null;
     this.playScreen = null;
     this.endScreen = null;
   }

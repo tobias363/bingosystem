@@ -32,6 +32,43 @@ export function makeShuffledBallBag(maxNumber = 60): number[] {
   return shuffle(Array.from({ length: maxNumber }, (_, i) => i + 1));
 }
 
+/**
+ * Generate a standard 75-ball bingo ticket (5×5 grid, free center).
+ * Columns: B(1-15), I(16-30), N(31-45), G(46-60), O(61-75).
+ * Center cell (row 2, col 2) is 0 (free space).
+ *
+ * @param color  Display color name for the client, e.g. "Small Yellow", "Elvis 1".
+ * @param type   Ticket type code for variant logic, e.g. "small", "large", "elvis".
+ */
+export function generateBingo75Ticket(color?: string, type?: string): Ticket {
+  const columns = [
+    pickUniqueInRange(1, 15, 5),    // B
+    pickUniqueInRange(16, 30, 5),   // I
+    pickUniqueInRange(31, 45, 5),   // N — one cell will be free
+    pickUniqueInRange(46, 60, 5),   // G
+    pickUniqueInRange(61, 75, 5),   // O
+  ];
+
+  const grid: number[][] = [];
+  for (let row = 0; row < 5; row++) {
+    const rowValues: number[] = [];
+    for (let col = 0; col < 5; col++) {
+      // Center cell is free space
+      if (row === 2 && col === 2) {
+        rowValues.push(0);
+      } else {
+        rowValues.push(columns[col][row]);
+      }
+    }
+    grid.push(rowValues);
+  }
+
+  const ticket: Ticket = { grid };
+  if (color) ticket.color = color;
+  if (type) ticket.type = type;
+  return ticket;
+}
+
 export function generateDatabingo60Ticket(): Ticket {
   // Denne varianten bruker 60 baller fordelt på 5 kolonner med 12 tall hver.
   // Frontend expects a 3×5 grid (15 cells) — all cells must contain a number.

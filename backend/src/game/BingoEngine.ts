@@ -167,7 +167,10 @@ interface ComplianceOptions {
 
 const DEFAULT_SELF_EXCLUSION_MIN_MS = 365 * 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_DRAWS_PER_ROUND = 30;
-const MAX_BINGO_BALLS = 60;
+const MAX_BINGO_BALLS_60 = 60;
+const MAX_BINGO_BALLS_75 = 75;
+/** Game slugs that use 75-ball format. */
+const BINGO75_SLUGS = new Set(["bingo", "game_1"]);
 const DEFAULT_BONUS_TRIGGER_PATTERN_INDEX = 1;
 /** BIN-253: Minimum milliseconds between successive manual draw calls to prevent rapid-fire draws. */
 const MIN_MANUAL_DRAW_INTERVAL_MS = 500;
@@ -241,11 +244,11 @@ export class BingoEngine {
       !Number.isFinite(maxDrawsPerRound) ||
       !Number.isInteger(maxDrawsPerRound) ||
       maxDrawsPerRound < 1 ||
-      maxDrawsPerRound > MAX_BINGO_BALLS
+      maxDrawsPerRound > MAX_BINGO_BALLS_75
     ) {
       throw new DomainError(
         "INVALID_CONFIG",
-        `maxDrawsPerRound må være et heltall mellom 1 og ${MAX_BINGO_BALLS}.`
+        `maxDrawsPerRound må være et heltall mellom 1 og ${MAX_BINGO_BALLS_75}.`
       );
     }
     this.maxDrawsPerRound = Math.floor(maxDrawsPerRound);
@@ -502,21 +505,31 @@ export class BingoEngine {
     const tickets = new Map<string, Ticket[]>();
     const marks = new Map<string, Set<number>[]>();
 
+    // Default ticket color cycling — matches Unity's SpilloramaGameBridge gridColors.
+    // When game variant config is implemented (BIN-437), colors will come from variant config instead.
+    const DEFAULT_TICKET_COLORS = ["Small Yellow", "Small White", "Small Purple", "Small Red", "Small Green", "Small Orange"];
+
     try {
+      let globalTicketIndex = 0;
       for (const player of eligiblePlayers) {
         const playerTickets: Ticket[] = [];
         const playerMarks: Set<number>[] = [];
 
         for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
+          const color = DEFAULT_TICKET_COLORS[globalTicketIndex % DEFAULT_TICKET_COLORS.length];
           const ticket = await this.bingoAdapter.createTicket({
             roomCode: room.code,
             gameId,
+            gameSlug: room.gameSlug,
             player,
             ticketIndex,
-            ticketsPerPlayer
+            ticketsPerPlayer,
+            color,
+            type: "small",
           });
           playerTickets.push(ticket);
           playerMarks.push(new Set<number>());
+          globalTicketIndex++;
         }
 
         tickets.set(player.id, playerTickets);
@@ -549,7 +562,7 @@ export class BingoEngine {
       payoutPercent: normalizedPayoutPercent,
       maxPayoutBudget,
       remainingPayoutBudget: maxPayoutBudget,
-      drawBag: makeShuffledBallBag(MAX_BINGO_BALLS),
+      drawBag: makeShuffledBallBag(BINGO75_SLUGS.has(room.gameSlug ?? "") ? MAX_BINGO_BALLS_75 : MAX_BINGO_BALLS_60),
       drawnNumbers: [],
       tickets,
       marks,

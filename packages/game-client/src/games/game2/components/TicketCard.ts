@@ -1,10 +1,19 @@
 import { Container, Graphics, Text } from "pixi.js";
 import type { Ticket } from "@spillorama/shared-types/game";
 import { BingoGrid, type GridSize } from "../../../components/BingoGrid.js";
+import type { BingoCellColors } from "../../../components/BingoCell.js";
 
 export interface TicketCardOptions {
   gridSize?: GridSize;
   cellSize?: number;
+  /** Card-level color overrides (Unity TicketColorTheme) */
+  cardBg?: number;
+  headerBg?: number;
+  headerText?: number;
+  toGoColor?: number;
+  toGoCloseColor?: number;
+  /** Cell-level color overrides (Unity TicketColorData) */
+  cellColors?: BingoCellColors;
 }
 
 /**
@@ -21,20 +30,30 @@ export class TicketCard extends Container {
   private cardW: number;
   private cardH: number;
 
-  // Unity colors
-  private static readonly CARD_BG = 0xfff2ce;       // Light cream
-  private static readonly HEADER_BG = 0x790001;      // Dark maroon
-  private static readonly HEADER_TEXT = 0xffe83d;     // Bright yellow
-  private static readonly TOGO_NORMAL = 0x790001;     // Maroon
-  private static readonly TOGO_CLOSE = 0xe63946;      // Red when close
+  // Default Unity colors (overridable via options)
+  private static readonly DEFAULT_CARD_BG = 0xfff2ce;
+  private static readonly DEFAULT_HEADER_BG = 0x790001;
+  private static readonly DEFAULT_HEADER_TEXT = 0xffe83d;
+  private static readonly DEFAULT_TOGO_NORMAL = 0x790001;
+  private static readonly DEFAULT_TOGO_CLOSE = 0xe63946;
+
+  private toGoNormalColor: number;
+  private toGoCloseColor: number;
 
   constructor(index: number, options?: TicketCardOptions) {
     super();
     const gridSize = options?.gridSize ?? "3x5";
     const cellSize = options?.cellSize ?? (gridSize === "5x5" ? 36 : 44);
 
+    // Theme colors (from Unity TicketColorTheme or defaults)
+    const cardBgColor = options?.cardBg ?? TicketCard.DEFAULT_CARD_BG;
+    const headerBgColor = options?.headerBg ?? TicketCard.DEFAULT_HEADER_BG;
+    const headerTextColor = options?.headerText ?? TicketCard.DEFAULT_HEADER_TEXT;
+    this.toGoNormalColor = options?.toGoColor ?? TicketCard.DEFAULT_TOGO_NORMAL;
+    this.toGoCloseColor = options?.toGoCloseColor ?? TicketCard.DEFAULT_TOGO_CLOSE;
+
     // Grid first to get dimensions
-    this.grid = new BingoGrid({ gridSize, cellSize, gap: 2 });
+    this.grid = new BingoGrid({ gridSize, cellSize, gap: 2, cellColors: options?.cellColors });
     this.cardW = this.grid.gridWidth + 16;
     const headerH = 28;
     const toGoH = 24;
@@ -43,13 +62,13 @@ export class TicketCard extends Container {
     // Card background
     this.cardBg = new Graphics();
     this.cardBg.roundRect(0, 0, this.cardW, this.cardH, 8);
-    this.cardBg.fill(TicketCard.CARD_BG);
+    this.cardBg.fill(cardBgColor);
     this.addChild(this.cardBg);
 
-    // Header bar (maroon)
+    // Header bar
     this.headerBg = new Graphics();
     this.headerBg.roundRect(0, 0, this.cardW, headerH, 8);
-    this.headerBg.fill(TicketCard.HEADER_BG);
+    this.headerBg.fill(headerBgColor);
     this.addChild(this.headerBg);
 
     // Header text (ticket number)
@@ -59,7 +78,7 @@ export class TicketCard extends Container {
         fontFamily: "Arial, Helvetica, sans-serif",
         fontSize: 13,
         fontWeight: "bold",
-        fill: TicketCard.HEADER_TEXT,
+        fill: headerTextColor,
       },
     });
     this.headerText.x = 8;
@@ -73,7 +92,7 @@ export class TicketCard extends Container {
         fontFamily: "Arial, Helvetica, sans-serif",
         fontSize: 13,
         fontWeight: "bold",
-        fill: TicketCard.HEADER_TEXT,
+        fill: headerTextColor,
       },
     });
     this.priceText.anchor.set(1, 0);
@@ -93,7 +112,7 @@ export class TicketCard extends Container {
         fontFamily: "Arial, Helvetica, sans-serif",
         fontSize: 14,
         fontWeight: "bold",
-        fill: TicketCard.TOGO_NORMAL,
+        fill: this.toGoNormalColor,
         align: "center",
       },
     });
@@ -147,9 +166,16 @@ export class TicketCard extends Container {
     if (remaining === 0) {
       this.toGoText.text = "Ferdig!";
       this.toGoText.style.fill = 0x2a9d8f;
+      // Stop any one-to-go blink animations (Unity: Stop_Blink)
+      this.grid.stopAllBlinks();
+    } else if (remaining === 1) {
+      this.toGoText.text = "1 ToGo!";
+      this.toGoText.style.fill = this.toGoCloseColor;
+      // Blink the remaining unmarked cell (Unity: Start_NumberBlink)
+      this.grid.blinkCells(this.grid.getUnmarkedNumbers());
     } else {
       this.toGoText.text = `${remaining} ToGo`;
-      this.toGoText.style.fill = remaining <= 2 ? TicketCard.TOGO_CLOSE : TicketCard.TOGO_NORMAL;
+      this.toGoText.style.fill = remaining <= 3 ? this.toGoCloseColor : this.toGoNormalColor;
     }
   }
 }
