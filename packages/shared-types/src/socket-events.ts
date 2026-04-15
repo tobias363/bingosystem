@@ -177,7 +177,7 @@ export interface JackpotSpinEntry {
 
 // ── Mini-games (Game 1 — Wheel of Fortune / Treasure Chest) ──────────────────
 
-export type MiniGameType = "wheelOfFortune" | "treasureChest";
+export type MiniGameType = "wheelOfFortune" | "treasureChest" | "mysteryGame" | "colorDraft";
 
 export interface MiniGameActivatedPayload {
   gameId: string;

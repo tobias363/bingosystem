@@ -8,6 +8,8 @@ import { PlayScreen } from "./screens/PlayScreen.js";
 import { EndScreen } from "../game2/screens/EndScreen.js";
 import { WheelOverlay } from "./components/WheelOverlay.js";
 import { TreasureChestOverlay } from "./components/TreasureChestOverlay.js";
+import { MysteryGameOverlay } from "./components/MysteryGameOverlay.js";
+import { ColorDraftOverlay } from "./components/ColorDraftOverlay.js";
 import { LuckyNumberPicker } from "./components/LuckyNumberPicker.js";
 import { LoadingOverlay } from "./components/LoadingOverlay.js";
 import { ToastNotification } from "./components/ToastNotification.js";
@@ -37,7 +39,7 @@ class Game1Controller implements GameController {
   private currentScreen: Container | null = null;
   private playScreen: PlayScreen | null = null;
   private endScreen: EndScreen | null = null;
-  private miniGameOverlay: WheelOverlay | TreasureChestOverlay | null = null;
+  private miniGameOverlay: WheelOverlay | TreasureChestOverlay | MysteryGameOverlay | ColorDraftOverlay | null = null;
   private myPlayerId: string | null = null;
   private actualRoomCode: string = "";
   private unsubs: (() => void)[] = [];
@@ -394,7 +396,22 @@ class Game1Controller implements GameController {
       this.miniGameOverlay = overlay;
       this.root.addChild(overlay);
       overlay.show(data);
+    } else if (data.type === "mysteryGame") {
+      const overlay = new MysteryGameOverlay(w, h);
+      overlay.setOnPlay((idx) => this.handleMiniGamePlay(idx));
+      overlay.setOnDismiss(() => this.dismissMiniGame());
+      this.miniGameOverlay = overlay;
+      this.root.addChild(overlay);
+      overlay.show(data);
+    } else if (data.type === "colorDraft") {
+      const overlay = new ColorDraftOverlay(w, h);
+      overlay.setOnPlay((idx) => this.handleMiniGamePlay(idx));
+      overlay.setOnDismiss(() => this.dismissMiniGame());
+      this.miniGameOverlay = overlay;
+      this.root.addChild(overlay);
+      overlay.show(data);
     } else {
+      // Default: TreasureChest
       const overlay = new TreasureChestOverlay(w, h);
       overlay.setOnPlay((idx) => this.handleMiniGamePlay(idx));
       overlay.setOnDismiss(() => this.dismissMiniGame());

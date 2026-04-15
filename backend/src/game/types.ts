@@ -78,7 +78,7 @@ export interface JackpotState {
   isComplete: boolean;
 }
 
-export type MiniGameType = "wheelOfFortune" | "treasureChest";
+export type MiniGameType = "wheelOfFortune" | "treasureChest" | "mysteryGame" | "colorDraft";
 
 export interface MiniGameState {
   playerId: string;
