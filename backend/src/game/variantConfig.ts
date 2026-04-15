@@ -55,6 +55,15 @@ export interface GameVariantConfig {
   replaceAmount?: number;
   /** BIN-465: Bonus prize (kr) if player's lucky number is drawn. Default: 0 (no bonus). */
   luckyNumberPrize?: number;
+  /** BIN-461: Jackpot config — prize awarded if Full House is won within N draws. */
+  jackpot?: {
+    /** Draw number at which jackpot is active (e.g. 56 means "Full House within 56 balls"). */
+    drawThreshold: number;
+    /** Jackpot prize amount in kr. */
+    prize: number;
+    /** If true, show jackpot info to players. */
+    isDisplay: boolean;
+  };
 }
 
 // ── Default configs ───────────────────────────────────────────────────────────
