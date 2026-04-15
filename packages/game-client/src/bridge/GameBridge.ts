@@ -58,6 +58,10 @@ export interface GameState {
   isPaused: boolean;
   pauseMessage: string | null;
 
+  // BIN-417: Active game variant info (from room:update.gameVariant)
+  gameType: string;
+  ticketTypes: Array<{ name: string; type: string; priceMultiplier: number; ticketCount: number }>;
+
   // Pre-round display tickets (for unarmed players)
   preRoundTickets: Ticket[];
 
@@ -205,6 +209,12 @@ export class GameBridge {
       this.state.autoDrawEnabled = scheduler.autoDrawEnabled;
     }
 
+    // BIN-417: Game variant info
+    if (payload.gameVariant) {
+      this.state.gameType = payload.gameVariant.gameType ?? "standard";
+      this.state.ticketTypes = (payload.gameVariant.ticketTypes ?? []) as GameState["ticketTypes"];
+    }
+
     // Game state
     const prevStatus = this.previousGameStatus;
     if (payload.currentGame) {
@@ -301,6 +311,8 @@ export class GameBridge {
       autoDrawEnabled: false,
       isPaused: false,
       pauseMessage: null,
+      gameType: "standard",
+      ticketTypes: [],
       preRoundTickets: [],
       serverTimestamp: 0,
     };

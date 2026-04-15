@@ -162,17 +162,27 @@ export class PlayScreen extends Container {
         this.calledNumbers.toggle();
       },
       onPreBuy: () => {
-        // Forhåndskjøp — open buy popup (same as Unity)
+        // Forhåndskjøp — open buy popup with variant ticket types if available
         const fee = this.lastState?.entryFee || 10;
-        this.buyPopup?.show(fee);
+        const types = this.lastState?.ticketTypes;
+        if (types && types.length > 0) {
+          this.buyPopup?.showWithTypes(fee, types);
+        } else {
+          this.buyPopup?.show(fee);
+        }
       },
       onSelectLuckyNumber: () => {
         this.onLuckyNumberTap?.();
       },
       onBuyMoreTickets: () => {
-        // Kjøp flere brett — open buy popup (same as Unity)
+        // Kjøp flere brett — open buy popup with variant types
         const fee = this.lastState?.entryFee || 10;
-        this.buyPopup?.show(fee);
+        const types = this.lastState?.ticketTypes;
+        if (types && types.length > 0) {
+          this.buyPopup?.showWithTypes(fee, types);
+        } else {
+          this.buyPopup?.show(fee);
+        }
       },
       onCancelTickets: () => {
         this.onCancelTickets?.();
@@ -262,8 +272,12 @@ export class PlayScreen extends Container {
       this.leftInfo.stopCountdown();
     }
 
-    // Show buy popup (Unity auto-opens purchase panel in lobby)
-    this.buyPopup?.show(state.entryFee || 10);
+    // Show buy popup with variant types if available (Unity auto-opens purchase panel in lobby)
+    if (state.ticketTypes && state.ticketTypes.length > 0) {
+      this.buyPopup?.showWithTypes(state.entryFee || 10, state.ticketTypes);
+    } else {
+      this.buyPopup?.show(state.entryFee || 10);
+    }
 
     // Update info panels
     this.updateInfo(state);
