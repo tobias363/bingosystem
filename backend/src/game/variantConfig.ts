@@ -53,6 +53,8 @@ export interface GameVariantConfig {
   patterns: PatternConfig[];
   /** Elvis-specific: price to replace tickets between rounds. */
   replaceAmount?: number;
+  /** BIN-465: Bonus prize (kr) if player's lucky number is drawn. Default: 0 (no bonus). */
+  luckyNumberPrize?: number;
 }
 
 // ── Default configs ───────────────────────────────────────────────────────────

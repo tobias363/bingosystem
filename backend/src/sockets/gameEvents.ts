@@ -141,6 +141,8 @@ export interface GameEventsDeps {
   resolveBingoHallGameConfigForRoom: (roomCode: string) => Promise<{ hallId: string; maxTicketsPerPlayer: number }>;
   requireActiveHallIdFromInput: (input: unknown) => Promise<string>;
   buildLeaderboard: (roomCode?: string) => LeaderboardEntry[];
+  /** BIN-445: Get active variant config for a room (from schedule or default). */
+  getVariantConfig?: (roomCode: string) => { gameType: string; config: import("../game/variantConfig.js").GameVariantConfig } | null;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -523,6 +525,7 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
           requestedTicketsPerPlayer ??
           Math.min(hallGameConfig.maxTicketsPerPlayer, runtimeBingoSettings.autoRoundTicketsPerPlayer);
         assertTicketsPerPlayerWithinHallLimit(ticketsPerPlayer, hallGameConfig.maxTicketsPerPlayer);
+        const variantInfo = deps.getVariantConfig?.(roomCode);
         await engine.startGame({
           roomCode,
           actorPlayerId: playerId,
@@ -530,6 +533,8 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
           ticketsPerPlayer,
           payoutPercent: runtimeBingoSettings.payoutPercent,
           armedPlayerIds: getArmedPlayerIds(roomCode),
+          gameType: variantInfo?.gameType,
+          variantConfig: variantInfo?.config,
         });
         disarmAllPlayers(roomCode);
         clearDisplayTicketCache(roomCode);

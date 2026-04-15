@@ -101,6 +101,11 @@ export interface GameSnapshot {
   /** BIN-244: Per-ticket mark sets — outer index = ticket index, inner = marked numbers. */
   marks: Record<string, number[][]>;
   participatingPlayerIds?: string[];
+  /** BIN-460: True if admin has paused this game. */
+  isPaused?: boolean;
+  pauseMessage?: string;
+  /** BIN-463: Test game — no real money transactions. */
+  isTestGame?: boolean;
   startedAt: string;
   endedAt?: string;
   endedReason?: string;

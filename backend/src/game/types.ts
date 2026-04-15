@@ -113,6 +113,11 @@ export interface GameState {
   jackpot?: JackpotState;
   /** Game 1 mini-game (wheel of fortune / treasure chest, activated after BINGO win). */
   miniGame?: MiniGameState;
+  /** BIN-460: Admin can pause a running game — freezes draws until resumed. */
+  isPaused?: boolean;
+  pauseMessage?: string;
+  /** BIN-463: Test game — no real money transactions. */
+  isTestGame?: boolean;
   startedAt: string;
   endedAt?: string;
   endedReason?: string;
@@ -153,6 +158,11 @@ export interface GameSnapshot {
   /** BIN-244: Per-ticket mark sets — outer index = ticket index, inner = marked numbers. */
   marks: Record<string, number[][]>;
   participatingPlayerIds?: string[];
+  /** BIN-460: True if admin has paused this game. */
+  isPaused?: boolean;
+  pauseMessage?: string;
+  /** BIN-463: Test game — no real money transactions. */
+  isTestGame?: boolean;
   startedAt: string;
   endedAt?: string;
   endedReason?: string;

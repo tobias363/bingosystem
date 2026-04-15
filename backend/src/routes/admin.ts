@@ -887,6 +887,33 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
     }
   });
 
+  // ── BIN-460: Game pause/resume (admin) ────────────────────────────────────
+
+  router.post("/api/admin/rooms/:roomCode/game/pause", async (req, res) => {
+    try {
+      await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      const message = typeof req.body?.message === "string" ? req.body.message : undefined;
+      engine.pauseGame(roomCode, message);
+      const snapshot = await emitRoomUpdate(roomCode);
+      apiSuccess(res, { roomCode, isPaused: true, snapshot });
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
+
+  router.post("/api/admin/rooms/:roomCode/game/resume", async (req, res) => {
+    try {
+      await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      engine.resumeGame(roomCode);
+      const snapshot = await emitRoomUpdate(roomCode);
+      apiSuccess(res, { roomCode, isPaused: false, snapshot });
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
+
   // ── Wallet compliance (admin) ─────────────────────────────────────────────
 
   router.get("/api/admin/wallets/:walletId/compliance", async (req, res) => {

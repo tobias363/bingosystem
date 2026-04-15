@@ -123,6 +123,8 @@ interface StartGameInput {
   gameType?: string;
   /** Variant config with ticket types and patterns (from hall_game_schedules.variant_config). */
   variantConfig?: import("./variantConfig.js").GameVariantConfig;
+  /** BIN-463: Test game — skip wallet operations. */
+  isTestGame?: boolean;
 }
 
 const DEFAULT_PATTERNS: PatternDefinition[] = [
@@ -464,10 +466,13 @@ export class BingoEngine {
     const channel: LedgerChannel = "INTERNET";
     const houseAccountId = this.ledger.makeHouseAccountId(room.hallId, gameType, channel);
     await this.walletAdapter.ensureAccount(houseAccountId);
+    // BIN-463: Test games skip all wallet operations.
+    const isTestGame = input.isTestGame ?? false;
+
     // HOEY-4: Track debited players for compensation if startup fails partway through.
     // BIN-250: If any transfer fails mid-loop, all previously debited players are refunded before rethrowing.
     const debitedPlayers: Array<{ player: Player; fromAccountId: string; toAccountId: string }> = [];
-    if (entryFee > 0) {
+    if (entryFee > 0 && !isTestGame) {
       try {
         for (const player of eligiblePlayers) {
           const transfer = await this.walletAdapter.transfer(
@@ -580,6 +585,7 @@ export class BingoEngine {
       patternResults,
       claims: [],
       participatingPlayerIds: eligiblePlayers.map(p => p.id),
+      isTestGame: isTestGame || undefined,
       startedAt: new Date(nowMs).toISOString()
     };
 
@@ -635,6 +641,11 @@ export class BingoEngine {
     const host = this.requirePlayer(room, input.actorPlayerId);
     const nowMs = Date.now();
     this.assertWalletAllowedForGameplay(host.walletId, nowMs);
+
+    // BIN-460: Block draws while game is paused
+    if (room.currentGame?.isPaused) {
+      throw new DomainError("GAME_PAUSED", "Spillet er pauset — trekking ikke tillatt.");
+    }
 
     // MEDIUM-1/BIN-253: Enforce minimum interval between manual draws
     if (this.minDrawIntervalMs > 0) {
@@ -1275,6 +1286,26 @@ export class BingoEngine {
     await this.finishPlaySessionsForGame(room, game, endedAtMs);
     // BIN-48/BIN-248: Synchronous checkpoint after game end
     await this.writeGameEndCheckpoint(room, game);
+  }
+
+  // ── BIN-460: Game pause/resume ─────────────────────────────────────────────
+
+  pauseGame(roomCode: string, message?: string): void {
+    const room = this.requireRoom(roomCode);
+    const game = this.requireRunningGame(room);
+    if (game.isPaused) throw new DomainError("GAME_ALREADY_PAUSED", "Spillet er allerede pauset.");
+    game.isPaused = true;
+    game.pauseMessage = message ?? "Spillet er pauset av admin";
+    logger.info({ roomCode, gameId: game.id }, "Game paused");
+  }
+
+  resumeGame(roomCode: string): void {
+    const room = this.requireRoom(roomCode);
+    const game = this.requireRunningGame(room);
+    if (!game.isPaused) throw new DomainError("GAME_NOT_PAUSED", "Spillet er ikke pauset.");
+    game.isPaused = false;
+    game.pauseMessage = undefined;
+    logger.info({ roomCode, gameId: game.id }, "Game resumed");
   }
 
   getRoomSnapshot(roomCode: string): RoomSnapshot {
@@ -2222,6 +2253,9 @@ export class BingoEngine {
       tickets: ticketByPlayerId,
       marks: marksByPlayerId,
       participatingPlayerIds: game.participatingPlayerIds,
+      isPaused: game.isPaused,
+      pauseMessage: game.pauseMessage,
+      isTestGame: game.isTestGame,
       startedAt: game.startedAt,
       endedAt: game.endedAt,
       endedReason: game.endedReason
