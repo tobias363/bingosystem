@@ -7,6 +7,14 @@ import { generateDatabingo60Ticket, generateBingo75Ticket } from "../game/ticket
 import type { Ticket } from "../game/types.js";
 import type { GameVariantConfig } from "../game/variantConfig.js";
 
+/** Per-type ticket selection stored for an armed player. */
+export interface TicketSelection {
+  /** Ticket type code, e.g. "small-yellow", "large-white", "elvis". */
+  type: string;
+  /** How many of this ticket type to purchase. */
+  qty: number;
+}
+
 export interface ChatMessage {
   id: string;
   playerId: string;
@@ -26,6 +34,8 @@ export class RoomStateManager {
   readonly luckyNumbersByRoom = new Map<string, Map<string, number>>();
   readonly roomConfiguredEntryFeeByRoom = new Map<string, number>();
   readonly armedPlayerIdsByRoom = new Map<string, Map<string, number>>();
+  /** Per-player ticket type selections (parallel to armedPlayerIdsByRoom). */
+  readonly armedPlayerSelectionsByRoom = new Map<string, Map<string, TicketSelection[]>>();
   readonly displayTicketCache = new Map<string, Ticket[]>();
   readonly variantByRoom = new Map<string, RoomVariantInfo>();
 
@@ -36,25 +46,48 @@ export class RoomStateManager {
     return map ? [...map.keys()] : [];
   }
 
-  /** Returns per-player ticket counts for all armed players. */
+  /** Returns per-player ticket counts (total weighted) for all armed players. */
   getArmedPlayerTicketCounts(roomCode: string): Record<string, number> {
     const map = this.armedPlayerIdsByRoom.get(roomCode);
     if (!map) return {};
     return Object.fromEntries(map);
   }
 
-  armPlayer(roomCode: string, playerId: string, ticketCount: number = 1): void {
+  /** Returns per-player ticket type selections for all armed players. */
+  getArmedPlayerSelections(roomCode: string): Record<string, TicketSelection[]> {
+    const selMap = this.armedPlayerSelectionsByRoom.get(roomCode);
+    if (!selMap) return {};
+    const result: Record<string, TicketSelection[]> = {};
+    for (const [pid, sels] of selMap) {
+      result[pid] = sels;
+    }
+    return result;
+  }
+
+  armPlayer(roomCode: string, playerId: string, ticketCount: number = 1, selections?: TicketSelection[]): void {
     let map = this.armedPlayerIdsByRoom.get(roomCode);
     if (!map) { map = new Map(); this.armedPlayerIdsByRoom.set(roomCode, map); }
     map.set(playerId, ticketCount);
+
+    // Store selections if provided
+    if (selections && selections.length > 0) {
+      let selMap = this.armedPlayerSelectionsByRoom.get(roomCode);
+      if (!selMap) { selMap = new Map(); this.armedPlayerSelectionsByRoom.set(roomCode, selMap); }
+      selMap.set(playerId, selections);
+    } else {
+      // Clear any stale selections for backward compat (ticketCount-only arm)
+      this.armedPlayerSelectionsByRoom.get(roomCode)?.delete(playerId);
+    }
   }
 
   disarmPlayer(roomCode: string, playerId: string): void {
     this.armedPlayerIdsByRoom.get(roomCode)?.delete(playerId);
+    this.armedPlayerSelectionsByRoom.get(roomCode)?.delete(playerId);
   }
 
   disarmAllPlayers(roomCode: string): void {
     this.armedPlayerIdsByRoom.get(roomCode)?.clear();
+    this.armedPlayerSelectionsByRoom.get(roomCode)?.clear();
   }
 
   // ── Lucky numbers ──────────────────────────────────────────────────────────

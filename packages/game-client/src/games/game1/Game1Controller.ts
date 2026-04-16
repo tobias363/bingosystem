@@ -210,7 +210,7 @@ class Game1Controller implements GameController {
         const container = this.deps.app.app.canvas.parentElement ?? document.body;
         this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container);
         this.playScreen.setOnClaim((type) => this.handleClaim(type));
-        this.playScreen.setOnBuy((ticketCount) => this.handleBuy(ticketCount));
+        this.playScreen.setOnBuy((selections) => this.handleBuy(selections));
         this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
         this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
         this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
@@ -232,7 +232,7 @@ class Game1Controller implements GameController {
         const container = this.deps.app.app.canvas.parentElement ?? document.body;
         this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container);
         this.playScreen.setOnClaim((type) => this.handleClaim(type));
-        this.playScreen.setOnBuy((ticketCount) => this.handleBuy(ticketCount));
+        this.playScreen.setOnBuy((selections) => this.handleBuy(selections));
         this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
         this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
         this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
@@ -357,8 +357,19 @@ class Game1Controller implements GameController {
 
   // ── User actions ──────────────────────────────────────────────────────
 
-  private async handleBuy(ticketCount: number = 1): Promise<void> {
-    const result = await this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true, ticketCount });
+  private async handleBuy(selections: Array<{ type: string; qty: number }> = []): Promise<void> {
+    // If selections are provided (new per-type path), send ticketSelections.
+    // Otherwise fall back to flat ticketCount for backward compat.
+    const payload: { roomCode: string; armed: true; ticketCount?: number; ticketSelections?: Array<{ type: string; qty: number }> } = {
+      roomCode: this.actualRoomCode,
+      armed: true,
+    };
+    if (selections.length > 0) {
+      payload.ticketSelections = selections;
+    } else {
+      payload.ticketCount = 1;
+    }
+    const result = await this.deps.socket.armBet(payload);
     this.playScreen?.showBuyPopupResult(result.ok, result.error?.message);
     if (!result.ok) {
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");

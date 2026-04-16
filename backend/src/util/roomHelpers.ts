@@ -126,6 +126,7 @@ export function buildRoomUpdatePayload(
     schedulerTickMs: number;
     getArmedPlayerIds: (roomCode: string) => string[];
     getArmedPlayerTicketCounts: (roomCode: string) => Record<string, number>;
+    getArmedPlayerSelections?: (roomCode: string) => Record<string, Array<{ type: string; qty: number }>>;
     getRoomConfiguredEntryFee: (roomCode: string) => number;
     getOrCreateDisplayTickets: (roomCode: string, playerId: string, count: number, gameSlug?: string) => Ticket[];
     getLuckyNumbers: (roomCode: string) => Record<string, number>;
@@ -164,6 +165,7 @@ export function buildRoomUpdatePayload(
   // Calculated here so the client never has to derive monetary amounts itself.
   // Rules mirror StakeCalculator.ts but are the single source of truth.
   const armedPlayerIds = opts.getArmedPlayerIds(snapshot.code);
+  const armedPlayerSelections = opts.getArmedPlayerSelections?.(snapshot.code) ?? {};
   const isGameRunning = snapshot.currentGame?.status === "RUNNING";
   const playerStakes: Record<string, number> = {};
 
@@ -181,14 +183,27 @@ export function buildRoomUpdatePayload(
       fee = opts.getRoomConfiguredEntryFee(snapshot.code);
     }
 
-    if (tickets.length > 0 && fee > 0) {
-      const ticketTypes = effectiveConfig.ticketTypes;
-      playerStakes[player.id] = roundCurrency(
-        tickets.reduce((sum, t) => {
-          const tt = ticketTypes.find((x: TicketTypeConfig) => x.type === t.type);
-          return sum + fee * (tt?.priceMultiplier ?? 1);
-        }, 0),
-      );
+    if (fee > 0) {
+      // If the player has per-type selections (armed phase), use those for precise pricing
+      const selections = armedPlayerSelections[player.id];
+      if (!isGameRunning && selections && selections.length > 0) {
+        const ticketTypes = effectiveConfig.ticketTypes;
+        playerStakes[player.id] = roundCurrency(
+          selections.reduce((sum, sel) => {
+            const tt = ticketTypes.find((x: TicketTypeConfig) => x.type === sel.type);
+            return sum + fee * (tt?.priceMultiplier ?? 1) * sel.qty;
+          }, 0),
+        );
+      } else if (tickets.length > 0) {
+        // Running game or legacy arm — calculate from actual tickets
+        const ticketTypes = effectiveConfig.ticketTypes;
+        playerStakes[player.id] = roundCurrency(
+          tickets.reduce((sum, t) => {
+            const tt = ticketTypes.find((x: TicketTypeConfig) => x.type === t.type);
+            return sum + fee * (tt?.priceMultiplier ?? 1);
+          }, 0),
+        );
+      }
     }
   }
 

@@ -134,8 +134,9 @@ export interface GameEventsDeps {
   findPlayerInRoomByWallet: (snapshot: RoomSnapshot, walletId: string) => RoomSnapshot["players"][number] | null;
   getRoomConfiguredEntryFee: (roomCode: string) => number;
   getArmedPlayerIds: (roomCode: string) => string[];
-  armPlayer: (roomCode: string, playerId: string, ticketCount?: number) => void;
+  armPlayer: (roomCode: string, playerId: string, ticketCount?: number, selections?: Array<{ type: string; qty: number }>) => void;
   getArmedPlayerTicketCounts: (roomCode: string) => Record<string, number>;
+  getArmedPlayerSelections: (roomCode: string) => Record<string, Array<{ type: string; qty: number }>>;
   disarmPlayer: (roomCode: string, playerId: string) => void;
   disarmAllPlayers: (roomCode: string) => void;
   clearDisplayTicketCache: (roomCode: string) => void;
@@ -496,15 +497,44 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
     }));
 
     socket.on("bet:arm", rateLimited("bet:arm", async (
-      payload: RoomActionPayload & { armed?: boolean; ticketCount?: number },
+      payload: RoomActionPayload & { armed?: boolean; ticketCount?: number; ticketSelections?: Array<{ type: string; qty: number }> },
       callback: (response: AckResponse<{ snapshot: RoomSnapshot; armed: boolean }>) => void
     ) => {
       try {
         const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
         const wantArmed = payload.armed !== false;
         if (wantArmed) {
-          const ticketCount = Math.min(30, Math.max(1, Math.round(payload.ticketCount ?? 1)));
-          armPlayer(roomCode, playerId, ticketCount);
+          // New path: per-type selections
+          if (Array.isArray(payload.ticketSelections) && payload.ticketSelections.length > 0) {
+            const selections = payload.ticketSelections
+              .filter((s) => s && typeof s.type === "string" && typeof s.qty === "number" && s.qty > 0)
+              .map((s) => ({ type: s.type, qty: Math.max(1, Math.round(s.qty)) }));
+
+            if (selections.length === 0) {
+              throw new DomainError("INVALID_INPUT", "Ingen gyldige billettvalg.");
+            }
+
+            // Validate total weighted count <= 30 using variant config ticketTypes for weights
+            const variantInfo = deps.getVariantConfig?.(roomCode);
+            const ticketTypes = variantInfo?.config?.ticketTypes ?? [];
+            let totalWeighted = 0;
+            for (const sel of selections) {
+              const tt = ticketTypes.find((t) => t.type === sel.type);
+              const weight = tt?.ticketCount ?? 1; // ticketCount IS the weight (small=1, large=3, elvis=2)
+              totalWeighted += sel.qty * weight;
+            }
+            if (totalWeighted > 30) {
+              throw new DomainError("INVALID_INPUT", `Totalt antall brett (${totalWeighted}) overstiger maks 30.`);
+            }
+            if (totalWeighted < 1) {
+              throw new DomainError("INVALID_INPUT", "Du må velge minst 1 brett.");
+            }
+            armPlayer(roomCode, playerId, totalWeighted, selections);
+          } else {
+            // Backward compat: flat ticketCount
+            const ticketCount = Math.min(30, Math.max(1, Math.round(payload.ticketCount ?? 1)));
+            armPlayer(roomCode, playerId, ticketCount);
+          }
         } else {
           disarmPlayer(roomCode, playerId);
         }
@@ -536,6 +566,7 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
           payoutPercent: runtimeBingoSettings.payoutPercent,
           armedPlayerIds: getArmedPlayerIds(roomCode),
           armedPlayerTicketCounts: deps.getArmedPlayerTicketCounts(roomCode),
+          armedPlayerSelections: deps.getArmedPlayerSelections(roomCode),
           gameType: variantInfo?.gameType,
           variantConfig: variantInfo?.config,
         });

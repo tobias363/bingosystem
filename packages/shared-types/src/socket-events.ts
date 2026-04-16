@@ -67,10 +67,20 @@ export interface RoomJoinPayload extends AuthenticatedSocketPayload {
   hallId?: string;
 }
 
+/** Per-type ticket selection sent from client to server during bet:arm. */
+export interface TicketSelection {
+  /** Ticket type code, e.g. "small-yellow", "large-white", "elvis". */
+  type: string;
+  /** How many of this ticket type to purchase. */
+  qty: number;
+}
+
 export interface BetArmPayload extends RoomActionPayload {
   armed?: boolean;
-  /** Number of tickets the player wants (1-30). Defaults to 1 if omitted. */
+  /** @deprecated Use ticketSelections instead. Flat count (1-30). Kept for backward compat. */
   ticketCount?: number;
+  /** Per-type ticket selections. Overrides ticketCount when present. */
+  ticketSelections?: TicketSelection[];
 }
 
 export interface GameStartPayload extends RoomActionPayload {

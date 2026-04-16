@@ -123,6 +123,12 @@ interface StartGameInput {
    * Falls back to `ticketsPerPlayer` for any player not in this map.
    */
   armedPlayerTicketCounts?: Record<string, number>;
+  /**
+   * Per-player ticket type selections from bet:arm.
+   * Maps playerId → array of { type, qty }.
+   * When present, ticket generation uses these instead of flat count + color cycling.
+   */
+  armedPlayerSelections?: Record<string, Array<{ type: string; qty: number }>>;
   /** Win-condition patterns for this round. Defaults to [1 Rad, Full Plate]. */
   patterns?: PatternDefinition[];
   /** Game variant type (from hall_game_schedules.game_type). */
@@ -488,7 +494,20 @@ export class BingoEngine {
       try {
         for (const player of eligiblePlayers) {
           const playerTicketCount = playerTicketCountMap.get(player.id) ?? ticketsPerPlayer;
-          const playerBuyIn = roundCurrency(entryFee * playerTicketCount);
+          // Calculate buy-in: if player has per-type selections, sum entryFee * priceMultiplier per type;
+          // otherwise fall back to entryFee * ticketCount (backward compat).
+          const playerSelections = input.armedPlayerSelections?.[player.id];
+          let playerBuyIn: number;
+          if (playerSelections && playerSelections.length > 0) {
+            playerBuyIn = roundCurrency(
+              playerSelections.reduce((sum, sel) => {
+                const tt = variantConfig.ticketTypes.find((t) => t.type === sel.type);
+                return sum + entryFee * (tt?.priceMultiplier ?? 1) * sel.qty;
+              }, 0)
+            );
+          } else {
+            playerBuyIn = roundCurrency(entryFee * playerTicketCount);
+          }
           const transfer = await this.walletAdapter.transfer(
             player.walletId,
             houseAccountId,
@@ -548,23 +567,67 @@ export class BingoEngine {
         const playerTickets: Ticket[] = [];
         const playerMarks: Set<number>[] = [];
 
-        // Assign colors for this player's tickets based on variant
-        const colorAssignments = variantConfigModule.assignTicketColors(playerTicketCount, variantConfig, variantGameType);
+        // Check if this player has per-type selections
+        const playerSelections = input.armedPlayerSelections?.[player.id];
 
-        for (let ticketIndex = 0; ticketIndex < playerTicketCount; ticketIndex += 1) {
-          const assignment = colorAssignments[ticketIndex] ?? { color: "Small Yellow", type: "small" };
-          const ticket = await this.bingoAdapter.createTicket({
-            roomCode: room.code,
-            gameId,
-            gameSlug: room.gameSlug,
-            player,
-            ticketIndex,
-            ticketsPerPlayer: playerTicketCount,
-            color: assignment.color,
-            type: assignment.type,
-          });
-          playerTickets.push(ticket);
-          playerMarks.push(new Set<number>());
+        if (playerSelections && playerSelections.length > 0) {
+          // ── Per-type ticket generation ──
+          // Each selection specifies a type and qty. For each selection,
+          // generate qty * ticketCount actual tickets (e.g. 1 "large" = 3 tickets).
+          let ticketIndex = 0;
+          for (const sel of playerSelections) {
+            const tt = variantConfig.ticketTypes.find((t) => t.type === sel.type);
+            const ticketsPerUnit = tt?.ticketCount ?? 1;
+            const colors = tt?.colors; // For traffic-light: [Red, Yellow, Green]
+
+            for (let unitIdx = 0; unitIdx < sel.qty; unitIdx++) {
+              for (let subIdx = 0; subIdx < ticketsPerUnit; subIdx++) {
+                let color: string;
+                let type: string;
+                if (colors && colors.length > 0) {
+                  // Traffic-light style: cycle through the type's colors
+                  color = colors[subIdx % colors.length];
+                  type = "traffic-" + color.split(" ")[1]?.toLowerCase();
+                } else {
+                  color = tt?.name ?? "Small Yellow";
+                  type = tt?.type ?? "small";
+                }
+
+                const ticket = await this.bingoAdapter.createTicket({
+                  roomCode: room.code,
+                  gameId,
+                  gameSlug: room.gameSlug,
+                  player,
+                  ticketIndex,
+                  ticketsPerPlayer: playerTicketCount,
+                  color,
+                  type,
+                });
+                playerTickets.push(ticket);
+                playerMarks.push(new Set<number>());
+                ticketIndex++;
+              }
+            }
+          }
+        } else {
+          // ── Legacy: flat count with color cycling ──
+          const colorAssignments = variantConfigModule.assignTicketColors(playerTicketCount, variantConfig, variantGameType);
+
+          for (let ticketIndex = 0; ticketIndex < playerTicketCount; ticketIndex += 1) {
+            const assignment = colorAssignments[ticketIndex] ?? { color: "Small Yellow", type: "small" };
+            const ticket = await this.bingoAdapter.createTicket({
+              roomCode: room.code,
+              gameId,
+              gameSlug: room.gameSlug,
+              player,
+              ticketIndex,
+              ticketsPerPlayer: playerTicketCount,
+              color: assignment.color,
+              type: assignment.type,
+            });
+            playerTickets.push(ticket);
+            playerMarks.push(new Set<number>());
+          }
         }
 
         tickets.set(player.id, playerTickets);

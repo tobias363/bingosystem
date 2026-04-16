@@ -51,7 +51,7 @@ export class PlayScreen extends Container {
   private chatPanel: ChatPanelV2;
   private audio: AudioManager;
   private onClaim: ((type: "LINE" | "BINGO") => void) | null = null;
-  private onBuy: ((ticketCount: number) => void) | null = null;
+  private onBuy: ((selections: Array<{ type: string; qty: number }>) => void) | null = null;
   private bgSprite: Sprite | null = null;
   private screenW: number;
   private screenH: number;
@@ -163,8 +163,8 @@ export class PlayScreen extends Container {
     // Game1 buy popup (HTML overlay — matches Unity's Game1TicketPurchasePanel)
     this.buyPopup = new Game1BuyPopup(this.overlayManager);
     // Delegate buy to controller — no direct socket call from view layer.
-    this.buyPopup.setOnBuy((ticketCount: number) => {
-      this.onBuy?.(ticketCount);
+    this.buyPopup.setOnBuy((selections: Array<{ type: string; qty: number }>) => {
+      this.onBuy?.(selections);
     });
 
     // Center top panel with action callbacks
@@ -204,7 +204,7 @@ export class PlayScreen extends Container {
     this.onClaim = callback;
   }
 
-  setOnBuy(callback: (ticketCount: number) => void): void {
+  setOnBuy(callback: (selections: Array<{ type: string; qty: number }>) => void): void {
     this.onBuy = callback;
   }
 

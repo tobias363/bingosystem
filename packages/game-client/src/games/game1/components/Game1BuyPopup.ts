@@ -15,7 +15,7 @@ export class Game1BuyPopup {
   private statusMsg: HTMLDivElement;
   private buyBtn: HTMLButtonElement;
 
-  private onBuy: ((ticketCount: number) => void) | null = null;
+  private onBuy: ((selections: Array<{ type: string; qty: number }>) => void) | null = null;
   private typeRows: Array<{
     type: string;
     price: number;
@@ -156,7 +156,7 @@ export class Game1BuyPopup {
     return this.backdrop.style.display !== "none";
   }
 
-  setOnBuy(callback: (ticketCount: number) => void): void {
+  setOnBuy(callback: (selections: Array<{ type: string; qty: number }>) => void): void {
     this.onBuy = callback;
   }
 
@@ -271,7 +271,10 @@ export class Game1BuyPopup {
     this.buyBtn.style.opacity = "0.6";
     this.buyBtn.textContent = "Vennligst vent...";
     this.statusMsg.textContent = "";
-    this.onBuy?.(this.getTotalTicketCount());
+    const selections = this.typeRows
+      .filter((r) => r.qty > 0)
+      .map((r) => ({ type: r.type, qty: r.qty }));
+    this.onBuy?.(selections);
   }
 
   private createRoundBtn(text: string): HTMLButtonElement {
