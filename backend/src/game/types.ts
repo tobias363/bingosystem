@@ -38,8 +38,14 @@ export interface Player {
 }
 
 export interface Ticket {
-  // 3x5 grid (3 rows, 5 columns), numbers 1-60. No free space.
+  // Grid of numbers. Format depends on game type:
+  // - Databingo60: 3x5 grid (3 rows, 5 cols), numbers 1-60, no free space.
+  // - Bingo75:     5x5 grid (5 rows, 5 cols), numbers 1-75, center=0 (free).
   grid: number[][];
+  /** Display color name matching Unity TicketColorManager, e.g. "Small Yellow", "Elvis 1". */
+  color?: string;
+  /** Ticket type code for variant logic: "small", "large", "elvis", "traffic-red", etc. */
+  type?: string;
 }
 
 export interface ClaimRecord {
@@ -63,6 +69,25 @@ export interface ClaimRecord {
   createdAt: string;
 }
 
+export interface JackpotState {
+  playerId: string;
+  prizeList: number[];
+  totalSpins: number;
+  playedSpins: number;
+  spinHistory: { spinNumber: number; segmentIndex: number; prizeAmount: number }[];
+  isComplete: boolean;
+}
+
+export type MiniGameType = "wheelOfFortune" | "treasureChest" | "mysteryGame" | "colorDraft";
+
+export interface MiniGameState {
+  playerId: string;
+  type: MiniGameType;
+  prizeList: number[];
+  isPlayed: boolean;
+  result?: { segmentIndex: number; prizeAmount: number };
+}
+
 export interface GameState {
   id: string;
   status: GameStatus;
@@ -84,6 +109,15 @@ export interface GameState {
   participatingPlayerIds?: string[];
   patterns?: PatternDefinition[];
   patternResults?: PatternResult[];
+  /** Game 5 jackpot mini-game (activated after BINGO win). */
+  jackpot?: JackpotState;
+  /** Game 1 mini-game (wheel of fortune / treasure chest, activated after BINGO win). */
+  miniGame?: MiniGameState;
+  /** BIN-460: Admin can pause a running game — freezes draws until resumed. */
+  isPaused?: boolean;
+  pauseMessage?: string;
+  /** BIN-463: Test game — no real money transactions. */
+  isTestGame?: boolean;
   startedAt: string;
   endedAt?: string;
   endedReason?: string;
@@ -124,6 +158,11 @@ export interface GameSnapshot {
   /** BIN-244: Per-ticket mark sets — outer index = ticket index, inner = marked numbers. */
   marks: Record<string, number[][]>;
   participatingPlayerIds?: string[];
+  /** BIN-460: True if admin has paused this game. */
+  isPaused?: boolean;
+  pauseMessage?: string;
+  /** BIN-463: Test game — no real money transactions. */
+  isTestGame?: boolean;
   startedAt: string;
   endedAt?: string;
   endedReason?: string;

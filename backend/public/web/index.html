@@ -4,6 +4,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>SPILLORAMA</title>
   <link rel="shortcut icon" href="TemplateData/favicon.ico">
   <link rel="stylesheet" href="TemplateData/style.css">
@@ -258,90 +259,220 @@
     .lobby-screen {
       display: none;
       flex-direction: column;
-      min-height: 100vh;
+      height: 100vh;
+      overflow: hidden;
       background: linear-gradient(160deg, #1a0a0a 0%, #3d0d0d 40%, #5c1010 70%, #2d0808 100%);
     }
     .lobby-screen.is-visible { display: flex; }
 
+    /* ── Topbar ────────────────────────────────────────────────────────── */
     .lobby-topbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 14px 20px;
-      background: rgba(0,0,0,0.35);
-      border-bottom: 1px solid rgba(255,255,255,0.08);
+      padding: 25px 50px;
+      background: linear-gradient(180deg, #5c1010 0%, #3d0d0d 100%);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
       flex-shrink: 0;
+      gap: 8px;
     }
     .lobby-topbar-left {
-      display: flex; align-items: center; gap: 12px;
+      display: flex;
+      align-items: center;
+      gap: 110px;
     }
+
+    /* Logo */
     .lobby-topbar-logo {
+      display: flex; align-items: center; gap: 10px;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+    .lobby-topbar-logo-img {
+      height: 46px;
+      width: auto;
+      display: block;
+      flex-shrink: 0;
+    }
+    .lobby-topbar-logo-text {
       font-size: 20px; font-weight: 900;
-      letter-spacing: 0.06em;
+      letter-spacing: 0.08em;
       color: #fff;
-      text-shadow: 0 1px 8px rgba(220,40,40,0.4);
+      text-shadow: 0 1px 10px rgba(220,40,40,0.5);
+      line-height: 1;
+    }
+    .lobby-topbar-logo-sub {
+      font-size: 8px; font-weight: 600;
+      letter-spacing: 0.16em;
+      color: rgba(255,255,255,0.45);
+      display: block;
+      line-height: 1;
+      margin-top: 2px;
+    }
+
+    /* Divider */
+    .lobby-topbar-divider {
+      width: 1px; height: 28px;
+      background: rgba(255,255,255,0.1);
+      margin: 0 6px;
+      flex-shrink: 0;
+    }
+
+    /* Alle Spill button */
+    .lobby-all-games-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 0 14px;
+      height: 36px;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.07);
+      color: rgba(255,255,255,0.9);
+      font-family: inherit;
+      font-size: 13px; font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .lobby-all-games-btn:hover { background: rgba(255,255,255,0.13); }
+    .lobby-all-games-btn svg { opacity: 0.75; }
+
+    /* Hall selector */
+    .lobby-topbar-hall-wrap {
+      display: flex; align-items: center; gap: 0;
+      height: 36px;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .lobby-topbar-hall-icon {
+      display: flex; align-items: center; justify-content: center;
+      width: 34px; height: 100%;
+      color: rgba(255,255,255,0.5);
+      flex-shrink: 0;
+      pointer-events: none;
     }
     .lobby-topbar-hall {
-      padding: 8px 12px;
-      border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.15);
-      background: rgba(255,255,255,0.06);
+      padding: 0 10px 0 2px;
+      height: 100%;
+      border: none;
+      background: transparent;
       color: #fff;
       font-family: inherit;
       font-size: 13px; font-weight: 600;
+      cursor: pointer;
+      min-width: 120px;
+      max-width: 200px;
+    }
+    .lobby-topbar-hall option { background: #1a0a0a; }
+
+    /* Right section */
+    .lobby-topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-shrink: 0;
     }
 
-    .lobby-topbar-right {
-      display: flex; align-items: center; gap: 12px;
-    }
+    /* Balance chip */
     .lobby-balance-chip {
-      padding: 8px 14px;
+      display: flex; align-items: center; gap: 6px;
+      padding: 0 14px;
+      height: 36px;
       border-radius: 10px;
-      background: rgba(255,255,255,0.08);
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.1);
       font-size: 14px; font-weight: 800;
-      color: #fff;
+      color: #81c784;
+      white-space: nowrap;
     }
+    .lobby-balance-chip::before {
+      content: '';
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #81c784;
+      box-shadow: 0 0 6px #81c784;
+      flex-shrink: 0;
+    }
+
+    /* Lommebok button */
+    .lobby-wallet-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 0 14px;
+      height: 36px;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.07);
+      color: rgba(255,255,255,0.9);
+      font-family: inherit;
+      font-size: 13px; font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .lobby-wallet-btn:hover { background: rgba(255,255,255,0.13); }
+
+    /* Innskudd button */
     .lobby-deposit-btn {
-      padding: 8px 14px;
+      display: flex; align-items: center; gap: 6px;
+      padding: 0 16px;
+      height: 36px;
       border: none; border-radius: 10px;
       background: linear-gradient(135deg, #2e7d32, #43a047);
       color: #fff;
       font-family: inherit;
       font-size: 13px; font-weight: 700;
       cursor: pointer;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(46,125,50,0.4);
+      transition: opacity 0.15s;
     }
     .lobby-deposit-btn:hover { opacity: 0.9; }
+    .lobby-deposit-btn-plus {
+      font-size: 18px; font-weight: 400; line-height: 1;
+      opacity: 0.85;
+    }
 
+    /* Icon buttons (bell, settings) */
     .lobby-user-chip {
       display: flex; align-items: center; gap: 8px;
-      padding: 6px 12px;
+      padding: 0 12px;
+      height: 36px;
       border-radius: 10px;
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.1);
       cursor: pointer;
       font-size: 13px; font-weight: 600;
       color: rgba(255,255,255,0.85);
+      transition: background 0.15s;
     }
-    .lobby-user-chip:hover { background: rgba(255,255,255,0.1); }
+    .lobby-user-chip:hover { background: rgba(255,255,255,0.11); }
     .lobby-user-avatar {
       width: 28px; height: 28px;
       border-radius: 50%;
       background: linear-gradient(135deg, #c62828, #e53935);
       display: flex; align-items: center; justify-content: center;
-      font-size: 13px; font-weight: 900; color: #fff;
+      font-size: 12px; font-weight: 900; color: #fff;
+      flex-shrink: 0;
     }
 
     .lobby-main {
       flex: 1;
-      padding: 24px 20px 0;
-      max-width: 900px;
-      width: 100%;
+      padding: 24px 40px;
+      width: 80%;
+      max-width: 1400px;
       margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }
     .lobby-heading {
-      font-size: 26px; font-weight: 900;
+      font-size: 22px; font-weight: 900;
       margin: 0 0 20px;
-      color: #fff;
+      color: rgba(255,255,255,0.7);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
 
     .lobby-compliance-warning {
@@ -356,44 +487,72 @@
 
     .lobby-game-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 16px;
+      flex: 1;
+      min-height: 0;
     }
 
+    /* ── Game card: vertical stacked layout ──────────────────────────────── */
     .lobby-tile {
       display: flex;
-      align-items: center;
-      gap: 14px;
-      padding: 16px 18px;
+      flex-direction: column;
+      align-items: stretch;
+      padding: 0;
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 16px;
       background: rgba(255,255,255,0.05);
       cursor: pointer;
-      transition: background 0.2s, border-color 0.2s, transform 0.1s;
+      transition: background 0.2s, border-color 0.2s, transform 0.12s;
       font-family: inherit;
       color: #fff;
       text-align: left;
-      width: 100%;
+      overflow: hidden;
+      height: 100%;
     }
     .lobby-tile:hover:not(:disabled) {
-      background: rgba(255,255,255,0.1);
-      border-color: rgba(229,57,53,0.4);
-      transform: translateY(-1px);
+      background: rgba(255,255,255,0.09);
+      border-color: rgba(229,57,53,0.5);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
     .lobby-tile:disabled {
       opacity: 0.4; cursor: not-allowed;
     }
-    .lobby-tile-icon { flex-shrink: 0; }
-    .lobby-tile-info { flex: 1; min-width: 0; }
-    .lobby-tile-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+
+    /* Thumbnail stretches to fill available card height */
+    .lobby-tile-icon {
+      width: 100%;
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      background: rgba(0,0,0,0.4);
+    }
+    .lobby-tile-thumb {
+      width: 100%; height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    /* Info row — fixed height, never shrinks */
+    .lobby-tile-info {
+      flex-shrink: 0;
+      padding: 10px 14px 6px;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .lobby-tile-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .lobby-tile-title {
       display: block;
-      font-size: 16px; font-weight: 800;
+      font-size: 15px; font-weight: 800;
     }
     .lobby-tile-status {
       display: inline-block;
       font-size: 11px; font-weight: 700;
-      padding: 2px 7px; border-radius: 20px;
+      padding: 2px 8px; border-radius: 20px;
       letter-spacing: 0.03em;
     }
     .lobby-tile-status--open    { background: rgba(76,175,80,0.25); color: #81c784; }
@@ -401,13 +560,28 @@
     .lobby-tile-status--closed  { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.35); }
     .lobby-tile-desc {
       display: block;
-      font-size: 12px; font-weight: 500;
+      font-size: 13px; font-weight: 500;
       color: rgba(255,255,255,0.55);
     }
-    .lobby-tile-arrow {
-      font-size: 24px; font-weight: 300;
-      color: rgba(255,255,255,0.3);
+
+    /* "Spill nå" button — always visible, fixed at bottom */
+    .lobby-tile-play-btn {
+      flex-shrink: 0;
+      margin: 4px 14px 12px;
+      padding: 8px;
+      border: none; border-radius: 30px;
+      background: rgba(38,166,154,0.85);
+      color: #fff;
+      font-size: 13px; font-weight: 700;
+      text-align: center;
+      letter-spacing: 0.02em;
     }
+    .lobby-tile:not(:disabled):hover .lobby-tile-play-btn {
+      background: rgba(38,166,154,1);
+    }
+    .lobby-tile:disabled .lobby-tile-play-btn { display: none; }
+
+    .lobby-tile-arrow { display: none; }
 
     .lobby-loading, .lobby-error, .lobby-empty {
       text-align: center;
@@ -441,31 +615,76 @@
     #unity-container { display: none; }
     #unity-footer { display: none; }
 
-    /* ── Back-to-Lobby Bar ─────────────────────────────────────────────── */
+    /* ── Game Top Bar — Unity canvas sits below the bar ─────────────────── */
+    #unity-container.unity-desktop {
+      position: fixed !important;
+      top: 80px !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      width: 100% !important;
+      height: calc(100dvh - 80px) !important;
+      height: calc(var(--vh, 100vh) - 80px) !important;
+      transform: none !important;
+    }
+
+    /* ── Game Top Bar (mirrors lobby topbar look) ─────────────────────── */
     .lobby-back-bar {
       position: fixed; top: 0; left: 0; right: 0;
       z-index: 200;
       display: none;
       align-items: center;
-      padding: 0 16px;
-      height: 44px;
-      background: rgba(0,0,0,0.75);
-      backdrop-filter: blur(8px);
-      border-bottom: 1px solid rgba(255,255,255,0.1);
+      justify-content: space-between;
+      padding: 0 50px;          /* same horizontal edge spacing as lobby */
+      height: 80px;
+      background: linear-gradient(180deg, #5c1010 0%, #3d0d0d 100%);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      gap: 20px;
     }
     .lobby-back-bar.is-visible { display: flex; }
 
+    /* Left group: logo + back button */
+    .game-bar-left {
+      display: flex; align-items: center;
+      gap: 20px; flex-shrink: 0;
+    }
+    .game-bar-logo {
+      display: flex; align-items: center;
+      text-decoration: none; flex-shrink: 0;
+    }
+    .game-bar-logo-img { height: 46px; width: auto; display: block; }
+
+    /* Back button */
     .lobby-back-btn {
-      border: none;
-      border-radius: 8px;
-      padding: 6px 14px;
-      background: rgba(255,255,255,0.1);
-      color: #fff;
+      display: flex; align-items: center; gap: 7px;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      padding: 0 16px;
+      height: 36px;
+      background: rgba(255,255,255,0.07);
+      color: rgba(255,255,255,0.9);
       font-family: inherit;
       font-size: 13px; font-weight: 700;
-      cursor: pointer;
+      cursor: pointer; white-space: nowrap;
+      flex-shrink: 0;
+      transition: background 0.15s;
     }
-    .lobby-back-btn:hover { background: rgba(255,255,255,0.18); }
+    .lobby-back-btn:hover { background: rgba(255,255,255,0.13); }
+
+    /* Center spacer (game name, optional) */
+    .game-bar-title {
+      flex: 1;
+      text-align: center;
+      font-size: 14px; font-weight: 600;
+      color: rgba(255,255,255,0.5);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* Right group: hall + balance + lommebok */
+    .game-bar-right {
+      display: flex; align-items: center;
+      gap: 20px; flex-shrink: 0;
+    }
 
     /* ── Spillvett FAB ─────────────────────────────────────────────────── */
     .spillvett-fab {
@@ -815,7 +1034,7 @@
       width: 100%; height: 100%;
     }
 
-    /* ── Notification bell ──────────────────────────────────────────────── */
+    /* ── Topbar icon buttons (bell, settings) ──────────────────────────── */
     .lobby-topbar-icon-btn {
       position: relative;
       display: flex; align-items: center; justify-content: center;
@@ -823,11 +1042,13 @@
       border: 1px solid rgba(255,255,255,0.12);
       border-radius: 10px;
       background: rgba(255,255,255,0.06);
-      color: rgba(255,255,255,0.8);
+      color: rgba(255,255,255,0.75);
       cursor: pointer;
       padding: 0;
+      flex-shrink: 0;
+      transition: background 0.15s;
     }
-    .lobby-topbar-icon-btn:hover { background: rgba(255,255,255,0.12); }
+    .lobby-topbar-icon-btn:hover { background: rgba(255,255,255,0.12); color: #fff; }
     .notification-badge {
       position: absolute; top: -4px; right: -4px;
       min-width: 16px; height: 16px;
@@ -837,6 +1058,7 @@
       font-size: 10px; font-weight: 800;
       display: flex; align-items: center; justify-content: center;
       padding: 0 4px;
+      border: 2px solid #0a0303;
     }
 
     /* ── Schedule list ─────────────────────────────────────────────────── */
@@ -905,17 +1127,78 @@
     .panel-error { color: #ff9191; }
 
     /* ── Responsive ────────────────────────────────────────────────────── */
+    @media (max-width: 820px) {
+      .lobby-topbar { height: auto; padding: 10px 14px; flex-wrap: wrap; gap: 8px; }
+      .lobby-topbar-left { flex: 1 1 auto; }
+      .lobby-topbar-right { flex: 1 1 auto; justify-content: flex-end; }
+      .lobby-all-games-btn span { display: none; }
+      .lobby-wallet-btn span { display: none; }
+      .lobby-topbar-divider { display: none; }
+      .lobby-topbar-hall { max-width: 140px; }
+
+      /* Game bar — compact on tablet */
+      .lobby-back-bar { padding: 0 14px; height: 60px; gap: 10px; }
+      .game-bar-logo-img { height: 32px; }
+      .game-bar-left .lobby-topbar-divider { display: none; }
+      .game-bar-left { gap: 10px; }
+      .game-bar-right { gap: 10px; }
+      .game-bar-right .lobby-wallet-btn span { display: none; }
+
+      /* Candy overlay — fill more of the screen */
+      #candy-shell { width: calc(100vw - 16px); height: calc(100vh - 16px); border-radius: 14px; }
+      #candy-overlay { padding: 8px; }
+    }
+    @media (max-width: 900px) {
+      .lobby-game-grid { grid-template-columns: repeat(2, 1fr); }
+      .lobby-main { width: 95%; padding: 20px 16px; }
+    }
     @media (max-width: 600px) {
-      .lobby-topbar {
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-      .lobby-topbar-left,
-      .lobby-topbar-right { width: 100%; }
-      .lobby-game-grid {
-        grid-template-columns: 1fr;
-      }
+      .lobby-topbar { flex-wrap: wrap; gap: 8px; }
+      .lobby-topbar-left, .lobby-topbar-right { width: 100%; }
+      .lobby-game-grid { grid-template-columns: 1fr; }
       .login-brand-title { font-size: 32px; }
+      .lobby-topbar-logo-sub { display: none; }
+
+      /* Game bar — mobile: stack or hide non-essential */
+      .lobby-back-bar {
+        padding: 0 10px;
+        padding-left: max(10px, env(safe-area-inset-left));
+        padding-right: max(10px, env(safe-area-inset-right));
+        height: 52px; gap: 6px;
+      }
+      .game-bar-logo-img { height: 26px; }
+      .game-bar-title { font-size: 12px; }
+      .lobby-back-btn span,
+      .lobby-back-btn svg + span { display: none; }
+      .lobby-back-btn { padding: 0 10px; height: 32px; }
+      .game-bar-right .lobby-topbar-hall-wrap { max-width: 100px; }
+      .game-bar-right .lobby-balance-chip { font-size: 12px; padding: 4px 10px; }
+
+      /* Candy overlay — full bleed on small phones */
+      #candy-shell { width: 100vw; height: 100dvh; border-radius: 0; }
+      #candy-overlay { padding: 0; }
+      #candy-close-btn { top: 8px; right: 8px; padding: 8px 12px; font-size: 12px; }
+
+      /* Unity container — account for shorter game bar */
+      .lobby-back-bar.is-visible ~ #unity-container { top: 52px !important; height: calc(100dvh - 52px) !important; }
+      .lobby-back-bar.is-visible ~ #web-game-container { top: 52px; height: calc(100dvh - 52px); }
+    }
+
+    /* ── Safe area insets (notched phones) ─────────────────────────────── */
+    @supports (padding: env(safe-area-inset-top)) {
+      .lobby-topbar { padding-top: max(10px, env(safe-area-inset-top)); }
+      .lobby-back-bar { padding-top: env(safe-area-inset-top); }
+      .spillvett-fab { bottom: max(18px, env(safe-area-inset-bottom)); left: max(18px, env(safe-area-inset-left)); }
+    }
+
+    /* ── Orientation: landscape on mobile ──────────────────────────────── */
+    @media (max-height: 500px) and (orientation: landscape) {
+      .lobby-back-bar { height: 44px; padding: 0 10px; }
+      .game-bar-logo-img { height: 24px; }
+      .game-bar-title { display: none; }
+      .lobby-back-btn { height: 28px; font-size: 12px; }
+      .lobby-back-bar.is-visible ~ #unity-container { top: 44px !important; height: calc(100dvh - 44px) !important; }
+      .lobby-back-bar.is-visible ~ #web-game-container { top: 44px; height: calc(100dvh - 44px); }
     }
 
     body.candy-overlay-open {
@@ -1253,22 +1536,55 @@
   <!-- ═══ 2. LOBBY SCREEN ════════════════════════════════════════════════ -->
   <div id="lobby-screen" class="lobby-screen">
     <div class="lobby-topbar">
+      <!-- Left: Logo + hall selector -->
       <div class="lobby-topbar-left">
-        <span class="lobby-topbar-logo">SPILLORAMA</span>
-        <select id="lobby-hall-select" class="lobby-topbar-hall">
-          <option>Laster haller...</option>
-        </select>
+        <div class="lobby-topbar-logo">
+          <img class="lobby-topbar-logo-img" src="logo.png" alt="Spillorama">
+        </div>
+
+        <!-- Hall selector -->
+        <div class="lobby-topbar-hall-wrap">
+          <div class="lobby-topbar-hall-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </div>
+          <select id="lobby-hall-select" class="lobby-topbar-hall">
+            <option>Laster haller...</option>
+          </select>
+        </div>
       </div>
+
+      <!-- Right: Actions + user -->
       <div class="lobby-topbar-right">
+        <!-- Balance -->
         <span class="lobby-balance-chip" id="lobby-balance">0 kr</span>
-        <button class="lobby-deposit-btn" id="lobby-deposit-btn" type="button">Sett inn</button>
+
+        <!-- Lommebok -->
+        <button class="lobby-wallet-btn" type="button" id="lobby-wallet-btn" title="Lommebok">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+          <span>Lommebok</span>
+        </button>
+
+        <!-- Innskudd -->
+        <button class="lobby-deposit-btn" id="lobby-deposit-btn" type="button">
+          <span class="lobby-deposit-btn-plus">+</span>
+          Innskudd
+        </button>
+
+        <!-- Bell -->
         <button class="lobby-topbar-icon-btn" id="lobby-notification-btn" type="button" title="Varsler">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           <span class="notification-badge" id="notification-badge" hidden></span>
         </button>
+
+        <!-- Profile -->
         <button class="lobby-user-chip" id="lobby-profile-btn" type="button">
           <span class="lobby-user-avatar" id="lobby-user-avatar">?</span>
           <span id="lobby-user-name">Bruker</span>
+        </button>
+
+        <!-- Settings -->
+        <button class="lobby-topbar-icon-btn" id="lobby-settings-btn" type="button" title="Innstillinger">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
       </div>
     </div>
@@ -1293,7 +1609,10 @@
     </footer>
   </div>
 
-  <!-- ═══ 3. UNITY CONTAINER (hidden, loads on demand) ═══════════════════ -->
+  <!-- ═══ 3a. WEB GAME CONTAINER (PixiJS, hidden, loads on demand) ═══════ -->
+  <div id="web-game-container" style="display:none; position:fixed; inset:0; z-index:900; background:#1a1a2e;"></div>
+
+  <!-- ═══ 3b. UNITY CONTAINER (hidden, loads on demand) ═══════════════════ -->
   <div id="unity-container" class="unity-desktop" style="display:none">
     <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
     <div id="unity-loading-bar">
@@ -1310,13 +1629,125 @@
     </div>
   </div>
 
-  <!-- ═══ 4. BACK-TO-LOBBY BAR ══════════════════════════════════════════ -->
+  <!-- ═══ 4. GAME TOP BAR (shown when Unity game is active) ══════════════ -->
   <div id="lobby-back-bar" class="lobby-back-bar">
-    <button class="lobby-back-btn" type="button" onclick="window.returnToShellLobby()">&#8592; Tilbake til lobby</button>
+
+    <!-- Left: logo + tilbake-knapp -->
+    <div class="game-bar-left">
+      <a class="game-bar-logo" href="#">
+        <img class="game-bar-logo-img" src="logo.png" alt="Spillorama">
+      </a>
+      <div class="lobby-topbar-divider"></div>
+      <button class="lobby-back-btn" type="button" onclick="window.returnToShellLobby()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        Tilbake til lobby
+      </button>
+    </div>
+
+    <!-- Center: game name (oppdateres av Unity) -->
+    <div class="game-bar-title" id="game-bar-name"></div>
+
+    <!-- Right: hall + saldo + lommebok -->
+    <div class="game-bar-right">
+
+      <!-- Hall selector (interaktiv, samme logikk som lobby) -->
+      <div class="lobby-topbar-hall-wrap">
+        <div class="lobby-topbar-hall-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </div>
+        <select id="game-bar-hall-select" class="lobby-topbar-hall">
+          <option>Laster haller...</option>
+        </select>
+      </div>
+
+      <!-- Saldo -->
+      <span class="lobby-balance-chip" id="game-bar-balance">0 kr</span>
+
+      <!-- Lommebok -->
+      <button class="lobby-wallet-btn" type="button" onclick="window.ShowSpillvettPanel && window.ShowSpillvettPanel()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
+        <span>Lommebok</span>
+      </button>
+
+    </div>
   </div>
 
   <!-- ═══ 5. SPILLVETT FAB ══════════════════════════════════════════════ -->
   <button id="spillvett-fab" class="spillvett-fab" type="button" hidden>Spillvett</button>
+
+  <!-- ═══ DEBUG: Ticket Debug Button ═══ -->
+  <button id="ticket-debug-btn" style="position:fixed;bottom:10px;right:120px;z-index:9999;background:#ff6600;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:bold;cursor:pointer;font-size:12px" onclick="window._showTicketDebug()">🎫 Debug</button>
+  <script>
+  window._showTicketDebug = function() {
+    var jwt = sessionStorage.getItem('spillorama.accessToken') || '';
+    var hallId = sessionStorage.getItem('lobby.activeHallId') || '';
+    if (!jwt) { alert('No JWT'); return; }
+
+    // Use socket.io-client loaded by Unity to query backend directly
+    var existing = document.getElementById('debug-overlay');
+    if (existing) existing.remove();
+
+    var overlay = document.createElement('div');
+    overlay.id = 'debug-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);color:#0f0;font-family:monospace;font-size:13px;padding:20px;overflow:auto;white-space:pre-wrap;user-select:text;cursor:text';
+    overlay.innerHTML = 'Loading ticket debug...\n\nClick anywhere to close.';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+
+    // Collect console logs
+    var logs = [];
+    var consoleEntries = performance.getEntriesByType ? [] : [];
+
+    // Search recent console for our debug markers
+    var searchTerms = ['SpilloramaBridge', 'Extracted', 'BuildGame1History', 'bet:arm', 'RoomPlayerId', 'ActiveRoomCode'];
+
+    fetch('/api/wallet/me', { headers: { 'Authorization': 'Bearer ' + jwt } })
+      .then(function(r) { return r.json(); })
+      .then(function(wr) {
+        var userId = wr.data?.playerId || 'unknown';
+        var balance = wr.data?.account?.balance || 0;
+
+        var lines = [
+          '╔══════════════════════════════════╗',
+          '║     🎫 TICKET DEBUG PANEL        ║',
+          '╚══════════════════════════════════╝',
+          '',
+          '── Identity ──',
+          'User ID (profile):  ' + userId,
+          'JWT:                ' + jwt.substring(0,30) + '...',
+          'Hall ID:            ' + hallId,
+          'Balance:            ' + balance + ' kr',
+          '',
+          '── Instructions ──',
+          '1. Press "Kjøp" to arm yourself',
+          '2. Wait for current round to END',
+          '3. New round starts → you get tickets',
+          '4. Look in console (F12) for:',
+          '   [SpilloramaSocket] RoomPlayerId set to XXX',
+          '   [SpilloramaBridge] Extracted N ticket grids',
+          '   [SpilloramaBridge] BuildGame1History: N tickets',
+          '',
+          '── What to check in Console (F12) ──',
+          'Filter by: SpilloramaBridge',
+          '',
+          'If "Extracted 0 ticket grids" or no "Extracted" log:',
+          '  → RoomPlayerId not matching ticket data',
+          '',
+          'If "Extracted 4 ticket grids" but no bongs visible:',
+          '  → ticketList passed to OnSubscribeRoom but UI not rendering',
+          '',
+          'If no "HandleRoomUpdate" logs at all:',
+          '  → Bridge not receiving events',
+          '',
+          '── Click anywhere to close ──'
+        ];
+        overlay.textContent = lines.join('\n');
+      })
+      .catch(function(e) {
+        overlay.textContent = 'Error: ' + e.message + '\n\nClick to close.';
+      });
+  };
+  </script>
 
   <!-- ═══ 6. PROFILE / SPILLVETT PANEL ══════════════════════════════════ -->
   <div id="profile-overlay" class="profile-overlay">
@@ -1437,7 +1868,7 @@
               <p class="spillvett-subtitle" id="spillvett-hall-name">Venter pa valgt hall</p>
             </div>
             <div class="spillvett-actions">
-              <button class="spillvett-button is-secondary" type="button" id="spillvett-toggle">Apne spillregnskap</button>
+              <button class="spillvett-button is-secondary" type="button" id="spillvett-toggle">Spillregnskap →</button>
             </div>
           </div>
 
@@ -1626,6 +2057,269 @@
     </div>
   </div>
 
+  <!-- ═══ SPILLREGNSKAP FULL-PAGE VIEW ═══════════════════════════════════ -->
+  <section id="spillregnskap-view" hidden aria-label="Spillregnskap">
+    <div class="sr-topbar">
+      <button id="sr-back-btn" class="sr-back-btn" type="button">← Tilbake</button>
+      <h1 class="sr-topbar-title">Spillregnskap</h1>
+    </div>
+
+    <div class="sr-loading" id="sr-loading">Henter spillregnskap…</div>
+    <div class="sr-error" id="sr-error" hidden></div>
+
+    <div class="sr-body" id="sr-content" hidden>
+
+      <!-- Totalt forbruk — øverst -->
+      <section>
+        <h2 class="sr-section-title">Totalt forbruk</h2>
+        <div class="sr-total-card">
+          <div class="sr-card-tabs">
+            <button class="sr-ctab is-active" data-days="1">I dag</button>
+            <button class="sr-ctab" data-days="7">7 dager</button>
+            <button class="sr-ctab" data-days="30">30 dager</button>
+            <button class="sr-ctab" data-days="182">182 dager</button>
+            <button class="sr-ctab" data-days="365">365 dager</button>
+          </div>
+          <div class="sr-card-metric">
+            <span class="sr-metric-label" id="sr-total-period-label">—</span>
+            <strong class="sr-metric-value" id="sr-total-forbruk-metric">—</strong>
+          </div>
+          <div class="sr-card-stats" id="sr-total-forbruk-stats"></div>
+          <p class="sr-card-footnote">Totalt netto forbruk på tvers av alle spill for valgt periode. Forbruk = − innsats + premier</p>
+        </div>
+      </section>
+
+      <!-- Ditt forbruk — stolpediagram -->
+      <section>
+        <h2 class="sr-section-title">Ditt forbruk</h2>
+        <div class="sr-ditt-card">
+          <div class="sr-ditt-tabs">
+            <button class="sr-dtab is-active" data-ditt-section="forbruk" data-ditt-period="dag">Dag</button>
+            <button class="sr-dtab" data-ditt-section="forbruk" data-ditt-period="uke">Uke</button>
+            <button class="sr-dtab" data-ditt-section="forbruk" data-ditt-period="måned">Måned</button>
+          </div>
+          <div class="sr-ditt-nav" id="sr-ditt-forbruk-nav">
+            <button class="sr-ditt-arrow" id="sr-ditt-forbruk-prev" aria-label="Forrige periode">&#8249;</button>
+            <span class="sr-ditt-nav-label" id="sr-ditt-forbruk-nav-label">—</span>
+            <button class="sr-ditt-arrow" id="sr-ditt-forbruk-next" aria-label="Neste periode">&#8250;</button>
+          </div>
+          <p class="sr-ditt-summary">Forbruk for perioden: <strong id="sr-ditt-forbruk-label">—</strong></p>
+          <p class="sr-ditt-chart-title" id="sr-ditt-forbruk-chart-title">—</p>
+          <div id="sr-ditt-forbruk-chart" class="sr-ditt-chart-wrap"></div>
+        </div>
+      </section>
+
+      <!-- Forbruk per spill -->
+      <section>
+        <h2 class="sr-section-title">Forbruk per spill</h2>
+        <div class="sr-games-grid">
+          <div class="sr-game-card">
+            <h3 class="sr-card-game-title">Databingo</h3>
+            <div class="sr-card-tabs">
+              <button class="sr-ctab is-active" data-section="forbruk" data-card="DATABINGO" data-cperiod="week">Uke</button>
+              <button class="sr-ctab" data-section="forbruk" data-card="DATABINGO" data-cperiod="month">Måned</button>
+              <button class="sr-ctab" data-section="forbruk" data-card="DATABINGO" data-cperiod="year">Siste 12 mnd</button>
+              <button class="sr-ctab" data-section="forbruk" data-card="DATABINGO" data-cperiod="custom">Egendefinert</button>
+            </div>
+            <div class="sr-card-nav" id="sr-forbruk-DATABINGO-nav">
+              <button class="sr-card-arrow" id="sr-forbruk-DATABINGO-prev" type="button">‹</button>
+              <span class="sr-card-period-label" id="sr-forbruk-DATABINGO-label">—</span>
+              <button class="sr-card-arrow" id="sr-forbruk-DATABINGO-next" type="button" disabled>›</button>
+            </div>
+            <div class="sr-card-custom" id="sr-forbruk-DATABINGO-custom" hidden>
+              <input type="date" id="sr-forbruk-DATABINGO-from" class="sr-date-input">
+              <span class="sr-date-sep">—</span>
+              <input type="date" id="sr-forbruk-DATABINGO-to" class="sr-date-input">
+              <button class="sr-date-apply" data-section-apply="forbruk" data-card-apply="DATABINGO" type="button">Vis</button>
+            </div>
+            <div class="sr-card-metric">
+              <span class="sr-metric-label">Forbruk for perioden</span>
+              <strong class="sr-metric-value" id="sr-forbruk-DATABINGO-metric">—</strong>
+            </div>
+            <div class="sr-card-stats" id="sr-forbruk-DATABINGO-stats"></div>
+            <div id="sr-forbruk-DATABINGO-chart" class="sr-forbruk-chart"></div>
+            <p class="sr-card-footnote">Oversikten viser netto forbruk per uke, måned og siste 12 måneder. Forbruk = − innsats + premier</p>
+          </div>
+          <div class="sr-game-card">
+            <h3 class="sr-card-game-title">Bingo</h3>
+            <div class="sr-card-tabs">
+              <button class="sr-ctab is-active" data-section="forbruk" data-card="MAIN_GAME" data-cperiod="week">Uke</button>
+              <button class="sr-ctab" data-section="forbruk" data-card="MAIN_GAME" data-cperiod="month">Måned</button>
+              <button class="sr-ctab" data-section="forbruk" data-card="MAIN_GAME" data-cperiod="year">Siste 12 mnd</button>
+              <button class="sr-ctab" data-section="forbruk" data-card="MAIN_GAME" data-cperiod="custom">Egendefinert</button>
+            </div>
+            <div class="sr-card-nav" id="sr-forbruk-MAIN_GAME-nav">
+              <button class="sr-card-arrow" id="sr-forbruk-MAIN_GAME-prev" type="button">‹</button>
+              <span class="sr-card-period-label" id="sr-forbruk-MAIN_GAME-label">—</span>
+              <button class="sr-card-arrow" id="sr-forbruk-MAIN_GAME-next" type="button" disabled>›</button>
+            </div>
+            <div class="sr-card-custom" id="sr-forbruk-MAIN_GAME-custom" hidden>
+              <input type="date" id="sr-forbruk-MAIN_GAME-from" class="sr-date-input">
+              <span class="sr-date-sep">—</span>
+              <input type="date" id="sr-forbruk-MAIN_GAME-to" class="sr-date-input">
+              <button class="sr-date-apply" data-section-apply="forbruk" data-card-apply="MAIN_GAME" type="button">Vis</button>
+            </div>
+            <div class="sr-card-metric">
+              <span class="sr-metric-label">Forbruk for perioden</span>
+              <strong class="sr-metric-value" id="sr-forbruk-MAIN_GAME-metric">—</strong>
+            </div>
+            <div class="sr-card-stats" id="sr-forbruk-MAIN_GAME-stats"></div>
+            <div id="sr-forbruk-MAIN_GAME-chart" class="sr-forbruk-chart"></div>
+            <p class="sr-card-footnote">Oversikten viser netto forbruk per uke, måned og siste 12 måneder. Forbruk = − innsats + premier</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Innsats per spill -->
+      <section>
+        <h2 class="sr-section-title">Innsats per spill</h2>
+        <div class="sr-games-grid">
+          <div class="sr-game-card">
+            <h3 class="sr-card-game-title">Databingo</h3>
+            <div class="sr-card-tabs">
+              <button class="sr-ctab is-active" data-section="innsats" data-card="DATABINGO" data-cperiod="week">Uke</button>
+              <button class="sr-ctab" data-section="innsats" data-card="DATABINGO" data-cperiod="month">Måned</button>
+              <button class="sr-ctab" data-section="innsats" data-card="DATABINGO" data-cperiod="year">Siste 12 mnd</button>
+            </div>
+            <div class="sr-card-nav" id="sr-innsats-DATABINGO-nav">
+              <button class="sr-card-arrow" id="sr-innsats-DATABINGO-prev" type="button">‹</button>
+              <span class="sr-card-period-label" id="sr-innsats-DATABINGO-label">—</span>
+              <button class="sr-card-arrow" id="sr-innsats-DATABINGO-next" type="button" disabled>›</button>
+            </div>
+            <div class="sr-card-metric">
+              <span class="sr-metric-label">Innsats for perioden</span>
+              <strong class="sr-metric-value" id="sr-innsats-DATABINGO-metric">—</strong>
+            </div>
+            <div id="sr-innsats-DATABINGO-chart" class="sr-card-chart-wrap"></div>
+            <p class="sr-card-footnote">Total innsats per uke, måned og siste 12 måneder.</p>
+          </div>
+          <div class="sr-game-card">
+            <h3 class="sr-card-game-title">Bingo</h3>
+            <div class="sr-card-tabs">
+              <button class="sr-ctab is-active" data-section="innsats" data-card="MAIN_GAME" data-cperiod="week">Uke</button>
+              <button class="sr-ctab" data-section="innsats" data-card="MAIN_GAME" data-cperiod="month">Måned</button>
+              <button class="sr-ctab" data-section="innsats" data-card="MAIN_GAME" data-cperiod="year">Siste 12 mnd</button>
+            </div>
+            <div class="sr-card-nav" id="sr-innsats-MAIN_GAME-nav">
+              <button class="sr-card-arrow" id="sr-innsats-MAIN_GAME-prev" type="button">‹</button>
+              <span class="sr-card-period-label" id="sr-innsats-MAIN_GAME-label">—</span>
+              <button class="sr-card-arrow" id="sr-innsats-MAIN_GAME-next" type="button" disabled>›</button>
+            </div>
+            <div class="sr-card-metric">
+              <span class="sr-metric-label">Innsats for perioden</span>
+              <strong class="sr-metric-value" id="sr-innsats-MAIN_GAME-metric">—</strong>
+            </div>
+            <div id="sr-innsats-MAIN_GAME-chart" class="sr-card-chart-wrap"></div>
+            <p class="sr-card-footnote">Total innsats per uke, måned og siste 12 måneder.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Premier per spill -->
+      <section>
+        <h2 class="sr-section-title">Premier per spill</h2>
+        <div class="sr-games-grid">
+          <div class="sr-game-card">
+            <h3 class="sr-card-game-title">Databingo</h3>
+            <div class="sr-card-tabs">
+              <button class="sr-ctab is-active" data-section="premier" data-card="DATABINGO" data-cperiod="week">Uke</button>
+              <button class="sr-ctab" data-section="premier" data-card="DATABINGO" data-cperiod="month">Måned</button>
+              <button class="sr-ctab" data-section="premier" data-card="DATABINGO" data-cperiod="year">Siste 12 mnd</button>
+            </div>
+            <div class="sr-card-nav" id="sr-premier-DATABINGO-nav">
+              <button class="sr-card-arrow" id="sr-premier-DATABINGO-prev" type="button">‹</button>
+              <span class="sr-card-period-label" id="sr-premier-DATABINGO-label">—</span>
+              <button class="sr-card-arrow" id="sr-premier-DATABINGO-next" type="button" disabled>›</button>
+            </div>
+            <div class="sr-card-metric">
+              <span class="sr-metric-label">Premier for perioden</span>
+              <strong class="sr-metric-value" id="sr-premier-DATABINGO-metric">—</strong>
+            </div>
+            <div id="sr-premier-DATABINGO-chart" class="sr-card-chart-wrap"></div>
+            <p class="sr-card-footnote">Total premier per uke, måned og siste 12 måneder.</p>
+          </div>
+          <div class="sr-game-card">
+            <h3 class="sr-card-game-title">Bingo</h3>
+            <div class="sr-card-tabs">
+              <button class="sr-ctab is-active" data-section="premier" data-card="MAIN_GAME" data-cperiod="week">Uke</button>
+              <button class="sr-ctab" data-section="premier" data-card="MAIN_GAME" data-cperiod="month">Måned</button>
+              <button class="sr-ctab" data-section="premier" data-card="MAIN_GAME" data-cperiod="year">Siste 12 mnd</button>
+            </div>
+            <div class="sr-card-nav" id="sr-premier-MAIN_GAME-nav">
+              <button class="sr-card-arrow" id="sr-premier-MAIN_GAME-prev" type="button">‹</button>
+              <span class="sr-card-period-label" id="sr-premier-MAIN_GAME-label">—</span>
+              <button class="sr-card-arrow" id="sr-premier-MAIN_GAME-next" type="button" disabled>›</button>
+            </div>
+            <div class="sr-card-metric">
+              <span class="sr-metric-label">Premier for perioden</span>
+              <strong class="sr-metric-value" id="sr-premier-MAIN_GAME-metric">—</strong>
+            </div>
+            <div id="sr-premier-MAIN_GAME-chart" class="sr-card-chart-wrap"></div>
+            <p class="sr-card-footnote">Total premier per uke, måned og siste 12 måneder.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Forbruk per hall -->
+      <section>
+        <h2 class="sr-section-title">Forbruk per hall</h2>
+        <div class="sr-section-nav">
+          <button id="sr-hall-prev" class="sr-nav-arrow" type="button">‹</button>
+          <span id="sr-hall-nav-label" class="sr-nav-label">—</span>
+          <button id="sr-hall-next" class="sr-nav-arrow" type="button">›</button>
+        </div>
+        <div class="sr-period-tabs" id="sr-hall-period-tabs">
+          <button class="sr-ptab is-active" data-hall-period="week">Uke</button>
+          <button class="sr-ptab" data-hall-period="month">Måned</button>
+          <button class="sr-ptab" data-hall-period="year">Siste 12 måneder</button>
+        </div>
+        <div class="sr-offset-nav">
+          <button id="sr-hall-offset-prev" class="sr-period-arrow" type="button">‹</button>
+          <span id="sr-hall-offset-label" class="sr-period-label">—</span>
+          <button id="sr-hall-offset-next" class="sr-period-arrow" type="button" disabled>›</button>
+        </div>
+        <div id="sr-hall-summary" class="sr-mini-summary"></div>
+        <div class="sr-chart-wrap"><div id="sr-hall-chart"></div></div>
+      </section>
+
+      <!-- Detaljert spillregnskap — e-post -->
+      <section class="sr-export-section">
+        <h2 class="sr-section-title">Detaljert spillregnskap</h2>
+        <p class="sr-export-desc">
+          Ønsker du en mer detaljert oversikt over din spilleaktivitet?
+          Vi sender et fullstendig spillregnskap til din registrerte e-postadresse.
+        </p>
+        <button id="sr-email-btn" class="sr-export-btn" type="button">Send spillregnskap på e-post</button>
+        <p class="sr-export-msg" id="sr-export-msg" hidden></p>
+      </section>
+    </div>
+  </section>
+
+  <!-- ═══ OBLIGATORISK PAUSE (§ 66) ══════════════════════════════════════ -->
+  <div id="mandatory-pause-modal" class="mandatory-pause-modal" hidden aria-modal="true" role="alertdialog" aria-labelledby="mandatory-pause-title">
+    <div class="mandatory-pause-card">
+      <div class="mandatory-pause-icon">⏸</div>
+      <h2 class="mandatory-pause-title" id="mandatory-pause-title">Obligatorisk spillepause</h2>
+      <p class="mandatory-pause-subtitle">Du har spilt i 1 time. Loven krever at du tar en pause på 5 minutter (§ 66).</p>
+      <div class="mandatory-pause-countdown" id="mandatory-pause-countdown">05:00</div>
+      <div class="mandatory-pause-stats">
+        <div class="mandatory-pause-stat">
+          <span class="mandatory-pause-stat-label">Samlet tap denne sesjonen</span>
+          <span class="mandatory-pause-stat-value" id="mandatory-pause-loss">—</span>
+        </div>
+        <div class="mandatory-pause-stat">
+          <span class="mandatory-pause-stat-label">Spilletid</span>
+          <span class="mandatory-pause-stat-value" id="mandatory-pause-playtime">—</span>
+        </div>
+        <div class="mandatory-pause-stat">
+          <span class="mandatory-pause-stat-label">Antall spill</span>
+          <span class="mandatory-pause-stat-value" id="mandatory-pause-gamecount">—</span>
+        </div>
+      </div>
+      <p class="mandatory-pause-note">Spillet er låst til pausen er over. Pausen kan ikke avbrytes.</p>
+    </div>
+  </div>
+
   <!-- ═══ 11. CANDY OVERLAY ═════════════════════════════════════════════ -->
   <div id="candy-overlay" class="candy-overlay">
     <div class="candy-overlay-bar">
@@ -1646,6 +2340,7 @@
   </div>
 
   <!-- ═══ SCRIPTS ═══════════════════════════════════════════════════════ -->
+  <script src="spillregnskap.js"></script>
   <script src="spillvett.js"></script>
 
   <script>
@@ -1739,12 +2434,54 @@
           fullscreenButton.onclick = function () {
             if (window.vuplex) window.vuplex.SetFullscreen(1);
           };
+
+          // Fallback: Application.ExternalCall("OnUnityReady") may silently fail in
+          // newer Unity WebGL builds. If Unity hasn't signalled after splash (3s) + buffer
+          // (5s), trigger OnUnityReady from the shell side instead.
+          setTimeout(function () {
+            if (!_unityReady) {
+              console.log('[Shell] OnUnityReady fallback — Unity did not signal in time');
+              OnUnityReady();
+            }
+          }, 10000); // 10s > splash delay (3s) + profile fetch buffer
         }).catch(function (message) {
           console.error('Unity load error:', message);
         });
       };
       document.body.appendChild(script);
     };
+
+    /* ── Orientation & resize handling ─────────────────────────────── */
+    (function () {
+      // On iOS, 100vh doesn't update on orientation change until a repaint.
+      // Force a layout recalc on orientation change so game containers resize.
+      var resizeTimer;
+      function handleViewportResize() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(function () {
+          // Update CSS custom property for real viewport height (100dvh fallback)
+          document.documentElement.style.setProperty('--vh', window.innerHeight + 'px');
+
+          // Resize Unity canvas if running
+          if (canvas && canvas.style.width === '100%') {
+            canvas.style.height = window.innerHeight + 'px';
+          }
+
+          // Resize web game container if visible
+          var webContainer = document.getElementById('web-game-container');
+          if (webContainer && webContainer.style.display !== 'none') {
+            webContainer.dispatchEvent(new Event('resize'));
+          }
+        }, 150);
+      }
+      window.addEventListener('resize', handleViewportResize);
+      window.addEventListener('orientationchange', function () {
+        // orientationchange fires before the viewport actually updates — delay
+        setTimeout(handleViewportResize, 300);
+      });
+      // Set initial value
+      handleViewportResize();
+    })();
 
     /* ── Unity → JS bridge callbacks ────────────────────────────────── */
 
@@ -1756,6 +2493,12 @@
       var jwt = sessionStorage.getItem('spillorama.accessToken') || '';
       if (jwt && unityInstanceRef) {
         unityInstanceRef.SendMessage('UIManager', 'ReceiveShellToken', jwt);
+      }
+
+      // Send active hall ID so Unity can join the correct Spillorama room
+      var hallId = sessionStorage.getItem('lobby.activeHallId') || '';
+      if (hallId && unityInstanceRef) {
+        unityInstanceRef.SendMessage('UIManager', 'SwitchActiveHallFromHost', hallId);
       }
 
       if (_pendingNavigate && unityInstanceRef) {
@@ -1795,6 +2538,36 @@
       }
     };
 
+    /* ── Game Bar ────────────────────────────────────────────────────── */
+
+    // Syncs saldo + hall fra lobby til game-baren
+    window.syncGameBar = function() {
+      var lobbyBal = document.getElementById('lobby-balance');
+      var gameBal  = document.getElementById('game-bar-balance');
+      if (lobbyBal && gameBal) gameBal.textContent = lobbyBal.textContent;
+
+      // Sync hall selector value
+      var lobbyHall = document.getElementById('lobby-hall-select');
+      var gameBarHall = document.getElementById('game-bar-hall-select');
+      if (lobbyHall && gameBarHall && lobbyHall.value) {
+        gameBarHall.value = lobbyHall.value;
+      }
+    };
+
+    // no-op — back bar visibility is handled entirely by lobby.js
+    window.SpilloramaShowHeader = function() {};
+
+    // Called by Unity with game data — we only use gameName to update the bar title
+    window.SpilloramaUpdateHeader = function(jsonStr) {
+      try {
+        var d = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+        if (d.gameName != null) {
+          var el = document.getElementById('game-bar-name');
+          if (el) el.textContent = d.gameName;
+        }
+      } catch(e) {}
+    };
+
     /* Called by Unity to send domain data */
     function requestDomainData() {
       var serverUrl = window.location.origin;
@@ -1802,95 +2575,6 @@
         unityInstanceRef.SendMessage('Socket And Event Manager', 'DomainDataCall', serverUrl);
       }
     }
-    var unityInstanceRef = null;
-
-    var script = document.createElement("script");
-    script.src = loaderUrl;
-    script.onload = () => {
-      createUnityInstance(canvas, config, (progress) => {
-        progressBarFull.style.width = 100 * progress + "%";
-      }).then((unityInstance) => {
-        unityInstanceRef = unityInstance;
-        loadingBar.style.display = "none";
-        fullscreenButton.onclick = () => {
-          window.vuplex.SetFullscreen(1)/*https://support.vuplex.com/articles/webgl-fullscreen*/;
-        };
-
-        // Initialize Firebase Cloud Messaging
-        const firebaseConfig = {
-          apiKey: "AIzaSyCn63hcAqgw-iWLRFCxKmJk6Wa6UrK8Ucc",
-          authDomain: "spillorama-bingo-ca229.firebaseapp.com",
-          databaseURL: "https://spillorama-bingo-ca229-default-rtdb.europe-west1.firebasedatabase.app",
-          projectId: "spillorama-bingo-ca229",
-          storageBucket: "spillorama-bingo-ca229.firebasestorage.app",
-          messagingSenderId: "360754039754",
-          appId: "1:360754039754:web:78c18c50fed1b2ad509d33",
-          measurementId: "G-8WZJB8ECSW"
-        };
-
-        firebase.initializeApp(firebaseConfig);
-        const messaging = firebase.messaging();
-
-        // Get the path where index.html is hosted (like /web/, / or /custom/path/)
-        let swDir = window.location.pathname.replace(/[^\/]+$/, '');
-        let swPath = swDir + 'firebase-messaging-sw.js';
-
-        navigator.serviceWorker.register(swPath, {
-          scope: swDir
-        }).then((registration) => {
-          console.log("✅ Service worker registered");
-          // ✅ Call getToken with service worker reference
-          Notification.requestPermission().then((permission) => {
-            if (permission === 'granted') {
-              messaging.getToken({
-                vapidKey: "BO8GlGnlSoBYtA0oZx6SzY-dlLNdh__TeFS6WNIY5X_SWsXfejE-B5I9gsn6O6a0rCYt8eOXTCO7-lcVAOgsPMc",
-                serviceWorkerRegistration: registration
-              }).then((token) => {
-                console.log("Web Push Token:", token);
-                unityInstance.SendMessage('FirebaseManager', 'OnWebTokenReceived', token);
-              }).catch((err) => {
-                console.error("FCM getToken error:", err);
-              });
-            } else {
-              console.warn("Notification permission not granted");
-            }
-          });
-        });
-
-        // Foreground push messages
-        messaging.onMessage((payload) => {
-          console.log('Push received in foreground:', payload);
-          unityInstance.SendMessage('FirebaseManager', 'OnWebMessageReceived', JSON.stringify(payload));
-                // Forward to service worker for native notification
-          const title = payload.notification?.title || 'Notification';
-          const body = payload.notification?.body || '';
-          const icon = 'TemplateData/favicon.ico';
-          const staticURL = new URL('./', window.location.href).toString();
-
-          if (Notification.permission === 'granted') {
-            new Notification(title, {
-              body,
-              icon,
-              data: { url: staticURL }
-            }).onclick = function (event) {
-              event.preventDefault();
-              window.open(staticURL, '_blank');
-            };
-          }
-        });
-
-      }).catch((message) => {
-        alert(message);
-      });
-    };
-    document.body.appendChild(script);
-    const channel = new BroadcastChannel("focusSpiloramaWeb");
-    channel.onmessage = (event) => {
-      if (event.data === "focus-tab") {
-        window.focus();
-      }
-    };
-
     const CANDY_ROUTE = "/candy/";
     let existingTab = null;
     let candyPlayerToken = "";
@@ -2105,8 +2789,13 @@
       closeGameOverlay({ notifyIframe: false });
     }
 
+    // Expose to lobby.js and Unity
+    window.launchCandyOverlay = launchCandyOverlay;
+    window.SetPlayerToken = SetPlayerToken;
+    window.ClearPlayerToken = ClearPlayerToken;
+    window.OpenUrlInSameTab = OpenUrlInSameTab;
+
     /* Called by Unity to open a URL */
-    var existingTab = null;
     function OpenUrlInSameTab(url) {
       if (isCandyRoute(url)) {
         launchCandyOverlay();
@@ -2224,7 +2913,6 @@
                 vapidKey: "BO8GlGnlSoBYtA0oZx6SzY-dlLNdh__TeFS6WNIY5X_SWsXfejE-B5I9gsn6O6a0rCYt8eOXTCO7-lcVAOgsPMc",
                 serviceWorkerRegistration: registration
               }).then(function (token) {
-                console.log("Web Push Token:", token);
                 _firebaseWebToken = token;
                 // If Unity already loaded, send now
                 if (unityInstanceRef) {
@@ -2259,11 +2947,6 @@
       }
     })();
 
-    /* ── BroadcastChannel focus ──────────────────────────────────────── */
-    var channel = new BroadcastChannel("focusSpiloramaWeb");
-    channel.onmessage = function (event) {
-      if (event.data === "focus-tab") window.focus();
-    };
   </script>
 
   <script src="lobby.js"></script>

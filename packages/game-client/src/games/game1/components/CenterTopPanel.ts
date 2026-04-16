@@ -1,0 +1,218 @@
+import type { HtmlOverlayManager } from "./HtmlOverlayManager.js";
+import type { PatternDefinition, PatternResult } from "@spillorama/shared-types/game";
+import { PatternMiniGrid } from "./PatternMiniGrid.js";
+
+export interface CenterTopCallbacks {
+  onShowCalledNumbers?: () => void;
+  onPreBuy?: () => void;
+  onCancelTickets?: () => void;
+  onBuyMoreTickets?: () => void;
+  onSelectLuckyNumber?: () => void;
+  onOpenSettings?: () => void;
+  onOpenMarkerBg?: () => void;
+}
+
+/**
+ * HTML overlay for game info (badge, prize rows) and action buttons.
+ *
+ * Positioned in the center-top of the play area. Shows the current game's
+ * pattern prizes and provides quick-action buttons.
+ *
+ * Button behaviour (matching Unity):
+ * - "Se oppleste tall" — toggles CalledNumbersOverlay
+ * - "Forhåndskjøp" — arms bet for next round (bet:arm)
+ * - "Bytt bakgrunn" — background change (placeholder)
+ * - "Kjøp flere brett" — arms bet for next round (bet:arm), same as Unity
+ */
+export class CenterTopPanel {
+  private root: HTMLDivElement;
+  private badgeEl: HTMLDivElement;
+  private prizeRowsEl: HTMLDivElement;
+  private callbacks: CenterTopCallbacks;
+  private buyMoreBtn: HTMLButtonElement | null = null;
+  private preBuyBtn: HTMLButtonElement | null = null;
+  private cancelBtn: HTMLButtonElement | null = null;
+
+  constructor(overlay: HtmlOverlayManager, callbacks: CenterTopCallbacks = {}) {
+    this.callbacks = callbacks;
+
+    this.root = overlay.createElement("center-top", {
+      flex: "1",
+      display: "flex",
+      flexDirection: "column",
+      padding: "18px 0",
+      marginLeft: "40px",
+      marginRight: "40px",
+    });
+
+    // Top row: game info + action buttons
+    const topRow = document.createElement("div");
+    topRow.style.cssText = "display:flex;flex-direction:row;align-items:flex-start;gap:40px;";
+
+    // Game info column
+    const gameInfo = document.createElement("div");
+    gameInfo.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+
+    this.badgeEl = document.createElement("div");
+    Object.assign(this.badgeEl.style, {
+      display: "inline-block",
+      background: "#b06010",
+      color: "#fff",
+      fontSize: "13px",
+      fontWeight: "700",
+      padding: "5px 16px",
+      borderRadius: "6px",
+      marginBottom: "10px",
+      width: "fit-content",
+    });
+    this.badgeEl.textContent = "Bingo";
+    gameInfo.appendChild(this.badgeEl);
+
+    this.prizeRowsEl = document.createElement("div");
+    this.prizeRowsEl.style.cssText = "font-size:16px;color:#ddd;line-height:2;";
+    gameInfo.appendChild(this.prizeRowsEl);
+
+    topRow.appendChild(gameInfo);
+
+    // Action buttons (2x2 grid)
+    const actionsGrid = document.createElement("div");
+    actionsGrid.style.cssText = "display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-top:2px;";
+
+    const buttons: { label: string; key: keyof CenterTopCallbacks; ref?: "buyMore" | "preBuy" | "cancel" }[] = [
+      { label: "Se oppleste tall", key: "onShowCalledNumbers" },
+      { label: "Forhåndskjøp", key: "onPreBuy", ref: "preBuy" },
+      { label: "Heldig tall", key: "onSelectLuckyNumber" },
+      { label: "Kjøp flere brett", key: "onBuyMoreTickets", ref: "buyMore" },
+      { label: "Markør/bakgrunn", key: "onOpenMarkerBg" },
+      { label: "Innstillinger", key: "onOpenSettings" },
+      { label: "Avbestill bonger", key: "onCancelTickets", ref: "cancel" },
+    ];
+
+    for (const { label, key, ref } of buttons) {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      Object.assign(btn.style, {
+        background: "rgba(0,0,0,0.25)",
+        border: "1.5px solid rgba(255,255,255,0.5)",
+        borderRadius: "22px",
+        padding: "9px 22px",
+        fontSize: "14px",
+        color: "#eee",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        backdropFilter: "blur(2px)",
+        width: "100%",
+        textAlign: "center",
+        fontFamily: "inherit",
+      });
+      btn.addEventListener("mouseenter", () => {
+        if (!btn.disabled) btn.style.background = "rgba(255,255,255,0.1)";
+      });
+      btn.addEventListener("mouseleave", () => {
+        if (!btn.disabled) btn.style.background = "rgba(0,0,0,0.25)";
+      });
+      btn.addEventListener("click", () => {
+        this.callbacks[key]?.();
+      });
+      actionsGrid.appendChild(btn);
+
+      if (ref === "buyMore") this.buyMoreBtn = btn;
+      if (ref === "preBuy") this.preBuyBtn = btn;
+      if (ref === "cancel") { this.cancelBtn = btn; btn.style.borderColor = "rgba(239,83,80,0.6)"; btn.style.color = "#ef5350"; }
+    }
+
+    topRow.appendChild(actionsGrid);
+    this.root.appendChild(topRow);
+  }
+
+  private patternGrids: PatternMiniGrid[] = [];
+
+  updatePatterns(patterns: PatternDefinition[], patternResults: PatternResult[], prizePool = 0): void {
+    // Destroy old pattern grids
+    for (const g of this.patternGrids) g.destroy();
+    this.patternGrids = [];
+    this.prizeRowsEl.innerHTML = "";
+
+    // Find first unwon pattern (Unity: currentPatternRow)
+    let currentPatternIdx = 0;
+    for (let i = 0; i < patternResults.length; i++) {
+      if (patternResults[i]?.isWon) currentPatternIdx = i + 1;
+    }
+
+    for (let i = 0; i < patterns.length; i++) {
+      const pattern = patterns[i];
+      const result = patternResults.find((r) => r.patternId === pattern.id);
+
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,0.15);padding:4px 0;";
+
+      // Mini-grid for the current (active) pattern only (matches Unity: only show one pattern at a time)
+      if (i === currentPatternIdx) {
+        const miniGrid = new PatternMiniGrid();
+        miniGrid.setDesign(pattern.design);
+        this.patternGrids.push(miniGrid);
+        row.appendChild(miniGrid.root);
+      }
+
+      // Pattern text
+      const span = document.createElement("span");
+      span.style.cssText = "font-size:16px;color:#ddd;flex:1;";
+
+      const prize = result?.payoutAmount ?? Math.round((pattern.prizePercent / 100) * prizePool);
+      const won = result?.isWon;
+
+      // Display name mapping (Unity: FormatRowText)
+      let displayName = pattern.name;
+      if (pattern.name === "Full House") displayName = `Rad ${patterns.length}`;
+      else if (/^Row \d/.test(pattern.name)) displayName = pattern.name.replace("Row", "Rad");
+
+      span.textContent = `${displayName} – ${prize} kr`;
+      if (won) {
+        span.style.color = "#81c784";
+        span.style.textDecoration = "line-through";
+      } else if (i === currentPatternIdx) {
+        span.style.color = "#ffe83d";
+        span.style.fontWeight = "700";
+      }
+      row.appendChild(span);
+      this.prizeRowsEl.appendChild(row);
+    }
+  }
+
+  /** Show brief confirmation feedback on a button after action completes. */
+  showButtonFeedback(button: "buyMore" | "preBuy", success: boolean): void {
+    const btn = button === "buyMore" ? this.buyMoreBtn : this.preBuyBtn;
+    if (!btn) return;
+
+    const originalText = btn.textContent;
+    btn.textContent = success ? "Registrert!" : "Feil";
+    btn.style.background = success ? "rgba(46,125,50,0.5)" : "rgba(183,28,28,0.5)";
+    btn.disabled = true;
+    btn.style.cursor = "default";
+    btn.style.opacity = "0.7";
+
+    setTimeout(() => {
+      btn.textContent = originalText;
+      btn.style.background = "rgba(0,0,0,0.25)";
+      btn.disabled = false;
+      btn.style.cursor = "pointer";
+      btn.style.opacity = "1";
+    }, 2000);
+  }
+
+  /** Hide cancel button during game (Unity: deleteBtn hidden after game start). */
+  setGameRunning(running: boolean): void {
+    if (this.cancelBtn) this.cancelBtn.style.display = running ? "none" : "";
+    if (this.buyMoreBtn) this.buyMoreBtn.style.display = running ? "" : "none";
+  }
+
+  setBadge(text: string): void {
+    this.badgeEl.textContent = text;
+  }
+
+  destroy(): void {
+    for (const g of this.patternGrids) g.destroy();
+    this.patternGrids = [];
+    this.root.remove();
+  }
+}

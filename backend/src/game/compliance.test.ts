@@ -20,7 +20,7 @@ test("hall ticket cap rejects value above configured max", () => {
 
 test("hall ticket cap rejects invalid hall max config", () => {
   assert.throws(
-    () => assertTicketsPerPlayerWithinHallLimit(2, 8),
+    () => assertTicketsPerPlayerWithinHallLimit(2, 31),
     (error: unknown) => error instanceof DomainError && error.code === "INVALID_HALL_CONFIG"
   );
 });

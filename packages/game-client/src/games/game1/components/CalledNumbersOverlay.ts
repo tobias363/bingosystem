@@ -1,0 +1,150 @@
+import type { HtmlOverlayManager } from "./HtmlOverlayManager.js";
+
+/**
+ * Maps number to CSS ball color matching Unity BINGO columns:
+ * B(1-15)=blue, I(16-30)=red, N(31-45)=purple, G(46-60)=green, O(61-75)=yellow
+ */
+function getBallColorCSS(n: number): string {
+  if (n <= 15) return "background:radial-gradient(circle at 38% 32%,#3a7adf,#0d2f8a 70%);box-shadow:0 0 8px rgba(40,80,220,0.4);";   // Blue (B)
+  if (n <= 30) return "background:radial-gradient(circle at 38% 32%,#e84040,#8b0000 70%);box-shadow:0 0 8px rgba(220,40,40,0.4);";   // Red (I)
+  if (n <= 45) return "background:radial-gradient(circle at 38% 32%,#cc44cc,#6a006a 70%);box-shadow:0 0 8px rgba(180,40,180,0.4);";   // Purple (N)
+  if (n <= 60) return "background:radial-gradient(circle at 38% 32%,#6ecf3a,#2a7a00 70%);box-shadow:0 0 8px rgba(100,220,40,0.4);";   // Green (G)
+  return "background:radial-gradient(circle at 38% 32%,#f0c020,#8a7000 70%);box-shadow:0 0 8px rgba(200,170,20,0.4);";                 // Yellow (O)
+}
+
+/**
+ * Fullscreen HTML overlay showing all drawn numbers as colored balls
+ * in a grid layout, matching Unity's WithdrawNumberHistoryPanel.
+ *
+ * Opened via "Se oppleste tall" button.
+ */
+export class CalledNumbersOverlay {
+  private backdrop: HTMLDivElement;
+  private grid: HTMLDivElement;
+  private countEl: HTMLSpanElement;
+  private drawnNumbers: number[] = [];
+
+  constructor(private overlay: HtmlOverlayManager) {
+    // Full-screen backdrop
+    this.backdrop = document.createElement("div");
+    Object.assign(this.backdrop.style, {
+      position: "absolute",
+      inset: "0",
+      background: "rgba(0,0,0,0.88)",
+      backdropFilter: "blur(4px)",
+      display: "none",
+      flexDirection: "column",
+      alignItems: "center",
+      padding: "30px 20px",
+      zIndex: "50",
+      pointerEvents: "auto",
+      overflow: "auto",
+    });
+    overlay.getRoot().appendChild(this.backdrop);
+
+    // Header row
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex;align-items:center;justify-content:space-between;width:100%;max-width:700px;margin-bottom:20px;";
+
+    const title = document.createElement("h2");
+    title.textContent = "Oppleste tall";
+    title.style.cssText = "font-size:22px;font-weight:700;color:#ffe83d;margin:0;";
+    header.appendChild(title);
+
+    this.countEl = document.createElement("span");
+    this.countEl.style.cssText = "font-size:14px;color:#aaa;";
+    header.appendChild(this.countEl);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "\u2715";
+    Object.assign(closeBtn.style, {
+      background: "rgba(255,255,255,0.15)",
+      border: "1px solid rgba(255,255,255,0.3)",
+      borderRadius: "50%",
+      width: "36px",
+      height: "36px",
+      color: "#fff",
+      fontSize: "18px",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontFamily: "inherit",
+    });
+    closeBtn.addEventListener("click", () => this.hide());
+    header.appendChild(closeBtn);
+
+    this.backdrop.appendChild(header);
+
+    // Ball grid
+    this.grid = document.createElement("div");
+    Object.assign(this.grid.style, {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fill, 52px)",
+      gap: "8px",
+      justifyContent: "center",
+      width: "100%",
+      maxWidth: "700px",
+    });
+    this.backdrop.appendChild(this.grid);
+  }
+
+  /** Replace all drawn numbers (used on reconnect / initial load). */
+  setNumbers(numbers: number[]): void {
+    this.drawnNumbers = [...numbers];
+    this.render();
+  }
+
+  /** Clear all drawn numbers (used on game end / new round). */
+  clearNumbers(): void {
+    this.drawnNumbers = [];
+    this.grid.innerHTML = "";
+    this.countEl.textContent = "0 tall trukket";
+  }
+
+  addNumber(number: number): void {
+    this.drawnNumbers.push(number);
+    if (this.isShowing()) this.render();
+  }
+
+  show(): void {
+    this.render();
+    this.backdrop.style.display = "flex";
+  }
+
+  hide(): void {
+    this.backdrop.style.display = "none";
+  }
+
+  toggle(): void {
+    if (this.isShowing()) this.hide();
+    else this.show();
+  }
+
+  isShowing(): boolean {
+    return this.backdrop.style.display !== "none";
+  }
+
+  private render(): void {
+    this.grid.innerHTML = "";
+    this.countEl.textContent = `${this.drawnNumbers.length} tall trukket`;
+
+    for (const n of this.drawnNumbers) {
+      const ball = document.createElement("div");
+      ball.style.cssText = `
+        width:48px;height:48px;border-radius:50%;
+        display:flex;align-items:center;justify-content:center;
+        font-size:18px;font-weight:700;color:#fff;
+        text-shadow:0 1px 2px rgba(0,0,0,0.5);
+        flex-shrink:0;position:relative;
+        ${getBallColorCSS(n)}
+      `;
+      ball.textContent = String(n);
+      this.grid.appendChild(ball);
+    }
+  }
+
+  destroy(): void {
+    this.backdrop.remove();
+  }
+}

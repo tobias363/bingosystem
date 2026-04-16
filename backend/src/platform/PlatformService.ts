@@ -67,6 +67,9 @@ export interface HallDefinition {
   name: string;
   region: string;
   address: string;
+  organizationNumber?: string;
+  settlementAccount?: string;
+  invoiceMethod?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -77,6 +80,9 @@ export interface CreateHallInput {
   name: string;
   region?: string;
   address?: string;
+  organizationNumber?: string;
+  settlementAccount?: string;
+  invoiceMethod?: string;
   isActive?: boolean;
 }
 
@@ -85,6 +91,9 @@ export interface UpdateHallInput {
   name?: string;
   region?: string;
   address?: string;
+  organizationNumber?: string;
+  settlementAccount?: string;
+  invoiceMethod?: string;
   isActive?: boolean;
 }
 
@@ -129,6 +138,65 @@ export interface UpsertHallGameConfigInput {
   isEnabled?: boolean;
   maxTicketsPerPlayer?: number;
   minRoundIntervalMs?: number;
+}
+
+// ── Spilleplan (§ 64) ────────────────────────────────────────────────────────
+
+export const MAIN_GAME_TYPES = ["standard", "kvikkis", "3r_jack", "ekstrapremie"] as const;
+export type MainGameType = (typeof MAIN_GAME_TYPES)[number];
+
+export interface ScheduleSlot {
+  id: string;
+  hallId: string;
+  gameType: string;
+  displayName: string;
+  dayOfWeek: number | null; // 0=Sun..6=Sat, null=every day
+  startTime: string;        // "HH:MM"
+  prizeDescription: string;
+  maxTickets: number;
+  isActive: boolean;
+  sortOrder: number;
+  /** BIN-436: Variant config with ticket types, patterns, prices. */
+  variantConfig: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateScheduleSlotInput {
+  gameType: string;
+  displayName: string;
+  dayOfWeek?: number | null;
+  startTime: string;
+  prizeDescription?: string;
+  maxTickets?: number;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export interface UpdateScheduleSlotInput {
+  gameType?: string;
+  displayName?: string;
+  dayOfWeek?: number | null;
+  startTime?: string;
+  prizeDescription?: string;
+  maxTickets?: number;
+  isActive?: boolean;
+  sortOrder?: number;
+  /** BIN-442: Variant config with ticket types, patterns, etc. */
+  variantConfig?: Record<string, unknown>;
+}
+
+export interface ScheduleLogEntry {
+  id: string;
+  hallId: string;
+  scheduleSlotId: string | null;
+  gameSessionId: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  playerCount: number | null;
+  totalPayout: number | null;
+  notes: string | null;
+  createdAt: string;
 }
 
 export interface GameSettingsChangeContext {
@@ -198,6 +266,9 @@ interface HallRow {
   name: string;
   region: string;
   address: string;
+  organization_number: string | null;
+  settlement_account: string | null;
+  invoice_method: string | null;
   is_active: boolean;
   created_at: Date | string;
   updated_at: Date | string;
@@ -234,6 +305,35 @@ interface GameSettingsChangeLogRow {
   effective_from: Date | string | null;
   payload_summary: string;
   payload_json: Record<string, unknown>;
+  created_at: Date | string;
+}
+
+interface ScheduleSlotRow {
+  id: string;
+  hall_id: string;
+  game_type: string;
+  display_name: string;
+  day_of_week: number | null;
+  start_time: string;
+  prize_description: string;
+  max_tickets: number;
+  is_active: boolean;
+  sort_order: number;
+  variant_config?: Record<string, unknown>;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface ScheduleLogRow {
+  id: string;
+  hall_id: string;
+  schedule_slot_id: string | null;
+  game_session_id: string | null;
+  started_at: Date | string;
+  ended_at: Date | string | null;
+  player_count: number | null;
+  total_payout: string | number | null;
+  notes: string | null;
   created_at: Date | string;
 }
 
@@ -392,7 +492,7 @@ export class PlatformService {
     await this.ensureInitialized();
     const email = normalizeEmail(input.email);
     this.assertEmail(email);
-    this.assertPassword(input.password);
+    this.assertLoginPassword(input.password);
 
     const { rows } = await this.pool.query<
       UserRow & {
@@ -646,6 +746,9 @@ export class PlatformService {
     const name = this.assertHallName(input.name);
     const region = this.assertHallRegion(input.region ?? "NO");
     const address = this.assertHallAddress(input.address ?? "");
+    const organizationNumber = input.organizationNumber?.trim() || null;
+    const settlementAccount = input.settlementAccount?.trim() || null;
+    const invoiceMethod = input.invoiceMethod?.trim() || null;
     const isActive = input.isActive ?? true;
     const hallId = randomUUID();
 
@@ -661,10 +764,10 @@ export class PlatformService {
       }
 
       const { rows } = await client.query<HallRow>(
-        `INSERT INTO ${this.hallsTable()} (id, slug, name, region, address, is_active)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, slug, name, region, address, is_active, created_at, updated_at`,
-        [hallId, slug, name, region, address, isActive]
+        `INSERT INTO ${this.hallsTable()} (id, slug, name, region, address, organization_number, settlement_account, invoice_method, is_active)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING *`,
+        [hallId, slug, name, region, address, organizationNumber, settlementAccount, invoiceMethod, isActive]
       );
       await this.seedHallGameConfigForHall(client, hallId);
       await client.query("COMMIT");
@@ -689,6 +792,9 @@ export class PlatformService {
     const nextName = update.name !== undefined ? this.assertHallName(update.name) : current.name;
     const nextRegion = update.region !== undefined ? this.assertHallRegion(update.region) : current.region;
     const nextAddress = update.address !== undefined ? this.assertHallAddress(update.address) : current.address;
+    const nextOrgNumber = update.organizationNumber !== undefined ? (update.organizationNumber?.trim() || null) : (current.organizationNumber ?? null);
+    const nextSettlementAccount = update.settlementAccount !== undefined ? (update.settlementAccount?.trim() || null) : (current.settlementAccount ?? null);
+    const nextInvoiceMethod = update.invoiceMethod !== undefined ? (update.invoiceMethod?.trim() || null) : (current.invoiceMethod ?? null);
     const nextIsActive = update.isActive !== undefined ? Boolean(update.isActive) : current.isActive;
 
     if (nextSlug !== current.slug) {
@@ -707,14 +813,171 @@ export class PlatformService {
            name = $3,
            region = $4,
            address = $5,
-           is_active = $6,
+           organization_number = $6,
+           settlement_account = $7,
+           invoice_method = $8,
+           is_active = $9,
            updated_at = now()
        WHERE id = $1
-       RETURNING id, slug, name, region, address, is_active, created_at, updated_at`,
-      [current.id, nextSlug, nextName, nextRegion, nextAddress, nextIsActive]
+       RETURNING *`,
+      [current.id, nextSlug, nextName, nextRegion, nextAddress, nextOrgNumber, nextSettlementAccount, nextInvoiceMethod, nextIsActive]
     );
 
     return this.mapHall(rows[0]);
+  }
+
+  // ── Spilleplan — CRUD (§ 64) ────────────────────────────────────────────
+
+  async listScheduleSlots(
+    hallReference: string,
+    options?: { dayOfWeek?: number; activeOnly?: boolean }
+  ): Promise<ScheduleSlot[]> {
+    await this.ensureInitialized();
+    const hall = await this.getHall(hallReference);
+    const activeOnly = options?.activeOnly ?? true;
+    const conditions: string[] = ["hall_id = $1"];
+    const params: unknown[] = [hall.id];
+    if (activeOnly) conditions.push("is_active = true");
+    if (options?.dayOfWeek !== undefined) {
+      params.push(options.dayOfWeek);
+      conditions.push(`(day_of_week IS NULL OR day_of_week = $${params.length})`);
+    }
+    const { rows } = await this.pool.query<ScheduleSlotRow>(
+      `SELECT id, hall_id, game_type, display_name, day_of_week, start_time::text,
+              prize_description, max_tickets, is_active, sort_order, variant_config, created_at, updated_at
+       FROM ${this.scheduleTable()} WHERE ${conditions.join(" AND ")}
+       ORDER BY sort_order ASC, start_time ASC`,
+      params
+    );
+    return rows.map((r) => this.mapScheduleSlot(r));
+  }
+
+  async createScheduleSlot(
+    hallReference: string,
+    input: CreateScheduleSlotInput
+  ): Promise<ScheduleSlot> {
+    await this.ensureInitialized();
+    const hall = await this.getHall(hallReference);
+    const id = randomUUID();
+    const gameType = this.assertNonEmptyString(input.gameType, "gameType", 40);
+    const displayName = this.assertNonEmptyString(input.displayName, "displayName", 80);
+    const startTime = this.assertTimeString(input.startTime);
+    const prizeDescription = (input.prizeDescription ?? "").slice(0, 200);
+    const maxTickets = Math.min(30, Math.max(1, Number(input.maxTickets ?? 30)));
+    const dayOfWeek =
+      input.dayOfWeek != null
+        ? Math.min(6, Math.max(0, Math.round(Number(input.dayOfWeek))))
+        : null;
+    const isActive = input.isActive !== false;
+    const sortOrder = Number(input.sortOrder ?? 0);
+    const { rows } = await this.pool.query<ScheduleSlotRow>(
+      `INSERT INTO ${this.scheduleTable()}
+        (id, hall_id, game_type, display_name, day_of_week, start_time,
+         prize_description, max_tickets, is_active, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6::time,$7,$8,$9,$10)
+       RETURNING id, hall_id, game_type, display_name, day_of_week,
+                 start_time::text, prize_description, max_tickets,
+                 is_active, sort_order, created_at, updated_at`,
+      [id, hall.id, gameType, displayName, dayOfWeek, startTime,
+       prizeDescription, maxTickets, isActive, sortOrder]
+    );
+    return this.mapScheduleSlot(rows[0]);
+  }
+
+  async updateScheduleSlot(slotId: string, input: UpdateScheduleSlotInput): Promise<ScheduleSlot> {
+    await this.ensureInitialized();
+    const { rows: ex } = await this.pool.query<ScheduleSlotRow>(
+      `SELECT id, hall_id, game_type, display_name, day_of_week, start_time::text,
+              prize_description, max_tickets, is_active, sort_order, created_at, updated_at
+       FROM ${this.scheduleTable()} WHERE id = $1`,
+      [slotId]
+    );
+    if (!ex[0]) throw new DomainError("SCHEDULE_SLOT_NOT_FOUND", "Spilleplansslot finnes ikke.");
+    const c = this.mapScheduleSlot(ex[0]);
+    const gameType =
+      input.gameType !== undefined
+        ? this.assertNonEmptyString(input.gameType, "gameType", 40)
+        : c.gameType;
+    const displayName =
+      input.displayName !== undefined
+        ? this.assertNonEmptyString(input.displayName, "displayName", 80)
+        : c.displayName;
+    const startTime =
+      input.startTime !== undefined ? this.assertTimeString(input.startTime) : c.startTime;
+    const prizeDescription =
+      input.prizeDescription !== undefined
+        ? input.prizeDescription.slice(0, 200)
+        : c.prizeDescription;
+    const maxTickets =
+      input.maxTickets !== undefined
+        ? Math.min(30, Math.max(1, Number(input.maxTickets)))
+        : c.maxTickets;
+    const dayOfWeek =
+      input.dayOfWeek !== undefined
+        ? input.dayOfWeek != null
+          ? Math.min(6, Math.max(0, Math.round(Number(input.dayOfWeek))))
+          : null
+        : c.dayOfWeek;
+    const isActive = input.isActive !== undefined ? Boolean(input.isActive) : c.isActive;
+    const sortOrder = input.sortOrder !== undefined ? Number(input.sortOrder) : c.sortOrder;
+    const variantConfig = input.variantConfig !== undefined ? input.variantConfig : c.variantConfig;
+    const { rows } = await this.pool.query<ScheduleSlotRow>(
+      `UPDATE ${this.scheduleTable()}
+       SET game_type=$2, display_name=$3, day_of_week=$4, start_time=$5::time,
+           prize_description=$6, max_tickets=$7, is_active=$8, sort_order=$9,
+           variant_config=$10::jsonb, updated_at=now()
+       WHERE id=$1
+       RETURNING id, hall_id, game_type, display_name, day_of_week,
+                 start_time::text, prize_description, max_tickets,
+                 is_active, sort_order, variant_config, created_at, updated_at`,
+      [slotId, gameType, displayName, dayOfWeek, startTime,
+       prizeDescription, maxTickets, isActive, sortOrder, JSON.stringify(variantConfig)]
+    );
+    return this.mapScheduleSlot(rows[0]);
+  }
+
+  async deleteScheduleSlot(slotId: string): Promise<void> {
+    await this.ensureInitialized();
+    await this.pool.query(`DELETE FROM ${this.scheduleTable()} WHERE id = $1`, [slotId]);
+  }
+
+  async logScheduledGame(input: {
+    hallId: string;
+    scheduleSlotId?: string;
+    gameSessionId?: string;
+    endedAt?: string;
+    playerCount?: number;
+    totalPayout?: number;
+    notes?: string;
+  }): Promise<ScheduleLogEntry> {
+    await this.ensureInitialized();
+    const id = randomUUID();
+    const { rows } = await this.pool.query<ScheduleLogRow>(
+      `INSERT INTO ${this.scheduleLogTable()}
+        (id, hall_id, schedule_slot_id, game_session_id,
+         ended_at, player_count, total_payout, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING *`,
+      [id, input.hallId, input.scheduleSlotId ?? null, input.gameSessionId ?? null,
+       input.endedAt ?? null, input.playerCount ?? null,
+       input.totalPayout ?? null, input.notes ?? null]
+    );
+    return this.mapScheduleLog(rows[0]);
+  }
+
+  async listScheduleLog(
+    hallReference: string,
+    options?: { limit?: number }
+  ): Promise<ScheduleLogEntry[]> {
+    await this.ensureInitialized();
+    const hall = await this.getHall(hallReference);
+    const limit = Math.min(200, Math.max(1, Number(options?.limit ?? 50)));
+    const { rows } = await this.pool.query<ScheduleLogRow>(
+      `SELECT * FROM ${this.scheduleLogTable()}
+       WHERE hall_id=$1 ORDER BY started_at DESC LIMIT $2`,
+      [hall.id, limit]
+    );
+    return rows.map((r) => this.mapScheduleLog(r));
   }
 
   async listTerminals(options?: {
@@ -1144,6 +1407,11 @@ export class PlatformService {
   }
 
   assertUserEligibleForGameplay(user: PublicAppUser): void {
+    // DEV: skip KYC/age checks in development mode
+    if (process.env.NODE_ENV !== "production") {
+      return;
+    }
+
     if (user.kycStatus !== "VERIFIED") {
       throw new DomainError("KYC_REQUIRED", "KYC må verifiseres før spill kan startes.");
     }
@@ -1276,6 +1544,9 @@ export class PlatformService {
       name: row.name,
       region: row.region,
       address: row.address,
+      organizationNumber: row.organization_number ?? undefined,
+      settlementAccount: row.settlement_account ?? undefined,
+      invoiceMethod: row.invoice_method ?? undefined,
       isActive: row.is_active,
       createdAt: asIso(row.created_at),
       updatedAt: asIso(row.updated_at)
@@ -1304,6 +1575,39 @@ export class PlatformService {
       minRoundIntervalMs: Number(row.min_round_interval_ms),
       createdAt: asIso(row.created_at),
       updatedAt: asIso(row.updated_at)
+    };
+  }
+
+  private mapScheduleSlot(row: ScheduleSlotRow): ScheduleSlot {
+    return {
+      id: row.id,
+      hallId: row.hall_id,
+      gameType: row.game_type,
+      displayName: row.display_name,
+      dayOfWeek: row.day_of_week,
+      startTime: typeof row.start_time === "string" ? row.start_time.slice(0, 5) : String(row.start_time),
+      prizeDescription: row.prize_description,
+      maxTickets: Number(row.max_tickets),
+      isActive: row.is_active,
+      sortOrder: Number(row.sort_order),
+      variantConfig: row.variant_config ?? {},
+      createdAt: asIso(row.created_at),
+      updatedAt: asIso(row.updated_at)
+    };
+  }
+
+  private mapScheduleLog(row: ScheduleLogRow): ScheduleLogEntry {
+    return {
+      id: row.id,
+      hallId: row.hall_id,
+      scheduleSlotId: row.schedule_slot_id,
+      gameSessionId: row.game_session_id,
+      startedAt: asIso(row.started_at),
+      endedAt: row.ended_at ? asIso(row.ended_at) : null,
+      playerCount: row.player_count,
+      totalPayout: row.total_payout != null ? Number(row.total_payout) : null,
+      notes: row.notes,
+      createdAt: asIso(row.created_at)
     };
   }
 
@@ -1448,7 +1752,7 @@ export class PlatformService {
     await client.query(
       `INSERT INTO ${this.hallGameConfigTable()}
         (hall_id, game_slug, is_enabled, max_tickets_per_player, min_round_interval_ms)
-       SELECT $1, g.slug, true, 5, 30000
+       SELECT $1, g.slug, true, 30, 30000
        FROM ${this.gamesTable()} g
        ON CONFLICT (hall_id, game_slug) DO NOTHING`,
       [hallId]
@@ -1459,7 +1763,7 @@ export class PlatformService {
     await client.query(
       `INSERT INTO ${this.hallGameConfigTable()}
         (hall_id, game_slug, is_enabled, max_tickets_per_player, min_round_interval_ms)
-       SELECT h.id, g.slug, true, 5, 30000
+       SELECT h.id, g.slug, true, 30, 30000
        FROM ${this.hallsTable()} h
        CROSS JOIN ${this.gamesTable()} g
        ON CONFLICT (hall_id, game_slug) DO NOTHING`
@@ -1600,11 +1904,20 @@ export class PlatformService {
           name TEXT NOT NULL,
           region TEXT NOT NULL DEFAULT 'NO',
           address TEXT NOT NULL DEFAULT '',
+          organization_number TEXT,
+          settlement_account TEXT,
+          invoice_method TEXT,
           is_active BOOLEAN NOT NULL DEFAULT true,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )`
       );
+      // Add columns if upgrading from older schema
+      for (const col of ["organization_number TEXT", "settlement_account TEXT", "invoice_method TEXT"]) {
+        await client.query(
+          `ALTER TABLE ${this.hallsTable()} ADD COLUMN IF NOT EXISTS ${col}`
+        ).catch(() => {});
+      }
 
       await client.query(
         `CREATE TABLE IF NOT EXISTS ${this.terminalsTable()} (
@@ -1625,7 +1938,7 @@ export class PlatformService {
           hall_id TEXT NOT NULL REFERENCES ${this.hallsTable()}(id) ON DELETE CASCADE,
           game_slug TEXT NOT NULL REFERENCES ${this.gamesTable()}(slug) ON DELETE CASCADE,
           is_enabled BOOLEAN NOT NULL DEFAULT true,
-          max_tickets_per_player INTEGER NOT NULL DEFAULT 5 CHECK (max_tickets_per_player >= 1 AND max_tickets_per_player <= 5),
+          max_tickets_per_player INTEGER NOT NULL DEFAULT 30 CHECK (max_tickets_per_player >= 1 AND max_tickets_per_player <= 30),
           min_round_interval_ms INTEGER NOT NULL DEFAULT 30000 CHECK (min_round_interval_ms >= 30000),
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1652,6 +1965,46 @@ export class PlatformService {
       await client.query(
         `CREATE INDEX IF NOT EXISTS idx_app_game_settings_change_log_game_slug_created_at
          ON ${this.gameSettingsChangeLogTable()} (game_slug, created_at DESC)`
+      );
+
+      // ── Spilleplan (§ 64) ─────────────────────────────────────────────────
+      await client.query(
+        `CREATE TABLE IF NOT EXISTS ${this.scheduleTable()} (
+          id TEXT PRIMARY KEY,
+          hall_id TEXT NOT NULL REFERENCES ${this.hallsTable()}(id) ON DELETE CASCADE,
+          game_type TEXT NOT NULL DEFAULT 'standard',
+          display_name TEXT NOT NULL,
+          day_of_week INTEGER CHECK (day_of_week IS NULL OR (day_of_week >= 0 AND day_of_week <= 6)),
+          start_time TIME NOT NULL,
+          prize_description TEXT NOT NULL DEFAULT '',
+          max_tickets INTEGER NOT NULL DEFAULT 30 CHECK (max_tickets >= 1 AND max_tickets <= 30),
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )`
+      );
+      await client.query(
+        `CREATE TABLE IF NOT EXISTS ${this.scheduleLogTable()} (
+          id TEXT PRIMARY KEY,
+          hall_id TEXT NOT NULL,
+          schedule_slot_id TEXT REFERENCES ${this.scheduleTable()}(id) ON DELETE SET NULL,
+          game_session_id TEXT,
+          started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          ended_at TIMESTAMPTZ,
+          player_count INTEGER,
+          total_payout NUMERIC,
+          notes TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )`
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_hall_game_schedules_hall_id
+         ON ${this.scheduleTable()} (hall_id, is_active, day_of_week, start_time)`
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_hall_schedule_log_hall_id
+         ON ${this.scheduleLogTable()} (hall_id, started_at DESC)`
       );
 
       const gameSeeds: Array<[string, string, string, string, boolean, number, object]> = [
@@ -1720,6 +2073,14 @@ export class PlatformService {
     return `"${this.schema}"."app_hall_game_config"`;
   }
 
+  private scheduleTable(): string {
+    return `"${this.schema}"."hall_game_schedules"`;
+  }
+
+  private scheduleLogTable(): string {
+    return `"${this.schema}"."hall_schedule_log"`;
+  }
+
   private async hashPassword(password: string): Promise<string> {
     const salt = randomBytes(16);
     const digest = (await scrypt(password, salt, 64)) as Buffer;
@@ -1756,8 +2117,24 @@ export class PlatformService {
   }
 
   private assertPassword(password: string): void {
-    if (password.length < 8 || password.length > 128) {
-      throw new DomainError("INVALID_PASSWORD", "Passord må være mellom 8 og 128 tegn.");
+    if (password.length < 12 || password.length > 128) {
+      throw new DomainError("INVALID_PASSWORD", "Passord må være mellom 12 og 128 tegn.");
+    }
+    if (!/[A-Z]/.test(password)) {
+      throw new DomainError("INVALID_PASSWORD", "Passord må inneholde minst én stor bokstav.");
+    }
+    if (!/[a-z]/.test(password)) {
+      throw new DomainError("INVALID_PASSWORD", "Passord må inneholde minst én liten bokstav.");
+    }
+    if (!/[0-9]/.test(password)) {
+      throw new DomainError("INVALID_PASSWORD", "Passord må inneholde minst ett siffer.");
+    }
+  }
+
+  /** Light check used only at login — avoids locking out existing users with legacy passwords. */
+  private assertLoginPassword(password: string): void {
+    if (!password || password.length > 128) {
+      throw new DomainError("INVALID_PASSWORD", "Passord mangler eller er for langt.");
     }
   }
 
@@ -1833,6 +2210,22 @@ export class PlatformService {
       throw new DomainError("INVALID_INPUT", `${fieldName} er ugyldig.`);
     }
     return normalized;
+  }
+
+  private assertNonEmptyString(value: string, field: string, maxLen: number): string {
+    const v = (value ?? "").trim();
+    if (!v || v.length > maxLen) {
+      throw new DomainError("INVALID_INPUT", `${field} er påkrevd og må være maks ${maxLen} tegn.`);
+    }
+    return v;
+  }
+
+  private assertTimeString(value: string): string {
+    const v = (value ?? "").trim();
+    if (!/^\d{2}:\d{2}(:\d{2})?$/.test(v)) {
+      throw new DomainError("INVALID_INPUT", "startTime må være på formatet HH:MM eller HH:MM:SS.");
+    }
+    return v;
   }
 
   private assertHallSlug(slug: string): string {

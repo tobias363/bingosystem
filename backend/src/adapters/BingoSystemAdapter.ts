@@ -3,9 +3,14 @@ import type { Player, Ticket, ClaimType, ClaimRecord, GameSnapshot, RecoverableG
 export interface CreateTicketInput {
   roomCode: string;
   gameId: string;
+  gameSlug?: string;
   player: Player;
   ticketIndex: number;
   ticketsPerPlayer: number;
+  /** Display color name for the client, e.g. "Small Yellow", "Elvis 1". */
+  color?: string;
+  /** Ticket type code for variant logic: "small", "large", "elvis", "traffic-red", etc. */
+  type?: string;
 }
 
 export interface GameStartedInput {

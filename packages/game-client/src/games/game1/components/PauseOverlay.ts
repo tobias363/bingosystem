@@ -1,0 +1,61 @@
+/**
+ * Game pause overlay — shown when admin pauses the game.
+ * Matches Unity's isGamePaused overlay with pauseGameMessage.
+ *
+ * Blocks interaction and shows a centered message.
+ * Auto-hides when game is resumed (isPaused becomes false in next room:update).
+ */
+export class PauseOverlay {
+  private backdrop: HTMLDivElement;
+  private messageEl: HTMLDivElement;
+
+  constructor(container: HTMLElement) {
+    this.backdrop = document.createElement("div");
+    Object.assign(this.backdrop.style, {
+      position: "absolute",
+      inset: "0",
+      background: "rgba(0,0,0,0.85)",
+      display: "none",
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "column",
+      gap: "16px",
+      zIndex: "90",
+      pointerEvents: "auto",
+    });
+    container.appendChild(this.backdrop);
+
+    // Pause icon
+    const icon = document.createElement("div");
+    icon.innerHTML = `<svg width="48" height="48" viewBox="0 0 24 24" fill="#ffe83d"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`;
+    this.backdrop.appendChild(icon);
+
+    // Title
+    const title = document.createElement("div");
+    title.textContent = "Spillet er pauset";
+    title.style.cssText = "color:#ffe83d;font-size:24px;font-weight:700;";
+    this.backdrop.appendChild(title);
+
+    // Message
+    this.messageEl = document.createElement("div");
+    this.messageEl.style.cssText = "color:#ccc;font-size:16px;text-align:center;max-width:400px;line-height:1.5;";
+    this.backdrop.appendChild(this.messageEl);
+  }
+
+  show(message?: string): void {
+    this.messageEl.textContent = message || "Venter på at admin gjenopptar spillet...";
+    this.backdrop.style.display = "flex";
+  }
+
+  hide(): void {
+    this.backdrop.style.display = "none";
+  }
+
+  isShowing(): boolean {
+    return this.backdrop.style.display !== "none";
+  }
+
+  destroy(): void {
+    this.backdrop.remove();
+  }
+}

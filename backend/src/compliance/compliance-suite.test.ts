@@ -272,7 +272,7 @@ test("compliance: enforces ticket max and hall ticket cap", async () => {
         roomCode: room.roomCode,
         actorPlayerId: room.hostPlayerId,
         entryFee: 0,
-        ticketsPerPlayer: 6,
+        ticketsPerPlayer: 31,
         payoutPercent: 80
       }),
     (error: unknown) => error instanceof DomainError && error.code === "INVALID_TICKETS_PER_PLAYER"
@@ -281,6 +281,16 @@ test("compliance: enforces ticket max and hall ticket cap", async () => {
   assert.throws(
     () => assertTicketsPerPlayerWithinHallLimit(5, 4),
     (error: unknown) => error instanceof DomainError && error.code === "TICKETS_ABOVE_HALL_LIMIT"
+  );
+
+  // Hall config with max 30 should be accepted (§2-10 allows up to 30)
+  assert.doesNotThrow(() => assertTicketsPerPlayerWithinHallLimit(30, 30));
+  assert.doesNotThrow(() => assertTicketsPerPlayerWithinHallLimit(5, 30));
+
+  // Hall config above 30 should be rejected
+  assert.throws(
+    () => assertTicketsPerPlayerWithinHallLimit(1, 31),
+    (error: unknown) => error instanceof DomainError && error.code === "INVALID_HALL_CONFIG"
   );
 });
 
@@ -508,7 +518,11 @@ test("compliance: enforces databingo prize caps and keeps payout audit", async (
     actorPlayerId: hostPlayerId,
     entryFee: 3000,
     ticketsPerPlayer: 1,
-    payoutPercent: 80
+    payoutPercent: 80,
+    patterns: [
+      { id: "1-rad", name: "1 Rad", claimType: "LINE" as const, prizePercent: 30, order: 1, design: 1 },
+      { id: "full-plate", name: "Full Plate", claimType: "BINGO" as const, prizePercent: 70, order: 2, design: 2 },
+    ]
   });
 
   // Make draw order deterministic for this test to avoid flakiness where a required
