@@ -1,6 +1,6 @@
 import { Container, Graphics, Text, Sprite, Assets, Texture } from "pixi.js";
 import gsap from "gsap";
-import type { JackpotActivatedPayload, JackpotSpinResult } from "@spillorama/shared-types/socket-events";
+import type { JackpotActivatedPayload, JackpotSpinResult, JackpotSpinEntry } from "@spillorama/shared-types/socket-events";
 
 const NUM_SEGMENTS = 8;
 const SEGMENT_COLORS = [
@@ -25,6 +25,7 @@ export class JackpotOverlay extends Container {
   private prizeList: number[] = [];
   private isSpinning = false;
   private radius: number;
+  private historyText: Text;
   private onSpin: (() => void) | null = null;
   private onDismiss: (() => void) | null = null;
   private autoSpinTimer: ReturnType<typeof setInterval> | null = null;
@@ -128,6 +129,17 @@ export class JackpotOverlay extends Container {
     this.resultText.visible = false;
     this.addChild(this.resultText);
 
+    // Spin history (shown after result)
+    this.historyText = new Text({
+      text: "",
+      style: { fontFamily: "Arial", fontSize: 16, fill: 0xcccccc, align: "center" },
+    });
+    this.historyText.anchor.set(0.5);
+    this.historyText.x = screenWidth / 2;
+    this.historyText.y = screenHeight / 2 + this.radius + 185;
+    this.historyText.visible = false;
+    this.addChild(this.historyText);
+
     this.visible = false;
   }
 
@@ -147,6 +159,7 @@ export class JackpotOverlay extends Container {
     this.spinBtn.visible = true;
     this.spinBtnText.text = "SPINN";
     this.resultText.visible = false;
+    this.updateHistoryDisplay(data.spinHistory);
     this.visible = true;
 
     // Start auto-spin countdown (10 seconds)
@@ -175,8 +188,8 @@ export class JackpotOverlay extends Container {
     const targetAngle = result.segmentIndex * segmentAngle + segmentAngle / 2;
     const totalRotation = 360 * 5 + (360 - targetAngle);
 
-    this.wheelContainer.children[0].rotation = 0;
-    const wheelInner = this.wheelContainer.children[0] as Container;
+    const wheelInner = this.getWheelInner();
+    wheelInner.rotation = 0;
 
     gsap.to(wheelInner, {
       rotation: (totalRotation * Math.PI) / 180,
@@ -186,11 +199,14 @@ export class JackpotOverlay extends Container {
         this.isSpinning = false;
         this.resultText.text = `Du vant ${result.prizeAmount} kr!`;
         this.resultText.visible = true;
+        this.updateHistoryDisplay(result.spinHistory);
 
         // Auto-dismiss after 4 seconds
         gsap.delayedCall(4, () => {
-          this.visible = false;
-          this.onDismiss?.();
+          if (!this.destroyed) {
+            this.visible = false;
+            this.onDismiss?.();
+          }
         });
       },
     });
@@ -198,7 +214,7 @@ export class JackpotOverlay extends Container {
 
   destroy(options?: Parameters<Container["destroy"]>[0]): void {
     this.clearAutoTimer();
-    gsap.killTweensOf(this.wheelContainer.children[0]);
+    gsap.killTweensOf(this.getWheelInner());
     super.destroy(options);
   }
 
@@ -258,17 +274,46 @@ export class JackpotOverlay extends Container {
     ring.stroke({ color: 0x790001, width: 2 });
     inner.addChild(ring);
 
+    inner.name = "wheel-inner";
     this.wheelContainer.addChild(inner);
   }
 
+  private getWheelInner(): Container {
+    return (this.wheelContainer.getChildByName("wheel-inner") ?? this.wheelContainer.children[0]) as Container;
+  }
+
   private updateWheelLabels(): void {
-    const inner = this.wheelContainer.children[0] as Container;
+    const inner = this.getWheelInner();
+    // Determine max prize for multiplier coloring
+    const maxPrize = Math.max(...this.prizeList, 1);
     for (let i = 0; i < NUM_SEGMENTS; i++) {
       const label = inner.getChildByName(`jp-label-${i}`) as Text | null;
       if (label && this.prizeList[i] !== undefined) {
-        label.text = `${this.prizeList[i]} kr`;
+        const prize = this.prizeList[i];
+        label.text = `${prize} kr`;
+        // Multiplier color: green for top prize, yellow for mid, white for low
+        if (prize >= maxPrize) {
+          label.style.fill = 0x00ff88; // Green — jackpot segment
+        } else if (prize >= maxPrize * 0.4) {
+          label.style.fill = 0xffe83d; // Gold — high value
+        } else {
+          label.style.fill = 0xffffff; // White — standard
+        }
       }
     }
+  }
+
+  private updateHistoryDisplay(history: JackpotSpinEntry[]): void {
+    if (!history || history.length === 0) {
+      this.historyText.visible = false;
+      return;
+    }
+    const entries = history
+      .slice(-5) // Show last 5 spins
+      .map((e) => `${e.prizeAmount} kr`)
+      .join(", ");
+    this.historyText.text = `Siste spinn: ${entries}`;
+    this.historyText.visible = true;
   }
 
   private async loadArrowSprite(fallback: Graphics, screenWidth: number, screenHeight: number): Promise<void> {

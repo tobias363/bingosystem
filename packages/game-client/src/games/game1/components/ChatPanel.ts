@@ -9,7 +9,17 @@ const INPUT_HEIGHT = 40;
 
 /**
  * Real-time chat panel for bingo games.
- * Uses an HTML <input> overlay for text entry (PixiJS has no native text input).
+ *
+ * Uses an HTML <input> overlay for text entry because PixiJS has no native
+ * text input. The overlay is repositioned on every resize/orientation change
+ * via a ResizeObserver on the game container.
+ *
+ * Known trade-off: HTML overlay over canvas is inherently fragile. This
+ * implementation mitigates the most common issues:
+ * - Repositions on container resize (covers window resize + orientation change)
+ * - Handles focus/blur to prevent mobile keyboard layout issues
+ * - Prevents game key events from leaking during chat input
+ * - Cleans up all DOM listeners and observers on destroy
  */
 export class ChatPanel extends Container {
   private socket: SpilloramaSocket;
@@ -22,6 +32,9 @@ export class ChatPanel extends Container {
   private inputBg: Graphics;
   private htmlInput: HTMLInputElement | null = null;
   private unsubChat: (() => void) | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private repositionRAF: number | null = null;
+  private isDestroyed = false;
 
   constructor(
     socket: SpilloramaSocket,
@@ -89,10 +102,32 @@ export class ChatPanel extends Container {
     this.renderMessages();
   }
 
+  /** Call when parent layout changes to reposition the HTML input. */
+  reposition(): void {
+    this.scheduleReposition();
+  }
+
   destroy(): void {
+    this.isDestroyed = true;
     this.unsubChat?.();
-    this.htmlInput?.remove();
-    this.htmlInput = null;
+
+    // Clean up resize observer
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+
+    // Cancel pending RAF
+    if (this.repositionRAF !== null) {
+      cancelAnimationFrame(this.repositionRAF);
+      this.repositionRAF = null;
+    }
+
+    // Remove HTML input and its event listeners
+    if (this.htmlInput) {
+      this.htmlInput.blur();
+      this.htmlInput.remove();
+      this.htmlInput = null;
+    }
+
     super.destroy({ children: true });
   }
 
@@ -107,6 +142,7 @@ export class ChatPanel extends Container {
     input.placeholder = "Skriv melding...";
     input.maxLength = 100;
     input.autocomplete = "off";
+    input.enterKeyHint = "send";
 
     Object.assign(input.style, {
       position: "absolute",
@@ -121,10 +157,11 @@ export class ChatPanel extends Container {
       padding: "0 8px",
       outline: "none",
       zIndex: "1000",
-      // Position will be updated once we know our global coords
       display: "none",
+      boxSizing: "border-box",
     });
 
+    // Send on Enter
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         const message = input.value.trim();
@@ -137,15 +174,44 @@ export class ChatPanel extends Container {
       e.stopPropagation();
     });
 
+    // Prevent all key events from leaking to game
+    input.addEventListener("keyup", (e) => e.stopPropagation());
+    input.addEventListener("keypress", (e) => e.stopPropagation());
+
+    // Focus styling
+    input.addEventListener("focus", () => {
+      input.style.borderColor = "#ffe83d";
+      input.style.background = "#4e0000";
+    });
+    input.addEventListener("blur", () => {
+      input.style.borderColor = "#790001";
+      input.style.background = "#3e0000";
+    });
+
     container.appendChild(input);
     this.htmlInput = input;
 
-    // Position the input once the panel is rendered (next frame)
-    requestAnimationFrame(() => this.positionHtmlInput());
+    // Initial position
+    this.scheduleReposition();
+
+    // Watch for container resizes (covers window resize + orientation change)
+    this.resizeObserver = new ResizeObserver(() => {
+      this.scheduleReposition();
+    });
+    this.resizeObserver.observe(container);
+  }
+
+  /** Debounced reposition via requestAnimationFrame. */
+  private scheduleReposition(): void {
+    if (this.repositionRAF !== null) return;
+    this.repositionRAF = requestAnimationFrame(() => {
+      this.repositionRAF = null;
+      if (!this.isDestroyed) this.positionHtmlInput();
+    });
   }
 
   private positionHtmlInput(): void {
-    if (!this.htmlInput) return;
+    if (!this.htmlInput || this.isDestroyed) return;
 
     const canvas = document.querySelector("#web-game-container canvas") as HTMLCanvasElement | null;
     if (!canvas) return;
@@ -163,9 +229,16 @@ export class ChatPanel extends Container {
     const cssX = canvasRect.left + (globalPos.x + 16) * scaleX * resolution;
     const cssY = canvasRect.top + (globalPos.y + inputY + 4) * scaleY * resolution;
 
+    // Scale the input to match canvas scaling
+    const inputWidth = (PANEL_WIDTH - 32) * scaleX * resolution;
+    const inputHeight = (INPUT_HEIGHT - 12) * scaleY * resolution;
+
     Object.assign(this.htmlInput.style, {
       left: `${cssX}px`,
       top: `${cssY}px`,
+      width: `${inputWidth}px`,
+      height: `${inputHeight}px`,
+      fontSize: `${Math.max(11, Math.floor(13 * scaleY * resolution))}px`,
       display: "block",
     });
   }

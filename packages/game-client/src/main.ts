@@ -41,10 +41,19 @@ export function unmountGame(): void {
 if (import.meta.env.DEV) {
   const container = document.getElementById("game-container");
   if (container) {
+    // Read game slug from URL params: ?game=bingo (default: bingo for Game 1)
+    const params = new URLSearchParams(window.location.search);
+    const gameSlug = params.get("game") ?? "bingo";
+    const hallId = params.get("hall") ?? "hall-default";
+
+    // Try to get token from sessionStorage (set by login) or use dev-token
+    const storedToken = sessionStorage.getItem("spillorama.accessToken") ?? "";
+    const accessToken = (storedToken || params.get("token")) ?? "dev-token";
+
     mountGame(container, {
-      gameSlug: "game_2",
-      accessToken: "dev-token",
-      hallId: "dev-hall",
+      gameSlug,
+      accessToken,
+      hallId,
       serverUrl: "http://localhost:4000",
     });
   }

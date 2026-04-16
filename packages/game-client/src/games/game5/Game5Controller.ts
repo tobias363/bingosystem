@@ -38,7 +38,6 @@ class Game5Controller implements GameController {
     const { app, socket, bridge } = this.deps;
     app.stage.addChild(this.root);
 
-    console.log("[Game5] Connecting socket...");
     socket.connect();
 
     const connected = await new Promise<boolean>((resolve) => {
@@ -50,7 +49,6 @@ class Game5Controller implements GameController {
     });
 
     if (!connected) { this.showError("Kunne ikke koble til server"); return; }
-    console.log("[Game5] Socket connected");
 
     this.unsubs.push(
       socket.on("connectionStateChanged", (state) => {
@@ -59,7 +57,6 @@ class Game5Controller implements GameController {
       }),
     );
 
-    console.log("[Game5] Joining room, hallId:", this.deps.hallId);
     const joinResult = await socket.createRoom({
       hallId: this.deps.hallId,
       gameSlug: "spillorama",
@@ -73,7 +70,6 @@ class Game5Controller implements GameController {
 
     this.myPlayerId = joinResult.data.playerId;
     this.actualRoomCode = joinResult.data.roomCode;
-    console.log("[Game5] Joined room:", this.actualRoomCode);
 
     bridge.start(this.myPlayerId);
     bridge.applySnapshot(joinResult.data.snapshot);
@@ -90,7 +86,6 @@ class Game5Controller implements GameController {
     this.root.eventMode = "static";
     this.root.on("pointerdown", () => this.deps.audio.unlock(), { once: true });
 
-    console.log("[Game5] Auto-arming...");
     await socket.armBet({ roomCode: this.actualRoomCode, armed: true });
 
     const state = bridge.getState();
@@ -111,7 +106,6 @@ class Game5Controller implements GameController {
   }
 
   private transitionTo(phase: Phase, state: GameState): void {
-    console.log("[Game5] Transition:", this.phase, "→", phase);
     this.phase = phase;
     this.clearScreen();
     const w = this.deps.app.app.screen.width;
@@ -181,7 +175,6 @@ class Game5Controller implements GameController {
   }
 
   private onJackpotActivated(data: JackpotActivatedPayload): void {
-    console.log("[Game5] Jackpot activated!", data);
     const w = this.deps.app.app.screen.width;
     const h = this.deps.app.app.screen.height;
 

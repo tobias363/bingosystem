@@ -2,7 +2,7 @@ import { Application, Container } from "pixi.js";
 import { SpilloramaSocket } from "../net/SpilloramaSocket.js";
 import { GameBridge } from "../bridge/GameBridge.js";
 import { AudioManager } from "../audio/AudioManager.js";
-import { createGame, type GameController } from "../games/registry.js";
+import { createGame, registrationsReady, type GameController } from "../games/registry.js";
 import { telemetry } from "../telemetry/Telemetry.js";
 
 export interface GameMountConfig {
@@ -25,6 +25,7 @@ export class GameApp {
   private bridge: GameBridge | null = null;
   private audio: AudioManager | null = null;
   private gameController: GameController | null = null;
+  private resizeCleanup: (() => void) | null = null;
 
   constructor() {
     this.app = new Application();
@@ -62,6 +63,9 @@ export class GameApp {
     this.bridge = new GameBridge(this.socket);
     this.audio = new AudioManager();
 
+    // Wait for all game controllers to register before looking up the slug
+    await registrationsReady;
+
     // Create and start game controller
     const roomCode = `BINGO1`; // Canonical room alias — backend resolves to hall-specific room
     this.gameController = createGame(config.gameSlug, {
@@ -82,6 +86,23 @@ export class GameApp {
     } else {
       console.warn("[GameApp] No game controller found for slug:", config.gameSlug);
     }
+
+    // Propagate PixiJS canvas resizes to the active game controller.
+    // Debounced to avoid excessive reflows during drag-resize.
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const onResize = () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const w = this.app.screen.width;
+        const h = this.app.screen.height;
+        this.gameController?.resize?.(w, h);
+      }, 100);
+    };
+    this.app.renderer.on("resize", onResize);
+    this.resizeCleanup = () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      this.app.renderer.off("resize", onResize);
+    };
   }
 
   getConfig(): GameMountConfig | null {
@@ -89,6 +110,8 @@ export class GameApp {
   }
 
   destroy(): void {
+    this.resizeCleanup?.();
+    this.resizeCleanup = null;
     this.gameController?.destroy();
     this.gameController = null;
     this.bridge?.stop();

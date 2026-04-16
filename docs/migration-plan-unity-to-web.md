@@ -138,13 +138,19 @@ Dette må avklares eksplisitt i fase 0, slik at migreringen ikke stopper opp i r
 ### 4.2 Faser
 
 ```
-Fase 0: Fundament          ████░░░░░░░░░░░░░░░░░░░░  
-Fase 1: Pilot (Game 2)     ░░░░████░░░░░░░░░░░░░░░░  
-Fase 2: Game 1             ░░░░░░░░█████░░░░░░░░░░░  
-Fase 3: Game 3             ░░░░░░░░░░░░░████░░░░░░░  
-Fase 4: Game 5             ░░░░░░░░░░░░░░░░░████░░░  
-Fase 5: Opprydding         ░░░░░░░░░░░░░░░░░░░░░██  
+Fase 0: Fundament          ████████████████████████  100% ✅
+Fase 1: Pilot (Game 2)     ██████████████████████░░   90%
+Fase 2: Game 1             ████████████████████░░░░   85%
+Fase 3: Game 3             █████████████████████░░░   88%
+Fase 4: Game 5             ███████████████████░░░░░   82%
+Fase 5: Opprydding         ░░░░░░░░░░░░░░░░░░░░░░░░    0%
 ```
+
+> **Statusoppdatering 2026-04-14:** Fase 0 er fullført. Fase 1–4 er bygget parallelt
+> (ikke sekvensielt som opprinnelig planlagt). Alle 4 spill har fungerende
+> kjernespillmekanikk. Gjenstående arbeid er hovedsakelig assets (lyd, sprites),
+> responsiv layout, E2E-testing og visuell polish.
+> Se [WEB_MIGRATION_TASKS.md](WEB_MIGRATION_TASKS.md) for detaljert oppgaveliste.
 
 ---
 

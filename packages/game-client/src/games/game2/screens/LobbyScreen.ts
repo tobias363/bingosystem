@@ -25,8 +25,8 @@ export class LobbyScreen extends Container {
     this.screenWidth = screenWidth;
     this.screenHeight = screenHeight;
 
-    // Info bar
-    this.infoBar = new PlayerInfoBar();
+    // Info bar (fills viewport width minus padding)
+    this.infoBar = new PlayerInfoBar(screenWidth - 40);
     this.infoBar.x = 20;
     this.infoBar.y = 10;
     this.addChild(this.infoBar);
@@ -68,10 +68,12 @@ export class LobbyScreen extends Container {
     luckyBtn.on("pointerdown", () => this.luckyPicker.show());
     this.addChild(luckyBtn);
 
-    // Buy popup (centered)
-    this.buyPopup = new BuyPopup(320, 220);
-    this.buyPopup.x = (screenWidth - 320) / 2;
-    this.buyPopup.y = screenHeight / 2 + 120;
+    // Buy popup (centered, clamped to viewport)
+    const popupW = Math.min(320, screenWidth - 32);
+    const popupH = 220;
+    this.buyPopup = new BuyPopup(popupW, popupH);
+    this.buyPopup.x = (screenWidth - popupW) / 2;
+    this.buyPopup.y = Math.min(screenHeight / 2 + 120, screenHeight - popupH - 16);
     this.buyPopup.setOnBuy((count) => this.onBuy?.(count));
     this.addChild(this.buyPopup);
 

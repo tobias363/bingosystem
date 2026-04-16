@@ -124,7 +124,6 @@ export class RouletteWheel extends Container {
       const centerIdx = this.getChildIndex(this.centerBg);
       this.addChildAt(arrowSprite, centerIdx);
 
-      console.log("[RouletteWheel] Sprites loaded successfully");
     } catch (err) {
       console.warn("[RouletteWheel] Sprite load failed, using procedural fallback:", err);
     }

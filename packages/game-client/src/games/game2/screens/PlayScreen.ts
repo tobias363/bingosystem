@@ -28,8 +28,8 @@ export class PlayScreen extends Container {
     super();
     this.audio = audio;
 
-    // Info bar (top)
-    this.infoBar = new PlayerInfoBar();
+    // Info bar (top, fills viewport width minus padding)
+    this.infoBar = new PlayerInfoBar(screenWidth - 40);
     this.infoBar.x = 20;
     this.infoBar.y = 10;
     this.addChild(this.infoBar);
@@ -39,7 +39,8 @@ export class PlayScreen extends Container {
       text: "",
       style: { fontFamily: "Arial", fontSize: 16, fill: 0xffe83d },
     });
-    this.luckyNumberText.x = screenWidth - 150;
+    this.luckyNumberText.anchor.set(1, 0);
+    this.luckyNumberText.x = screenWidth - 20;
     this.luckyNumberText.y = 14;
     this.addChild(this.luckyNumberText);
 
@@ -57,15 +58,19 @@ export class PlayScreen extends Container {
     this.scroller.y = scrollerY;
     this.addChild(this.scroller);
 
-    // Claim buttons (bottom)
-    this.lineBtn = new ClaimButton("LINE", 140, 50);
-    this.lineBtn.x = screenWidth / 2 - 150;
+    // Claim buttons (bottom, centered with gap)
+    const claimBtnW = Math.min(140, (screenWidth - 60) / 2);
+    const claimGap = 10;
+    const claimTotalW = claimBtnW * 2 + claimGap;
+
+    this.lineBtn = new ClaimButton("LINE", claimBtnW, 50);
+    this.lineBtn.x = (screenWidth - claimTotalW) / 2;
     this.lineBtn.y = screenHeight - 65;
     this.lineBtn.setOnClaim((type) => this.onClaim?.(type));
     this.addChild(this.lineBtn);
 
-    this.bingoBtn = new ClaimButton("BINGO", 140, 50);
-    this.bingoBtn.x = screenWidth / 2 + 10;
+    this.bingoBtn = new ClaimButton("BINGO", claimBtnW, 50);
+    this.bingoBtn.x = (screenWidth - claimTotalW) / 2 + claimBtnW + claimGap;
     this.bingoBtn.y = screenHeight - 65;
     this.bingoBtn.setOnClaim((type) => this.onClaim?.(type));
     this.addChild(this.bingoBtn);

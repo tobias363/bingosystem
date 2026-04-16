@@ -49,8 +49,15 @@ export class CountdownTimer extends Container {
       this.pulseTween.kill();
       this.pulseTween = null;
     }
-    this.visible = false;
-    this.scale.set(1);
+    if (!this.destroyed) {
+      this.visible = false;
+      this.scale.set(1);
+    }
+  }
+
+  override destroy(options?: boolean | { children?: boolean }): void {
+    this.stop();
+    super.destroy(options);
   }
 
   private update(): void {

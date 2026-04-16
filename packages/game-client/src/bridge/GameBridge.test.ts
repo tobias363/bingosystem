@@ -75,6 +75,8 @@ function makeRoomUpdate(overrides: Partial<RoomUpdatePayload> = {}): RoomUpdateP
     ...snap,
     scheduler: {},
     preRoundTickets: {},
+    armedPlayerIds: [],
+    playerStakes: {},
     luckyNumbers: {},
     serverTimestamp: Date.now(),
     ...overrides,
@@ -317,6 +319,39 @@ describe("GameBridge", () => {
       );
 
       expect(bridge.getState().preRoundTickets).toEqual(tickets);
+    });
+
+    it("picks up server-authoritative stake for current player", () => {
+      bridge.start("player-1");
+
+      socket.fire(
+        "roomUpdate",
+        makeRoomUpdate({ playerStakes: { "player-1": 60, "player-2": 20 } }),
+      );
+
+      expect(bridge.getState().myStake).toBe(60);
+    });
+
+    it("defaults myStake to 0 when player has no stake", () => {
+      bridge.start("player-1");
+
+      socket.fire(
+        "roomUpdate",
+        makeRoomUpdate({ playerStakes: { "player-2": 40 } }),
+      );
+
+      expect(bridge.getState().myStake).toBe(0);
+    });
+
+    it("defaults myStake to 0 when playerStakes is missing", () => {
+      bridge.start("player-1");
+
+      socket.fire(
+        "roomUpdate",
+        makeRoomUpdate({ playerStakes: {} }),
+      );
+
+      expect(bridge.getState().myStake).toBe(0);
     });
   });
 

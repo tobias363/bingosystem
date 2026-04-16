@@ -104,4 +104,12 @@ export class ClaimButton extends Container {
     this.setState("hidden");
     this.btnText.text = ClaimButton.COLORS[this.claimType].text;
   }
+
+  destroy(options?: Parameters<Container["destroy"]>[0]): void {
+    if (this.pulseTween) {
+      this.pulseTween.kill();
+      this.pulseTween = null;
+    }
+    super.destroy(options);
+  }
 }

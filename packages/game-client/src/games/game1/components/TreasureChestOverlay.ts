@@ -1,6 +1,8 @@
-import { Container, Graphics, Text } from "pixi.js";
+import { Container, Graphics, Text, Sprite, Assets, Texture } from "pixi.js";
 import gsap from "gsap";
 import type { MiniGameActivatedPayload, MiniGamePlayResult } from "@spillorama/shared-types/socket-events";
+
+const ASSET_BASE = import.meta.env.BASE_URL + "assets/game1/";
 
 const CHEST_COLORS = {
   closed: 0x8b4513,
@@ -9,6 +11,20 @@ const CHEST_COLORS = {
   openBg: 0x2e0000,
   winner: 0xffe83d,
 };
+
+let chestClosedTex: Texture | null = null;
+let chestOpenTex: Texture | null = null;
+
+async function loadChestTextures(): Promise<void> {
+  try {
+    [chestClosedTex, chestOpenTex] = await Promise.all([
+      Assets.load<Texture>(ASSET_BASE + "chest-closed.png"),
+      Assets.load<Texture>(ASSET_BASE + "chest-open.png"),
+    ]);
+  } catch {
+    // Keep null — fallback to procedural drawing
+  }
+}
 
 /**
  * Treasure Chest mini-game overlay for Game 1 (Classic Bingo).
@@ -108,7 +124,8 @@ export class TreasureChestOverlay extends Container {
     this.onDismiss = callback;
   }
 
-  show(data: MiniGameActivatedPayload): void {
+  async show(data: MiniGameActivatedPayload): Promise<void> {
+    await loadChestTextures();
     this.prizeList = data.prizeList;
     this.isRevealing = false;
     this.resultText.visible = false;
@@ -151,14 +168,18 @@ export class TreasureChestOverlay extends Container {
 
     // Show result
     gsap.delayedCall(1, () => {
-      this.resultText.text = `Du vant ${result.prizeAmount} kr!`;
-      this.resultText.visible = true;
+      if (!this.destroyed) {
+        this.resultText.text = `Du vant ${result.prizeAmount} kr!`;
+        this.resultText.visible = true;
+      }
     });
 
     // Auto-dismiss after 5 seconds
     gsap.delayedCall(5, () => {
-      this.visible = false;
-      this.onDismiss?.();
+      if (!this.destroyed) {
+        this.visible = false;
+        this.onDismiss?.();
+      }
     });
   }
 
@@ -227,27 +248,33 @@ export class TreasureChestOverlay extends Container {
   private drawClosedChest(size: number, number: number): Container {
     const c = new Container();
 
-    // Body
-    const body = new Graphics();
-    body.roundRect(-size / 2, -size / 2, size, size, 6);
-    body.fill(CHEST_COLORS.closed);
-    body.stroke({ color: CHEST_COLORS.lid, width: 2 });
-    c.addChild(body);
+    if (chestClosedTex) {
+      const sprite = new Sprite(chestClosedTex);
+      sprite.anchor.set(0.5);
+      const scale = size / Math.max(chestClosedTex.width, chestClosedTex.height);
+      sprite.scale.set(scale);
+      c.addChild(sprite);
+    } else {
+      // Procedural fallback
+      const body = new Graphics();
+      body.roundRect(-size / 2, -size / 2, size, size, 6);
+      body.fill(CHEST_COLORS.closed);
+      body.stroke({ color: CHEST_COLORS.lid, width: 2 });
+      c.addChild(body);
 
-    // Lid stripe
-    const lid = new Graphics();
-    lid.rect(-size / 2, -size / 2, size, size * 0.3);
-    lid.fill(CHEST_COLORS.closedLight);
-    lid.stroke({ color: CHEST_COLORS.lid, width: 1 });
-    c.addChild(lid);
+      const lid = new Graphics();
+      lid.rect(-size / 2, -size / 2, size, size * 0.3);
+      lid.fill(CHEST_COLORS.closedLight);
+      lid.stroke({ color: CHEST_COLORS.lid, width: 1 });
+      c.addChild(lid);
 
-    // Lock
-    const lock = new Graphics();
-    lock.circle(0, -size * 0.05, size * 0.08);
-    lock.fill(CHEST_COLORS.lid);
-    c.addChild(lock);
+      const lock = new Graphics();
+      lock.circle(0, -size * 0.05, size * 0.08);
+      lock.fill(CHEST_COLORS.lid);
+      c.addChild(lock);
+    }
 
-    // Number
+    // Number label
     const label = new Text({
       text: `${number}`,
       style: { fontFamily: "Arial", fontSize: Math.floor(size * 0.3), fill: 0xffffff, fontWeight: "bold" },
@@ -265,18 +292,25 @@ export class TreasureChestOverlay extends Container {
       alpha: 0.5,
       duration: 0.3,
       onComplete: () => {
-        // Rebuild as open chest
         chest.removeChildren();
         chest.alpha = 1;
 
         const size = 70;
 
-        // Open body
-        const body = new Graphics();
-        body.roundRect(-size / 2, -size / 2, size, size, 6);
-        body.fill(isWinner ? CHEST_COLORS.winner : CHEST_COLORS.openBg);
-        body.stroke({ color: isWinner ? 0xffffff : CHEST_COLORS.lid, width: isWinner ? 3 : 2 });
-        chest.addChild(body);
+        if (chestOpenTex) {
+          const sprite = new Sprite(chestOpenTex);
+          sprite.anchor.set(0.5);
+          const scale = size / Math.max(chestOpenTex.width, chestOpenTex.height);
+          sprite.scale.set(scale);
+          if (isWinner) sprite.tint = 0xffe83d;
+          chest.addChild(sprite);
+        } else {
+          const body = new Graphics();
+          body.roundRect(-size / 2, -size / 2, size, size, 6);
+          body.fill(isWinner ? CHEST_COLORS.winner : CHEST_COLORS.openBg);
+          body.stroke({ color: isWinner ? 0xffffff : CHEST_COLORS.lid, width: isWinner ? 3 : 2 });
+          chest.addChild(body);
+        }
 
         // Prize label
         const label = new Text({
@@ -292,7 +326,6 @@ export class TreasureChestOverlay extends Container {
         label.anchor.set(0.5);
         chest.addChild(label);
 
-        // Winner glow
         if (isWinner) {
           gsap.to(chest, { alpha: 0.7, duration: 0.4, yoyo: true, repeat: 3 });
         }

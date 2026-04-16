@@ -36,7 +36,6 @@ class Game2Controller implements GameController {
     app.stage.addChild(this.root);
 
     // Connect socket
-    console.log("[Game2] Connecting socket...");
     socket.connect();
 
     // Wait for connection with timeout
@@ -44,7 +43,6 @@ class Game2Controller implements GameController {
       if (socket.isConnected()) { resolve(true); return; }
       const timeout = setTimeout(() => { resolve(false); }, 10000);
       const unsub = socket.on("connectionStateChanged", (state) => {
-        console.log("[Game2] Socket state:", state);
         if (state === "connected") { unsub(); clearTimeout(timeout); resolve(true); }
       });
     });
@@ -53,7 +51,6 @@ class Game2Controller implements GameController {
       this.showError("Kunne ikke koble til server");
       return;
     }
-    console.log("[Game2] Socket connected");
 
     // Track socket stability
     this.unsubs.push(
@@ -64,7 +61,6 @@ class Game2Controller implements GameController {
     );
 
     // Join or create room
-    console.log("[Game2] Joining room, hallId:", this.deps.hallId);
     const joinResult = await socket.createRoom({
       hallId: this.deps.hallId,
       gameSlug: "rocket",
@@ -78,7 +74,6 @@ class Game2Controller implements GameController {
 
     this.myPlayerId = joinResult.data.playerId;
     this.actualRoomCode = joinResult.data.roomCode;
-    console.log("[Game2] Joined room:", this.actualRoomCode, "playerId:", this.myPlayerId);
 
     // Start bridge
     bridge.start(this.myPlayerId);
@@ -98,16 +93,13 @@ class Game2Controller implements GameController {
     this.root.on("pointerdown", () => this.deps.audio.unlock(), { once: true });
 
     // Auto-arm so we're ready for the next game
-    console.log("[Game2] Auto-arming for next game...");
-    const armResult = await socket.armBet({
+    await socket.armBet({
       roomCode: this.actualRoomCode,
       armed: true,
     });
-    console.log("[Game2] Arm result:", armResult.ok, armResult.error || "");
 
     // Transition based on initial game state
     const state = bridge.getState();
-    console.log("[Game2] Initial state:", state.gameStatus, "tickets:", state.myTickets.length, "players:", state.playerCount);
 
     if (state.gameStatus === "RUNNING" && state.myTickets.length > 0) {
       this.transitionTo("PLAYING", state);
@@ -123,10 +115,14 @@ class Game2Controller implements GameController {
     this.root.destroy({ children: true });
   }
 
+  resize(width: number, height: number): void {
+    if (this.phase === "LOADING") return;
+    this.transitionTo(this.phase, this.deps.bridge.getState());
+  }
+
   // ── State transitions ─────────────────────────────────────────────────
 
   private transitionTo(phase: Phase, state: GameState): void {
-    console.log("[Game2] Transition:", this.phase, "→", phase);
     this.phase = phase;
     this.clearScreen();
 
@@ -174,12 +170,9 @@ class Game2Controller implements GameController {
   }
 
   private onGameStarted(state: GameState): void {
-    console.log("[Game2] Game started, tickets:", state.myTickets.length);
     if (state.myTickets.length > 0) {
       this.transitionTo("PLAYING", state);
     } else {
-      // We're not participating — stay in lobby, show message
-      console.log("[Game2] No tickets — staying in lobby");
       if (this.lobbyScreen) {
         this.lobbyScreen.update(state);
       }
@@ -187,7 +180,6 @@ class Game2Controller implements GameController {
   }
 
   private onGameEnded(state: GameState): void {
-    console.log("[Game2] Game ended");
     if (this.phase === "PLAYING") {
       this.transitionTo("ENDED", state);
     } else {
@@ -198,7 +190,7 @@ class Game2Controller implements GameController {
     this.deps.socket.armBet({
       roomCode: this.actualRoomCode,
       armed: true,
-    }).then(r => console.log("[Game2] Re-armed for next game:", r.ok));
+    });
   }
 
   private onNumberDrawn(number: number, drawIndex: number, state: GameState): void {
@@ -221,14 +213,12 @@ class Game2Controller implements GameController {
   // ── User actions ──────────────────────────────────────────────────────
 
   private async handleBuy(_count: number): Promise<void> {
-    console.log("[Game2] Arming bet, roomCode:", this.actualRoomCode);
     const result = await this.deps.socket.armBet({
       roomCode: this.actualRoomCode,
       armed: true,
     });
 
     if (result.ok) {
-      console.log("[Game2] Armed successfully");
       this.lobbyScreen?.hideBuyPopup();
     } else {
       console.error("[Game2] Arm failed:", result.error);
@@ -237,7 +227,6 @@ class Game2Controller implements GameController {
   }
 
   private async handleLuckyNumber(number: number): Promise<void> {
-    console.log("[Game2] Setting lucky number:", number);
     await this.deps.socket.setLuckyNumber({
       roomCode: this.actualRoomCode,
       luckyNumber: number,
@@ -245,7 +234,6 @@ class Game2Controller implements GameController {
   }
 
   private async handleClaim(type: "LINE" | "BINGO"): Promise<void> {
-    console.log("[Game2] Submitting claim:", type);
     const result = await this.deps.socket.submitClaim({
       roomCode: this.actualRoomCode,
       type,

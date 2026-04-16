@@ -11,11 +11,12 @@ import { ChatPanelV2 } from "../components/ChatPanelV2.js";
 import { TicketOverlay } from "../components/TicketOverlay.js";
 import { CalledNumbersOverlay } from "../components/CalledNumbersOverlay.js";
 import { Game1BuyPopup } from "../components/Game1BuyPopup.js";
-import { TicketScroller } from "../../game2/components/TicketScroller.js";
+import { TicketGridScroller } from "../components/TicketGridScroller.js";
 import { TicketCard } from "../../game2/components/TicketCard.js";
 import { ClaimButton } from "../../game2/components/ClaimButton.js";
 import { checkClaims } from "../../game2/logic/ClaimDetector.js";
 import { getTicketThemeByName } from "../colors/TicketColorThemes.js";
+import { stakeFromState } from "../logic/StakeCalculator.js";
 
 const TUBE_COLUMN_WIDTH = 130;
 const CHAT_WIDTH = 265;
@@ -49,7 +50,7 @@ export class PlayScreen extends Container {
   private chatPanel: ChatPanelV2;
   private audio: AudioManager;
   private onClaim: ((type: "LINE" | "BINGO") => void) | null = null;
-  private onBuy: ((count: number) => void) | null = null;
+  private onBuy: (() => void) | null = null;
   private bgSprite: Sprite | null = null;
   private screenW: number;
   private screenH: number;
@@ -63,8 +64,8 @@ export class PlayScreen extends Container {
   private onOpenSettings: (() => void) | null = null;
   private onOpenMarkerBg: (() => void) | null = null;
 
-  // Inline ticket display
-  private inlineScroller: TicketScroller;
+  // Inline ticket display (vertical grid — matches Unity GridLayoutGroup)
+  private inlineScroller: TicketGridScroller;
   private lineBtn: ClaimButton;
   private bingoBtn: ClaimButton;
   private lineAlreadyWon = false;
@@ -99,11 +100,11 @@ export class PlayScreen extends Container {
 
     // Buy popup is created later as an HTML overlay (see below)
 
-    // Inline ticket scroller — anchored from TICKET_TOP, fills to near the bottom
+    // Inline ticket grid — vertical scroll, matches Unity GridLayoutGroup (250×250 cells)
     const scrollerLeft = TUBE_COLUMN_WIDTH;
     const scrollerW = screenWidth - TUBE_COLUMN_WIDTH - CHAT_WIDTH - 20;
     const scrollerH = screenHeight - TICKET_TOP - 62; // Leave 62px for claim buttons
-    this.inlineScroller = new TicketScroller(scrollerW, scrollerH);
+    this.inlineScroller = new TicketGridScroller(scrollerW, scrollerH);
     this.inlineScroller.x = scrollerLeft;
     this.inlineScroller.y = TICKET_TOP;
     this.addChild(this.inlineScroller);
@@ -150,10 +151,10 @@ export class PlayScreen extends Container {
 
     // Game1 buy popup (HTML overlay — matches Unity's Game1TicketPurchasePanel)
     this.buyPopup = new Game1BuyPopup(this.overlayManager);
-    this.buyPopup.setOnBuy(async () => {
-      const result = await socket.armBet({ roomCode, armed: true });
-      this.buyPopup?.showResult(result.ok, result.error?.message);
-      if (result.ok) this.onBuy?.(1);
+    // Delegate all buy logic to the controller via onBuy callback.
+    // The controller calls socket.armBet and reports the result back via showBuyPopupResult().
+    this.buyPopup.setOnBuy(() => {
+      this.onBuy?.();
     });
 
     // Center top panel with action callbacks
@@ -162,27 +163,19 @@ export class PlayScreen extends Container {
         this.calledNumbers.toggle();
       },
       onPreBuy: () => {
-        // Forhåndskjøp — open buy popup with variant ticket types if available
+        // Forhåndskjøp — only show popup with backend ticket types (never a fallback)
         const fee = this.lastState?.entryFee || 10;
-        const types = this.lastState?.ticketTypes;
-        if (types && types.length > 0) {
-          this.buyPopup?.showWithTypes(fee, types);
-        } else {
-          this.buyPopup?.show(fee);
-        }
+        const types = this.lastState?.ticketTypes ?? [];
+        this.buyPopup?.showWithTypes(fee, types);
       },
       onSelectLuckyNumber: () => {
         this.onLuckyNumberTap?.();
       },
       onBuyMoreTickets: () => {
-        // Kjøp flere brett — open buy popup with variant types
+        // Kjøp flere brett — only show popup with backend ticket types
         const fee = this.lastState?.entryFee || 10;
-        const types = this.lastState?.ticketTypes;
-        if (types && types.length > 0) {
-          this.buyPopup?.showWithTypes(fee, types);
-        } else {
-          this.buyPopup?.show(fee);
-        }
+        const types = this.lastState?.ticketTypes ?? [];
+        this.buyPopup?.showWithTypes(fee, types);
       },
       onCancelTickets: () => {
         this.onCancelTickets?.();
@@ -203,8 +196,14 @@ export class PlayScreen extends Container {
     this.onClaim = callback;
   }
 
-  setOnBuy(callback: (count: number) => void): void {
+  setOnBuy(callback: () => void): void {
     this.onBuy = callback;
+  }
+
+  /** Called by the controller after armBet completes to show result in the popup. */
+  showBuyPopupResult(ok: boolean, errorMessage?: string): void {
+    this.buyPopup?.showResult(ok, errorMessage);
+    if (ok) this.buyPopup?.hide();
   }
 
   setOnLuckyNumberTap(callback: () => void): void {
@@ -251,41 +250,49 @@ export class PlayScreen extends Container {
     // (Unity: bingoBallPanelManager.Reset() + withdrawNumberHistoryPanel.Close())
     this.ballTube.clear();
     this.calledNumbers.clearNumbers();
-    this.inlineScroller.clearCards();
     this.lineBtn.reset();
     this.bingoBtn.reset();
     this.lineAlreadyWon = false;
     this.bingoAlreadyWon = false;
 
-    // Load existing drawn balls only when joining a game already in progress (spectator mode).
-    if (state.gameStatus === "RUNNING" && state.drawnNumbers.length > 0) {
-      this.ballTube.loadBalls(state.drawnNumbers);
-      this.calledNumbers.setNumbers(state.drawnNumbers);
-    }
+    // Clear any tickets from the previous round — canvas stays empty while waiting
+    this.inlineScroller.clearCards();
 
-    // Show countdown in number ring
-    // (Unity: CountdownTimer_Spillorama() with scheduler.millisUntilNextStart)
-    if (state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
-      this.leftInfo.startCountdown(state.millisUntilNextStart);
-    } else {
-      // Show "..." while waiting for scheduler data (Unity: Game_1_Timer_Txt.text = "...")
+    const gameIsLive = state.gameStatus === "RUNNING";
+
+    if (gameIsLive) {
+      // ── Spectator mode: game is actively drawing, player has no tickets ──
+      // Show the live draw as-is. No countdown — the ring will show drawn balls.
       this.leftInfo.stopCountdown();
+      if (state.drawnNumbers.length > 0) {
+        this.ballTube.loadBalls(state.drawnNumbers);
+        this.calledNumbers.setNumbers(state.drawnNumbers);
+      }
+    } else {
+      // ── True waiting: between rounds, no game running ──
+      // Show countdown in number ring so the player sees time until next start.
+      if (state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
+        this.leftInfo.startCountdown(state.millisUntilNextStart);
+      } else {
+        this.leftInfo.stopCountdown();
+      }
     }
 
-    // Show buy popup with variant types if available (Unity auto-opens purchase panel in lobby)
-    if (state.ticketTypes && state.ticketTypes.length > 0) {
-      this.buyPopup?.showWithTypes(state.entryFee || 10, state.ticketTypes);
-    } else {
-      this.buyPopup?.show(state.entryFee || 10);
-    }
+    // Show buy popup so the player can buy tickets for the upcoming round.
+    // Show buy popup — only with backend ticket types (no client fallback).
+    // If types haven't arrived yet, showWithTypes returns early and
+    // updateWaitingState() will show the popup when the first room:update lands.
+    this.buyPopup?.showWithTypes(state.entryFee || 10, state.ticketTypes ?? []);
 
     // Update info panels
     this.updateInfo(state);
   }
 
-  /** Show ball in tube + audio during waiting/spectator mode (no tickets). */
+  /** Show ball in tube + audio during spectator mode (game running, no tickets). */
   onSpectatorNumberDrawn(number: number, state: GameState): void {
     this.lastState = state;
+    // Game is now actively drawing — stop any countdown that may be in the ring.
+    this.leftInfo.stopCountdown();
     this.ballTube.addBall(number);
     this.calledNumbers.addNumber(number);
     this.audio.playNumber(number);
@@ -294,11 +301,29 @@ export class PlayScreen extends Container {
 
   /** Update waiting mode state (e.g. new countdown, player count changes). */
   updateWaitingState(state: GameState): void {
+    const prevTypes = this.lastState?.ticketTypes;
     this.lastState = state;
 
     if (this.isWaitingMode) {
-      if (state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
-        this.leftInfo.startCountdown(state.millisUntilNextStart);
+      // Only show countdown when no game is actively drawing.
+      // Once RUNNING, the ring shows drawn balls — not a timer.
+      if (state.gameStatus !== "RUNNING") {
+        if (state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
+          this.leftInfo.startCountdown(state.millisUntilNextStart);
+        }
+      } else {
+        // Game just became live — stop the countdown so drawn balls can appear in the ring.
+        this.leftInfo.stopCountdown();
+      }
+
+      // Show buy popup when ticket types first arrive from backend.
+      // Types are empty on initial snapshot, then populated from gameVariant in
+      // the first room:update. The popup auto-shows here since enterWaitingMode()
+      // skipped it (showWithTypes returns early when types are empty).
+      const hadTypes = prevTypes && prevTypes.length > 0;
+      const hasTypes = state.ticketTypes && state.ticketTypes.length > 0;
+      if (!hadTypes && hasTypes) {
+        this.buyPopup?.showWithTypes(state.entryFee || 10, state.ticketTypes);
       }
     }
 
@@ -335,8 +360,10 @@ export class PlayScreen extends Container {
     for (let i = 0; i < state.myTickets.length; i++) {
       const ticket = state.myTickets[i];
       const theme = getTicketThemeByName(ticket.color, i);
+      // cellSize 44 → card ~244px wide (matches Unity's 250px GridLayoutGroup cell)
       const card = new TicketCard(i, {
         gridSize: "5x5",
+        cellSize: 44,
         cardBg: theme.cardBg,
         headerBg: theme.headerBg,
         headerText: theme.headerText,
@@ -354,6 +381,11 @@ export class PlayScreen extends Container {
       } else {
         card.setHeaderLabel(`${i + 1} — ${ticket.color ?? "standard"}`);
       }
+
+      // Set price on back face (entryFee × priceMultiplier for this ticket type)
+      const tt = state.ticketTypes.find(t => t.type === ticket.type);
+      const ticketPrice = Math.round(state.entryFee * (tt?.priceMultiplier ?? 1));
+      card.setPrice(`${ticketPrice} kr`);
 
       if (state.myMarks[i]) {
         card.markNumbers(state.myMarks[i]);
@@ -461,9 +493,13 @@ export class PlayScreen extends Container {
 
   updateInfo(state: GameState): void {
     this.lastState = state;
+
+    // Delegate to StakeCalculator — see StakeCalculator.ts for the full rule set.
+    const totalStake = stakeFromState(state);
+
     this.leftInfo.update(
       state.playerCount,
-      state.entryFee,
+      totalStake,
       state.prizePool,
       state.lastDrawnNumber,
       state.drawCount,

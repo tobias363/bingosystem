@@ -182,8 +182,10 @@ export class WheelOverlay extends Container {
         this.resultText.visible = true;
 
         gsap.delayedCall(4, () => {
-          this.visible = false;
-          this.onDismiss?.();
+          if (!this.destroyed) {
+            this.visible = false;
+            this.onDismiss?.();
+          }
         });
       },
     });

@@ -8,11 +8,13 @@ const GAP = 8;
 /**
  * Animated vertical ball queue for Game 3 (Monster Bingo).
  *
- * Port of Unity's BingoNumberBalls + BallScript:
+ * Port of Unity's BingoNumberBalls + BallScript + BallPathRottate:
  * - FIFO queue with max 5 visible balls
- * - New balls drop in from above with acceleration (velocity + acc)
- * - When full, oldest ball fades out, all shift down, new one enters
- * - Entry scale: 1.2x → 1.0x (matching Unity's highlightScale)
+ * - New balls drop in from above with rotation and acceleration
+ * - Bounce effect on landing (overshoot + settle)
+ * - Newest ball pulses briefly to draw attention
+ * - When full, oldest ball scales down + fades out, all shift up, new one enters
+ * - Color-coded by number range (matching Unity's BingoBallType)
  */
 export class AnimatedBallQueue extends Container {
   private balls: BallEntry[] = [];
@@ -39,7 +41,7 @@ export class AnimatedBallQueue extends Container {
     this.addChild(this.queueContainer);
   }
 
-  /** Add a drawn number to the queue with drop animation. */
+  /** Add a drawn number to the queue with drop + rotation animation. */
   addBall(number: number): void {
     // If queue is full, remove oldest
     if (this.balls.length >= MAX_BALLS) {
@@ -51,17 +53,28 @@ export class AnimatedBallQueue extends Container {
     this.balls.push(entry);
     this.queueContainer.addChild(entry.container);
 
-    // Animate entry: drop from above with acceleration
+    // Animate entry: drop from above with rotation (matching Unity BallPathRottate)
     const targetY = (this.balls.length - 1) * (BALL_SIZE + GAP);
     entry.container.x = 0;
-    entry.container.y = -BALL_SIZE - 20; // Start above tube
+    entry.container.y = -BALL_SIZE - 30; // Start above tube
     entry.container.scale.set(1.2); // Unity highlightScale
+    entry.container.rotation = -0.3 + Math.random() * 0.6; // Slight random tilt
 
+    // Drop with acceleration + bounce at landing
     gsap.to(entry.container, {
       y: targetY,
-      duration: 0.45,
-      ease: "power2.in", // Accelerates — matches Unity velocity+acc
+      duration: 0.5,
+      ease: "bounce.out",
     });
+
+    // Rotation settles to zero during drop
+    gsap.to(entry.container, {
+      rotation: 0,
+      duration: 0.4,
+      ease: "power2.out",
+    });
+
+    // Scale settles from 1.2 → 1.0
     gsap.to(entry.container.scale, {
       x: 1,
       y: 1,
@@ -69,11 +82,27 @@ export class AnimatedBallQueue extends Container {
       delay: 0.15,
       ease: "power2.out",
     });
+
+    // Brief pulse glow on newest ball to draw attention
+    if (entry.glow) {
+      entry.glow.alpha = 0;
+      gsap.to(entry.glow, {
+        alpha: 0.5,
+        duration: 0.3,
+        delay: 0.5,
+        yoyo: true,
+        repeat: 1,
+        ease: "power1.inOut",
+      });
+    }
   }
 
   /** Clear all balls. */
   clear(): void {
     for (const entry of this.balls) {
+      gsap.killTweensOf(entry.container);
+      gsap.killTweensOf(entry.container.scale);
+      if (entry.glow) gsap.killTweensOf(entry.glow);
       entry.container.destroy({ children: true });
     }
     this.queueContainer.removeChildren();
@@ -90,18 +119,28 @@ export class AnimatedBallQueue extends Container {
     const oldest = this.balls.shift();
     if (!oldest) return;
 
-    // Animate oldest out (fade + slide down)
+    // Animate oldest out: scale down + fade + slight rotation (like rolling away)
+    gsap.killTweensOf(oldest.container);
+    gsap.killTweensOf(oldest.container.scale);
+    if (oldest.glow) gsap.killTweensOf(oldest.glow);
+
     gsap.to(oldest.container, {
       alpha: 0,
-      y: oldest.container.y + BALL_SIZE / 2,
-      duration: 0.25,
+      rotation: 0.5,
+      duration: 0.3,
+      ease: "power2.in",
+    });
+    gsap.to(oldest.container.scale, {
+      x: 0.3,
+      y: 0.3,
+      duration: 0.3,
       ease: "power2.in",
       onComplete: () => {
         oldest.container.destroy({ children: true });
       },
     });
 
-    // Shift remaining balls down
+    // Shift remaining balls up smoothly
     for (let i = 0; i < this.balls.length; i++) {
       gsap.to(this.balls[i].container, {
         y: i * (BALL_SIZE + GAP),
@@ -114,14 +153,25 @@ export class AnimatedBallQueue extends Container {
   private createBall(number: number): BallEntry {
     const container = new Container();
     const radius = BALL_SIZE / 2;
+    const color = getColorForNumber(number);
+
+    // Glow ring (pulsing highlight for newest ball)
+    const glow = new Graphics();
+    glow.circle(0, radius, radius + 3);
+    glow.fill({ color: 0xffe83d, alpha: 0 });
+    glow.alpha = 0;
+    container.addChild(glow);
 
     // Ball circle
     const bg = new Graphics();
     bg.circle(0, radius, radius - 1);
-    bg.fill(getColorForNumber(number));
-    // Inner highlight
-    bg.circle(-2, radius - 3, radius * 0.6);
-    bg.fill({ color: 0xffffff, alpha: 0.15 });
+    bg.fill(color);
+    // Inner highlight (3D depth effect)
+    bg.circle(-3, radius - 4, radius * 0.5);
+    bg.fill({ color: 0xffffff, alpha: 0.2 });
+    // Bottom shadow
+    bg.circle(2, radius + 3, radius * 0.4);
+    bg.fill({ color: 0x000000, alpha: 0.1 });
     container.addChild(bg);
 
     // Number text
@@ -140,13 +190,23 @@ export class AnimatedBallQueue extends Container {
     text.y = radius;
     container.addChild(text);
 
-    return { container, number };
+    return { container, number, glow };
+  }
+
+  override destroy(options?: boolean | { children?: boolean }): void {
+    for (const entry of this.balls) {
+      gsap.killTweensOf(entry.container);
+      gsap.killTweensOf(entry.container.scale);
+      if (entry.glow) gsap.killTweensOf(entry.glow);
+    }
+    super.destroy(options);
   }
 }
 
 interface BallEntry {
   container: Container;
   number: number;
+  glow: Graphics;
 }
 
 function getColorForNumber(n: number): number {

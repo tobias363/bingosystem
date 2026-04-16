@@ -20,8 +20,6 @@ import { GamePlanPanel } from "./components/GamePlanPanel.js";
 
 type Phase = "LOADING" | "WAITING" | "PLAYING" | "ENDED";
 
-/** Auto-dismiss delay for end screen before transitioning to waiting (ms). */
-const END_SCREEN_AUTO_DISMISS_MS = 5000;
 
 /**
  * Game 1 (Classic Bingo) controller.
@@ -49,6 +47,8 @@ class Game1Controller implements GameController {
   private lastMiniGamePrize = 0;
   private endScreenTimer: ReturnType<typeof setTimeout> | null = null;
   private gameRoundCount = 0;
+  /** True during initial load — prevents connectionStateChanged from hiding the loader early. */
+  private initializing = true;
   private luckyPicker: LuckyNumberPicker | null = null;
   private loader: LoadingOverlay | null = null;
   private toast: ToastNotification | null = null;
@@ -99,7 +99,8 @@ class Game1Controller implements GameController {
           telemetry.trackReconnect();
           this.loader?.show("Kobler til igjen...");
         }
-        if (state === "connected" && this.loader?.isShowing()) {
+        // Only auto-hide on reconnect — never during initial load (initializing flag guards it)
+        if (state === "connected" && this.loader?.isShowing() && !this.initializing) {
           this.loader.hide();
         }
         if (state === "disconnected") {
@@ -148,20 +149,23 @@ class Game1Controller implements GameController {
     this.root.eventMode = "static";
     this.root.on("pointerdown", () => this.deps.audio.unlock(), { once: true });
 
-    // Auto-arm
-    await socket.armBet({ roomCode: this.actualRoomCode, armed: true });
-
-    // Hide loader — game is ready (Unity: DisplayLoader(false))
-    this.loader.hide();
-
-    // Transition based on state
+    // Transition FIRST — build all PixiJS + HTML elements while loader is still covering canvas.
+    // The loader must stay visible until the first frame is fully rendered so the player
+    // never sees a blank canvas or elements snapping into position.
     const state = bridge.getState();
+    this.loader.show("Laster spill...");
 
     if (state.gameStatus === "RUNNING" && state.myTickets.length > 0) {
       this.transitionTo("PLAYING", state);
     } else {
       this.transitionTo("WAITING", state);
     }
+
+    // Wait two animation frames: first for PixiJS to layout+render, second as safety margin.
+    // Only then reveal the canvas — player sees a fully live game from the first pixel.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    this.initializing = false;
+    this.loader.hide();
   }
 
   resize(width: number, height: number): void {
@@ -257,6 +261,7 @@ class Game1Controller implements GameController {
         }
         this.setScreen(this.endScreen);
         break;
+
     }
   }
 
@@ -296,24 +301,14 @@ class Game1Controller implements GameController {
   }
 
   private onGameEnded(state: GameState): void {
-    // Dismiss any active mini-game overlay so it doesn't block the EndScreen
+    // Dismiss any active mini-game overlay
     this.dismissMiniGame();
 
-    if (this.phase === "PLAYING") {
-      this.transitionTo("ENDED", state);
-
-      // Auto-dismiss EndScreen after a delay — matches Unity's immediate
-      // transition to waiting mode with countdown timer.
-      this.endScreenTimer = setTimeout(() => {
-        this.endScreenTimer = null;
-        if (this.phase === "ENDED") {
-          this.transitionTo("WAITING", this.deps.bridge.getState());
-        }
-      }, END_SCREEN_AUTO_DISMISS_MS);
-    } else {
-      this.transitionTo("WAITING", state);
-    }
-    this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true });
+    // Skip the end screen entirely — go straight to waiting mode with buy popup.
+    // Unity shows a brief game-over animation, but the web shell goes directly
+    // to the pre-round lobby so players can buy tickets for the next round.
+    // Do NOT auto-arm here — the player must explicitly click "Kjøp" in the popup.
+    this.transitionTo("WAITING", state);
   }
 
   private buyMoreDisabled = false;
@@ -356,9 +351,9 @@ class Game1Controller implements GameController {
 
   private async handleBuy(): Promise<void> {
     const result = await this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true });
-    if (result.ok) {
-      this.playScreen?.hideBuyPopup();
-    } else {
+    // Report result back to popup (showBuyPopupResult hides popup on success).
+    this.playScreen?.showBuyPopupResult(result.ok, result.error?.message);
+    if (!result.ok) {
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");
     }
   }

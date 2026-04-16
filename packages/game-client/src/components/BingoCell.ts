@@ -99,6 +99,10 @@ export class BingoCell extends Container {
     return this.marked;
   }
 
+  isBlinking(): boolean {
+    return this.blinking;
+  }
+
   mark(): void {
     if (this.marked) return;
     this.marked = true;
@@ -153,6 +157,10 @@ export class BingoCell extends Container {
       this.blinkTween = null;
     }
     gsap.to(this.scale, { x: 1, y: 1, duration: 0.15 });
+    // Restore correct background color (one-to-go may have overridden it)
+    if (!this.marked) {
+      this.drawBg(this.highlighted ? this.colors.bgHighlight : this.colors.bgDefault);
+    }
   }
 
   setHighlight(on: boolean): void {

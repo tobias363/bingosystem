@@ -150,6 +150,44 @@ export class BingoGrid extends Container {
     }
   }
 
+  /**
+   * Per-row one-to-go detection — matches Unity's Start_NumberBlink per row.
+   *
+   * Incremental: only stops blinks for cells that are no longer one-to-go,
+   * and only starts blinks for newly eligible cells. Existing blinks continue
+   * uninterrupted so the animation doesn't reset on every number draw.
+   */
+  updateOneToGo(oneToGoColor?: number): void {
+    // Which cells should be blinking (their row has exactly 1 unmarked cell)
+    const shouldBlink = new Set<BingoCell>();
+    for (let row = 0; row < this.dims.rows; row++) {
+      const unmarkedInRow: BingoCell[] = [];
+      for (let col = 0; col < this.dims.cols; col++) {
+        const cell = this.cells[row * this.dims.cols + col];
+        if (cell && !cell.isMarked()) {
+          unmarkedInRow.push(cell);
+        }
+      }
+      if (unmarkedInRow.length === 1) {
+        shouldBlink.add(unmarkedInRow[0]);
+      }
+    }
+
+    // Stop blinks only for cells that no longer qualify
+    for (const cell of this.cells) {
+      if (cell.isBlinking() && !shouldBlink.has(cell)) {
+        cell.stopBlink();
+      }
+    }
+
+    // Start blinks only for newly eligible cells (don't restart existing ones)
+    for (const cell of shouldBlink) {
+      if (!cell.isBlinking()) {
+        cell.startBlink(oneToGoColor);
+      }
+    }
+  }
+
   /** Highlight cells for a pattern. */
   highlightPattern(cellNumbers: number[]): void {
     // Clear previous highlights

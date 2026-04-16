@@ -8,6 +8,8 @@ import type { GameState } from "../../../bridge/GameBridge.js";
  */
 export class EndScreen extends Container {
   private onDismiss: (() => void) | null = null;
+  private panel: Container | null = null;
+  private panelContentY = 70;
 
   constructor(screenWidth: number, screenHeight: number) {
     super();
@@ -20,13 +22,16 @@ export class EndScreen extends Container {
   }
 
   show(state: GameState): void {
-    const w = this.children[0] ? 400 : 400;
+    const screenW = this.parent?.width ?? 800;
+    const screenH = this.parent?.height ?? 600;
+    const w = Math.min(400, screenW - 32);
     const h = 280;
-    const cx = (this.parent?.width ?? 800) / 2;
-    const cy = (this.parent?.height ?? 600) / 2;
+    const cx = screenW / 2;
+    const cy = screenH / 2;
 
     // Results panel
     const panel = new Container();
+    this.panel = panel;
     panel.x = cx - w / 2;
     panel.y = cy - h / 2;
 
@@ -72,12 +77,16 @@ export class EndScreen extends Container {
       noResults.x = 30;
       noResults.y = y;
       panel.addChild(noResults);
+      y += 30;
     }
 
+    this.panelContentY = y;
+
     // "Next game" button
+    const btnW = Math.min(200, w - 40);
     const nextBtn = new Container();
     const nextBg = new Graphics();
-    nextBg.roundRect(0, 0, 200, 44, 8);
+    nextBg.roundRect(0, 0, btnW, 44, 8);
     nextBg.fill(0xa00020);
     nextBtn.addChild(nextBg);
     const nextText = new Text({
@@ -85,10 +94,10 @@ export class EndScreen extends Container {
       style: { fontFamily: "Arial", fontSize: 18, fontWeight: "bold", fill: 0xffffff },
     });
     nextText.anchor.set(0.5);
-    nextText.x = 100;
+    nextText.x = btnW / 2;
     nextText.y = 22;
     nextBtn.addChild(nextText);
-    nextBtn.x = (w - 200) / 2;
+    nextBtn.x = (w - btnW) / 2;
     nextBtn.y = h - 64;
     nextBtn.eventMode = "static";
     nextBtn.cursor = "pointer";
@@ -109,7 +118,35 @@ export class EndScreen extends Container {
     this.onDismiss = callback;
   }
 
+  /** Display a mini-game bonus prize below pattern results. */
+  showMiniGameBonus(amount: number): void {
+    if (!this.panel || amount <= 0) return;
+
+    const separator = new Graphics();
+    separator.rect(30, this.panelContentY, this.panel.width - 60, 1);
+    separator.fill(0x790001);
+    this.panel.addChild(separator);
+
+    const bonusText = new Text({
+      text: `Bonuspremie: ${amount} kr`,
+      style: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 20,
+        fontWeight: "bold",
+        fill: 0xffe83d,
+      },
+    });
+    bonusText.x = 30;
+    bonusText.y = this.panelContentY + 8;
+    this.panel.addChild(bonusText);
+  }
+
   private dismiss(): void {
     if (this.onDismiss) this.onDismiss();
+  }
+
+  override destroy(options?: boolean | { children?: boolean }): void {
+    gsap.killTweensOf(this);
+    super.destroy(options);
   }
 }

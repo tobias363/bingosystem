@@ -6,6 +6,7 @@ import type { AudioManager } from "../audio/AudioManager.js";
 export interface GameController {
   start(): Promise<void>;
   destroy(): void;
+  resize?(width: number, height: number): void;
 }
 
 export type GameFactory = (deps: GameDeps) => GameController;
@@ -32,7 +33,10 @@ export function createGame(slug: string, deps: GameDeps): GameController | null 
 }
 
 // Game registrations (side-effect imports)
-import("./game1/Game1Controller.js").catch(() => {});
-import("./game2/Game2Controller.js").catch(() => {});
-import("./game3/Game3Controller.js").catch(() => {});
-import("./game5/Game5Controller.js").catch(() => {});
+// Await all before calling createGame() to avoid race conditions.
+export const registrationsReady = Promise.all([
+  import("./game1/Game1Controller.js"),
+  import("./game2/Game2Controller.js"),
+  import("./game3/Game3Controller.js"),
+  import("./game5/Game5Controller.js"),
+]).catch(() => {});

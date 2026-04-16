@@ -1,4 +1,5 @@
 import { Container, Graphics, Text } from "pixi.js";
+import gsap from "gsap";
 import type { Ticket } from "@spillorama/shared-types/game";
 import { BingoGrid, type GridSize } from "../../../components/BingoGrid.js";
 import type { BingoCellColors } from "../../../components/BingoCell.js";
@@ -19,6 +20,9 @@ export interface TicketCardOptions {
 
 /**
  * Ticket card with Unity-matching design: header bar + BingoGrid + to-go counter.
+ *
+ * Tap the header bar to flip the card and see ticket info on the back.
+ * Auto-flips back after 3 seconds (matches Unity BingoTicket.ShowTicketDetails).
  */
 export class TicketCard extends Container {
   readonly grid: BingoGrid;
@@ -30,6 +34,15 @@ export class TicketCard extends Container {
   private ticket: Ticket | null = null;
   private cardW: number;
   private cardH: number;
+
+  // Flip state
+  private backPanel: Container;
+  private backInfoLabel: Text;
+  private backInfoPrice: Text;
+  private isFlipped = false;
+  private flipAnimating = false;
+  private flipTimer: ReturnType<typeof setTimeout> | null = null;
+  private currentLabel = "";
 
   // Default Unity colors (overridable via options)
   private static readonly DEFAULT_CARD_BG = 0xfff2ce;
@@ -121,6 +134,81 @@ export class TicketCard extends Container {
     this.toGoText.x = this.cardW / 2;
     this.toGoText.y = headerH + this.grid.gridHeight + 8;
     this.addChild(this.toGoText);
+
+    // ── Back face (flip info panel) ──────────────────────────────────────────
+
+    this.backPanel = new Container();
+    this.backPanel.visible = false;
+
+    // Back panel: same background as front card
+    const backBg = new Graphics();
+    backBg.roundRect(0, 0, this.cardW, this.cardH, 8);
+    backBg.fill(cardBgColor);
+    this.backPanel.addChild(backBg);
+
+    // Back panel header (same styling as front)
+    const backHeader = new Graphics();
+    backHeader.roundRect(0, 0, this.cardW, headerH, 8);
+    backHeader.fill(headerBgColor);
+    this.backPanel.addChild(backHeader);
+
+    const backHeaderText = new Text({
+      text: `Bong ${index + 1}`,
+      style: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 13,
+        fontWeight: "bold",
+        fill: headerTextColor,
+      },
+    });
+    backHeaderText.x = 8;
+    backHeaderText.y = 5;
+    this.backPanel.addChild(backHeaderText);
+
+    // Central info block — label (large) + price (smaller)
+    const centerY = headerH + (this.cardH - headerH) / 2 - 28;
+
+    this.backInfoLabel = new Text({
+      text: "",
+      style: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 16,
+        fontWeight: "bold",
+        fill: headerBgColor,
+        align: "center",
+        wordWrap: true,
+        wordWrapWidth: this.cardW - 16,
+      },
+    });
+    this.backInfoLabel.anchor.set(0.5, 0);
+    this.backInfoLabel.x = this.cardW / 2;
+    this.backInfoLabel.y = centerY;
+    this.backPanel.addChild(this.backInfoLabel);
+
+    this.backInfoPrice = new Text({
+      text: "",
+      style: {
+        fontFamily: "Arial, Helvetica, sans-serif",
+        fontSize: 13,
+        fontWeight: "600",
+        fill: headerBgColor,
+        align: "center",
+      },
+    });
+    this.backInfoPrice.anchor.set(0.5, 0);
+    this.backInfoPrice.x = this.cardW / 2;
+    this.backInfoPrice.y = centerY + 36;
+    this.backPanel.addChild(this.backInfoPrice);
+
+    this.addChild(this.backPanel);
+
+    // ── Header tap → flip ────────────────────────────────────────────────────
+    this.headerBg.eventMode = "static";
+    this.headerBg.cursor = "pointer";
+    this.headerBg.on("pointerdown", (e) => {
+      e.stopPropagation();
+      this.flip();
+    });
   }
 
   loadTicket(ticket: Ticket): void {
@@ -152,6 +240,14 @@ export class TicketCard extends Container {
   reset(): void {
     this.grid.reset();
     this.updateToGo();
+    // Force flip back if flipped
+    if (this.isFlipped) {
+      if (this.flipTimer) { clearTimeout(this.flipTimer); this.flipTimer = null; }
+      this.isFlipped = false;
+      this.flipAnimating = false;
+      this.backPanel.visible = false;
+      this.scale.set(1);
+    }
   }
 
   get cardWidth(): number {
@@ -165,23 +261,68 @@ export class TicketCard extends Container {
   /** Update the header label (e.g. for Elvis variant: "Elvis 1" or Traffic Light colors). */
   setHeaderLabel(label: string): void {
     this.headerText.text = label;
+    this.currentLabel = label;
+    this.backInfoLabel.text = label;
   }
+
+  /** Set the price shown on the back face (e.g. "10 kr"). */
+  setPrice(price: string): void {
+    this.priceText.text = price;
+    this.backInfoPrice.text = price;
+  }
+
+  /**
+   * Flip the card to show info on the back (or flip back to front).
+   * Matches Unity BingoTicket.ShowTicketDetails / HideTicketDetailsAnimation.
+   */
+  flip(): void {
+    if (this.flipAnimating) return;
+    this.flipAnimating = true;
+
+    if (this.flipTimer) { clearTimeout(this.flipTimer); this.flipTimer = null; }
+
+    // First half: scale X → 0 (card "turns edge-on")
+    gsap.to(this.scale, {
+      x: 0,
+      duration: 0.2,
+      ease: "power2.in",
+      onComplete: () => {
+        // At midpoint: toggle which face is visible
+        this.isFlipped = !this.isFlipped;
+        this.backPanel.visible = this.isFlipped;
+
+        // Second half: scale X → 1 (new face expands into view)
+        gsap.to(this.scale, {
+          x: 1,
+          duration: 0.2,
+          ease: "power2.out",
+          onComplete: () => {
+            this.flipAnimating = false;
+            if (this.isFlipped) {
+              // Auto-flip back after 3 seconds (Unity: ticketDetailPageTime = 3s)
+              this.flipTimer = setTimeout(() => this.flip(), 3000);
+            }
+          },
+        });
+      },
+    });
+  }
+
+  // ── Private ───────────────────────────────────────────────────────────────
 
   private updateToGo(): void {
     const remaining = this.grid.getRemainingCount();
     if (remaining === 0) {
       this.toGoText.text = "Ferdig!";
       this.toGoText.style.fill = 0x2a9d8f;
-      // Stop any one-to-go blink animations (Unity: Stop_Blink)
+      // All rows complete — stop all blink animations (Unity: Stop_Blink)
       this.grid.stopAllBlinks();
-    } else if (remaining === 1) {
-      this.toGoText.text = "1 ToGo!";
-      this.toGoText.style.fill = this.toGoCloseColor;
-      // Blink the remaining unmarked cell with one-to-go color (Unity: Start_NumberBlink + imgCellOneToGo)
-      this.grid.blinkCells(this.grid.getUnmarkedNumbers(), ONE_TO_GO_COLOR);
     } else {
-      this.toGoText.text = `${remaining} ToGo`;
+      this.toGoText.text = remaining === 1 ? "1 ToGo!" : `${remaining} ToGo`;
       this.toGoText.style.fill = remaining <= 3 ? this.toGoCloseColor : this.toGoNormalColor;
+      // Per-row one-to-go detection: blink the single remaining cell in any row
+      // that is one number away from completion (Unity: Start_NumberBlink per row)
+      this.grid.updateOneToGo(ONE_TO_GO_COLOR);
     }
   }
 }

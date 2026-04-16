@@ -283,8 +283,8 @@
     startGameBarSocketSync();
 
     try {
-      // Dynamic import of the web game client (stable path, no hash)
-      var module = await import('/web/games/main.js');
+      // Dynamic import of the web game client (cache-bust with timestamp)
+      var module = await import('/web/games/main.js?v=' + Date.now());
       if (module.mountGame) {
         module.mountGame(webContainer, {
           gameSlug: game.slug,
