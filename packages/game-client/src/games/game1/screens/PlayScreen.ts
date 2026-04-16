@@ -288,10 +288,18 @@ export class PlayScreen extends Container {
       this.calledNumbers.setNumbers(state.drawnNumbers);
     }
 
-    // Show countdown in number ring + center ball
-    if (state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
+    // Show countdown ONLY when no game is actively running.
+    // When RUNNING (spectator mode), show the drawn ball — not a countdown.
+    if (state.gameStatus !== "RUNNING" && state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
       this.leftInfo.startCountdown(state.millisUntilNextStart);
       this.centerBall.startCountdown(state.millisUntilNextStart);
+    } else if (state.gameStatus === "RUNNING") {
+      // Spectator: stop any countdown, show last drawn number
+      this.leftInfo.stopCountdown();
+      this.centerBall.stopCountdown();
+      if (state.lastDrawnNumber) {
+        this.centerBall.showNumber(state.lastDrawnNumber);
+      }
     } else {
       this.leftInfo.stopCountdown();
       this.centerBall.showWaiting();
@@ -320,9 +328,13 @@ export class PlayScreen extends Container {
     this.lastState = state;
 
     if (this.isWaitingMode) {
-      if (state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
+      // Only show countdown when no game is actively running
+      if (state.gameStatus !== "RUNNING" && state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
         this.leftInfo.startCountdown(state.millisUntilNextStart);
         this.centerBall.startCountdown(state.millisUntilNextStart);
+      } else if (state.gameStatus === "RUNNING") {
+        this.leftInfo.stopCountdown();
+        this.centerBall.stopCountdown();
       }
 
       // Show buy popup when ticket types first arrive from backend
