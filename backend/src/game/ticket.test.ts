@@ -1,0 +1,329 @@
+/**
+ * Unit tests for ticket.ts — pattern detection and ticket generation.
+ * Covers: findFirstCompleteLinePatternIndex, hasAnyCompleteLine, hasFullBingo,
+ * generateDatabingo60Ticket, ticketContainsNumber, makeShuffledBallBag.
+ */
+import assert from "node:assert/strict";
+import test, { describe } from "node:test";
+import {
+  findFirstCompleteLinePatternIndex,
+  hasAnyCompleteLine,
+  hasFullBingo,
+  generateDatabingo60Ticket,
+  ticketContainsNumber,
+  makeShuffledBallBag,
+  makeRoomCode,
+} from "./ticket.js";
+import type { Ticket } from "./types.js";
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Create a 3x5 grid with sequential numbers starting at `start`. */
+function make3x5(start = 1): Ticket {
+  return {
+    grid: [
+      [start, start + 1, start + 2, start + 3, start + 4],
+      [start + 5, start + 6, start + 7, start + 8, start + 9],
+      [start + 10, start + 11, start + 12, start + 13, start + 14],
+    ],
+  };
+}
+
+/** Create a 5x5 grid with free space at center [2][2] = 0. */
+function make5x5(start = 1): Ticket {
+  let n = start;
+  const grid: number[][] = [];
+  for (let r = 0; r < 5; r++) {
+    const row: number[] = [];
+    for (let c = 0; c < 5; c++) {
+      if (r === 2 && c === 2) {
+        row.push(0);
+      } else {
+        row.push(n++);
+      }
+    }
+    grid.push(row);
+  }
+  return { grid };
+}
+
+// ── findFirstCompleteLinePatternIndex ───────────────────────────────────────
+
+describe("findFirstCompleteLinePatternIndex", () => {
+  describe("3x5 grid", () => {
+    test("returns -1 when no marks", () => {
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), new Set()), -1);
+    });
+
+    test("detects complete first row (index 0)", () => {
+      const marks = new Set([1, 2, 3, 4, 5]);
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), marks), 0);
+    });
+
+    test("detects complete second row (index 1)", () => {
+      const marks = new Set([6, 7, 8, 9, 10]);
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), marks), 1);
+    });
+
+    test("detects complete third row (index 2)", () => {
+      const marks = new Set([11, 12, 13, 14, 15]);
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), marks), 2);
+    });
+
+    test("detects complete first column (index = rows + 0 = 3)", () => {
+      const marks = new Set([1, 6, 11]);
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), marks), 3);
+    });
+
+    test("detects complete last column (index = rows + 4 = 7)", () => {
+      const marks = new Set([5, 10, 15]);
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), marks), 7);
+    });
+
+    test("returns first found pattern (row before column)", () => {
+      // Both row 0 and column 0 are complete
+      const marks = new Set([1, 2, 3, 4, 5, 6, 11]);
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), marks), 0);
+    });
+
+    test("returns -1 with partial row", () => {
+      const marks = new Set([1, 2, 3, 4]);
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), marks), -1);
+    });
+
+    test("returns -1 with partial column", () => {
+      const marks = new Set([1, 6]);
+      assert.equal(findFirstCompleteLinePatternIndex(make3x5(), marks), -1);
+    });
+  });
+
+  describe("5x5 grid with free space", () => {
+    test("returns -1 when no marks", () => {
+      assert.equal(findFirstCompleteLinePatternIndex(make5x5(), new Set()), -1);
+    });
+
+    test("detects complete first row (index 0)", () => {
+      const marks = new Set([1, 2, 3, 4, 5]);
+      assert.equal(findFirstCompleteLinePatternIndex(make5x5(), marks), 0);
+    });
+
+    test("detects center row with free space (only 4 marks needed)", () => {
+      // Center row [2]: 11, 12, 0(free), 13, 14
+      const marks = new Set([11, 12, 13, 14]);
+      assert.equal(findFirstCompleteLinePatternIndex(make5x5(), marks), 2);
+    });
+
+    test("detects center column with free space (only 4 marks needed)", () => {
+      // Column 2: 3, 8, 0(free), 17, 22
+      const marks = new Set([3, 8, 17, 22]);
+      const result = findFirstCompleteLinePatternIndex(make5x5(), marks);
+      // Column index = rows(5) + col(2) = 7
+      assert.equal(result, 7);
+    });
+
+    test("returns -1 with scattered marks", () => {
+      const marks = new Set([1, 7, 13, 19]);
+      assert.equal(findFirstCompleteLinePatternIndex(make5x5(), marks), -1);
+    });
+  });
+});
+
+// ── hasAnyCompleteLine ──────────────────────────────────────────────────────
+
+describe("hasAnyCompleteLine", () => {
+  test("delegates to findFirstCompleteLinePatternIndex (row)", () => {
+    const marks = new Set([1, 2, 3, 4, 5]);
+    assert.equal(hasAnyCompleteLine(make3x5(), marks), true);
+  });
+
+  test("delegates to findFirstCompleteLinePatternIndex (column)", () => {
+    const marks = new Set([1, 6, 11]);
+    assert.equal(hasAnyCompleteLine(make3x5(), marks), true);
+  });
+
+  test("returns false when no complete line", () => {
+    assert.equal(hasAnyCompleteLine(make3x5(), new Set([1, 2, 3])), false);
+  });
+
+  test("5x5 free space counts as marked", () => {
+    const marks = new Set([11, 12, 13, 14]); // center row, free space fills gap
+    assert.equal(hasAnyCompleteLine(make5x5(), marks), true);
+  });
+});
+
+// ── hasFullBingo ────────────────────────────────────────────────────────────
+
+describe("hasFullBingo", () => {
+  describe("3x5 grid", () => {
+    test("returns false with no marks", () => {
+      assert.equal(hasFullBingo(make3x5(), new Set()), false);
+    });
+
+    test("returns false with 14 of 15 cells marked", () => {
+      const marks = new Set(Array.from({ length: 14 }, (_, i) => i + 1));
+      assert.equal(hasFullBingo(make3x5(), marks), false);
+    });
+
+    test("returns true when all 15 cells marked", () => {
+      const marks = new Set(Array.from({ length: 15 }, (_, i) => i + 1));
+      assert.equal(hasFullBingo(make3x5(), marks), true);
+    });
+
+    test("returns true with extra marks beyond grid numbers", () => {
+      const marks = new Set(Array.from({ length: 30 }, (_, i) => i + 1));
+      assert.equal(hasFullBingo(make3x5(), marks), true);
+    });
+  });
+
+  describe("5x5 grid with free space", () => {
+    test("returns true when all 24 non-free cells marked", () => {
+      const marks = new Set(Array.from({ length: 24 }, (_, i) => i + 1));
+      assert.equal(hasFullBingo(make5x5(), marks), true);
+    });
+
+    test("returns false with 23 of 24 non-free cells marked", () => {
+      const marks = new Set(Array.from({ length: 23 }, (_, i) => i + 1));
+      assert.equal(hasFullBingo(make5x5(), marks), false);
+    });
+
+    test("free space does not need to be in marks set", () => {
+      // All non-free cells marked, 0 not in set
+      const marks = new Set(Array.from({ length: 24 }, (_, i) => i + 1));
+      assert.ok(!marks.has(0));
+      assert.equal(hasFullBingo(make5x5(), marks), true);
+    });
+  });
+});
+
+// ── generateDatabingo60Ticket ───────────────────────────────────────────────
+
+describe("generateDatabingo60Ticket", () => {
+  test("generates a 3x5 grid", () => {
+    const ticket = generateDatabingo60Ticket();
+    assert.equal(ticket.grid.length, 3);
+    for (const row of ticket.grid) {
+      assert.equal(row.length, 5);
+    }
+  });
+
+  test("all cells contain numbers 1–60", () => {
+    const ticket = generateDatabingo60Ticket();
+    for (const row of ticket.grid) {
+      for (const cell of row) {
+        assert.ok(cell >= 1 && cell <= 60, `cell ${cell} out of range`);
+      }
+    }
+  });
+
+  test("column ranges are correct (col 0: 1-12, col 1: 13-24, etc.)", () => {
+    const ticket = generateDatabingo60Ticket();
+    const ranges = [
+      [1, 12], [13, 24], [25, 36], [37, 48], [49, 60],
+    ];
+    for (let col = 0; col < 5; col++) {
+      for (let row = 0; row < 3; row++) {
+        const val = ticket.grid[row][col];
+        assert.ok(
+          val >= ranges[col][0] && val <= ranges[col][1],
+          `grid[${row}][${col}]=${val} not in range [${ranges[col][0]}, ${ranges[col][1]}]`,
+        );
+      }
+    }
+  });
+
+  test("columns are sorted ascending", () => {
+    const ticket = generateDatabingo60Ticket();
+    for (let col = 0; col < 5; col++) {
+      const colValues = [ticket.grid[0][col], ticket.grid[1][col], ticket.grid[2][col]];
+      assert.deepEqual(colValues, [...colValues].sort((a, b) => a - b));
+    }
+  });
+
+  test("all 15 cells are unique", () => {
+    const ticket = generateDatabingo60Ticket();
+    const allNums = ticket.grid.flat();
+    assert.equal(new Set(allNums).size, 15);
+  });
+
+  test("produces different tickets on repeated calls", () => {
+    const tickets = Array.from({ length: 10 }, () => generateDatabingo60Ticket());
+    const grids = tickets.map((t) => JSON.stringify(t.grid));
+    const unique = new Set(grids);
+    // With 10 random tickets, extremely unlikely all are identical
+    assert.ok(unique.size > 1, "should produce varied tickets");
+  });
+});
+
+// ── ticketContainsNumber ────────────────────────────────────────────────────
+
+describe("ticketContainsNumber", () => {
+  test("returns true for number on the grid", () => {
+    assert.equal(ticketContainsNumber(make3x5(), 1), true);
+    assert.equal(ticketContainsNumber(make3x5(), 15), true);
+  });
+
+  test("returns false for number not on the grid", () => {
+    assert.equal(ticketContainsNumber(make3x5(), 16), false);
+    assert.equal(ticketContainsNumber(make3x5(), 0), false);
+  });
+
+  test("works with 5x5 grid (free space 0)", () => {
+    assert.equal(ticketContainsNumber(make5x5(), 1), true);
+    assert.equal(ticketContainsNumber(make5x5(), 0), true); // free space
+    assert.equal(ticketContainsNumber(make5x5(), 99), false);
+  });
+});
+
+// ── makeShuffledBallBag ─────────────────────────────────────────────────────
+
+describe("makeShuffledBallBag", () => {
+  test("contains numbers 1 to 60 by default", () => {
+    const bag = makeShuffledBallBag();
+    assert.equal(bag.length, 60);
+    const sorted = [...bag].sort((a, b) => a - b);
+    assert.deepEqual(sorted, Array.from({ length: 60 }, (_, i) => i + 1));
+  });
+
+  test("respects custom maxNumber", () => {
+    const bag = makeShuffledBallBag(75);
+    assert.equal(bag.length, 75);
+    const sorted = [...bag].sort((a, b) => a - b);
+    assert.deepEqual(sorted, Array.from({ length: 75 }, (_, i) => i + 1));
+  });
+
+  test("is shuffled (not sorted)", () => {
+    // Run 5 times — at least one should differ from sorted order
+    const bags = Array.from({ length: 5 }, () => makeShuffledBallBag());
+    const sorted = Array.from({ length: 60 }, (_, i) => i + 1);
+    const allSorted = bags.every((b) => JSON.stringify(b) === JSON.stringify(sorted));
+    assert.ok(!allSorted, "bags should not all be in sorted order");
+  });
+});
+
+// ── makeRoomCode ────────────────────────────────────────────────────────────
+
+describe("makeRoomCode", () => {
+  test("generates a 6-character code", () => {
+    const code = makeRoomCode(new Set());
+    assert.equal(code.length, 6);
+  });
+
+  test("uses only allowed characters (no 0, O, I, 1)", () => {
+    const allowed = new Set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789");
+    for (let i = 0; i < 20; i++) {
+      const code = makeRoomCode(new Set());
+      for (const ch of code) {
+        assert.ok(allowed.has(ch), `character '${ch}' not in allowed set`);
+      }
+    }
+  });
+
+  test("does not collide with existing codes", () => {
+    const existing = new Set<string>();
+    for (let i = 0; i < 100; i++) {
+      const code = makeRoomCode(existing);
+      assert.ok(!existing.has(code), "should not generate existing code");
+      existing.add(code);
+    }
+  });
+});
