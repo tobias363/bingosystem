@@ -125,6 +125,7 @@ export function buildRoomUpdatePayload(
     bingoMaxDrawsPerRound: number;
     schedulerTickMs: number;
     getArmedPlayerIds: (roomCode: string) => string[];
+    getArmedPlayerTicketCounts: (roomCode: string) => Record<string, number>;
     getRoomConfiguredEntryFee: (roomCode: string) => number;
     getOrCreateDisplayTickets: (roomCode: string, playerId: string, count: number, gameSlug?: string) => Ticket[];
     getLuckyNumbers: (roomCode: string) => Record<string, number>;
@@ -137,12 +138,15 @@ export function buildRoomUpdatePayload(
   // Generate display tickets for players who are in the room but didn't
   // get game tickets (not armed). This ensures their boards always show
   // numbers — just without marking.
+  // For armed players, use their chosen ticket count.
   const preRoundTickets: Record<string, Ticket[]> = {};
   const gameTickets = snapshot.currentGame?.tickets ?? {};
   const ticketsPerPlayer = runtimeBingoSettings.autoRoundTicketsPerPlayer;
+  const armedTicketCounts = opts.getArmedPlayerTicketCounts(snapshot.code);
   for (const player of snapshot.players) {
     if (gameTickets[player.id] && gameTickets[player.id].length > 0) continue;
-    preRoundTickets[player.id] = getOrCreateDisplayTickets(snapshot.code, player.id, ticketsPerPlayer, snapshot.gameSlug);
+    const playerTicketCount = armedTicketCounts[player.id] ?? ticketsPerPlayer;
+    preRoundTickets[player.id] = getOrCreateDisplayTickets(snapshot.code, player.id, playerTicketCount, snapshot.gameSlug);
   }
 
   // BIN-443: Include variant info so client can show correct purchase UI.

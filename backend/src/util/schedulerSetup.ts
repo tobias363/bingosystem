@@ -16,6 +16,7 @@ export interface SchedulerCallbackDeps {
   drawScheduler: DrawScheduler;
   runtimeBingoSettings: BingoSchedulerSettings;
   getArmedPlayerIds: (roomCode: string) => string[];
+  getArmedPlayerTicketCounts: (roomCode: string) => Record<string, number>;
   getRoomConfiguredEntryFee: (roomCode: string) => number;
   disarmAllPlayers: (roomCode: string) => void;
   clearDisplayTicketCache: (roomCode: string) => void;
@@ -110,6 +111,7 @@ export function createSchedulerCallbacks(deps: SchedulerCallbackDeps) {
           ticketsPerPlayer: deps.runtimeBingoSettings.autoRoundTicketsPerPlayer,
           payoutPercent: deps.runtimeBingoSettings.payoutPercent,
           armedPlayerIds: deps.getArmedPlayerIds(roomCode),
+          armedPlayerTicketCounts: deps.getArmedPlayerTicketCounts(roomCode),
           gameType: variantInfo?.gameType,
           variantConfig: variantInfo?.config,
         });

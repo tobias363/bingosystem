@@ -25,20 +25,28 @@ export class RoomStateManager {
   readonly chatHistoryByRoom = new Map<string, ChatMessage[]>();
   readonly luckyNumbersByRoom = new Map<string, Map<string, number>>();
   readonly roomConfiguredEntryFeeByRoom = new Map<string, number>();
-  readonly armedPlayerIdsByRoom = new Map<string, Set<string>>();
+  readonly armedPlayerIdsByRoom = new Map<string, Map<string, number>>();
   readonly displayTicketCache = new Map<string, Ticket[]>();
   readonly variantByRoom = new Map<string, RoomVariantInfo>();
 
   // ── Armed players ──────────────────────────────────────────────────────────
 
   getArmedPlayerIds(roomCode: string): string[] {
-    return [...(this.armedPlayerIdsByRoom.get(roomCode) ?? [])];
+    const map = this.armedPlayerIdsByRoom.get(roomCode);
+    return map ? [...map.keys()] : [];
   }
 
-  armPlayer(roomCode: string, playerId: string): void {
-    let set = this.armedPlayerIdsByRoom.get(roomCode);
-    if (!set) { set = new Set(); this.armedPlayerIdsByRoom.set(roomCode, set); }
-    set.add(playerId);
+  /** Returns per-player ticket counts for all armed players. */
+  getArmedPlayerTicketCounts(roomCode: string): Record<string, number> {
+    const map = this.armedPlayerIdsByRoom.get(roomCode);
+    if (!map) return {};
+    return Object.fromEntries(map);
+  }
+
+  armPlayer(roomCode: string, playerId: string, ticketCount: number = 1): void {
+    let map = this.armedPlayerIdsByRoom.get(roomCode);
+    if (!map) { map = new Map(); this.armedPlayerIdsByRoom.set(roomCode, map); }
+    map.set(playerId, ticketCount);
   }
 
   disarmPlayer(roomCode: string, playerId: string): void {

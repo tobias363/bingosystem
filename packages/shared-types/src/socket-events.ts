@@ -69,6 +69,8 @@ export interface RoomJoinPayload extends AuthenticatedSocketPayload {
 
 export interface BetArmPayload extends RoomActionPayload {
   armed?: boolean;
+  /** Number of tickets the player wants (1-30). Defaults to 1 if omitted. */
+  ticketCount?: number;
 }
 
 export interface GameStartPayload extends RoomActionPayload {

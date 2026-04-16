@@ -210,7 +210,7 @@ class Game1Controller implements GameController {
         const container = this.deps.app.app.canvas.parentElement ?? document.body;
         this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container);
         this.playScreen.setOnClaim((type) => this.handleClaim(type));
-        this.playScreen.setOnBuy(() => this.handleBuy());
+        this.playScreen.setOnBuy((ticketCount) => this.handleBuy(ticketCount));
         this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
         this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
         this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
@@ -232,7 +232,7 @@ class Game1Controller implements GameController {
         const container = this.deps.app.app.canvas.parentElement ?? document.body;
         this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container);
         this.playScreen.setOnClaim((type) => this.handleClaim(type));
-        this.playScreen.setOnBuy(() => this.handleBuy());
+        this.playScreen.setOnBuy((ticketCount) => this.handleBuy(ticketCount));
         this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
         this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
         this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
@@ -357,8 +357,8 @@ class Game1Controller implements GameController {
 
   // ── User actions ──────────────────────────────────────────────────────
 
-  private async handleBuy(): Promise<void> {
-    const result = await this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true });
+  private async handleBuy(ticketCount: number = 1): Promise<void> {
+    const result = await this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true, ticketCount });
     this.playScreen?.showBuyPopupResult(result.ok, result.error?.message);
     if (!result.ok) {
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");

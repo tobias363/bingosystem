@@ -117,6 +117,12 @@ interface StartGameInput {
   payoutPercent: number;
   /** If provided, only these players get tickets. Others watch without playing. */
   armedPlayerIds?: string[];
+  /**
+   * Per-player ticket counts selected at arm time.
+   * Maps playerId → number of tickets requested.
+   * Falls back to `ticketsPerPlayer` for any player not in this map.
+   */
+  armedPlayerTicketCounts?: Record<string, number>;
   /** Win-condition patterns for this round. Defaults to [1 Rad, Full Plate]. */
   patterns?: PatternDefinition[];
   /** Game variant type (from hall_game_schedules.game_type). */
@@ -471,22 +477,30 @@ export class BingoEngine {
 
     // HOEY-4: Track debited players for compensation if startup fails partway through.
     // BIN-250: If any transfer fails mid-loop, all previously debited players are refunded before rethrowing.
-    const debitedPlayers: Array<{ player: Player; fromAccountId: string; toAccountId: string }> = [];
+    const debitedPlayers: Array<{ player: Player; fromAccountId: string; toAccountId: string; amount: number }> = [];
+    // Per-player ticket counts: resolve each player's ticket count from armedPlayerTicketCounts, clamped to ticketsPerPlayer max.
+    const playerTicketCountMap: Map<string, number> = new Map();
+    for (const player of eligiblePlayers) {
+      const requested = input.armedPlayerTicketCounts?.[player.id] ?? ticketsPerPlayer;
+      playerTicketCountMap.set(player.id, Math.min(requested, ticketsPerPlayer));
+    }
     if (entryFee > 0 && !isTestGame) {
       try {
         for (const player of eligiblePlayers) {
+          const playerTicketCount = playerTicketCountMap.get(player.id) ?? ticketsPerPlayer;
+          const playerBuyIn = roundCurrency(entryFee * playerTicketCount);
           const transfer = await this.walletAdapter.transfer(
             player.walletId,
             houseAccountId,
-            entryFee,
-            `Bingo buy-in ${room.code}`,
+            playerBuyIn,
+            `Bingo buy-in ${room.code} (${playerTicketCount} tickets)`,
             { idempotencyKey: `buyin-${gameId}-${player.id}` }
           );
-          debitedPlayers.push({ player, fromAccountId: transfer.fromTx.accountId, toAccountId: transfer.toTx.accountId });
-          player.balance -= entryFee;
+          debitedPlayers.push({ player, fromAccountId: transfer.fromTx.accountId, toAccountId: transfer.toTx.accountId, amount: playerBuyIn });
+          player.balance -= playerBuyIn;
           await this.compliance.recordLossEntry(player.walletId, room.hallId, {
             type: "BUYIN",
-            amount: entryFee,
+            amount: playerBuyIn,
             createdAtMs: nowMs
           });
           await this.compliance.incrementSessionGameCount(player.walletId);
@@ -495,7 +509,7 @@ export class BingoEngine {
             gameType,
             channel,
             eventType: "STAKE",
-            amount: entryFee,
+            amount: playerBuyIn,
             roomCode: room.code,
             gameId,
             playerId: player.id,
@@ -508,8 +522,8 @@ export class BingoEngine {
           });
         }
       } catch (err) {
-        // Compensate: refund all already-debited players
-        const { failedRefunds } = await this.refundDebitedPlayers(debitedPlayers, houseAccountId, entryFee, room.code, gameId);
+        // Compensate: refund all already-debited players (using per-player amounts)
+        const { failedRefunds } = await this.refundDebitedPlayers(debitedPlayers, houseAccountId, room.code, gameId);
         if (failedRefunds.length > 0 && this.bingoAdapter.onCheckpoint) {
           // Persist failed refund data so it can be recovered/reconciled after restart
           await this.bingoAdapter.onCheckpoint({
@@ -530,13 +544,14 @@ export class BingoEngine {
 
     try {
       for (const player of eligiblePlayers) {
+        const playerTicketCount = playerTicketCountMap.get(player.id) ?? ticketsPerPlayer;
         const playerTickets: Ticket[] = [];
         const playerMarks: Set<number>[] = [];
 
         // Assign colors for this player's tickets based on variant
-        const colorAssignments = variantConfigModule.assignTicketColors(ticketsPerPlayer, variantConfig, variantGameType);
+        const colorAssignments = variantConfigModule.assignTicketColors(playerTicketCount, variantConfig, variantGameType);
 
-        for (let ticketIndex = 0; ticketIndex < ticketsPerPlayer; ticketIndex += 1) {
+        for (let ticketIndex = 0; ticketIndex < playerTicketCount; ticketIndex += 1) {
           const assignment = colorAssignments[ticketIndex] ?? { color: "Small Yellow", type: "small" };
           const ticket = await this.bingoAdapter.createTicket({
             roomCode: room.code,
@@ -544,7 +559,7 @@ export class BingoEngine {
             gameSlug: room.gameSlug,
             player,
             ticketIndex,
-            ticketsPerPlayer,
+            ticketsPerPlayer: playerTicketCount,
             color: assignment.color,
             type: assignment.type,
           });
@@ -556,9 +571,9 @@ export class BingoEngine {
         marks.set(player.id, playerMarks);
       }
     } catch (err) {
-      // Compensate: refund all debited players if ticket generation fails
+      // Compensate: refund all debited players if ticket generation fails (using per-player amounts)
       if (entryFee > 0) {
-        const { failedRefunds } = await this.refundDebitedPlayers(debitedPlayers, houseAccountId, entryFee, room.code, gameId);
+        const { failedRefunds } = await this.refundDebitedPlayers(debitedPlayers, houseAccountId, room.code, gameId);
         if (failedRefunds.length > 0 && this.bingoAdapter.onCheckpoint) {
           await this.bingoAdapter.onCheckpoint({
             roomCode: room.code, gameId, reason: "REFUND_FAILURE" as never,
@@ -570,7 +585,8 @@ export class BingoEngine {
       throw err;
     }
 
-    const prizePool = roundCurrency(entryFee * eligiblePlayers.length);
+    // Prize pool = sum of all per-player buy-ins
+    const prizePool = roundCurrency(debitedPlayers.reduce((sum, d) => sum + d.amount, 0) || (entryFee * eligiblePlayers.length));
     const maxPayoutBudget = roundCurrency((prizePool * normalizedPayoutPercent) / 100);
     // BIN-448: Use patterns from variant config if available, else explicit input, else defaults.
     const patterns = input.patterns
@@ -2148,28 +2164,27 @@ export class BingoEngine {
   /** HOEY-4: Refund buy-ins when game startup fails partway through.
    *  Returns structured data about any failed refunds for reconciliation. */
   private async refundDebitedPlayers(
-    debitedPlayers: Array<{ player: Player; fromAccountId: string; toAccountId: string }>,
+    debitedPlayers: Array<{ player: Player; fromAccountId: string; toAccountId: string; amount: number }>,
     houseAccountId: string,
-    entryFee: number,
     roomCode: string,
     gameId: string
   ): Promise<{ failedRefunds: Array<{ playerId: string; walletId: string; amount: number; error: string }> }> {
     const failedRefunds: Array<{ playerId: string; walletId: string; amount: number; error: string }> = [];
-    for (const { player } of debitedPlayers) {
+    for (const { player, amount } of debitedPlayers) {
       try {
         await this.walletAdapter.transfer(
           houseAccountId,
           player.walletId,
-          entryFee,
+          amount,
           `Refund: game start failed ${roomCode}`,
           { idempotencyKey: `refund-${gameId}-${player.id}` }
         );
-        player.balance += entryFee;
+        player.balance += amount;
       } catch (refundErr) {
         failedRefunds.push({
           playerId: player.id,
           walletId: player.walletId,
-          amount: entryFee,
+          amount,
           error: String(refundErr)
         });
         logger.error(
@@ -2180,7 +2195,7 @@ export class BingoEngine {
     }
     if (failedRefunds.length > 0) {
       logger.error(
-        { failedRefunds, gameId, roomCode, totalFailedAmount: failedRefunds.length * entryFee },
+        { failedRefunds, gameId, roomCode, totalFailedAmount: failedRefunds.reduce((s, r) => s + r.amount, 0) },
         `RECONCILIATION: ${failedRefunds.length} refund(s) failed for game ${gameId} — players owe money`
       );
     }

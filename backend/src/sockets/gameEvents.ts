@@ -127,14 +127,15 @@ export interface GameEventsDeps {
   runtimeBingoSettings: BingoSchedulerSettings;
   chatHistoryByRoom: Map<string, ChatMessage[]>;
   luckyNumbersByRoom: Map<string, Map<string, number>>;
-  armedPlayerIdsByRoom: Map<string, Set<string>>;
+  armedPlayerIdsByRoom: Map<string, Map<string, number>>;
   roomConfiguredEntryFeeByRoom: Map<string, number>;
   displayTicketCache: Map<string, Ticket[]>;
   getPrimaryRoomForHall: (hallId: string) => { code: string; hallId: string } | null;
   findPlayerInRoomByWallet: (snapshot: RoomSnapshot, walletId: string) => RoomSnapshot["players"][number] | null;
   getRoomConfiguredEntryFee: (roomCode: string) => number;
   getArmedPlayerIds: (roomCode: string) => string[];
-  armPlayer: (roomCode: string, playerId: string) => void;
+  armPlayer: (roomCode: string, playerId: string, ticketCount?: number) => void;
+  getArmedPlayerTicketCounts: (roomCode: string) => Record<string, number>;
   disarmPlayer: (roomCode: string, playerId: string) => void;
   disarmAllPlayers: (roomCode: string) => void;
   clearDisplayTicketCache: (roomCode: string) => void;
@@ -495,14 +496,15 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
     }));
 
     socket.on("bet:arm", rateLimited("bet:arm", async (
-      payload: RoomActionPayload & { armed?: boolean },
+      payload: RoomActionPayload & { armed?: boolean; ticketCount?: number },
       callback: (response: AckResponse<{ snapshot: RoomSnapshot; armed: boolean }>) => void
     ) => {
       try {
         const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
         const wantArmed = payload.armed !== false;
         if (wantArmed) {
-          armPlayer(roomCode, playerId);
+          const ticketCount = Math.min(30, Math.max(1, Math.round(payload.ticketCount ?? 1)));
+          armPlayer(roomCode, playerId, ticketCount);
         } else {
           disarmPlayer(roomCode, playerId);
         }
@@ -533,6 +535,7 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
           ticketsPerPlayer,
           payoutPercent: runtimeBingoSettings.payoutPercent,
           armedPlayerIds: getArmedPlayerIds(roomCode),
+          armedPlayerTicketCounts: deps.getArmedPlayerTicketCounts(roomCode),
           gameType: variantInfo?.gameType,
           variantConfig: variantInfo?.config,
         });
