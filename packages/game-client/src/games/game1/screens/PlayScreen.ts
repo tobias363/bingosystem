@@ -67,6 +67,8 @@ export class PlayScreen extends Container {
   private onCancelTickets: (() => void) | null = null;
   private onOpenSettings: (() => void) | null = null;
   private onOpenMarkerBg: (() => void) | null = null;
+  /** A6: Host manual start callback. */
+  private onStartGame: (() => void) | null = null;
 
   // Inline ticket display (vertical multi-column grid, matching Unity GridLayoutGroup)
   private inlineScroller: TicketGridScroller;
@@ -194,6 +196,9 @@ export class PlayScreen extends Container {
       onOpenMarkerBg: () => {
         this.onOpenMarkerBg?.();
       },
+      onStartGame: () => {
+        this.onStartGame?.();
+      },
     });
 
     // Chat panel (right sidebar)
@@ -237,6 +242,11 @@ export class PlayScreen extends Container {
 
   setOnOpenMarkerBg(callback: () => void): void {
     this.onOpenMarkerBg = callback;
+  }
+
+  /** A6: Set the host manual start callback. */
+  setOnStartGame(callback: () => void): void {
+    this.onStartGame = callback;
   }
 
   subscribeChatToBridge(
@@ -515,9 +525,12 @@ export class PlayScreen extends Container {
       state.lastDrawnNumber,
       state.drawCount,
       state.totalDrawCapacity,
+      state.players,
     );
     this.chatPanel.updatePlayerCount(state.playerCount);
     this.centerTop.updatePatterns(state.patterns, state.patternResults, state.prizePool);
+    // A6: Show/hide host manual start button
+    this.centerTop.setCanStartNow(state.canStartNow, state.gameStatus === "RUNNING");
   }
 
   /** Expose inline ticket cards for external operations (e.g. lucky number highlighting). */

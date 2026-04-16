@@ -53,6 +53,8 @@ export interface GameState {
   // Scheduler
   millisUntilNextStart: number | null;
   autoDrawEnabled: boolean;
+  /** A6: True when the host/admin can manually start the game right now. */
+  canStartNow: boolean;
 
   // BIN-460: Game pause state
   isPaused: boolean;
@@ -223,6 +225,9 @@ export class GameBridge {
     if (typeof scheduler?.autoDrawEnabled === "boolean") {
       this.state.autoDrawEnabled = scheduler.autoDrawEnabled;
     }
+    if (typeof scheduler?.canStartNow === "boolean") {
+      this.state.canStartNow = scheduler.canStartNow;
+    }
 
     // BIN-417: Game variant info
     if (payload.gameVariant) {
@@ -325,6 +330,7 @@ export class GameBridge {
       luckyNumbers: {},
       millisUntilNextStart: null,
       autoDrawEnabled: false,
+      canStartNow: false,
       isPaused: false,
       pauseMessage: null,
       gameType: "standard",

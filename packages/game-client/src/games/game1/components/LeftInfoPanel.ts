@@ -1,4 +1,5 @@
 import type { HtmlOverlayManager } from "./HtmlOverlayManager.js";
+import type { Player } from "@spillorama/shared-types/game";
 
 /**
  * HTML overlay panel showing player info, number ring, and draw progress.
@@ -93,8 +94,23 @@ export class LeftInfoPanel {
     lastDrawnNumber: number | null,
     drawCount: number,
     totalDrawCapacity: number,
+    players?: Player[],
   ): void {
-    this.playerCountEl.textContent = String(playerCount).padStart(2, "0");
+    // G2/G3: Count unique halls from player data
+    let hallCount = 0;
+    if (players && players.length > 0) {
+      const halls = new Set<string>();
+      for (const p of players) {
+        if (p.hallId) halls.add(p.hallId);
+      }
+      hallCount = halls.size;
+    }
+
+    const countStr = String(playerCount).padStart(2, "0");
+    this.playerCountEl.textContent = hallCount > 1
+      ? `${countStr} (${hallCount} haller)`
+      : countStr;
+
     this.entryFeeEl.textContent = totalStake > 0
       ? `Innsats: ${totalStake} kr`
       : `Innsats: \u2014`;

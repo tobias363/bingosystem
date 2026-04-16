@@ -371,7 +371,8 @@ export class BingoEngine {
       name: this.assertPlayerName(input.playerName),
       walletId,
       balance,
-      socketId: input.socketId
+      socketId: input.socketId,
+      hallId,
     };
 
     const existingCodes = new Set(this.rooms.keys());
@@ -414,7 +415,8 @@ export class BingoEngine {
       name: this.assertPlayerName(input.playerName),
       walletId,
       balance,
-      socketId: input.socketId
+      socketId: input.socketId,
+      hallId,
     });
 
     return { roomCode, playerId };

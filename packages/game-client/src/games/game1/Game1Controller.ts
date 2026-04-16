@@ -220,6 +220,7 @@ class Game1Controller implements GameController {
         this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
         this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
         this.playScreen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
+        this.playScreen.setOnStartGame(() => this.handleStartGame());
         this.playScreen.subscribeChatToBridge((listener) =>
           this.deps.bridge.on("chatMessage", listener),
         );
@@ -242,6 +243,7 @@ class Game1Controller implements GameController {
         this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
         this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
         this.playScreen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
+        this.playScreen.setOnStartGame(() => this.handleStartGame());
         this.playScreen.subscribeChatToBridge((listener) =>
           this.deps.bridge.on("chatMessage", listener),
         );
@@ -396,6 +398,14 @@ class Game1Controller implements GameController {
     this.playScreen?.showBuyPopupResult(result.ok, result.error?.message);
     if (!result.ok) {
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");
+    }
+  }
+
+  /** A6: Host/admin manual game start — calls game:start on the socket. */
+  private async handleStartGame(): Promise<void> {
+    const result = await this.deps.socket.startGame({ roomCode: this.actualRoomCode });
+    if (!result.ok) {
+      this.toast?.error(result.error?.message || "Kunne ikke starte spillet");
     }
   }
 
