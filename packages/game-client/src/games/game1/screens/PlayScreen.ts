@@ -162,8 +162,7 @@ export class PlayScreen extends Container {
 
     // Game1 buy popup (HTML overlay — matches Unity's Game1TicketPurchasePanel)
     this.buyPopup = new Game1BuyPopup(this.overlayManager);
-    // Delegate all buy logic to the controller via onBuy callback.
-    // The controller calls socket.armBet and reports the result back via showBuyPopupResult().
+    // Delegate buy to controller — no direct socket call from view layer.
     this.buyPopup.setOnBuy(() => {
       this.onBuy?.();
     });
@@ -272,19 +271,15 @@ export class PlayScreen extends Container {
     }
 
     // Show countdown in number ring + center ball
-    // (Unity: CountdownTimer_Spillorama() with scheduler.millisUntilNextStart)
     if (state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
       this.leftInfo.startCountdown(state.millisUntilNextStart);
       this.centerBall.startCountdown(state.millisUntilNextStart);
     } else {
-      // Show "..." while waiting for scheduler data (Unity: Game_1_Timer_Txt.text = "...")
       this.leftInfo.stopCountdown();
       this.centerBall.showWaiting();
     }
 
-    // Show buy popup — only with backend ticket types (no client fallback).
-    // If types haven't arrived yet, showWithTypes returns early and
-    // updateWaitingState() will show the popup when the first room:update lands.
+    // Show buy popup — only with backend ticket types (no client fallback)
     this.buyPopup?.showWithTypes(state.entryFee || 10, state.ticketTypes ?? []);
 
     // Update info panels
@@ -303,12 +298,20 @@ export class PlayScreen extends Container {
 
   /** Update waiting mode state (e.g. new countdown, player count changes). */
   updateWaitingState(state: GameState): void {
+    const prevTypes = this.lastState?.ticketTypes;
     this.lastState = state;
 
     if (this.isWaitingMode) {
       if (state.millisUntilNextStart !== null && state.millisUntilNextStart > 0) {
         this.leftInfo.startCountdown(state.millisUntilNextStart);
         this.centerBall.startCountdown(state.millisUntilNextStart);
+      }
+
+      // Show buy popup when ticket types first arrive from backend
+      const hadTypes = prevTypes && prevTypes.length > 0;
+      const hasTypes = state.ticketTypes && state.ticketTypes.length > 0;
+      if (!hadTypes && hasTypes) {
+        this.buyPopup?.showWithTypes(state.entryFee || 10, state.ticketTypes);
       }
     }
 
@@ -446,7 +449,7 @@ export class PlayScreen extends Container {
     // Ball tube — add animated ball
     this.ballTube.addBall(number);
 
-    // Center ball — show new number with scale-in animation
+    // Center ball — show new number with animation
     this.centerBall.showNumber(number);
 
     // Inline tickets — mark number on all cards
@@ -476,10 +479,7 @@ export class PlayScreen extends Container {
 
   updateInfo(state: GameState): void {
     this.lastState = state;
-
-    // Delegate to StakeCalculator — see StakeCalculator.ts for the full rule set.
     const totalStake = stakeFromState(state);
-
     this.leftInfo.update(
       state.playerCount,
       totalStake,

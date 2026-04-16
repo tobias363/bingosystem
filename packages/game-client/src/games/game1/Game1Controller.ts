@@ -263,6 +263,7 @@ class Game1Controller implements GameController {
   // ── Bridge event handlers ─────────────────────────────────────────────
 
   private onStateChanged(state: GameState): void {
+    console.log("[Game1] stateChanged — phase:", this.phase, "gameStatus:", state.gameStatus, "myTickets:", state.myTickets.length, "myStake:", state.myStake, "isArmed:", state.isArmed);
     if (this.phase === "WAITING" && this.playScreen) {
       this.playScreen.updateWaitingState(state);
     }
@@ -286,11 +287,13 @@ class Game1Controller implements GameController {
     this.gameRoundCount++;
     this.buyMoreDisabled = false;
 
+    console.log("[Game1] onGameStarted — myTickets:", state.myTickets.length, "gameStatus:", state.gameStatus, "isArmed:", state.isArmed, "myPlayerId:", state.myPlayerId, "preRoundTickets:", state.preRoundTickets.length);
+
     if (state.myTickets.length > 0) {
+      console.log("[Game1] → PLAYING (has tickets)");
       this.transitionTo("PLAYING", state);
     } else {
-      // Spectator: go to waiting mode so they can see the game in progress
-      // (Unity stays on the same panel and just hides the buy UI)
+      console.log("[Game1] → WAITING (spectator, no tickets)");
       this.transitionTo("WAITING", state);
     }
   }
@@ -356,7 +359,6 @@ class Game1Controller implements GameController {
 
   private async handleBuy(): Promise<void> {
     const result = await this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true });
-    // Report result back to popup (showBuyPopupResult hides popup on success).
     this.playScreen?.showBuyPopupResult(result.ok, result.error?.message);
     if (!result.ok) {
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");

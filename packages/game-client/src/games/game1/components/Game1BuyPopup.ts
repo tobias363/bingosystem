@@ -14,7 +14,6 @@ export class Game1BuyPopup {
   private totalLabel: HTMLDivElement;
   private statusMsg: HTMLDivElement;
   private buyBtn: HTMLButtonElement;
-  private cancelBtn: HTMLButtonElement;
 
   private onBuy: (() => void) | null = null;
   private typeRows: Array<{
@@ -112,11 +111,11 @@ export class Game1BuyPopup {
     this.buyBtn.addEventListener("click", () => this.handleBuy());
     btnRow.appendChild(this.buyBtn);
 
-    this.cancelBtn = document.createElement("button");
-    this.cancelBtn.textContent = "Avbryt";
-    this.styleSecondaryBtn(this.cancelBtn);
-    this.cancelBtn.addEventListener("click", () => this.hide());
-    btnRow.appendChild(this.cancelBtn);
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = "Avbryt";
+    this.styleSecondaryBtn(cancelBtn);
+    cancelBtn.addEventListener("click", () => this.hide());
+    btnRow.appendChild(cancelBtn);
 
     this.card.appendChild(btnRow);
   }
@@ -137,8 +136,7 @@ export class Game1BuyPopup {
 
     for (const tt of ticketTypes) {
       const price = Math.round(entryFee * tt.priceMultiplier);
-      const displayName = this.getDisplayName(tt);
-      this.buildTypeCard(displayName, tt.type, price, tt.ticketCount);
+      this.buildTypeCard(this.getDisplayName(tt), tt.type, price, tt.ticketCount);
     }
 
     this.updateTotal();
@@ -162,7 +160,6 @@ export class Game1BuyPopup {
     this.onBuy = callback;
   }
 
-  /** Show feedback after bet:arm response. */
   showResult(success: boolean, message?: string): void {
     if (success) {
       this.statusMsg.style.color = "#81c784";
@@ -192,7 +189,6 @@ export class Game1BuyPopup {
     return tt.name;
   }
 
-  /** Build a compact card for a ticket type with name, price, and +/- selector. */
   private buildTypeCard(name: string, type: string, price: number, ticketCount: number): void {
     const card = document.createElement("div");
     Object.assign(card.style, {
@@ -202,7 +198,6 @@ export class Game1BuyPopup {
       padding: "10px 8px",
     });
 
-    // Name (stacked for compact 3-col layout)
     const nameEl = document.createElement("div");
     nameEl.textContent = ticketCount > 1 ? `${name} (${ticketCount} brett)` : name;
     Object.assign(nameEl.style, {
@@ -211,7 +206,6 @@ export class Game1BuyPopup {
     });
     card.appendChild(nameEl);
 
-    // Price
     const priceEl = document.createElement("div");
     priceEl.textContent = `${price} kr`;
     Object.assign(priceEl.style, {
@@ -219,7 +213,6 @@ export class Game1BuyPopup {
     });
     card.appendChild(priceEl);
 
-    // Qty selector: − [qty] +
     const qtyRow = document.createElement("div");
     qtyRow.style.cssText = "display:flex;align-items:center;justify-content:center;gap:10px;";
 
@@ -235,18 +228,12 @@ export class Game1BuyPopup {
 
     const minusBtn = this.createRoundBtn("\u2212");
     minusBtn.addEventListener("click", () => {
-      if (entry.qty > 0) {
-        entry.qty--;
-        qtyLabel.textContent = String(entry.qty);
-        this.updateTotal();
-      }
+      if (entry.qty > 0) { entry.qty--; qtyLabel.textContent = String(entry.qty); this.updateTotal(); }
     });
 
     const plusBtn = this.createRoundBtn("+");
     plusBtn.addEventListener("click", () => {
-      entry.qty++;
-      qtyLabel.textContent = String(entry.qty);
-      this.updateTotal();
+      entry.qty++; qtyLabel.textContent = String(entry.qty); this.updateTotal();
     });
 
     qtyRow.appendChild(minusBtn);
