@@ -518,7 +518,11 @@ test("compliance: enforces databingo prize caps and keeps payout audit", async (
     actorPlayerId: hostPlayerId,
     entryFee: 3000,
     ticketsPerPlayer: 1,
-    payoutPercent: 80
+    payoutPercent: 80,
+    patterns: [
+      { id: "1-rad", name: "1 Rad", claimType: "LINE" as const, prizePercent: 30, order: 1, design: 1 },
+      { id: "full-plate", name: "Full Plate", claimType: "BINGO" as const, prizePercent: 70, order: 2, design: 2 },
+    ]
   });
 
   // Make draw order deterministic for this test to avoid flakiness where a required
