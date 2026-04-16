@@ -595,6 +595,7 @@ class Game1Controller implements GameController {
     audio.setSoundEnabled(settings.soundEnabled);
     audio.setVoiceEnabled(settings.voiceEnabled);
     audio.setVoiceLanguage(AudioManager.settingsToVoice(settings.voiceLanguage));
+    audio.setDoubleAnnounce(settings.doubleAnnounce);
   }
 
   private showError(message: string): void {

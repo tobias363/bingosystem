@@ -362,7 +362,9 @@ export class PlayScreen extends Container {
       const ticketRows = ticket.grid?.length ?? 3;
       const ticketCols = ticket.grid?.[0]?.length ?? 5;
       const gridSize = (ticketRows === 5 && ticketCols === 5) ? "5x5" : "3x5";
-      const cellSize = gridSize === "5x5" ? 44 : 44;
+      // Unity: PrefabBingoGame1LargeTicket5x5 uses larger cell sizes for "large" ticket types
+      const isLargeType = ticket.type?.toLowerCase().includes("large") ?? false;
+      const cellSize = isLargeType ? 52 : 44;
 
       const card = new TicketCard(i, {
         gridSize,

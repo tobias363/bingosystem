@@ -48,8 +48,17 @@ export class TicketCard extends Container {
   private bingoTimeline: gsap.core.Timeline | null = null;
   private bingoOverlay: Text | null = null;
 
+  // ── Flip animation state ────────────────────────────────────────────
+  private isFlipped = false;
+  private isFlipping = false;
+  private flipAutoTimer: ReturnType<typeof setTimeout> | null = null;
+  private detailsOverlay: Container | null = null;
+  private ticketIndex: number;
+  private headerTextColor: number;
+
   constructor(index: number, options?: TicketCardOptions) {
     super();
+    this.ticketIndex = index;
     const gridSize = options?.gridSize ?? "3x5";
     const cellSize = options?.cellSize ?? (gridSize === "5x5" ? 36 : 44);
 
@@ -58,6 +67,7 @@ export class TicketCard extends Container {
     this.cardBgColor = cardBgColor;
     const headerBgColor = options?.headerBg ?? TicketCard.DEFAULT_HEADER_BG;
     const headerTextColor = options?.headerText ?? TicketCard.DEFAULT_HEADER_TEXT;
+    this.headerTextColor = headerTextColor;
     this.toGoNormalColor = options?.toGoColor ?? TicketCard.DEFAULT_TOGO_NORMAL;
     this.toGoCloseColor = options?.toGoCloseColor ?? TicketCard.DEFAULT_TOGO_CLOSE;
 
@@ -129,6 +139,18 @@ export class TicketCard extends Container {
     this.toGoText.x = this.cardW / 2;
     this.toGoText.y = headerH + this.grid.gridHeight + 8;
     this.addChild(this.toGoText);
+
+    // ── Flip interaction (tap/click to show ticket details) ───────────
+    this.eventMode = "static";
+    this.cursor = "pointer";
+    this.on("pointerdown", () => {
+      if (this.isFlipping) return;
+      if (this.isFlipped) {
+        this.flipToGrid();
+      } else {
+        this.flipToDetails();
+      }
+    });
   }
 
   loadTicket(ticket: Ticket): void {
@@ -180,10 +202,178 @@ export class TicketCard extends Container {
     this.priceText.text = `${amount}kr`;
   }
 
-  /** Stop all card-level animations (background blink, BINGO pulse). */
+  /** Stop all card-level animations (background blink, BINGO pulse, flip timer). */
   stopCardAnimations(): void {
     this.stopBgBlink();
     this.stopBingoAnimation();
+    if (this.flipAutoTimer !== null) {
+      clearTimeout(this.flipAutoTimer);
+      this.flipAutoTimer = null;
+    }
+  }
+
+  // ── Flip animation (Unity: Y-rotation 0→90→0 mapped to scaleX) ─────
+
+  /**
+   * Flip the card to show details (ticket number, price, type).
+   * GSAP animation: scaleX 1→0 (0.25s), swap content, scaleX 0→1 (0.25s).
+   * Auto-flips back after 3.0s.
+   */
+  flipToDetails(): void {
+    if (this.isFlipping || this.isFlipped) return;
+    this.isFlipping = true;
+
+    // Build details overlay if it doesn't exist yet
+    if (!this.detailsOverlay) {
+      this.detailsOverlay = new Container();
+
+      // Background matching the card
+      const bg = new Graphics();
+      bg.roundRect(0, 0, this.cardW, this.cardH, 8);
+      bg.fill(this.cardBgColor);
+      this.detailsOverlay.addChild(bg);
+
+      const centerX = this.cardW / 2;
+      const centerY = this.cardH / 2;
+
+      // Ticket number
+      const numText = new Text({
+        text: `Bong #${this.ticketIndex + 1}`,
+        style: {
+          fontFamily: "Arial, Helvetica, sans-serif",
+          fontSize: 20,
+          fontWeight: "bold",
+          fill: this.headerTextColor,
+          align: "center",
+        },
+      });
+      numText.anchor.set(0.5);
+      numText.x = centerX;
+      numText.y = centerY - 30;
+      this.detailsOverlay.addChild(numText);
+
+      // Price
+      const priceInfo = new Text({
+        text: this.priceText.text,
+        style: {
+          fontFamily: "Arial, Helvetica, sans-serif",
+          fontSize: 16,
+          fontWeight: "bold",
+          fill: 0x2a9d8f,
+          align: "center",
+        },
+      });
+      priceInfo.anchor.set(0.5);
+      priceInfo.x = centerX;
+      priceInfo.y = centerY;
+      this.detailsOverlay.addChild(priceInfo);
+
+      // Type/color name (from header text)
+      const typeInfo = new Text({
+        text: this.headerText.text,
+        style: {
+          fontFamily: "Arial, Helvetica, sans-serif",
+          fontSize: 14,
+          fill: 0xcccccc,
+          align: "center",
+        },
+      });
+      typeInfo.anchor.set(0.5);
+      typeInfo.x = centerX;
+      typeInfo.y = centerY + 28;
+      this.detailsOverlay.addChild(typeInfo);
+
+      this.detailsOverlay.visible = false;
+      this.addChild(this.detailsOverlay);
+    }
+
+    // Update details text to current values
+    const detailTexts = this.detailsOverlay.children.filter(
+      (c): c is Text => c instanceof Text,
+    );
+    if (detailTexts.length >= 2) {
+      detailTexts[1].text = this.priceText.text;
+    }
+    if (detailTexts.length >= 3) {
+      detailTexts[2].text = this.headerText.text;
+    }
+
+    // Animate: scale X to 0, swap, scale X back to 1
+    const pivotX = this.cardW / 2;
+    this.pivot.x = pivotX;
+    this.x += pivotX;
+
+    gsap.to(this.scale, {
+      x: 0,
+      duration: 0.25,
+      ease: "power2.in",
+      onComplete: () => {
+        // Hide front, show back
+        this.grid.visible = false;
+        this.toGoText.visible = false;
+        this.headerBg.visible = false;
+        this.headerText.visible = false;
+        this.priceText.visible = false;
+        this.cardBg.visible = false;
+        if (this.detailsOverlay) this.detailsOverlay.visible = true;
+
+        gsap.to(this.scale, {
+          x: 1,
+          duration: 0.25,
+          ease: "power2.out",
+          onComplete: () => {
+            this.isFlipping = false;
+            this.isFlipped = true;
+
+            // Auto-flip back after 3.0s
+            this.flipAutoTimer = setTimeout(() => {
+              this.flipAutoTimer = null;
+              this.flipToGrid();
+            }, 3000);
+          },
+        });
+      },
+    });
+  }
+
+  /**
+   * Flip the card back to show the normal grid view.
+   */
+  flipToGrid(): void {
+    if (this.isFlipping || !this.isFlipped) return;
+    this.isFlipping = true;
+
+    // Cancel auto-flip timer if still pending
+    if (this.flipAutoTimer !== null) {
+      clearTimeout(this.flipAutoTimer);
+      this.flipAutoTimer = null;
+    }
+
+    gsap.to(this.scale, {
+      x: 0,
+      duration: 0.25,
+      ease: "power2.in",
+      onComplete: () => {
+        // Show front, hide back
+        this.grid.visible = true;
+        this.toGoText.visible = true;
+        this.headerBg.visible = true;
+        this.headerText.visible = true;
+        this.priceText.visible = true;
+        this.cardBg.visible = true;
+        if (this.detailsOverlay) this.detailsOverlay.visible = false;
+
+        gsap.to(this.scale, {
+          x: 1,
+          duration: 0.25,
+          ease: "power2.out",
+          onComplete: () => {
+            this.isFlipping = false;
+            this.isFlipped = false;
+          },
+        });
+      },
+    });
   }
 
   private updateToGo(): void {
