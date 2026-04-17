@@ -1,0 +1,37 @@
+name: Parity Matrix Check
+
+on:
+  pull_request:
+    paths:
+      - "docs/engineering/PARITY_MATRIX.md"
+      - "scripts/generate-parity-matrix.ts"
+      - ".github/workflows/matrix-check.yml"
+  push:
+    branches:
+      - main
+
+# BIN-528 CI-gate: ensures `docs/engineering/PARITY_MATRIX.md` is normalized
+# (per-section counts + §6 overall-summary match the actual table rows).
+# Any PR that edits the matrix without running `npm run matrix:generate` will
+# fail this check. Stops count-drift from accumulating like it did in bolk 4-7.
+#
+# Runs in ~15 s — no node_modules install needed beyond root devDeps.
+
+jobs:
+  matrix-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install root devDependencies (tsx)
+        # Only need tsx for the script — no game-client or backend deps.
+        run: npm install --no-audit --no-fund --ignore-scripts tsx@^4
+
+      - name: Run matrix normalization check
+        run: npx tsx scripts/generate-parity-matrix.ts --check
