@@ -56,7 +56,7 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 | Audio (3 stemmepakker, 60 clips) | ✅ | 🔵 | ✅ | ✅ | ✅ | — |
 | Double-announce toggle | ✅ | 🔵 | ✅ | ✅ | ✅ | — |
 | Spectator-fase (SPECTATING) | ❌ | 🔵 | ❌ | ✅ | ❌ | [BIN-507](https://linear.app/bingosystem/issue/BIN-507) |
-| Loader-barriere (late-join sync) | 🟡 | ✅ | ❌ | ✅ | ❌ | [BIN-500](https://linear.app/bingosystem/issue/BIN-500) |
+| Loader-barriere (late-join sync) | ✅ | ✅ | ✅ | ✅ | 🟡 | [BIN-500](https://linear.app/bingosystem/issue/BIN-500) ✅ merged |
 | MAX_DRAWS 75 (fiks fra 60) | ✅ | ❌ | 🔵 | ✅ | ❌ | [BIN-520](https://linear.app/bingosystem/issue/BIN-520) |
 
 ### 2.2 Game-specific features
@@ -267,3 +267,4 @@ Automatisk generator fra YAML front-matter i per-spill canonical specs er planla
 |------|-----------|---------|
 | 2026-04-17 | (denne PR) | Initial versjon. G1 verifisert mot kode og canonical spec (BIN-528). G2/G3/G5 delvis utfyllt fra README — venter på respektive canonical specs (BIN-529/530/531). |
 | 2026-04-17 | BIN-502 PR | Oppdatert G1-rader: BIN-494 Redis-adapter ✅ (backend i main), BIN-499 ticket:mark slim ✅ (backend i main) — begge levert av slot-2 via PR #108. BIN-502 drawIndex gap-deteksjon ✅ (klient i main) — levert i denne PR. Alle tre nå 🟡 "Release-klar" (venter på integrasjon-test i staging). |
+| 2026-04-17 | BIN-500 PR | BIN-500 Loader-barriere ✅ (klient i main) — syncReady-checkliste + "Syncer..."-overlay ved RUNNING late-join + syncGap-telemetri. Rad nå 🟡 Release-klar (venter på manuell late-join-test mot staging). |
