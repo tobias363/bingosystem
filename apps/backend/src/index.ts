@@ -441,20 +441,35 @@ const registerGameEvents = createGameEventHandlers({
   chatMessageStore,
 });
 
-// BIN-498: TV-display socket handlers. Validation is a simple env-var token
-// gate (`HALL_DISPLAY_TOKEN_<HALL_SLUG>` → hall slug). Full RBAC lands with
-// BIN-503; this is sufficient for the pilot single-hall TV.
+// BIN-498 + BIN-503: TV-display socket handlers.
+//
+// Primary validation path is the DB-backed token store
+// (`app_hall_display_tokens`, rotated via admin UI). Fallback to the
+// env-var `HALL_DISPLAY_TOKEN_<SLUG>` is kept for dev/staging where
+// tokens may be seeded outside the admin flow. Tokens are never logged.
 const registerAdminDisplayEvents = createAdminDisplayHandlers({
   engine, platformService, io,
   validateDisplayToken: async (token) => {
-    // Token format: "<HALL_SLUG>:<SECRET>". The matching env var is
-    // HALL_DISPLAY_TOKEN_<UPPER_HALL_SLUG>=SECRET. Empty/missing env-var
-    // means the hall has no display token configured — reject closed.
     const colon = token.indexOf(":");
     if (colon <= 0) throw new Error("token format ugyldig (forventer <hallSlug>:<secret>)");
     const hallSlug = token.slice(0, colon).trim();
     const secret = token.slice(colon + 1).trim();
     if (!hallSlug || !secret) throw new Error("token format ugyldig");
+
+    // BIN-503: DB path first.
+    try {
+      const { hallId } = await platformService.verifyHallDisplayToken(token);
+      return { hallId };
+    } catch (dbErr) {
+      // Fall through to env-var only if the DB path rejected for a
+      // reason that looks like "token doesn't exist" — hall-mismatch or
+      // format errors must stay failed so env-var can't be used to
+      // bypass them.
+      const message = (dbErr as Error).message || "";
+      if (!message.includes("Ugyldig display-token")) throw dbErr;
+    }
+
+    // BIN-498 env-var fallback.
     const envName = `HALL_DISPLAY_TOKEN_${hallSlug.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
     const expected = (process.env[envName] ?? "").trim();
     if (!expected) throw new Error(`hall ${hallSlug} har ingen display-token konfigurert`);

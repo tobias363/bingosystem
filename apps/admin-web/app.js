@@ -4,6 +4,7 @@ const CHAT3_SECTION_ACCESS_RULES = {
   "section-game-settings": { permissions: ["GAME_CATALOG_READ"], mode: "all" },
   "section-games": { permissions: ["GAME_CATALOG_READ"], mode: "all" },
   "section-halls": { permissions: ["HALL_READ"], mode: "all" },
+  "section-hall-display": { permissions: ["HALL_READ"], mode: "all" },
   "section-terminals": { permissions: ["TERMINAL_READ"], mode: "all" },
   "section-hall-rules": { permissions: ["HALL_GAME_CONFIG_READ"], mode: "all" },
   "section-wallet-compliance": { permissions: ["WALLET_COMPLIANCE_READ"], mode: "all" },
@@ -18,6 +19,8 @@ const CHAT3_ACTION_PERMISSION_RULES = {
   createHallBtn: "HALL_WRITE",
   saveHallBtn: "HALL_WRITE",
   reloadHallsBtn: "HALL_READ",
+  createDisplayTokenBtn: "HALL_WRITE",
+  reloadDisplayTokensBtn: "HALL_READ",
   createTerminalBtn: "TERMINAL_WRITE",
   saveTerminalBtn: "TERMINAL_WRITE",
   reloadTerminalsBtn: "TERMINAL_READ",
@@ -90,6 +93,18 @@ const elements = {
   saveHallBtn: document.getElementById("saveHallBtn"),
   reloadHallsBtn: document.getElementById("reloadHallsBtn"),
   hallStatus: document.getElementById("hallStatus"),
+
+  // BIN-503: Hall TV-display tokens.
+  displayTokenLabel: document.getElementById("displayTokenLabel"),
+  createDisplayTokenBtn: document.getElementById("createDisplayTokenBtn"),
+  reloadDisplayTokensBtn: document.getElementById("reloadDisplayTokensBtn"),
+  displayTokenReveal: document.getElementById("displayTokenReveal"),
+  displayTokenPlaintext: document.getElementById("displayTokenPlaintext"),
+  displayTokenKioskLink: document.getElementById("displayTokenKioskLink"),
+  displayTokenQr: document.getElementById("displayTokenQr"),
+  dismissDisplayTokenBtn: document.getElementById("dismissDisplayTokenBtn"),
+  displayTokenList: document.getElementById("displayTokenList"),
+  displayTokenStatus: document.getElementById("displayTokenStatus"),
 
   terminalHallFilter: document.getElementById("terminalHallFilter"),
   terminalSelect: document.getElementById("terminalSelect"),
@@ -2444,6 +2459,154 @@ async function handleSaveHall() {
   }
 }
 
+// BIN-503: Hall TV-display tokens ─────────────────────────────────────────
+
+function formatDisplayTokenDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("nb-NO", { dateStyle: "short", timeStyle: "short" });
+}
+
+function renderDisplayTokens(tokens) {
+  elements.displayTokenList.innerHTML = "";
+  if (!Array.isArray(tokens) || tokens.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.style.padding = "8px";
+    td.className = "muted";
+    td.textContent = "Ingen aktive tokens for denne hallen.";
+    tr.appendChild(td);
+    elements.displayTokenList.appendChild(tr);
+    return;
+  }
+  for (const token of tokens) {
+    const tr = document.createElement("tr");
+    tr.style.borderBottom = "1px solid #e5e7eb";
+    const labelCell = document.createElement("td");
+    labelCell.style.padding = "6px";
+    labelCell.textContent = token.label || "(uten etikett)";
+    const createdCell = document.createElement("td");
+    createdCell.style.padding = "6px";
+    createdCell.textContent = formatDisplayTokenDate(token.createdAt);
+    const lastUsedCell = document.createElement("td");
+    lastUsedCell.style.padding = "6px";
+    lastUsedCell.textContent = formatDisplayTokenDate(token.lastUsedAt);
+    const actionCell = document.createElement("td");
+    actionCell.style.padding = "6px";
+    const btn = document.createElement("button");
+    btn.className = "secondary";
+    btn.textContent = "Tilbakekall";
+    btn.addEventListener("click", () => {
+      handleRevokeDisplayToken(token.id).catch((err) => {
+        setStatus(elements.displayTokenStatus, err.message || "Klarte ikke tilbakekalle token.", "error");
+      });
+    });
+    actionCell.appendChild(btn);
+    tr.append(labelCell, createdCell, lastUsedCell, actionCell);
+    elements.displayTokenList.appendChild(tr);
+  }
+}
+
+async function loadHallDisplayTokens() {
+  const hall = getSelectedHallEditor();
+  if (!hall) {
+    renderDisplayTokens([]);
+    setStatus(elements.displayTokenStatus, "Velg en hall for å se tokens.", "");
+    return;
+  }
+  try {
+    const tokens = await apiRequest(
+      `/api/admin/halls/${encodeURIComponent(hall.id)}/display-tokens`,
+      { auth: true }
+    );
+    renderDisplayTokens(tokens);
+    setStatus(
+      elements.displayTokenStatus,
+      `${tokens.length} aktive token(s) for ${hall.name}.`,
+      "success"
+    );
+  } catch (error) {
+    renderDisplayTokens([]);
+    setStatus(elements.displayTokenStatus, error.message || "Kunne ikke laste tokens.", "error");
+  }
+}
+
+function buildKioskUrl(hallSlug, compositeToken) {
+  // The backend serves the TV-kiosk page at /web/tv/. Same-origin by design
+  // so cookies/CSRF aren't an issue — the kiosk only uses the query token.
+  const base = `${window.location.origin}/web/tv/`;
+  const params = new URLSearchParams();
+  params.set("hall", hallSlug);
+  // compositeToken is "<slug>:<secret>" — the kiosk page splits it and
+  // sends the full composite to admin-display:login.
+  const secret = compositeToken.includes(":")
+    ? compositeToken.slice(compositeToken.indexOf(":") + 1)
+    : compositeToken;
+  params.set("token", secret);
+  return `${base}?${params.toString()}`;
+}
+
+function showDisplayTokenReveal(hallSlug, plaintextToken, compositeToken) {
+  elements.displayTokenPlaintext.textContent = compositeToken;
+  const kioskUrl = buildKioskUrl(hallSlug, compositeToken);
+  elements.displayTokenKioskLink.href = kioskUrl;
+  elements.displayTokenKioskLink.textContent = kioskUrl;
+  // QR via goqr.me — a free, no-auth endpoint that renders PNG from a URL
+  // query param. If it's ever down the URL text is still readable; the QR
+  // is a convenience, not a security primitive.
+  const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=${encodeURIComponent(kioskUrl)}`;
+  elements.displayTokenQr.src = qrSrc;
+  elements.displayTokenReveal.style.display = "block";
+}
+
+function hideDisplayTokenReveal() {
+  elements.displayTokenReveal.style.display = "none";
+  elements.displayTokenPlaintext.textContent = "";
+  elements.displayTokenQr.removeAttribute("src");
+}
+
+async function handleCreateDisplayToken() {
+  const hall = getSelectedHallEditor();
+  if (!hall) {
+    setStatus(elements.displayTokenStatus, "Velg en hall først.", "error");
+    return;
+  }
+  const label = (elements.displayTokenLabel.value || "").trim();
+  setLoading(elements.createDisplayTokenBtn, true, "Genererer...", "Generer ny token");
+  try {
+    const result = await apiRequest(
+      `/api/admin/halls/${encodeURIComponent(hall.id)}/display-tokens`,
+      { method: "POST", auth: true, body: { label } }
+    );
+    showDisplayTokenReveal(hall.slug, result.plaintextToken, result.compositeToken);
+    elements.displayTokenLabel.value = "";
+    await loadHallDisplayTokens();
+    setStatus(
+      elements.displayTokenStatus,
+      "Token generert — kopier den før du lukker boksen.",
+      "success"
+    );
+  } catch (error) {
+    setStatus(elements.displayTokenStatus, error.message || "Klarte ikke generere token.", "error");
+  } finally {
+    setLoading(elements.createDisplayTokenBtn, false, "Genererer...", "Generer ny token");
+  }
+}
+
+async function handleRevokeDisplayToken(tokenId) {
+  const hall = getSelectedHallEditor();
+  if (!hall) return;
+  if (!window.confirm("Tilbakekalle denne tokenen? Den kan ikke brukes igjen.")) return;
+  await apiRequest(
+    `/api/admin/halls/${encodeURIComponent(hall.id)}/display-tokens/${encodeURIComponent(tokenId)}`,
+    { method: "DELETE", auth: true }
+  );
+  await loadHallDisplayTokens();
+  setStatus(elements.displayTokenStatus, "Token tilbakekalt.", "success");
+}
+
 function buildTerminalPayload() {
   const hallId = (elements.terminalHallId.value || "").trim();
   const terminalCode = (elements.terminalCode.value || "").trim();
@@ -2846,6 +3009,26 @@ async function bootstrap() {
 
   elements.hallEditorSelect.addEventListener("change", () => {
     renderSelectedHallEditor();
+    hideDisplayTokenReveal();
+    loadHallDisplayTokens().catch((err) => {
+      setStatus(elements.displayTokenStatus, err.message || "Kunne ikke laste tokens.", "error");
+    });
+  });
+
+  elements.createDisplayTokenBtn.addEventListener("click", () => {
+    handleCreateDisplayToken().catch((err) => {
+      setStatus(elements.displayTokenStatus, err.message || "Kunne ikke generere token.", "error");
+    });
+  });
+
+  elements.reloadDisplayTokensBtn.addEventListener("click", () => {
+    loadHallDisplayTokens().catch((err) => {
+      setStatus(elements.displayTokenStatus, err.message || "Kunne ikke laste tokens.", "error");
+    });
+  });
+
+  elements.dismissDisplayTokenBtn.addEventListener("click", () => {
+    hideDisplayTokenReveal();
   });
 
   elements.createHallBtn.addEventListener("click", () => {
