@@ -55,7 +55,7 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 | Chat-persistens (DB) | 🔴 | ❌ | 🔵 | ❌ | ❌ | [BIN-516](https://linear.app/bingosystem/issue/BIN-516) |
 | Audio (3 stemmepakker, 60 clips) | ✅ | 🔵 | ✅ | ✅ | ✅ | — |
 | Double-announce toggle | ✅ | 🔵 | ✅ | ✅ | ✅ | — |
-| Spectator-fase (SPECTATING) | ❌ | 🔵 | ❌ | ✅ | ❌ | [BIN-507](https://linear.app/bingosystem/issue/BIN-507) |
+| Spectator-fase (SPECTATING) | ✅ | ✅ | ✅ | ✅ | 🟡 | [BIN-507](https://linear.app/bingosystem/issue/BIN-507) ✅ merged |
 | Loader-barriere (late-join sync) | ✅ | ✅ | ✅ | ✅ | 🟡 | [BIN-500](https://linear.app/bingosystem/issue/BIN-500) ✅ merged |
 | MAX_DRAWS 75 (fiks fra 60) | ✅ | ✅ | 🔵 | ✅ | ✅ | [BIN-520](https://linear.app/bingosystem/issue/BIN-520) ✅ merged |
 
@@ -94,7 +94,7 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 | Asset-pipeline (Unity → PixiJS) | 🔵 | 🔵 | 🟡 | ✅ | ❌ | [BIN-543](https://linear.app/bingosystem/issue/BIN-543) |
 | PlayerPrefs → localStorage mapping | 🔵 | 🔵 | ❌ | ✅ | ❌ | [BIN-544](https://linear.app/bingosystem/issue/BIN-544) |
 
-**Game 1 totalt:** 32 rader — 14 ✅, 11 🟡, 7 ❌. Release-klar: 10 / 32 (31 %). Seks rader flyttet denne sesjonen: BIN-494 (Redis), BIN-499 (ticket:mark slim), BIN-502 (drawIndex gap), BIN-500 (loader-barriere), BIN-520 (MAX_DRAWS 75 ✅ fullført), BIN-545 (Zod-fundament 🟡), BIN-508 (load-test 🟡 venter på første nattlig-kjøring).
+**Game 1 totalt:** 32 rader — 14 ✅, 12 🟡, 6 ❌. Release-klar: 10 / 32 (31 %). Syv rader flyttet denne sesjonen: BIN-494 (Redis), BIN-499 (ticket:mark slim), BIN-502 (drawIndex gap), BIN-500 (loader-barriere), BIN-520 (MAX_DRAWS 75 ✅ fullført), BIN-545 (Zod-fundament 🟡), BIN-508 (load-test 🟡), BIN-507 (SPECTATING 🟡 venter på staging-test).
 
 ---
 
@@ -206,11 +206,11 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 
 | Spill | Rader | ✅ | 🟡 | ❌ | Release-klar % |
 |-------|------:|---:|---:|---:|---------------:|
-| Game 1 (Databingo) | 32 | 14 | 11 | 7 | 31 % |
+| Game 1 (Databingo) | 32 | 14 | 12 | 6 | 31 % |
 | Game 2 (Rocket) | 10 | 0 | 4 | 6 | 0 % |
 | Game 3 (Monster) | 9 | 0 | 5 | 4 | 0 % |
 | Game 5 (Spillorama) | 12 | 0 | 5 | 7 | 0 % |
-| **Totalt** | **63** | **14** | **25** | **24** | **22 %** |
+| **Totalt** | **63** | **14** | **26** | **23** | **22 %** |
 
 Totalsum regnet per **Release-klar**-kolonnen — det er den som styrer cutover-beslutning per [`LEGACY_DECOUPLING_STATUS.md`](../architecture/LEGACY_DECOUPLING_STATUS.md).
 
@@ -269,3 +269,4 @@ Automatisk generator fra YAML front-matter i per-spill canonical specs er planla
 | 2026-04-17 | BIN-502 PR | Oppdatert G1-rader: BIN-494 Redis-adapter ✅ (backend i main), BIN-499 ticket:mark slim ✅ (backend i main) — begge levert av slot-2 via PR #108. BIN-502 drawIndex gap-deteksjon ✅ (klient i main) — levert i denne PR. Alle tre nå 🟡 "Release-klar" (venter på integrasjon-test i staging). |
 | 2026-04-17 | BIN-500 PR | BIN-500 Loader-barriere ✅ (klient i main) — syncReady-checkliste + "Syncer..."-overlay ved RUNNING late-join + syncGap-telemetri. Rad nå 🟡 Release-klar (venter på manuell late-join-test mot staging). |
 | 2026-04-17 | BIN-520/545/508 batch | Agent 2 leverte: BIN-520 envConfig MAX_DRAWS 60→75 (✅ fullført), BIN-545 Zod-schema-fundament i packages/shared-types/ (🟡 3 av mange events dekket), BIN-508 Artillery 1000-player load-test (🟡 merged, venter på første nattlig-kjøring). G1 release-klar nå 10/32 (31 %); totalt 14 ✅, 25 🟡, 24 ❌. |
+| 2026-04-17 | BIN-507 PR | BIN-507 SPECTATING-fase ✅ (klient i main) — ny phase i Game1Controller, transitions fra start/onGameStarted/handleReconnect, live draws via onSpectatorNumberDrawn, server-guards verifisert (PLAYER_NOT_PARTICIPATING, NOT_ARMED_FOR_GAME, MARKS_NOT_FOUND). Rad nå 🟡 Release-klar (venter på manuell late-join-test mot staging). G1 totalt: 14 ✅, 12 🟡, 6 ❌. |

@@ -19,7 +19,19 @@ import { MarkerBackgroundPanel } from "./components/MarkerBackgroundPanel.js";
 import { GamePlanPanel } from "./components/GamePlanPanel.js";
 import { AudioManager } from "../../audio/AudioManager.js";
 
-type Phase = "LOADING" | "WAITING" | "PLAYING" | "ENDED";
+/**
+ * Phase-maskin for Game 1.
+ *
+ * - LOADING: før snapshot er applied + loader-sync (BIN-500)
+ * - WAITING: ingen aktiv runde, countdown mot neste, buy-popup tilgjengelig
+ * - PLAYING: aktiv runde, spilleren har billetter
+ * - SPECTATING (BIN-507): aktiv runde, spilleren har 0 billetter — ser live
+ *   trekning + kan kjøpe for neste runde. Overgang til PLAYING skjer ved
+ *   onGameStarted hvis spilleren armet preRoundTickets. Overgang til WAITING
+ *   skjer ved onGameEnded hvis ingen preRoundTickets.
+ * - ENDED: runde avsluttet, resultater vises før auto-dismiss til WAITING.
+ */
+type Phase = "LOADING" | "WAITING" | "PLAYING" | "SPECTATING" | "ENDED";
 
 /** Auto-dismiss delay for end screen before transitioning to waiting (ms). */
 const END_SCREEN_AUTO_DISMISS_MS = 5000;
@@ -172,8 +184,13 @@ class Game1Controller implements GameController {
     // Transition based on state
     const state = bridge.getState();
 
-    if (state.gameStatus === "RUNNING" && state.myTickets.length > 0) {
-      this.transitionTo("PLAYING", state);
+    if (state.gameStatus === "RUNNING") {
+      // BIN-507: late-joiner med billetter → PLAYING, uten → SPECTATING
+      if (state.myTickets.length > 0) {
+        this.transitionTo("PLAYING", state);
+      } else {
+        this.transitionTo("SPECTATING", state);
+      }
     } else {
       this.transitionTo("WAITING", state);
     }
@@ -331,6 +348,36 @@ class Game1Controller implements GameController {
         break;
       }
 
+      case "SPECTATING": {
+        // BIN-507: Late-joiner / ubemannet runde. Spilleren har 0 billetter
+        // men skal se live trekning, chat, patterns og jackpot. Buy-popup
+        // er tilgjengelig for å arme for NESTE runde (preRoundTickets).
+        // Mark/claim er server-guardet mot spillere uten billetter.
+        this.lastMiniGamePrize = 0;
+        const container = this.deps.app.app.canvas.parentElement ?? document.body;
+        this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container);
+        // Mark/claim-handlers beholdes for konsistens — server returnerer feil
+        // hvis spectator prøver. Klient-UI viser ikke mark-knapper når
+        // myTickets er tom (PlayScreen renderer tom ticket-list).
+        this.playScreen.setOnClaim((type) => this.handleClaim(type));
+        this.playScreen.setOnBuy((selections) => this.handleBuy(selections));
+        this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
+        this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
+        this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
+        this.playScreen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
+        this.playScreen.setOnStartGame(() => this.handleStartGame());
+        this.playScreen.subscribeChatToBridge((listener) =>
+          this.deps.bridge.on("chatMessage", listener),
+        );
+        // Samme render som PLAYING: live draws via CenterBall, chat, patterns.
+        // buildTickets(state) med myTickets=[] gir tom ticket-seksjon men
+        // CenterBall + DrawnBalls + PatternMiniGrid kjører som vanlig.
+        this.playScreen.buildTickets(state);
+        this.playScreen.updateInfo(state);
+        this.setScreen(this.playScreen);
+        break;
+      }
+
       case "ENDED":
         this.endScreen = new EndScreen(w, h);
         this.endScreen.setOnDismiss(() => {
@@ -353,6 +400,13 @@ class Game1Controller implements GameController {
       this.playScreen.updateWaitingState(state);
     }
     if (this.phase === "PLAYING" && this.playScreen) {
+      this.playScreen.updateInfo(state);
+    }
+    // BIN-507: SPECTATING får samme live-oppdateringer som PLAYING (draws,
+    // patterns, playerStakes). Hvis spilleren armer preRoundTickets mens de
+    // er SPECTATING, forblir fasen — overgang til PLAYING skjer først ved
+    // onGameStarted for neste runde.
+    if (this.phase === "SPECTATING" && this.playScreen) {
       this.playScreen.updateInfo(state);
     }
 
@@ -384,8 +438,11 @@ class Game1Controller implements GameController {
       console.log("[Game1] → PLAYING (has tickets)");
       this.transitionTo("PLAYING", state);
     } else {
-      console.log("[Game1] → WAITING (spectator, no tickets)");
-      this.transitionTo("WAITING", state);
+      // BIN-507: runde starter uten at spilleren armet billetter → SPECTATING.
+      // Tidligere falt de til WAITING som viste countdown mot neste runde —
+      // forvirrende fordi trekning allerede er i gang.
+      console.log("[Game1] → SPECTATING (no tickets, round is running)");
+      this.transitionTo("SPECTATING", state);
     }
   }
 
@@ -433,8 +490,9 @@ class Game1Controller implements GameController {
         this.buyMoreDisabled = true;
         this.playScreen.disableBuyMore();
       }
-    } else if (this.phase === "WAITING" && this.playScreen) {
-      // Spectator mode — animate ball in tube but no ticket marking
+    } else if ((this.phase === "WAITING" || this.phase === "SPECTATING") && this.playScreen) {
+      // BIN-507: Both WAITING (legacy sparse spectator path) and SPECTATING
+      // (late-joiner midt i runde) viser live ball-animasjon uten ticket-marking.
       this.playScreen.onSpectatorNumberDrawn(number, state);
     }
   }
@@ -629,9 +687,13 @@ class Game1Controller implements GameController {
         this.deps.bridge.applySnapshot(result.data.snapshot);
         const state = this.deps.bridge.getState();
 
-        // Transition based on current game status
-        if (state.gameStatus === "RUNNING" && state.myTickets.length > 0) {
-          this.transitionTo("PLAYING", state);
+        // Transition based on current game status (BIN-507: RUNNING + 0 tickets → SPECTATING)
+        if (state.gameStatus === "RUNNING") {
+          if (state.myTickets.length > 0) {
+            this.transitionTo("PLAYING", state);
+          } else {
+            this.transitionTo("SPECTATING", state);
+          }
         } else {
           this.transitionTo("WAITING", state);
         }
@@ -644,8 +706,12 @@ class Game1Controller implements GameController {
         if (fallback.ok && fallback.data?.snapshot) {
           this.deps.bridge.applySnapshot(fallback.data.snapshot);
           const state = this.deps.bridge.getState();
-          if (state.gameStatus === "RUNNING" && state.myTickets.length > 0) {
-            this.transitionTo("PLAYING", state);
+          if (state.gameStatus === "RUNNING") {
+            if (state.myTickets.length > 0) {
+              this.transitionTo("PLAYING", state);
+            } else {
+              this.transitionTo("SPECTATING", state);
+            }
           } else {
             this.transitionTo("WAITING", state);
           }

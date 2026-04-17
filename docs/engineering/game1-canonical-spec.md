@@ -96,8 +96,11 @@ Lobby (spillerliste, nedtelling)
 ```
 
 **Klient-state-maskin** (`Game1Controller.ts:22`):
-- `LOADING` → `WAITING` (etter snapshot) → `PLAYING` (når spiller har aktive billetter og gameStatus=RUNNING) → `ENDED` → tilbake til `WAITING`
-- `SPECTATING` **ikke implementert ennå** — se [BIN-507](https://linear.app/bingosystem/issue/BIN-507).
+- `LOADING` → (snapshot + syncReady via BIN-500) → `WAITING` / `PLAYING` / `SPECTATING` avhengig av `gameStatus` og `myTickets.length`
+- `WAITING`: ingen aktiv runde — countdown mot neste, buy-popup tilgjengelig
+- `PLAYING`: aktiv runde, spilleren har billetter
+- `SPECTATING` (BIN-507 levert): aktiv runde, spilleren har 0 billetter. Ser live trekning + chat + patterns. Kan kjøpe for neste runde via buy-popup. Overgang til `PLAYING` ved neste `onGameStarted` hvis spilleren armet `preRoundTickets`.
+- `ENDED`: resultater vises, auto-dismiss til `WAITING` etter 5 sek
 
 ---
 
