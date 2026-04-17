@@ -32,14 +32,14 @@ Complements but does not replace:
 
 ### Code + CI
 - [ ] All PRs in the [Legacy-avkobling project](https://linear.app/bingosystem/project/legacy-avkobling-game-1-5-backend-paritet-a973e623234a) that this pilot depends on are merged to `main`.
-- [ ] `PARITY_MATRIX.md` §2.3 shows **Observability ✅**, **Feature-flag rollback-runbook ✅**, **Unity rollback-bundle CI 🟡 or ✅** (bundle exists — see §1.Unity below), **E2E pengeflyt-test ✅**, **Wire-kontrakt-test ✅**.
+- [ ] `PARITY_MATRIX.md` §2.3 shows **Observability ✅**, **Feature-flag rollback-runbook ✅**, **Unity arkiv-bundle (CDN) ✅** (archive exists — see §1.Unity below), **E2E pengeflyt-test ✅**, **Wire-kontrakt-test ✅**.
 - [ ] Latest nightly CI green: `compliance-gate.yml` + the Artillery load-test job for BIN-508.
 - [ ] Branch-protection on `main` shows `compliance` as a required status check (one-time toggle — see `RELEASE_GATE.md` §3).
 
-### Unity rollback
-- [ ] `UNITY_LICENSE` (and `UNITY_EMAIL`/`UNITY_PASSWORD` or `UNITY_SERIAL`) set in GitHub Actions repo secrets.
-- [ ] At least one successful run of `.github/workflows/unity-build.yml` via `workflow_dispatch` in the last 14 days — the artefact must exist and be downloadable. Record the run URL in §7.
-- [ ] That artefact pre-staged on the CDN (or Render static host) at the Unity client path per `UNITY_BUILD_RUNBOOK.md` §4. This is the rollback-insurance — the flag flip is useless if no bundle is serving.
+### Unity rollback (archive-based, BIN-532 scope-endret 2026-04-17)
+- [ ] Unity WebGL bundle uploaded once to the CDN at `/legacy-unity-archive/v1.0.0/`. Source: one-time local build by the technical lead at the current prod tag (no CI, no `UNITY_LICENSE` secret). Per `UNITY_ARCHIVE_RUNBOOK.md` §1.
+- [ ] Archive reachable: `curl -I <cdn>/legacy-unity-archive/v1.0.0/index.html` returns `200`, with `Cache-Control: public, max-age=31536000, immutable`. Record the probe output + archive URL in §7.
+- [ ] `BUILD_METADATA.txt` at the archive path reports the Unity version pin and the prod-tag SHA — operator verifies with `curl -s <cdn>/legacy-unity-archive/v1.0.0/BUILD_METADATA.txt` per `UNITY_ARCHIVE_RUNBOOK.md` §2.
 
 ### Observability
 - [ ] Grafana dashboards `spillorama-draws-claims`, `spillorama-connection-health`, `spillorama-finance-gates` are reachable on the target Grafana (run `./infra/deploy/grafana-provision.sh` if not — see `infra/README.md`).
@@ -121,11 +121,11 @@ From the admin-web during the window, the operator has (per BIN-515):
 
 1. **Announce in `#ops-cutover`:** `Rolling back hall <slug>. Trigger: <one-line reason>. Starting now.` Start a wall-clock timer.
 
-2. **Flip the flag** via admin-web → Halls → *Client variant* → `unity-fallback` → Save. (Use `unity-fallback` not `unity` for the first rollback so the rollback is attributable in logs; we can set it to plain `unity` after the post-mortem.)
+2. **Flip the flag** via admin-web → Halls → *Client variant* → `unity` → Save. The backend's `/api/halls/:slug/client-variant` resolves to the read-only Unity archive at `/legacy-unity-archive/v1.0.0/` (per BIN-540 routing + BIN-532 archive scope). `unity-fallback` remains a supported synonym for belt-and-braces — both values reach the same archive.
 
-3. **Invalidate CDN cache** — same command as §2 step 3, plus: if the Unity bundle lives on a different path (`/web/games/unity/`), also purge that. See `UNITY_BUILD_RUNBOOK.md` §4 for the exact paths.
+3. **Invalidate CDN cache** for the variant-lookup endpoint (`/api/halls/<slug>/client-variant`). The archive itself is cached immutably and does not need purging — it never changes. See `UNITY_ARCHIVE_RUNBOOK.md` §3 for the exact path.
 
-4. **Tell the hall-admin** to refresh the TV and ask players to reopen the app. Their next session lands on the Unity client.
+4. **Tell the hall-admin** to refresh the TV and ask players to reopen the app. Their next session lands on the archived Unity client. Expected load time on a warm CDN: < 15 s.
 
 5. **Watch the dashboards for 5 min.** Expect: reconnect-rate spike (clients are reconnecting across the swap — harmless), then drop back to baseline; claim rate resumes at pre-cutover level.
 
@@ -135,11 +135,11 @@ From the admin-web during the window, the operator has (per BIN-515):
 
 ### What if the rollback itself fails?
 
-The flag is bi-directional by design. If flipping back to `unity-fallback` doesn't help (e.g. the Unity bundle is stale or the flag system itself is wedged):
+The flag is bi-directional by design. If flipping back to `unity` doesn't help (e.g. the archive CDN is down or the flag system itself is wedged):
 
 1. **Page technical lead (Tobias)** immediately — don't try more fixes alone.
-2. If the admin-web is unreachable, update the DB directly: `UPDATE app_halls SET client_variant = 'unity-fallback' WHERE slug = '<slug>';`. Known safe because BIN-540's fail-closed default is `unity`.
-3. If the Unity bundle is missing at the CDN path, re-trigger `unity-build.yml` via `workflow_dispatch` and re-upload per `UNITY_BUILD_RUNBOOK.md` §4. This is the second-order rollback; target < 30 min.
+2. If the admin-web is unreachable, update the DB directly: `UPDATE app_halls SET client_variant = 'unity' WHERE slug = '<slug>';`. Known safe because BIN-540's fail-closed default is `unity`.
+3. If the archive is unreachable, run the full-loader sanity test from `UNITY_ARCHIVE_RUNBOOK.md` §2 from a fresh connection to confirm the CDN itself is the failure point, then escalate to the CDN provider. Re-uploading the archive is a last-resort step and requires the technical lead's local Unity editor — it's hours, not minutes, so take it out of the critical path.
 4. Worst case: disable the hall entirely by setting `is_active = false` via admin-web. Players see a "hall lukket" screen. Use this only if both clients are broken for the hall.
 
 ---
@@ -199,7 +199,10 @@ Append one row per event — **both** staging rehearsals and prod hall cutovers.
 
 | Dato (ISO) | Miljø | Hall | Event | Operatør | Start | Slutt | Utfall | Issues / refs |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| _(første rehearsal fylles inn av operatør)_ | staging | STAGING_HALL_1 | Rehearsal §4 + §5 + dry-run av §2 | | | | | |
+| 2026-04-17T19:51:47Z | local (in-mem test-suite) | — | rehearsal — step 2 (E2E pengeflyt, `pengeflyt-e2e.test.ts`) | agent-2 | 19:51:47Z | 19:51:48Z | pass | 5/5 tests grønne (bingo/rocket/monsterbingo/spillorama + BIN-245 checkpoint recovery); varighet 231 ms. [BIN-526](https://linear.app/bingosystem/issue/BIN-526). |
+| 2026-04-17T19:52:01Z | local (in-mem test-suite) | — | rehearsal — step 8 (Spillvett fail-closed, `cross-game.test.ts`) | agent-2 | 19:52:01Z | 19:52:01Z | pass | 20/20 tests grønne (4 spill × 4 regler + 4 fail-closed), inkludert DB-mock-throw-fail-closed-invarianten; varighet 201 ms. [BIN-541](https://linear.app/bingosystem/issue/BIN-541). |
+| 2026-04-17T19:52:23Z | local (in-mem test-suite) | — | rehearsal — step 6 (chat-persistens, `ChatMessageStore.test.ts` + `socketIntegration.test.ts`) | agent-2 | 19:52:23Z | 19:52:25Z | pass | 35/35 tests grønne (ChatMessageStore × 9 + socket-integrasjon × 26), inkl. `chat:history`-replay etter reconnect; varighet 1.65 s. [BIN-516](https://linear.app/bingosystem/issue/BIN-516). |
+| _(neste rad: første staging-rehearsal — step 1 arkiv-verifisering når Tobias har lastet opp til `/legacy-unity-archive/v1.0.0/`)_ | staging | STAGING_HALL_1 | rehearsal — step 1 + hands-on step 3/4/5/7 | | | | | |
 
 Column semantics:
 
