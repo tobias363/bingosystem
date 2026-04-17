@@ -1,7 +1,10 @@
 # Game 3 — Monster Bingo / Mønsterbingo (Web-implementasjon)
 
 **Status:** Funksjonell MVP — 5x5 grids + chat + animert kulekø
-**Dato:** 2026-04-14
+**Dato:** 2026-04-17 (opprinnelig: 2026-04-14)
+
+> **Autoritativ spesifikasjon:** [`docs/engineering/game3-canonical-spec.md`](../../../../../docs/engineering/game3-canonical-spec.md) (BIN-530).
+> Ved motsigelser vinner canonical spec. Se spec §11 for G3-unike avvik (waypoint-bane, pattern-animasjon, multiple patterns) + G1-paritets-avvik.
 
 ## Hva er implementert
 
