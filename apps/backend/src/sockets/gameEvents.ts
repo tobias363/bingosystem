@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
 import { ClaimSubmitPayloadSchema, TicketReplacePayloadSchema } from "@spillorama/shared-types/socket-events";
 import { DomainError, toPublicError } from "../game/BingoEngine.js";
+import { addBreadcrumb, captureError } from "../observability/sentry.js";
 import type { BingoEngine } from "../game/BingoEngine.js";
 import type { PlatformService, PublicAppUser } from "../platform/PlatformService.js";
 import type { SocketRateLimiter } from "../middleware/socketRateLimit.js";
@@ -182,11 +183,16 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
     callback({ ok: true, data });
   }
 
-  function ackFailure<T>(callback: (response: AckResponse<T>) => void, error: unknown): void {
-    callback({
-      ok: false,
-      error: toPublicError(error)
-    });
+  function ackFailure<T>(callback: (response: AckResponse<T>) => void, error: unknown, eventName?: string): void {
+    const publicErr = toPublicError(error);
+    // BIN-539: DomainError is an expected validation outcome — don't spam
+    // Sentry with client-input issues. Capture everything else.
+    if (!(error instanceof DomainError)) {
+      captureError(error, { event: eventName, errCode: publicErr.code });
+    } else {
+      addBreadcrumb("socket.domain_error", { event: eventName, code: publicErr.code }, "warning");
+    }
+    callback({ ok: false, error: publicErr });
   }
 
   const MAX_CHAT_MESSAGES_PER_ROOM = 100;

@@ -16,6 +16,7 @@
     "migrate:create": "node-pg-migrate -d APP_PG_CONNECTION_STRING -m migrations create"
   },
   "dependencies": {
+    "@sentry/node": "^10.49.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "@spillorama/shared-types": "file:../../packages/shared-types",
     "cors": "^2.8.5",
