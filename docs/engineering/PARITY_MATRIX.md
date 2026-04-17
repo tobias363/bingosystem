@@ -139,34 +139,42 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 
 ## 4. Game 3 — Monster Bingo / Mønsterbingo
 
-**Canonical spec:** *skal skrives — [BIN-530](https://linear.app/bingosystem/issue/BIN-530)*
-**Slug:** (TBD)
-**Grid:** 5×5 + animert kulekø
+**Canonical spec:** [`game3-canonical-spec.md`](game3-canonical-spec.md) (BIN-530 levert)
+**Slug:** `monsterbingo`
+**Grid:** 5×5 (fri sentercelle) — 60-ball range + animert kulekø
 
 ### 4.1 Kjerne-features
 
 | Feature | Legacy i bruk? | Backend-paritet | Klient-paritet | Legacy-refs fjernet? | Release-klar | Issue-ref |
 |---------|----------------|-----------------|----------------|----------------------|--------------|-----------|
-| Rom-join + authoritative state | ❌ | 🟡 | ✅ | ❌ | ❌ | [BIN-530](https://linear.app/bingosystem/issue/BIN-530) |
-| Billett-kjøp | ❌ | 🟡 | ✅ | ❌ | ❌ | [BIN-530](https://linear.app/bingosystem/issue/BIN-530) |
-| Ticket-mark (slim) | 🔴 | 🔴 | ❌ | ❌ | ❌ | [BIN-499](https://linear.app/bingosystem/issue/BIN-499) (shared) |
-| Claim LINE + BINGO | ❌ | 🟡 | ✅ | ❌ | ❌ | [BIN-530](https://linear.app/bingosystem/issue/BIN-530) |
-| Trekning + drawIndex | ❌ | ✅ | ✅ | ❌ | ❌ | [BIN-502](https://linear.app/bingosystem/issue/BIN-502) (shared) |
-| Chat | ❌ | ✅ | ✅ | ❌ | ❌ | — |
+| Rom-join + authoritative state | 🔴 | ✅ | ✅ | ❌ | 🟡 | — |
+| Billett-kjøp (1 type "standard") | 🔴 | ✅ | ✅ | ❌ | 🟡 | — |
+| Ticket-mark (slim) | ✅ | ✅ | 🟡 | ✅ | 🟡 | [BIN-499](https://linear.app/bingosystem/issue/BIN-499) shared (merged) |
+| Claim LINE + BINGO | 🔴 | ✅ | ✅ | ❌ | 🟡 | — |
+| Multiple patterns (utover LINE+BINGO) | 🔴 | ❌ | ❌ | ❌ | ❌ | Egen issue — "Mønsterbingo" tilsier dette |
+| Trekning + drawIndex | ✅ | ✅ | ✅ | ✅ | 🟡 | [BIN-502](https://linear.app/bingosystem/issue/BIN-502) shared (merged) |
+| Chat (sanntids) | 🔴 | ✅ | ✅ | ❌ | 🟡 | — (G3 har chat i motsetning til G2/G5) |
+| Lucky number | 🔴 | ✅ | ✅ | ❌ | 🟡 | — |
+| Audio (nummerannouncement) | 🔴 | 🔵 | ❌ | ❌ | ❌ | Egen issue |
+| Loader-barriere (late-join) | ❌ | ✅ | ❌ | ✅ | ❌ | Port BIN-500-mønster til G3 |
+| SPECTATING-fase | ❌ | ✅ | ❌ | ✅ | ❌ | Port BIN-507-mønster til G3 |
+| Eksplisitt kjøp (fjern auto-arm) | ❌ | ✅ | ❌ | ✅ | ❌ | G1 har dette, G3 mangler |
 
 ### 4.2 Game-specific features
 
 | Feature | Legacy i bruk? | Backend-paritet | Klient-paritet | Legacy-refs fjernet? | Release-klar | Issue-ref |
 |---------|----------------|-----------------|----------------|----------------------|--------------|-----------|
-| Animert kulekø (velocity + akselerasjon) | 🔴 | 🔵 | 🟡 | ❌ | ❌ | [BIN-530](https://linear.app/bingosystem/issue/BIN-530) |
-| Kulekø FIFO (maks 5) | 🔴 | 🔵 | 🟡 | ❌ | ❌ | [BIN-530](https://linear.app/bingosystem/issue/BIN-530) |
-| Mønsteranimasjon (ping-pong) | 🔴 | 🔵 | 🟡 | ❌ | ❌ | [BIN-530](https://linear.app/bingosystem/issue/BIN-530) |
+| Animert kulekø vertikal FIFO (MVP) | 🔴 | 🔵 | ✅ | ❌ | 🟡 | — |
+| Kulekø FIFO (maks 5) | 🔴 | 🔵 | ✅ | ❌ | 🟡 | — |
+| Waypoint-bane (`BallPathRottate.cs`) | 🔴 | 🔵 | ❌ | ❌ | ❌ | Egen issue — krever GSAP-timeline eller fysikk |
+| Mønsteranimasjon (ping-pong) | 🔴 | 🔵 | ❌ | ❌ | ❌ | Egen issue |
 
 ### 4.3 Canonical spec status
 
-- [ ] **BIN-530** — skriv `docs/engineering/game3-canonical-spec.md`
+- [x] **BIN-530** — `docs/engineering/game3-canonical-spec.md` skrevet med YAML front-matter (levert)
+- Rader verifisert mot kode + legacy `Sockets/game3.js`. Se spec §11 for kjente avvik.
 
-**Game 3 totalt:** 9 rader — 0 ✅, 5 🟡, 4 ❌. **Venter på canonical spec.**
+**Game 3 totalt:** 16 rader — 0 ✅, 10 🟡, 6 ❌. **Release-klar: 0/16 (0 %) — MVP-nivå.**
 
 ---
 
@@ -220,9 +228,9 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 |-------|------:|---:|---:|---:|---------------:|
 | Game 1 (Databingo) | 32 | 14 | 16 | 2 | 31 % |
 | Game 2 (Rocket) | 14 | 0 | 9 | 5 | 0 % |
-| Game 3 (Monster) | 9 | 0 | 5 | 4 | 0 % |
+| Game 3 (Monster) | 16 | 0 | 10 | 6 | 0 % |
 | Game 5 (Spillorama) | 20 | 0 | 11 | 9 | 0 % |
-| **Totalt** | **75** | **14** | **41** | **20** | **19 %** |
+| **Totalt** | **82** | **14** | **46** | **22** | **17 %** |
 
 Totalsum regnet per **Release-klar**-kolonnen — det er den som styrer cutover-beslutning per [`LEGACY_DECOUPLING_STATUS.md`](../architecture/LEGACY_DECOUPLING_STATUS.md).
 
@@ -286,3 +294,4 @@ Automatisk generator fra YAML front-matter i per-spill canonical specs er planla
 | 2026-04-17 | BIN-529 PR | Game 2 canonical spec levert — `docs/engineering/game2-canonical-spec.md` med YAML front-matter. G2-matrise utvidet fra 10 → 14 rader (verifisert mot kode + legacy `Sockets/game2.js`): 0 ✅, 9 🟡, 5 ❌. Spec §11 lister avvik fra G1 (SPECTATING, loader-barriere, eksplisitt kjøp) som egne port-issues. Totalsum 67 rader (G1: 32, G2: 14, G3: 9, G5: 12). |
 | 2026-04-17 | BIN-509/505/506 batch | Agent 2 leverte: BIN-509 Elvis-replace + replaceAmount debitering (PR #121 `41740f2f`); BIN-505/506 Mystery + ColorDraft 4-way rotation (PR #122 `f31f36c2`). BIN-521 (replaceAmount) dekket via BIN-509. G1 4 rader flyttet ❌ → 🟡. Totalsum G1: 14 ✅, 16 🟡, 2 ❌. |
 | 2026-04-17 | BIN-531 PR | Game 5 canonical spec levert — `docs/engineering/game5-canonical-spec.md` med YAML front-matter. G5-matrise utvidet fra 12 → 20 rader: 0 ✅, 11 🟡, 9 ❌. Spec §11 lister 8 G5-unike avvik (rulett-fysikk, Free Spin Jackpot, SwapTicket, KYC, billettfarger, auto-select m.fl.) + G1-paritets-avvik. Totalsum 75 rader (G1: 32, G2: 14, G3: 9, G5: 20). |
+| 2026-04-17 | BIN-530 PR | Game 3 canonical spec levert — `docs/engineering/game3-canonical-spec.md`. G3-matrise utvidet fra 9 → 16 rader: 0 ✅, 10 🟡, 6 ❌. G3 har chat (delt fra G1) men mangler waypoint-bane, pattern-animasjon og multiple patterns. **Siste i per-spill canonical spec-serien — alle fire spill nå fullt spesifisert.** Totalsum 82 rader. |
