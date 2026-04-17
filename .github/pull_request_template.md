@@ -2,9 +2,10 @@
 - 
 
 ## Scope
-- [ ] Backend
-- [ ] Frontend
-- [ ] Spillorama/Unity
+- [ ] apps/backend
+- [ ] apps/admin-web
+- [ ] packages/game-client
+- [ ] legacy/unity-client
 - [ ] DevOps/CI
 
 ## Risk
@@ -13,10 +14,10 @@
 - [ ] High
 
 ## Testing
-- [ ] `npm --prefix backend run check`
-- [ ] `npm --prefix backend run test`
-- [ ] `npm --prefix backend run test:compliance`
-- [ ] `npm --prefix backend run build`
+- [ ] `npm --prefix apps/backend run check`
+- [ ] `npm --prefix apps/backend run test`
+- [ ] `npm --prefix apps/backend run test:compliance`
+- [ ] `npm --prefix apps/backend run build`
 - [ ] Manual verification completed
 
 ## Deploy Plan

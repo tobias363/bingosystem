@@ -91,14 +91,11 @@ Rollback options:
 ## 6) Local quality gates before push
 
 ```bash
-npm --prefix backend run check
-npm --prefix backend run test
-npm --prefix backend run test:compliance
-npm --prefix backend run build
+npm --prefix apps/backend run check
+npm --prefix apps/backend run test
+npm --prefix apps/backend run test:compliance
+npm --prefix apps/backend run build
 ```
 
-If Unity/Spillorama changed, also run:
-
-```bash
-npm run check:unity
-```
+> Note: The legacy Unity project lives under `legacy/unity-client/` and has its
+> own test tooling. See [legacy/README.md](../../legacy/README.md) for details.
