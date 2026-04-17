@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
+import { ClaimSubmitPayloadSchema } from "@spillorama/shared-types/socket-events";
 import { DomainError, toPublicError } from "../game/BingoEngine.js";
 import type { BingoEngine } from "../game/BingoEngine.js";
 import type { PlatformService, PublicAppUser } from "../platform/PlatformService.js";
@@ -652,14 +653,20 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
 
     socket.on("claim:submit", rateLimited("claim:submit", async (payload: ClaimPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
       try {
-        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
-        if (payload?.type !== "LINE" && payload?.type !== "BINGO") {
-          throw new DomainError("INVALID_INPUT", "type må være LINE eller BINGO.");
+        // BIN-545: runtime-validate the incoming claim:submit payload against the
+        // shared-types Zod schema. `roomCode` and `type` must be present and
+        // well-typed before we let the engine act.
+        const parsed = ClaimSubmitPayloadSchema.safeParse(payload);
+        if (!parsed.success) {
+          const first = parsed.error.issues[0];
+          const field = first?.path.join(".") || "payload";
+          throw new DomainError("INVALID_INPUT", `claim:submit payload invalid (${field}: ${first?.message ?? "unknown"}).`);
         }
+        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(parsed.data);
         const claim = await engine.submitClaim({
           roomCode,
           playerId,
-          type: payload.type
+          type: parsed.data.type
         });
         const snapshot = await emitRoomUpdate(roomCode);
         // Emit pattern:won if a pattern was completed by this claim

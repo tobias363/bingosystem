@@ -27,6 +27,15 @@ jobs:
           cache: npm
           cache-dependency-path: apps/backend/package-lock.json
 
+      - name: Install packages/shared-types dependencies
+        # BIN-545: apps/backend depends on @spillorama/shared-types via a file:
+        # reference. The symlink resolution at runtime resolves from the real
+        # path, so shared-types' own deps (zod) must be installed there too.
+        run: npm --prefix packages/shared-types install --no-audit --no-fund
+
+      - name: Build packages/shared-types
+        run: npm --prefix packages/shared-types run build
+
       - name: Install apps/backend dependencies
         run: npm --prefix apps/backend ci
 
@@ -41,3 +50,6 @@ jobs:
 
       - name: Build apps/backend
         run: npm --prefix apps/backend run build
+
+      - name: Run shared-types wire-contract tests
+        run: npm --prefix packages/shared-types run test

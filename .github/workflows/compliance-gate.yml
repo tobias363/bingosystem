@@ -21,6 +21,13 @@ jobs:
           cache: npm
           cache-dependency-path: apps/backend/package-lock.json
 
+      - name: Install packages/shared-types dependencies
+        # BIN-545: apps/backend imports from @spillorama/shared-types (runtime Zod).
+        run: npm --prefix packages/shared-types install --no-audit --no-fund
+
+      - name: Build packages/shared-types
+        run: npm --prefix packages/shared-types run build
+
       - name: Install apps/backend dependencies
         run: npm --prefix apps/backend ci
 
