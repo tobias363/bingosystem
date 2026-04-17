@@ -1,7 +1,9 @@
 ## Unity Dead-Code Audit
 
 Dato: 11. april 2026
-Status: attende sikre pass gjennomfort
+Status: innhold frosset — se notat under
+
+> **Legacy-dokumentasjon.** Dette er en historisk audit av Unity-klienten. Nåværende legacy-status styres av [`docs/architecture/LEGACY_DECOUPLING_STATUS.md`](../../docs/architecture/LEGACY_DECOUPLING_STATUS.md). Game 4-referanser her er historiske; Game 4 utgår per [BIN-496](https://linear.app/bingosystem/issue/BIN-496).
 
 ### Fjernet i denne runden
 

@@ -1,12 +1,20 @@
 # Unity Game Architecture And Change Guide
-Dato: 11. april 2026
-Scope: `/Users/tobiashaugen/Projects/Spillorama-system/Spillorama`
+Dato: 11. april 2026 (innhold frosset — se §Status under)
+Scope: Legacy Unity-klient (`legacy/unity-client/` — tidligere `Spillorama/`)
+
+> ## Status
+>
+> **Dette er legacy-dokumentasjon for Unity-klienten under utfasing.** Se [`docs/architecture/LEGACY_DECOUPLING_STATUS.md`](../../docs/architecture/LEGACY_DECOUPLING_STATUS.md) for autoritativ status på hver komponent.
+>
+> **Game 4 (Theme Bingo) utgår** per [BIN-496](https://linear.app/bingosystem/issue/BIN-496) og [BIN-524](https://linear.app/bingosystem/issue/BIN-524). Paritet-scope for web-native migrering er Game 1, 2, 3 og 5 — se [`docs/architecture/migration-plan-unity-to-web.md`](../../docs/architecture/migration-plan-unity-to-web.md). Game 4-beskrivelser i dette dokumentet er historiske og skal ikke brukes som grunnlag for nytt arbeid.
+>
+> **Path-referanser:** File-lenker i dette dokumentet peker på gammel path `/Spillorama-system/Spillorama/Assets/...`. Etter restrukturering (landet 2026-04-17) er faktisk path `legacy/unity-client/Assets/...`. Ikke oppdatert her — dokumentet er frosset som historisk referanse.
 
 ## Formål
 
-Dette dokumentet beskriver hvordan Unity-klienten i `Spillorama-system` er organisert, hvordan de fem Unity-spillene åpnes fra lobbyen, hvilke kodepunkter som faktisk styrer hver flyt, og hva som må endres når man skal gjøre endringer trygt.
+Dette dokumentet beskriver hvordan den *legacy* Unity-klienten er organisert, hvordan de fem Unity-spillene åpnes fra lobbyen, hvilke kodepunkter som faktisk styrer hver flyt, og hva som styrer hver flyt.
 
-Dette er en arbeidsguide for utvikling, feilsøking og parity-arbeid mot leverandørkode.
+Brukes som referanse for paritet-arbeid i ny stack (`packages/game-client/`) og for feilsøking i legacy så lenge den er i drift. Dokumentet skal ikke brukes som guide for nye endringer i `legacy/unity-client/` — unntatt akutte feilrettinger som må holde prod stabilt inntil cutover per [BIN-540](https://linear.app/bingosystem/issue/BIN-540).
 
 ## Hovedstruktur
 
@@ -207,9 +215,13 @@ Hva styrer opplevelsen:
 - subscribe: `SubscribeRoom`
 - kjøp: `GetGame3PurchaseData`, `PurchaseGame3Tickets`, `CancelGameTickets`
 
-### Game 4
+### Game 4 — **UTGÅR** ⚫
 
-Primære filer:
+> **Game 4 (Theme Bingo) utgår** per [BIN-496](https://linear.app/bingosystem/issue/BIN-496). Ingen klient-port, ingen web-native implementasjon, og seed-raden i `apps/backend/migrations/20260413000001_initial_schema.sql:227` settes til `is_active = false`. Beskrivelsen under er historisk og brukes kun for hall-runtime-support inntil legacy-backend deaktiveres.
+>
+> Ikke utfør paritet-arbeid mot Game 4. Relaterte issues (BIN-513 Game4ThemesData, BIN-518 MysteryGameFinished G4, BIN-497 voucher) er lukket som duplikater inn mot BIN-496.
+
+Primære filer (historisk):
 - [`Game4Panel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%204/Game4Panel.cs)
 - [`Game4ThemeSelectionPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%204/Game4ThemeSelectionPanel.cs)
 - [`Game4GamePlayPanel.cs`](/Users/tobiashaugen/Projects/Spillorama-system/Spillorama/Assets/_Project/_Scripts/Panels/Game/Game%204/Game4GamePlayPanel.cs)
