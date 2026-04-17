@@ -156,6 +156,16 @@ class Game1Controller implements GameController {
     // No auto-arm — player must explicitly buy tickets via the popup.
     // (Unity also requires explicit purchase via Game1TicketPurchasePanel.)
 
+    // BIN-500: Loader-barriere.
+    // En late-joiner kan komme inn mens en runde kjører. Før loader fjernes må
+    // vi være sikre på at klienten rendrer samme tilstand som andre spillere:
+    //   (a) socket connected  — allerede verifisert over
+    //   (b) snapshot applied  — gjort via bridge.applySnapshot() like over
+    //   (c) audio/SFX lastet  — preload ferdig (AudioManager.preloadSfx ble kalt i init)
+    //   (d) hvis RUNNING: minst én live room:update ELLER numberDrawn mottatt
+    //       (beviser at socket faktisk leverer — ikke bare er connected)
+    await this.waitForSyncReady();
+
     // Hide loader — game is ready (Unity: DisplayLoader(false))
     this.loader.hide();
 
@@ -166,6 +176,74 @@ class Game1Controller implements GameController {
       this.transitionTo("PLAYING", state);
     } else {
       this.transitionTo("WAITING", state);
+    }
+  }
+
+  /**
+   * BIN-500: Hold loader til klient er synkronisert med resten av rommet.
+   *
+   * Checkpoint (d) gjelder bare hvis runde allerede er RUNNING ved inngang.
+   * For WAITING eller ENDED er det ingen live event å vente på — snapshot
+   * er autoritativ og vi kan slippe loader.
+   *
+   * Timeout: maks 5 sek. Hvis backend er tregt, hellere vis tom state enn
+   * evig loader — bruker ser da live events komme inn fortløpende.
+   */
+  private async waitForSyncReady(): Promise<void> {
+    const { bridge } = this.deps;
+    const syncStartedAt = Date.now();
+    const SYNC_TIMEOUT_MS = 5000;
+
+    const state = bridge.getState();
+    const isRunningAtEntry = state.gameStatus === "RUNNING";
+
+    if (isRunningAtEntry) {
+      this.loader?.show("Syncer...");
+    }
+
+    // Audio-assets: AudioManager.preloadSfx() returnerer void men bruker Howler's
+    // own preload. Vi venter ikke på en eksplisitt promise her — Howler spiller
+    // med silent-fallback hvis en SFX enda ikke er dekodet. Men nummerannouncement-
+    // clips er lazy, så det er OK at de ikke er lastet ved sync-tid.
+
+    // Vent på første live event hvis RUNNING
+    if (isRunningAtEntry) {
+      const gotLiveEvent = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), SYNC_TIMEOUT_MS);
+        const unsubDraw = bridge.on("numberDrawn", () => {
+          clearTimeout(timer);
+          unsubDraw();
+          unsubState();
+          resolve(true);
+        });
+        const unsubState = bridge.on("stateChanged", (s) => {
+          // room:update → stateChanged. Hvis vi får oppdatert drawnNumbers-lengde
+          // eller en phase-transition, regnes det som "live".
+          if (s.drawnNumbers.length > state.drawnNumbers.length) {
+            clearTimeout(timer);
+            unsubDraw();
+            unsubState();
+            resolve(true);
+          }
+        });
+      });
+
+      const syncGap = Date.now() - syncStartedAt;
+      telemetry.trackEvent("late_join_sync", { syncGapMs: syncGap, gotLiveEvent });
+      if (!gotLiveEvent) {
+        console.warn(
+          `[Game1] sync-timeout etter ${syncGap}ms — slipper loader med snapshot-state`,
+        );
+      } else {
+        console.debug(`[Game1] late-join sync OK etter ${syncGap}ms`);
+      }
+    } else {
+      // Ikke RUNNING — snapshot er tilstrekkelig baseline.
+      telemetry.trackEvent("late_join_sync", {
+        syncGapMs: Date.now() - syncStartedAt,
+        gotLiveEvent: false,
+        skipped: "not-running",
+      });
     }
   }
 
