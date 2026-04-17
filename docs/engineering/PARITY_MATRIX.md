@@ -83,7 +83,7 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 | AdminHallDisplayLogin | 🔴 | 🟡 | ❌ | ❌ | ❌ | [BIN-503](https://linear.app/bingosystem/issue/BIN-503) |
 | Admin hall-events (ready, countdowns) | 🔴 | ❌ | ❌ | ❌ | ❌ | [BIN-515](https://linear.app/bingosystem/issue/BIN-515) |
 | Admin-dashboard m/ rapporter | 🔴 | ❌ | ❌ | ❌ | ❌ | [BIN-517](https://linear.app/bingosystem/issue/BIN-517) |
-| Spillvett cross-game-test | 🔵 | ❌ | 🔵 | ✅ | ❌ | [BIN-541](https://linear.app/bingosystem/issue/BIN-541) |
+| Spillvett cross-game-test | 🔵 | ✅ | 🔵 | ✅ | 🟡 | [BIN-541](https://linear.app/bingosystem/issue/BIN-541) — 20 tester (4 spill × 4 regler + 4 fail-closed) i denne PR |
 | E2E pengeflyt-test | 🔵 | ✅ | 🔵 | ✅ | ✅ | [BIN-526](https://linear.app/bingosystem/issue/BIN-526) ✅ merged — `apps/backend/src/compliance/__tests__/pengeflyt-e2e.test.ts` dekker G1/G2/G3/G5 |
 | Wire-kontrakt-test (Zod) | 🔵 | ✅ | ✅ | ✅ | ✅ | [BIN-527](https://linear.app/bingosystem/issue/BIN-527) / [BIN-545](https://linear.app/bingosystem/issue/BIN-545) ✅ merged |
 | Load-test 1000+ spillere | 🔵 | ✅ | 🔵 | ✅ | 🟡 | [BIN-508](https://linear.app/bingosystem/issue/BIN-508) ✅ merged, venter på første nattlig-kjøring |
