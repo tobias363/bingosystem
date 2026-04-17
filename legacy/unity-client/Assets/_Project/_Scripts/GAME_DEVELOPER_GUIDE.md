@@ -1,12 +1,15 @@
 # Game Developer Guide — Spillorama Unity Client
 
-Oppdatert: 12. april 2026
+Oppdatert: 17. april 2026
+Status: **Legacy-klient under utfasing.** Se [`docs/architecture/LEGACY_DECOUPLING_STATUS.md`](../../../../docs/architecture/LEGACY_DECOUPLING_STATUS.md) for autoritativ status på hver komponent.
 
 ## Oversikt
 
-Unity-klienten kommuniserer utelukkende med **Spillorama-backenden**. Det gamle AIS-systemet
-(`GameSocketManager` / `EventManager` / `BestHTTP.SocketIO`) er fullstendig fjernet fra alle
-spillskript (Game 1-5). All spillkommunikasjon går nå gjennom:
+Unity-klienten kommuniserer utelukkende med **Spillorama-backenden** (`apps/backend/` i live stack, eller `legacy/unity-backend/` inntil cutover).
+
+Det gamle AIS-systemet er **fjernet fra Game1–5-spillskriptene** (grep `GameSocketManager.SocketGame` i `Game{1..5}/` = 0 treff per 2026-04-17). Men klassene `GameSocketManager.cs` og `EventManager.*.cs` finnes fortsatt i `Socket Manager/`-mappen og kompileres med Unity-bygget inntil sletting per [`docs/operations/LEGACY_DELETION_PLAN.md`](../../../../docs/operations/LEGACY_DELETION_PLAN.md). Ikke re-introduser referanser til dem fra Game-skripter.
+
+All spillkommunikasjon går gjennom:
 
 - **`SpilloramaSocketManager`** — Socket.IO-tilkobling mot Spillorama-backend
 - **`SpilloramaGameBridge`** — Oversetter Spillorama socket-events til spillspesifikke datatyper
