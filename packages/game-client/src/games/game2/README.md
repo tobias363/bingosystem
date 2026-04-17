@@ -1,8 +1,10 @@
 # Game 2 — Rocket Bingo (Web-implementasjon)
 
 **Status:** Funksjonell MVP — gameplay-loop verifisert mot backend
-**Dato:** 2026-04-14
-**Branch:** feat/seed-halls
+**Dato:** 2026-04-17 (opprinnelig: 2026-04-14)
+
+> **Autoritativ spesifikasjon:** [`docs/engineering/game2-canonical-spec.md`](../../../../../docs/engineering/game2-canonical-spec.md) (BIN-529).
+> Ved motsigelser vinner canonical spec. Denne README-filen er en teknisk oversikt over koden her; se spec §11 for kjente avvik fra legacy og fra G1-paritet.
 
 ## Hva er implementert
 

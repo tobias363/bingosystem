@@ -100,36 +100,40 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 
 ## 3. Game 2 — Rocket Bingo
 
-**Canonical spec:** *skal skrives — [BIN-529](https://linear.app/bingosystem/issue/BIN-529) oppfølger*
-**Slug:** (TBD — verifiser når canonical spec skrives)
-**Grid:** 3×5 Rocket-stack
+**Canonical spec:** [`game2-canonical-spec.md`](game2-canonical-spec.md) (BIN-529 levert)
+**Slug:** `rocket`
+**Grid:** 3×5 (15 celler) — 60-ball range
 
 ### 3.1 Kjerne-features
 
 | Feature | Legacy i bruk? | Backend-paritet | Klient-paritet | Legacy-refs fjernet? | Release-klar | Issue-ref |
 |---------|----------------|-----------------|----------------|----------------------|--------------|-----------|
-| Rom-join + authoritative state | ❌ | 🟡 | ✅ | ❌ | ❌ | [BIN-529](https://linear.app/bingosystem/issue/BIN-529) |
-| Billett-kjøp | ❌ | 🟡 | ✅ | ❌ | ❌ | [BIN-529](https://linear.app/bingosystem/issue/BIN-529) |
-| Ticket-mark (slim) | 🔴 | 🔴 | ❌ | ❌ | ❌ | [BIN-499](https://linear.app/bingosystem/issue/BIN-499) (shared) |
-| Claim LINE + BINGO | ❌ | 🟡 | ✅ | ❌ | ❌ | [BIN-529](https://linear.app/bingosystem/issue/BIN-529) |
-| Trekning + drawIndex | ❌ | ✅ | ✅ | ❌ | ❌ | [BIN-502](https://linear.app/bingosystem/issue/BIN-502) (shared) |
-| Chat | ❌ | ✅ | ❌ | ❌ | ❌ | — |
-| Audio | ❌ | 🔵 | ❌ | ❌ | ❌ | — |
+| Rom-join + authoritative state | 🔴 | ✅ | ✅ | ❌ | 🟡 | — |
+| Billett-kjøp (1 type "standard") | 🔴 | ✅ | ✅ | ❌ | 🟡 | — |
+| Ticket-mark (slim) | ✅ | ✅ | 🟡 | ✅ | 🟡 | [BIN-499](https://linear.app/bingosystem/issue/BIN-499) shared (merged) |
+| Claim LINE + BINGO | 🔴 | ✅ | ✅ | ❌ | 🟡 | — |
+| Trekning + drawIndex | ✅ | ✅ | ✅ | ✅ | 🟡 | [BIN-502](https://linear.app/bingosystem/issue/BIN-502) shared (merged) |
+| Lucky number | 🔴 | ✅ | ✅ | ❌ | 🟡 | — |
+| Chat | 🔴 | ✅ | ❌ | ❌ | ❌ | Egen issue må opprettes |
+| Audio (nummerannouncement) | 🔴 | 🔵 | ❌ | ❌ | ❌ | Egen issue må opprettes |
+| Loader-barriere (late-join) | ❌ | ✅ | ❌ | ✅ | ❌ | Port BIN-500-mønster til G2 |
+| SPECTATING-fase | ❌ | ✅ | ❌ | ✅ | ❌ | Port BIN-507-mønster til G2 |
+| Eksplisitt kjøp (fjern auto-arm) | ❌ | ✅ | ❌ | ✅ | ❌ | G1 har dette, G2 mangler |
 
 ### 3.2 Game-specific features
 
 | Feature | Legacy i bruk? | Backend-paritet | Klient-paritet | Legacy-refs fjernet? | Release-klar | Issue-ref |
 |---------|----------------|-----------------|----------------|----------------------|--------------|-----------|
-| Rakettstabling / animasjon | 🔴 | 🔵 | 🟡 | ❌ | ❌ | [BIN-529](https://linear.app/bingosystem/issue/BIN-529) |
-| Paginering (multiple tickets) | 🔴 | 🔵 | 🟡 | ❌ | ❌ | [BIN-529](https://linear.app/bingosystem/issue/BIN-529) |
+| Rakettstabling / animasjon (MVP) | 🔴 | 🔵 | 🟡 | ❌ | ❌ | Polish: egen issue |
+| Paginering (multiple tickets) | 🔴 | 🔵 | 🟡 | ❌ | 🟡 | — |
 | Blind ticket purchase (`Game2BuyBlindTickets`) | 🔴 | ❌ | ❌ | ❌ | ❌ | [BIN-511](https://linear.app/bingosystem/issue/BIN-511) |
 
 ### 3.3 Canonical spec status
 
-- [ ] **BIN-529** — skriv `docs/engineering/game2-canonical-spec.md` med YAML front-matter (bruk [`game1-canonical-spec.md`](game1-canonical-spec.md) som mal)
-- [ ] Før denne er skrevet, er alle rader her estimater fra README — ikke verifisert mot kode
+- [x] **BIN-529** — `docs/engineering/game2-canonical-spec.md` skrevet med YAML front-matter (levert)
+- Rader verifisert mot kode + legacy `Sockets/game2.js`. Se spec §11 for kjente avvik.
 
-**Game 2 totalt:** 10 rader — 0 ✅, 4 🟡, 6 ❌. **Venter på canonical spec før fullstendig verifisering.**
+**Game 2 totalt:** 14 rader — 0 ✅, 9 🟡, 5 ❌. **Release-klar: 0/14 (0 %) — MVP-nivå, trenger flere features + staging-integrasjon.**
 
 ---
 
@@ -207,10 +211,10 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 | Spill | Rader | ✅ | 🟡 | ❌ | Release-klar % |
 |-------|------:|---:|---:|---:|---------------:|
 | Game 1 (Databingo) | 32 | 14 | 12 | 6 | 31 % |
-| Game 2 (Rocket) | 10 | 0 | 4 | 6 | 0 % |
+| Game 2 (Rocket) | 14 | 0 | 9 | 5 | 0 % |
 | Game 3 (Monster) | 9 | 0 | 5 | 4 | 0 % |
 | Game 5 (Spillorama) | 12 | 0 | 5 | 7 | 0 % |
-| **Totalt** | **63** | **14** | **26** | **23** | **22 %** |
+| **Totalt** | **67** | **14** | **31** | **22** | **21 %** |
 
 Totalsum regnet per **Release-klar**-kolonnen — det er den som styrer cutover-beslutning per [`LEGACY_DECOUPLING_STATUS.md`](../architecture/LEGACY_DECOUPLING_STATUS.md).
 
@@ -270,3 +274,4 @@ Automatisk generator fra YAML front-matter i per-spill canonical specs er planla
 | 2026-04-17 | BIN-500 PR | BIN-500 Loader-barriere ✅ (klient i main) — syncReady-checkliste + "Syncer..."-overlay ved RUNNING late-join + syncGap-telemetri. Rad nå 🟡 Release-klar (venter på manuell late-join-test mot staging). |
 | 2026-04-17 | BIN-520/545/508 batch | Agent 2 leverte: BIN-520 envConfig MAX_DRAWS 60→75 (✅ fullført), BIN-545 Zod-schema-fundament i packages/shared-types/ (🟡 3 av mange events dekket), BIN-508 Artillery 1000-player load-test (🟡 merged, venter på første nattlig-kjøring). G1 release-klar nå 10/32 (31 %); totalt 14 ✅, 25 🟡, 24 ❌. |
 | 2026-04-17 | BIN-507 PR | BIN-507 SPECTATING-fase ✅ (klient i main) — ny phase i Game1Controller, transitions fra start/onGameStarted/handleReconnect, live draws via onSpectatorNumberDrawn, server-guards verifisert (PLAYER_NOT_PARTICIPATING, NOT_ARMED_FOR_GAME, MARKS_NOT_FOUND). Rad nå 🟡 Release-klar (venter på manuell late-join-test mot staging). G1 totalt: 14 ✅, 12 🟡, 6 ❌. |
+| 2026-04-17 | BIN-529 PR | Game 2 canonical spec levert — `docs/engineering/game2-canonical-spec.md` med YAML front-matter. G2-matrise utvidet fra 10 → 14 rader (verifisert mot kode + legacy `Sockets/game2.js`): 0 ✅, 9 🟡, 5 ❌. Spec §11 lister avvik fra G1 (SPECTATING, loader-barriere, eksplisitt kjøp) som egne port-issues. Totalsum 67 rader (G1: 32, G2: 14, G3: 9, G5: 12). |
