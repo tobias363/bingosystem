@@ -1,15 +1,19 @@
 # Game 1 — Classic Bingo (Web-implementasjon)
 
 **Status:** Funksjonell MVP — 5x5 grids + chat + LINE/BINGO claims
-**Dato:** 2026-04-14
-**Branch:** feat/seed-halls
+**Dato:** 2026-04-17 (opprinnelig: 2026-04-14, utvidet med 5 sprinter 2026-04-16)
+
+> **Autoritativ spesifikasjon:** [`docs/engineering/game1-canonical-spec.md`](../../../../../docs/engineering/game1-canonical-spec.md) (BIN-528).
+> Denne README-filen er en teknisk oversikt over koden her; ved motsigelser vinner canonical spec.
+>
+> Statusrapport per 2026-04-16 er arkivert til [`docs/archive/GAME1_STATUSRAPPORT-2026-04-16.md`](../../../../../docs/archive/GAME1_STATUSRAPPORT-2026-04-16.md).
 
 ## Hva er implementert
 
 ### Fullstendig gameplay-loop (gjenbruk fra Game 2)
 1. **Lobby** → joiner rom, ser spillerantall og nedtelling
-2. **Arm/kjøp** → auto-arm ved join + re-arm etter hver runde
-3. **Nedtelling** → GSAP-animert countdown
+2. **Billett-kjøp** → per-type valg i pop-up, *ingen* auto-arm — spilleren må eksplisitt kjøpe hver runde (`Game1Controller.ts:156`)
+3. **Nedtelling** → GSAP-animert countdown MM:SS
 4. **Gameplay** → 5x5 billettkort med fri sentercelle, numre markeres i sanntid
 5. **Claim** → LINE/BINGO deteksjon → server-validering
 6. **Chat** → sanntids chat-panel (høyreside)
