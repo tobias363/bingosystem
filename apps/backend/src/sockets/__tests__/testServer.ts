@@ -173,6 +173,9 @@ export interface TestServer {
   url: string;
   engine: BingoEngine;
   io: Server;
+  /** BIN-509: exposed so tests can seed variant config (replaceAmount, etc.). */
+  roomState: RoomStateManager;
+  walletAdapter: WalletAdapter;
   close: () => Promise<void>;
   connectClient: (token: string) => Promise<TestClient>;
 }
@@ -297,9 +300,11 @@ export async function createTestServer(): Promise<TestServer> {
     disarmPlayer: (code, id) => roomState.disarmPlayer(code, id),
     disarmAllPlayers: (code) => roomState.disarmAllPlayers(code),
     clearDisplayTicketCache: (code) => roomState.clearDisplayTicketCache(code),
+    replaceDisplayTicket: (code, id, ticketId, slug) => roomState.replaceDisplayTicket(code, id, ticketId, slug),
     resolveBingoHallGameConfigForRoom: async () => ({ hallId: "hall-test", maxTicketsPerPlayer: 5 }),
     requireActiveHallIdFromInput: async (input) => (typeof input === "string" ? input : "hall-test"),
     buildLeaderboard: () => [],
+    getVariantConfig: (code) => roomState.getVariantConfig(code),
   };
 
   const registerGameEvents = createGameEventHandlers(deps);
@@ -343,6 +348,8 @@ export async function createTestServer(): Promise<TestServer> {
     url,
     engine,
     io,
+    roomState,
+    walletAdapter,
     close: async () => {
       for (const c of clients) c.disconnect();
       io.close();

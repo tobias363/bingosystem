@@ -23,6 +23,9 @@ export const DEFAULT_RATE_LIMITS: Record<string, RateLimitConfig> = {
   "draw:next":           { windowMs: 2_000,  maxEvents: 5 },
   "draw:extra:purchase": { windowMs: 5_000,  maxEvents: 3 },
   "ticket:mark":         { windowMs: 1_000,  maxEvents: 10 },
+  // BIN-509: wallet-mutating pre-round action — stricter than draws so an
+  // abusive client can't drain a balance or spam the ledger.
+  "ticket:replace":      { windowMs: 5_000,  maxEvents: 5 },
   "claim:submit":        { windowMs: 5_000,  maxEvents: 5 },
   "room:state":          { windowMs: 5_000,  maxEvents: 10 },
   "bet:arm":             { windowMs: 5_000,  maxEvents: 10 },

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
-import { ClaimSubmitPayloadSchema } from "@spillorama/shared-types/socket-events";
+import { ClaimSubmitPayloadSchema, TicketReplacePayloadSchema } from "@spillorama/shared-types/socket-events";
 import { DomainError, toPublicError } from "../game/BingoEngine.js";
 import type { BingoEngine } from "../game/BingoEngine.js";
 import type { PlatformService, PublicAppUser } from "../platform/PlatformService.js";
@@ -141,6 +141,8 @@ export interface GameEventsDeps {
   disarmPlayer: (roomCode: string, playerId: string) => void;
   disarmAllPlayers: (roomCode: string) => void;
   clearDisplayTicketCache: (roomCode: string) => void;
+  /** BIN-509: swap one pre-round ticket in place; returns null if ticketId is unknown. */
+  replaceDisplayTicket?: (roomCode: string, playerId: string, ticketId: string, gameSlug?: string) => Ticket | null;
   resolveBingoHallGameConfigForRoom: (roomCode: string) => Promise<{ hallId: string; maxTicketsPerPlayer: number }>;
   requireActiveHallIdFromInput: (input: unknown) => Promise<string>;
   buildLeaderboard: (roomCode?: string) => LeaderboardEntry[];
@@ -646,6 +648,56 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
         // Private ack event — no room-fanout.
         socket.emit("ticket:marked", { roomCode, playerId, number });
         ackSuccess(callback, { number, playerId });
+      } catch (error) {
+        ackFailure(callback, error);
+      }
+    }));
+
+    // BIN-509: ticket:replace — pre-round swap of a single display ticket,
+    // charging gameVariant.replaceAmount. Runtime-validated via Zod (BIN-545).
+    // The engine gates on GAME_RUNNING and INSUFFICIENT_FUNDS; the handler
+    // looks up the replacement amount from variant config and does the cache
+    // swap after the wallet debit succeeds.
+    socket.on("ticket:replace", rateLimited("ticket:replace", async (payload: unknown, callback: (response: AckResponse<{ ticketId: string; debitedAmount: number }>) => void) => {
+      try {
+        const parsed = TicketReplacePayloadSchema.safeParse(payload);
+        if (!parsed.success) {
+          const first = parsed.error.issues[0];
+          const field = first?.path.join(".") || "payload";
+          throw new DomainError("INVALID_INPUT", `ticket:replace payload invalid (${field}: ${first?.message ?? "unknown"}).`);
+        }
+        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(parsed.data);
+        const ticketId = parsed.data.ticketId;
+
+        // Resolve replaceAmount from the room's active variant config.
+        const variantInfo = deps.getVariantConfig?.(roomCode);
+        const replaceAmount = variantInfo?.config.replaceAmount ?? 0;
+        if (!(replaceAmount > 0)) {
+          throw new DomainError("REPLACE_NOT_ALLOWED", "Denne varianten støtter ikke billettbytte.");
+        }
+
+        // Idempotency: (room, player, ticket) is the natural key. A retried
+        // request with the same ticketId produces the same ledger entry.
+        const idempotencyKey = `ticket-replace-${roomCode}-${playerId}-${ticketId}`;
+        const { debitedAmount } = await engine.chargeTicketReplacement(
+          roomCode,
+          playerId,
+          replaceAmount,
+          idempotencyKey,
+        );
+
+        // Swap the display ticket in place only after the charge succeeds.
+        const snapshot = engine.getRoomSnapshot(roomCode);
+        const newTicket = deps.replaceDisplayTicket?.(roomCode, playerId, ticketId, snapshot.gameSlug) ?? null;
+        if (!newTicket) {
+          // The player's id is authenticated and the charge already went
+          // through, but the cache doesn't know about this ticketId. That's a
+          // client bug — report it, don't silently swallow.
+          throw new DomainError("TICKET_NOT_FOUND", `Ingen pre-round billett med id=${ticketId}.`);
+        }
+
+        await emitRoomUpdate(roomCode);
+        ackSuccess(callback, { ticketId, debitedAmount });
       } catch (error) {
         ackFailure(callback, error);
       }

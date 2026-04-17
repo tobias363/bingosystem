@@ -11,6 +11,7 @@ export {
   RoomUpdatePayloadSchema,
   DrawNewPayloadSchema,
   ClaimSubmitPayloadSchema,
+  TicketReplacePayloadSchema,
   TicketSelectionSchema,
   TicketTypeInfoSchema,
   RoomSnapshotSchema,
@@ -25,6 +26,7 @@ import type {
   RoomUpdatePayload as RoomUpdatePayloadT,
   DrawNewPayload as DrawNewPayloadT,
   ClaimSubmitPayload as ClaimSubmitPayloadT,
+  TicketReplacePayload as TicketReplacePayloadT,
   TicketSelection as TicketSelectionT,
   TicketTypeInfo as TicketTypeInfoT,
 } from "./schemas.js";
@@ -44,6 +46,8 @@ export const SocketEvents = {
   DRAW_NEXT: "draw:next",
   DRAW_EXTRA_PURCHASE: "draw:extra:purchase",
   TICKET_MARK: "ticket:mark",
+  /** BIN-509: swap a pre-round ticket for a new one (debits replaceAmount). */
+  TICKET_REPLACE: "ticket:replace",
   CLAIM_SUBMIT: "claim:submit",
   LUCKY_SET: "lucky:set",
   CHAT_SEND: "chat:send",
@@ -123,6 +127,13 @@ export interface TicketMarkPayload extends RoomActionPayload {
  * `.safeParse()` before acting on the payload — see BIN-545.
  */
 export type ClaimSubmitPayload = ClaimSubmitPayloadT;
+
+/**
+ * BIN-509: payload for `ticket:replace`. Runtime-validated via
+ * `TicketReplacePayloadSchema`. Only accepted when the target room's
+ * currentGame is not RUNNING; debits `gameVariant.replaceAmount`.
+ */
+export type TicketReplacePayload = TicketReplacePayloadT;
 
 export interface LuckyNumberPayload extends RoomActionPayload {
   luckyNumber: number;

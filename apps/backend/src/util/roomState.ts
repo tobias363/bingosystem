@@ -114,9 +114,29 @@ export class RoomStateManager {
     // Game 1 (bingo) uses 75-ball 5x5 tickets; all other games use 60-ball 3x5 tickets.
     const generator = gameSlug === "bingo" ? generateBingo75Ticket : generateDatabingo60Ticket;
     const tickets: Ticket[] = [];
-    for (let i = 0; i < count; i++) tickets.push(generator());
+    for (let i = 0; i < count; i++) tickets.push({ ...generator(), id: `tkt-${i}` });
     this.displayTicketCache.set(key, tickets);
     return tickets;
+  }
+
+  /**
+   * BIN-509: replace a single pre-round ticket in place, preserving other
+   * tickets' ids and order. Returns the new ticket, or null if no such
+   * ticketId exists in the cache.
+   *
+   * The caller is responsible for verifying game-state and debiting the
+   * player's wallet — this method only mutates the display cache.
+   */
+  replaceDisplayTicket(roomCode: string, playerId: string, ticketId: string, gameSlug?: string): Ticket | null {
+    const key = `${roomCode}:${playerId}`;
+    const cached = this.displayTicketCache.get(key);
+    if (!cached) return null;
+    const idx = cached.findIndex((t) => t.id === ticketId);
+    if (idx < 0) return null;
+    const generator = gameSlug === "bingo" ? generateBingo75Ticket : generateDatabingo60Ticket;
+    const replacement: Ticket = { ...generator(), id: ticketId };
+    cached[idx] = replacement;
+    return replacement;
   }
 
   clearDisplayTicketCache(roomCode: string): void {
