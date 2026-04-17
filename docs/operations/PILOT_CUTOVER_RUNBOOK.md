@@ -1,6 +1,6 @@
 # Pilot cutover runbook — Unity → web hall-for-hall
 
-**Linear:** [BIN-525 (Legacy-avkobling)](https://linear.app/bingosystem/project/legacy-avkobling-game-1-5-backend-paritet-a973e623234a) · [BIN-540 (feature-flag)](https://linear.app/bingosystem/issue/BIN-540) · [BIN-532 (Unity rollback)](https://linear.app/bingosystem/issue/BIN-532)
+**Linear:** [BIN-525 (Legacy-avkobling)](https://linear.app/bingosystem/project/legacy-avkobling-game-1-5-backend-paritet-a973e623234a) · [BIN-540 (feature-flag)](https://linear.app/bingosystem/issue/BIN-540) · [BIN-532 (Unity rollback — dropped 2026-04-17)](https://linear.app/bingosystem/issue/BIN-532)
 **Owner:** Technical lead (Tobias Haugen)
 **Status:** **Draft** — must be signed off by technical lead + compliance + ops before the first hall is cut over. See §9.
 **Last updated:** 2026-04-17
@@ -20,7 +20,6 @@ The Unity → web migration cuts over per hall, not everything at once. That mea
 Complements but does not replace:
 
 - [`ROLLBACK_RUNBOOK.md`](./ROLLBACK_RUNBOOK.md) — BIN-540 per-hall `client_variant` flag mechanics.
-- [`UNITY_BUILD_RUNBOOK.md`](./UNITY_BUILD_RUNBOOK.md) — BIN-532 how to cut a rollback bundle on demand.
 - [`OBSERVABILITY_RUNBOOK.md`](./OBSERVABILITY_RUNBOOK.md) — BIN-539 what signal to watch, what the thresholds mean.
 - [`../compliance/RELEASE_GATE.md`](../compliance/RELEASE_GATE.md) §7 — pre-pilot acceptance checklist; this runbook satisfies parts of it.
 
@@ -32,14 +31,16 @@ Complements but does not replace:
 
 ### Code + CI
 - [ ] All PRs in the [Legacy-avkobling project](https://linear.app/bingosystem/project/legacy-avkobling-game-1-5-backend-paritet-a973e623234a) that this pilot depends on are merged to `main`.
-- [ ] `PARITY_MATRIX.md` §2.3 shows **Observability ✅**, **Feature-flag rollback-runbook ✅**, **Unity arkiv-bundle (CDN) ✅** (archive exists — see §1.Unity below), **E2E pengeflyt-test ✅**, **Wire-kontrakt-test ✅**.
+- [ ] `PARITY_MATRIX.md` §2.3 shows **Observability ✅**, **Feature-flag rollback-runbook ✅**, **E2E pengeflyt-test ✅**, **Wire-kontrakt-test ✅**.
 - [ ] Latest nightly CI green: `compliance-gate.yml` + the Artillery load-test job for BIN-508.
 - [ ] Branch-protection on `main` shows `compliance` as a required status check (one-time toggle — see `RELEASE_GATE.md` §3).
 
-### Unity rollback (archive-based, BIN-532 scope-endret 2026-04-17)
-- [ ] Unity WebGL bundle uploaded once to the CDN at `/legacy-unity-archive/v1.0.0/`. Source: one-time local build by the technical lead at the current prod tag (no CI, no `UNITY_LICENSE` secret). Per `UNITY_ARCHIVE_RUNBOOK.md` §1.
-- [ ] Archive reachable: `curl -I <cdn>/legacy-unity-archive/v1.0.0/index.html` returns `200`, with `Cache-Control: public, max-age=31536000, immutable`. Record the probe output + archive URL in §7.
-- [ ] `BUILD_METADATA.txt` at the archive path reports the Unity version pin and the prod-tag SHA — operator verifies with `curl -s <cdn>/legacy-unity-archive/v1.0.0/BUILD_METADATA.txt` per `UNITY_ARCHIVE_RUNBOOK.md` §2.
+### Unity rollback (dropped — BIN-532 canceled 2026-04-17)
+
+**No Unity archive exists or will be built.** Unity permanent decommissioned;
+`legacy/unity-client/` is retained as read-only code reference only.
+Rollback strategy is web-only git-revert of the current deploy — see §3.
+No pre-flight Unity checks needed.
 
 ### Observability
 - [ ] Grafana dashboards `spillorama-draws-claims`, `spillorama-connection-health`, `spillorama-finance-gates` are reachable on the target Grafana (run `./infra/deploy/grafana-provision.sh` if not — see `infra/README.md`).
@@ -113,34 +114,56 @@ From the admin-web during the window, the operator has (per BIN-515):
 
 ## §3 Rollback-prosedyre
 
-**Trigger:** any "roll back" row in §2 step 6, OR any single request from the hall-admin that sounds like "this isn't working". The flag exists precisely so rollback is cheap — err on the side of flipping it back.
+**Trigger:** any "roll back" row in §2 step 6, OR any single request from the hall-admin that sounds like "this isn't working". Err on the side of rolling back — fixes happen offline.
 
-**Target duration:** < 5 min end-to-end. After the second successful drill, target < 2 min.
+**Target duration:** < 10 min end-to-end (longer than original plan because we revert the deploy, not flip a flag).
 
-### Step-by-step
+### Context
+
+Since BIN-532 (Unity archive) was canceled 2026-04-17, the rollback path is **git-revert of the current web-client deploy**, not "fall back to Unity". Tradeoff:
+
+- **Benefit:** no stale Unity archive to maintain, no CDN-dep, no ~60 MB bundle retention cost, no Unity-specific code paths to keep compiling
+- **Cost:** rollback is deploy-sized (minutes, not seconds) — which is acceptable because we also have §3b (disable hall entirely) for immediate-cut scenarios
+
+### Step-by-step (web-client-regression scenario)
 
 1. **Announce in `#ops-cutover`:** `Rolling back hall <slug>. Trigger: <one-line reason>. Starting now.` Start a wall-clock timer.
 
-2. **Flip the flag** via admin-web → Halls → *Client variant* → `unity` → Save. The backend's `/api/halls/:slug/client-variant` resolves to the read-only Unity archive at `/legacy-unity-archive/v1.0.0/` (per BIN-540 routing + BIN-532 archive scope). `unity-fallback` remains a supported synonym for belt-and-braces — both values reach the same archive.
+2. **Identify the bad web-client deploy.** Check Render deploy log (`render.com/dashboard`) for the deploy that shipped the regression. Typically the most recent one.
 
-3. **Invalidate CDN cache** for the variant-lookup endpoint (`/api/halls/<slug>/client-variant`). The archive itself is cached immutably and does not need purging — it never changes. See `UNITY_ARCHIVE_RUNBOOK.md` §3 for the exact path.
+3. **Trigger redeploy of the previous known-good commit.** In Render dashboard → Backend service → Deploys → find last green deploy → click "Redeploy". Takes ~3-5 min.
 
-4. **Tell the hall-admin** to refresh the TV and ask players to reopen the app. Their next session lands on the archived Unity client. Expected load time on a warm CDN: < 15 s.
+   Alternative (faster if the fix is already identified): git-revert the problem commit on main and push — Render auto-deploys.
 
-5. **Watch the dashboards for 5 min.** Expect: reconnect-rate spike (clients are reconnecting across the swap — harmless), then drop back to baseline; claim rate resumes at pre-cutover level.
+4. **During the 3-5 min wait:** if the bad behavior is active-game-breaking (e.g. claims not registering), immediately execute §3b below to cut the hall. If the bad behavior is cosmetic or tolerable, let players finish the current round.
 
-6. **Log the rollback** — post the timer result + a one-paragraph cause in §7 and in the associated Linear issue. Create a sub-issue under BIN-525 if the root cause isn't already tracked.
+5. **After redeploy:** invalidate CDN cache for `/web/games/main.js` (CDN dashboard → Purge by path). Tell hall-admin to refresh TV and ask players to reopen the app.
 
-7. **Post-incident debrief** within 24 h. The pilot cannot move to the next hall until the root cause of this rollback is understood and either fixed or consciously accepted.
+6. **Watch the dashboards for 5 min.** Expect: reconnect-rate spike (harmless, clients reconnecting across the deploy), then drop to baseline; claim rate resumes.
 
-### What if the rollback itself fails?
+7. **Log the rollback** — post the timer result + one-paragraph cause in §7 + associated Linear issue. Create sub-issue under BIN-525 if root cause isn't already tracked.
 
-The flag is bi-directional by design. If flipping back to `unity` doesn't help (e.g. the archive CDN is down or the flag system itself is wedged):
+8. **Post-incident debrief** within 24 h. Pilot doesn't move to next hall until root cause is understood + either fixed or consciously accepted.
 
-1. **Page technical lead (Tobias)** immediately — don't try more fixes alone.
-2. If the admin-web is unreachable, update the DB directly: `UPDATE app_halls SET client_variant = 'unity' WHERE slug = '<slug>';`. Known safe because BIN-540's fail-closed default is `unity`.
-3. If the archive is unreachable, run the full-loader sanity test from `UNITY_ARCHIVE_RUNBOOK.md` §2 from a fresh connection to confirm the CDN itself is the failure point, then escalate to the CDN provider. Re-uploading the archive is a last-resort step and requires the technical lead's local Unity editor — it's hours, not minutes, so take it out of the critical path.
-4. Worst case: disable the hall entirely by setting `is_active = false` via admin-web. Players see a "hall lukket" screen. Use this only if both clients are broken for the hall.
+### §3b Emergency hall-shutdown (if rollback is too slow)
+
+Used when the regression is active-game-breaking (e.g. wallet debits without ticket issued, claims lost, chat exposes other players' data). Seconds-level response needed.
+
+1. **Admin-web → Halls → select hall → `is_active = false` → Save.** Players see "hall lukket" screen. Active rounds are force-ended per BIN-515 `admin:force-end` handler with `reason: "emergency-shutdown"` — Lotteritilsynet audit-log captured automatically.
+
+2. **Notify hall-admin immediately** that the hall is cut for <estimated duration until fix>.
+
+3. **Fix the issue** via normal PR + deploy flow. Then re-enable hall via `is_active = true`.
+
+4. **Compliance log:** record the emergency-shutdown in §7 + in Lotteritilsynet-reporting log. This is a regulatory event even if no money was lost.
+
+### What if rollback itself fails?
+
+If Render is unreachable or the revert doesn't help:
+
+1. **Page technical lead (Tobias) immediately** — don't try more fixes alone.
+2. If admin-web is unreachable, update DB directly: `UPDATE app_halls SET is_active = false WHERE slug = '<slug>';` to execute emergency shutdown.
+3. Worst case: disable all halls by `UPDATE app_halls SET is_active = false;`. Players see "vedlikehold" screen. Revert immediately after fix is deployed.
 
 ---
 
@@ -202,7 +225,8 @@ Append one row per event — **both** staging rehearsals and prod hall cutovers.
 | 2026-04-17T19:51:47Z | local (in-mem test-suite) | — | rehearsal — step 2 (E2E pengeflyt, `pengeflyt-e2e.test.ts`) | agent-2 | 19:51:47Z | 19:51:48Z | pass | 5/5 tests grønne (bingo/rocket/monsterbingo/spillorama + BIN-245 checkpoint recovery); varighet 231 ms. [BIN-526](https://linear.app/bingosystem/issue/BIN-526). |
 | 2026-04-17T19:52:01Z | local (in-mem test-suite) | — | rehearsal — step 8 (Spillvett fail-closed, `cross-game.test.ts`) | agent-2 | 19:52:01Z | 19:52:01Z | pass | 20/20 tests grønne (4 spill × 4 regler + 4 fail-closed), inkludert DB-mock-throw-fail-closed-invarianten; varighet 201 ms. [BIN-541](https://linear.app/bingosystem/issue/BIN-541). |
 | 2026-04-17T19:52:23Z | local (in-mem test-suite) | — | rehearsal — step 6 (chat-persistens, `ChatMessageStore.test.ts` + `socketIntegration.test.ts`) | agent-2 | 19:52:23Z | 19:52:25Z | pass | 35/35 tests grønne (ChatMessageStore × 9 + socket-integrasjon × 26), inkl. `chat:history`-replay etter reconnect; varighet 1.65 s. [BIN-516](https://linear.app/bingosystem/issue/BIN-516). |
-| _(neste rad: første staging-rehearsal — step 1 arkiv-verifisering når Tobias har lastet opp til `/legacy-unity-archive/v1.0.0/`)_ | staging | STAGING_HALL_1 | rehearsal — step 1 + hands-on step 3/4/5/7 | | | | | |
+| 2026-04-17T21:xx | — | — | rehearsal — step 1 (arkiv-verifisering) | — | — | — | **dropped** | BIN-532 canceled 2026-04-17. No Unity archive will be created. Rollback strategy is git-revert of web-client deploy per §3. Step 1 removed from rehearsal scope. |
+| _(neste rad: første staging-rehearsal — hands-on step 3/4/5/7 når staging-tidsvindu settes)_ | staging | STAGING_HALL_1 | rehearsal — hands-on step 3/4/5/7 | | | | | |
 
 Column semantics:
 
