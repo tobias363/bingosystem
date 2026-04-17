@@ -5,6 +5,8 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server, type Socket } from "socket.io";
+import { createAdapter } from "@socket.io/redis-adapter";
+import { Redis } from "ioredis";
 import { createWalletAdapter } from "./adapters/createWalletAdapter.js";
 import { LocalBingoSystemAdapter } from "./adapters/LocalBingoSystemAdapter.js";
 import { PostgresBingoSystemAdapter } from "./adapters/PostgresBingoSystemAdapter.js";
@@ -347,6 +349,23 @@ app.get("/health/draw-engine", (_req, res) => {
 
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
 
+// BIN-494: Redis adapter for multi-node fanout. Required for horizontal scaling —
+// io.to(roomCode).emit(...) does not reach clients on sibling nodes without it.
+// Fallback to in-memory when REDIS_URL is unset (single-node dev).
+const rawRedisUrl = process.env.REDIS_URL?.trim();
+let socketIoPubClient: Redis | null = null;
+let socketIoSubClient: Redis | null = null;
+if (rawRedisUrl) {
+  socketIoPubClient = new Redis(rawRedisUrl, { maxRetriesPerRequest: 3, lazyConnect: false });
+  socketIoSubClient = socketIoPubClient.duplicate();
+  socketIoPubClient.on("error", (err) => console.error("[socket.io] redis pub error", err));
+  socketIoSubClient.on("error", (err) => console.error("[socket.io] redis sub error", err));
+  io.adapter(createAdapter(socketIoPubClient, socketIoSubClient));
+  console.log(`[socket.io] redis-adapter ENABLED (${rawRedisUrl.replace(/\/\/[^@]*@/, "//***@")}) — multi-node fanout active`);
+} else {
+  console.warn("[socket.io] redis-adapter DISABLED (no REDIS_URL) — multi-node fanout will not work");
+}
+
 // BIN-164: Socket.IO rate limiter — prevents event flooding per socket
 const socketRateLimiter = new SocketRateLimiter();
 socketRateLimiter.start();
@@ -502,6 +521,9 @@ function handleShutdown(signal: string) {
       await roomStateStore.shutdown();
       if (redisSchedulerLock) await redisSchedulerLock.shutdown();
       if (responsibleGamingStore) await responsibleGamingStore.shutdown();
+      // BIN-494: close Socket.IO Redis adapter clients
+      if (socketIoPubClient) { try { await socketIoPubClient.quit(); } catch { /* best effort */ } }
+      if (socketIoSubClient) { try { await socketIoSubClient.quit(); } catch { /* best effort */ } }
       server.close(() => { console.info("[shutdown] HTTP server closed. Exiting."); process.exit(0); });
       setTimeout(() => { console.warn("[shutdown] Forced exit after timeout."); process.exit(1); }, 10_000).unref();
     })

@@ -35,6 +35,7 @@ Påkrevde Render environment variables for production:
 - `REDIS_HOST`
 - `REDIS_PORT`
 - `REDIS_PASSWORD`
+- `REDIS_URL` — påkrevd for multi-node (BIN-494). Socket.IO Redis-adapter gjør cross-node fanout mulig. Uten dette vil `io.to(room).emit(...)` kun nå klienter på samme node.
 - `SESSION_SECRET`
 - `JWT_SECRET`
 - `JWT_REFRESH_SECRET`
@@ -42,6 +43,14 @@ Påkrevde Render environment variables for production:
 Anbefalt health-endpoint:
 
 - `https://<service-domain>/health`
+
+### Multi-node skalering (BIN-494)
+
+Ved horisontal skalering (>1 backend-node) må følgende være på plass:
+
+1. **`REDIS_URL` satt** på alle noder — peker til felles Redis. Adapteren (`@socket.io/redis-adapter`) republiserer room-events via Redis pub/sub så alle noder får fanout.
+2. **Sticky sessions** konfigureres på Render/reverse-proxy. Socket.IO fallback-transport (long-polling) krever at samme klient rutes til samme node i hele handshake-løpet. Sett sticky session cookie på Render-service-nivå (sporenummer konfigureres i BIN-540 feature-flag rollout).
+3. Ved fravær av `REDIS_URL`: backend logger `[socket.io] redis-adapter DISABLED (no REDIS_URL) — multi-node fanout will not work` og faller tilbake til in-memory (single-node-oppførsel).
 
 ## 3) (Valgfritt) GitHub Variables for timeouts
 
