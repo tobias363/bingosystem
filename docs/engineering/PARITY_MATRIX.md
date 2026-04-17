@@ -65,10 +65,10 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 |---------|----------------|-----------------|----------------|----------------------|--------------|-----------|
 | Mini-game rotasjon — Wheel of Fortune | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Mini-game rotasjon — Treasure Chest | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| Mini-game rotasjon — Mystery | 🔴 | ❌ | 🟡 | ❌ | ❌ | [BIN-505](https://linear.app/bingosystem/issue/BIN-505) |
-| Mini-game rotasjon — ColorDraft | 🔴 | ❌ | 🟡 | ❌ | ❌ | [BIN-506](https://linear.app/bingosystem/issue/BIN-506) |
-| Elvis replace (real in-place swap) | 🔴 | 🟡 | ✅ | ❌ | ❌ | [BIN-509](https://linear.app/bingosystem/issue/BIN-509) |
-| `replaceAmount` debitering | 🔴 | ❌ | 🔵 | ❌ | ❌ | [BIN-509](https://linear.app/bingosystem/issue/BIN-509) (tidl. BIN-521) |
+| Mini-game rotasjon — Mystery | ✅ | ✅ | 🟡 | ✅ | 🟡 | [BIN-505](https://linear.app/bingosystem/issue/BIN-505) ✅ merged #122 |
+| Mini-game rotasjon — ColorDraft | ✅ | ✅ | 🟡 | ✅ | 🟡 | [BIN-506](https://linear.app/bingosystem/issue/BIN-506) ✅ merged #122 |
+| Elvis replace (real in-place swap) | ✅ | ✅ | ✅ | ✅ | 🟡 | [BIN-509](https://linear.app/bingosystem/issue/BIN-509) ✅ merged #121 |
+| `replaceAmount` debitering | ✅ | ✅ | 🔵 | ✅ | 🟡 | [BIN-509](https://linear.app/bingosystem/issue/BIN-509) ✅ merged (dekker BIN-521) |
 | Lucky number picker (60-tall) | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Host manual start | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Per-hall player-data | ✅ | ✅ | ✅ | ✅ | ✅ | — |
@@ -94,7 +94,7 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 | Asset-pipeline (Unity → PixiJS) | 🔵 | 🔵 | 🟡 | ✅ | ❌ | [BIN-543](https://linear.app/bingosystem/issue/BIN-543) |
 | PlayerPrefs → localStorage mapping | 🔵 | 🔵 | ❌ | ✅ | ❌ | [BIN-544](https://linear.app/bingosystem/issue/BIN-544) |
 
-**Game 1 totalt:** 32 rader — 14 ✅, 12 🟡, 6 ❌. Release-klar: 10 / 32 (31 %). Syv rader flyttet denne sesjonen: BIN-494 (Redis), BIN-499 (ticket:mark slim), BIN-502 (drawIndex gap), BIN-500 (loader-barriere), BIN-520 (MAX_DRAWS 75 ✅ fullført), BIN-545 (Zod-fundament 🟡), BIN-508 (load-test 🟡), BIN-507 (SPECTATING 🟡 venter på staging-test).
+**Game 1 totalt:** 32 rader — 14 ✅, 16 🟡, 2 ❌. Release-klar: 10 / 32 (31 %). Denne sesjonen: BIN-494, BIN-499, BIN-502, BIN-500, BIN-507, BIN-520 (✅ fullført), BIN-505, BIN-506, BIN-509 (backend ✅), BIN-545, BIN-508, BIN-539 (alle 🟡 release-klar, venter på staging).
 
 ---
 
@@ -210,11 +210,11 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 
 | Spill | Rader | ✅ | 🟡 | ❌ | Release-klar % |
 |-------|------:|---:|---:|---:|---------------:|
-| Game 1 (Databingo) | 32 | 14 | 12 | 6 | 31 % |
+| Game 1 (Databingo) | 32 | 14 | 16 | 2 | 31 % |
 | Game 2 (Rocket) | 14 | 0 | 9 | 5 | 0 % |
 | Game 3 (Monster) | 9 | 0 | 5 | 4 | 0 % |
 | Game 5 (Spillorama) | 12 | 0 | 5 | 7 | 0 % |
-| **Totalt** | **67** | **14** | **31** | **22** | **21 %** |
+| **Totalt** | **67** | **14** | **35** | **18** | **21 %** |
 
 Totalsum regnet per **Release-klar**-kolonnen — det er den som styrer cutover-beslutning per [`LEGACY_DECOUPLING_STATUS.md`](../architecture/LEGACY_DECOUPLING_STATUS.md).
 
@@ -276,3 +276,4 @@ Automatisk generator fra YAML front-matter i per-spill canonical specs er planla
 | 2026-04-17 | BIN-539 PR | Observability-fundament: backend Sentry init (`apps/backend/src/observability/sentry.ts`) + errorReporter middleware + ackFailure auto-capture; tre nye Prometheus-metrikker (claim_submitted_total, payout_amount histogram, reconnect_total); klient Sentry sidecar (`packages/game-client/src/telemetry/Sentry.ts`) koblet til eksisterende Telemetry; 30s gap-watchdog via GameBridge.getGapMetrics(); runbook i `docs/operations/OBSERVABILITY_RUNBOOK.md` med terskler + rollback-eierskap. Rad nå 🟡 Release-klar — venter på Grafana-dashboards provisjonert. |
 | 2026-04-17 | BIN-507 PR | BIN-507 SPECTATING-fase ✅ (klient i main) — ny phase i Game1Controller, transitions fra start/onGameStarted/handleReconnect, live draws via onSpectatorNumberDrawn, server-guards verifisert (PLAYER_NOT_PARTICIPATING, NOT_ARMED_FOR_GAME, MARKS_NOT_FOUND). Rad nå 🟡 Release-klar (venter på manuell late-join-test mot staging). G1 totalt: 14 ✅, 12 🟡, 6 ❌. |
 | 2026-04-17 | BIN-529 PR | Game 2 canonical spec levert — `docs/engineering/game2-canonical-spec.md` med YAML front-matter. G2-matrise utvidet fra 10 → 14 rader (verifisert mot kode + legacy `Sockets/game2.js`): 0 ✅, 9 🟡, 5 ❌. Spec §11 lister avvik fra G1 (SPECTATING, loader-barriere, eksplisitt kjøp) som egne port-issues. Totalsum 67 rader (G1: 32, G2: 14, G3: 9, G5: 12). |
+| 2026-04-17 | BIN-509/505/506 batch | Agent 2 leverte: BIN-509 Elvis-replace + replaceAmount debitering (PR #121 `41740f2f`); BIN-505/506 Mystery + ColorDraft 4-way rotation (PR #122 `f31f36c2`). BIN-521 (replaceAmount) dekket via BIN-509. G1 4 rader flyttet ❌ → 🟡. Totalsum G1: 14 ✅, 16 🟡, 2 ❌. |
