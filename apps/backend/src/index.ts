@@ -37,6 +37,8 @@ import { createWalletRouter } from "./routes/wallet.js";
 import { createPaymentsRouter } from "./routes/payments.js";
 import { createGameRouter } from "./routes/game.js";
 import { createGameEventHandlers } from "./sockets/gameEvents.js";
+import { initSentry, setSocketSentryContext, addBreadcrumb, captureError, flushSentry } from "./observability/sentry.js";
+import { errorReporter } from "./middleware/errorReporter.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +47,10 @@ const frontendDir = path.resolve(__dirname, "../../frontend");
 const publicDir = path.resolve(__dirname, "../public");
 const adminFrontendFile = path.resolve(frontendDir, "admin/index.html");
 const projectDir = path.resolve(__dirname, "../..");
+
+// BIN-539: Sentry — init before the HTTP server exists so the error reporter
+// is wired from the first request. No-op if SENTRY_DSN is unset.
+void initSentry();
 
 const app = express();
 
@@ -389,6 +395,9 @@ io.use(async (socket, next) => {
       socket.data.authenticated = true;
       // HOEY-9: Register player identity for player-based rate limiting.
       if (user.walletId) socketRateLimiter.registerPlayer(socket.id, user.walletId);
+      // BIN-539: Tag the socket with hashed identifiers for Sentry.
+      setSocketSentryContext(socket, { walletId: user.walletId, hallId: (user as { hallId?: string }).hallId });
+      addBreadcrumb("socket.connected", { socketId: socket.id, hashedWalletId: socket.data.sentry?.walletIdHash });
     } catch (err) {
       return next(new Error(`UNAUTHORIZED: ${err instanceof DomainError ? err.message : "Autentisering feilet"}`));
     }
@@ -447,6 +456,11 @@ app.get("*", (_req, res) => {
   if (_req.path === "/admin" || _req.path === "/admin/") { res.sendFile(adminFrontendFile); return; }
   res.sendFile(path.join(publicDir, "web/index.html"));
 });
+
+// BIN-539: Express error reporter — must be registered after all routes.
+// Captures any thrown error, forwards to Sentry (when enabled), and sends a
+// consistent `{ ok: false, error }` response so clients can rely on shape.
+app.use(errorReporter());
 
 // ── Server start ──────────────────────────────────────────────────────────────
 
@@ -534,5 +548,13 @@ function handleShutdown(signal: string) {
 
 process.on("SIGTERM", () => handleShutdown("SIGTERM"));
 process.on("SIGINT", () => handleShutdown("SIGINT"));
-process.on("unhandledRejection", (reason) => { console.error("[FATAL] Unhandled promise rejection:", reason); handleShutdown("unhandledRejection"); });
-process.on("uncaughtException", (error) => { console.error("[FATAL] Uncaught exception:", error); handleShutdown("uncaughtException"); });
+process.on("unhandledRejection", (reason) => {
+  console.error("[FATAL] Unhandled promise rejection:", reason);
+  captureError(reason, { source: "unhandledRejection" });
+  void flushSentry(2000).finally(() => handleShutdown("unhandledRejection"));
+});
+process.on("uncaughtException", (error) => {
+  console.error("[FATAL] Uncaught exception:", error);
+  captureError(error, { source: "uncaughtException" });
+  void flushSentry(2000).finally(() => handleShutdown("uncaughtException"));
+});
