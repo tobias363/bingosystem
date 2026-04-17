@@ -1,5 +1,7 @@
 # Unity Runtime Blockers 2026-04-10
 
+> **Legacy-dokumentasjon.** Historisk blocker-analyse fra april 2026 da `apps/backend/` (ny TypeScript-backend) ble bygget opp for å matche legacy AIS-backenden. Nåværende legacy-status styres av [`docs/architecture/LEGACY_DECOUPLING_STATUS.md`](../../docs/architecture/LEGACY_DECOUPLING_STATUS.md). Game 4 utgår per [BIN-496](https://linear.app/bingosystem/issue/BIN-496) — ignorer Game 4-referanser som aktiv scope.
+
 ## Kort konklusjon
 
 `/web/` stopper ikke lenger fordi host-siden eller Socket.IO-handshake feiler.
