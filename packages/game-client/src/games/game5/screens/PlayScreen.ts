@@ -8,6 +8,7 @@ import { DrawnBallsPanel } from "../../game2/components/DrawnBallsPanel.js";
 import { ClaimButton } from "../../game2/components/ClaimButton.js";
 import { PlayerInfoBar } from "../../game2/components/PlayerInfoBar.js";
 import { RouletteWheel } from "../components/RouletteWheel.js";
+import { getTicketThemeByName } from "../../game1/colors/TicketColorThemes.js";
 import { checkClaims } from "../../game2/logic/ClaimDetector.js";
 
 /**
@@ -102,8 +103,17 @@ export class PlayScreen extends Container {
     }
 
     for (let i = 0; i < state.myTickets.length; i++) {
-      const card = new TicketCard(i);
-      card.loadTicket(state.myTickets[i]);
+      const ticket = state.myTickets[i];
+      const theme = getTicketThemeByName(ticket.color, i);
+      const card = new TicketCard(i, {
+        cardBg: theme.cardBg,
+        headerBg: theme.headerBg,
+        headerText: theme.headerText,
+        toGoColor: theme.toGoColor,
+        toGoCloseColor: theme.toGoCloseColor,
+        cellColors: theme.cellColors,
+      });
+      card.loadTicket(ticket);
 
       if (state.myMarks[i]) {
         card.markNumbers(state.myMarks[i]);

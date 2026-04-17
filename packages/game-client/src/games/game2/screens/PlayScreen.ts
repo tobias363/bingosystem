@@ -10,6 +10,7 @@ import { ClaimButton } from "../components/ClaimButton.js";
 import { PlayerInfoBar } from "../components/PlayerInfoBar.js";
 import { RocketStack } from "../components/RocketStack.js";
 import { ChatPanel } from "../../game1/components/ChatPanel.js";
+import { getTicketThemeByName } from "../../game1/colors/TicketColorThemes.js";
 import { checkClaims } from "../logic/ClaimDetector.js";
 
 const CHAT_WIDTH = 280;
@@ -187,8 +188,17 @@ export class PlayScreen extends Container {
     }
 
     for (let i = 0; i < state.myTickets.length; i++) {
-      const card = new TicketCard(i);
-      card.loadTicket(state.myTickets[i]);
+      const ticket = state.myTickets[i];
+      const theme = getTicketThemeByName(ticket.color, i);
+      const card = new TicketCard(i, {
+        cardBg: theme.cardBg,
+        headerBg: theme.headerBg,
+        headerText: theme.headerText,
+        toGoColor: theme.toGoColor,
+        toGoCloseColor: theme.toGoCloseColor,
+        cellColors: theme.cellColors,
+      });
+      card.loadTicket(ticket);
 
       // Mark already drawn numbers
       if (state.myMarks[i]) {
