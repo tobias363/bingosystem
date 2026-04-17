@@ -25,6 +25,8 @@ export const PlayerSchema = z.object({
 
 export const TicketSchema = z.object({
   grid: z.array(z.array(z.number().int())),
+  /** BIN-509: stable id for pre-round (display) tickets. Optional for backward compat. */
+  id: z.string().optional(),
   color: z.string().optional(),
   type: z.string().optional(),
 });
@@ -163,3 +165,16 @@ export const ClaimSubmitPayloadSchema = z.object({
   type: ClaimType,
 });
 export type ClaimSubmitPayload = z.infer<typeof ClaimSubmitPayloadSchema>;
+
+/**
+ * BIN-509: ticket:replace — swaps a single pre-round display ticket for a new
+ * one and debits gameVariant.replaceAmount from the player's wallet. Only
+ * permitted while the game is NOT running; armed state is preserved.
+ */
+export const TicketReplacePayloadSchema = z.object({
+  accessToken: z.string().optional(),
+  roomCode: z.string().min(1),
+  playerId: z.string().optional(),
+  ticketId: z.string().min(1),
+});
+export type TicketReplacePayload = z.infer<typeof TicketReplacePayloadSchema>;

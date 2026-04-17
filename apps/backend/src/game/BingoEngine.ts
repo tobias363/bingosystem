@@ -816,6 +816,73 @@ export class BingoEngine {
     return { number: nextNumber, drawIndex: game.drawnNumbers.length, gameId: game.id };
   }
 
+  /**
+   * BIN-509: charge the configured `replaceAmount` for a pre-round ticket
+   * replacement. Returns the debited amount. Throws:
+   *   - GAME_RUNNING — cannot replace once a round is in progress
+   *   - INVALID_REPLACE_AMOUNT — replaceAmount is 0 or unset (variant disables it)
+   *   - INSUFFICIENT_FUNDS — player's wallet balance can't cover it
+   *
+   * Wallet flow mirrors the STAKE leg of the buy-in: player → hall house
+   * account, with an idempotency key so a retried replacement is a no-op.
+   * Compliance ledger records a STAKE event.
+   *
+   * The caller owns the display-ticket cache and is responsible for generating
+   * the replacement ticket after this method returns successfully.
+   */
+  async chargeTicketReplacement(
+    roomCode: string,
+    playerId: string,
+    amount: number,
+    idempotencyKey: string,
+  ): Promise<{ debitedAmount: number }> {
+    const room = this.requireRoom(roomCode);
+    if (room.currentGame && room.currentGame.status === "RUNNING") {
+      throw new DomainError("GAME_RUNNING", "Kan ikke bytte billett mens runden spilles.");
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new DomainError("INVALID_REPLACE_AMOUNT", "replaceAmount er ikke konfigurert for denne varianten.");
+    }
+    const player = this.requirePlayer(room, playerId);
+    const nowMs = Date.now();
+    this.assertWalletAllowedForGameplay(player.walletId, nowMs);
+    const debit = roundCurrency(amount);
+    await this.walletAdapter.ensureAccount(player.walletId);
+    const balance = await this.walletAdapter.getBalance(player.walletId);
+    if (balance < debit) {
+      throw new DomainError("INSUFFICIENT_FUNDS", "Ikke nok saldo til å bytte billett.");
+    }
+    const gameType: LedgerGameType = "DATABINGO";
+    const channel: LedgerChannel = "INTERNET";
+    const houseAccountId = this.ledger.makeHouseAccountId(room.hallId, gameType, channel);
+    await this.walletAdapter.ensureAccount(houseAccountId);
+    await this.walletAdapter.transfer(
+      player.walletId,
+      houseAccountId,
+      debit,
+      `Ticket replace ${room.code}`,
+      { idempotencyKey },
+    );
+    player.balance -= debit;
+    await this.compliance.recordLossEntry(player.walletId, room.hallId, {
+      type: "BUYIN",
+      amount: debit,
+      createdAtMs: nowMs,
+    });
+    await this.ledger.recordComplianceLedgerEvent({
+      hallId: room.hallId,
+      gameType,
+      channel,
+      eventType: "STAKE",
+      amount: debit,
+      roomCode: room.code,
+      gameId: room.currentGame?.id,
+      playerId: player.id,
+      walletId: player.walletId,
+    });
+    return { debitedAmount: debit };
+  }
+
   async markNumber(input: MarkNumberInput): Promise<void> {
     const room = this.requireRoom(input.roomCode);
     const game = this.requireRunningGame(room);

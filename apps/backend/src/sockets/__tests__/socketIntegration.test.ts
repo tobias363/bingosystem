@@ -13,6 +13,7 @@
 import assert from "node:assert/strict";
 import test, { describe, beforeEach, afterEach } from "node:test";
 import { createTestServer, type TestServer } from "./testServer.js";
+import type { Ticket } from "../../game/types.js";
 
 interface AckResponse<T = unknown> {
   ok: boolean;
@@ -120,6 +121,106 @@ describe("Socket.IO integration", () => {
     const drawEvent = await drawPromise;
     assert.equal(drawEvent.number, drawResult.data!.number, "broadcast number should match");
     assert.equal(drawEvent.drawIndex, 1, "first draw should have drawIndex 1 (length after push)");
+  });
+
+  // ── 2b. BIN-509: ticket:replace ──────────────────────────────────────────
+
+  test("BIN-509: ticket:replace swaps one pre-round ticket in place and debits replaceAmount", async () => {
+    const alice = await server.connectClient("token-alice");
+
+    const r1 = await alice.emit<AckResponse<{ roomCode: string; playerId: string }>>("room:create", { hallId: "hall-test" });
+    const roomCode = r1.data!.roomCode;
+    const playerId = r1.data!.playerId;
+
+    // Configure the room's variant so replaceAmount > 0.
+    server.roomState.setVariantConfig(roomCode, {
+      gameType: "elvis",
+      config: {
+        ticketTypes: [{ name: "Elvis 1", type: "elvis", priceMultiplier: 2, ticketCount: 2 }],
+        patterns: [{ name: "Full House", claimType: "BINGO", prizePercent: 100, design: 0 }],
+        replaceAmount: 5,
+      },
+    });
+
+    // Arm with 2 tickets.
+    const armAck = await alice.emit<AckResponse<{ armed: boolean }>>("bet:arm", { roomCode, armed: true, ticketCount: 2 });
+    assert.ok(armAck.ok, `bet:arm failed: ${armAck.error?.message}`);
+
+    // Test-server's simplified buildRoomUpdatePayload does not populate
+    // preRoundTickets (see testServer.ts comment). Read directly from the
+    // RoomStateManager that the handler operates on — same source of truth.
+    const originalTickets = server.roomState.getOrCreateDisplayTickets(roomCode, playerId, 2);
+    assert.equal(originalTickets.length, 2, "expected 2 pre-round tickets");
+    const ticketToReplace = originalTickets[0];
+    const keptTicket = originalTickets[1];
+    assert.ok(ticketToReplace.id, "ticket must have a stable id");
+
+    const balanceBefore = await server.walletAdapter.getBalance("wallet-alice");
+
+    const replaceResult = await alice.emit<AckResponse<{ ticketId: string; debitedAmount: number }>>(
+      "ticket:replace",
+      { roomCode, playerId, ticketId: ticketToReplace.id! },
+    );
+    assert.ok(replaceResult.ok, `ticket:replace failed: ${replaceResult.error?.message}`);
+    assert.equal(replaceResult.data!.ticketId, ticketToReplace.id);
+    assert.equal(replaceResult.data!.debitedAmount, 5);
+
+    // Re-read from the cache (same Map the handler mutated).
+    const newTickets = server.roomState.getOrCreateDisplayTickets(roomCode, playerId, 2);
+    assert.equal(newTickets.length, 2, "still 2 tickets after replace");
+    const replacedTicket = newTickets.find((t) => t.id === ticketToReplace.id);
+    assert.ok(replacedTicket, "replacement has the same stable id");
+    assert.notDeepStrictEqual(replacedTicket!.grid, ticketToReplace.grid, "grid must change on replace");
+    const retained = newTickets.find((t) => t.id === keptTicket.id);
+    assert.deepStrictEqual(retained?.grid, keptTicket.grid, "the other ticket is unchanged");
+
+    const balanceAfter = await server.walletAdapter.getBalance("wallet-alice");
+    assert.equal(balanceBefore - balanceAfter, 5, "wallet debited by exactly replaceAmount");
+  });
+
+  test("BIN-509: ticket:replace rejects when variant has no replaceAmount (REPLACE_NOT_ALLOWED)", async () => {
+    const alice = await server.connectClient("token-alice");
+    const r1 = await alice.emit<AckResponse<{ roomCode: string }>>("room:create", { hallId: "hall-test" });
+    const roomCode = r1.data!.roomCode;
+    // Standard variant — replaceAmount unset / 0.
+    server.roomState.setVariantConfig(roomCode, {
+      gameType: "standard",
+      config: {
+        ticketTypes: [{ name: "Small Yellow", type: "small", priceMultiplier: 1, ticketCount: 1 }],
+        patterns: [{ name: "Full House", claimType: "BINGO", prizePercent: 100, design: 0 }],
+      },
+    });
+    await alice.emit("bet:arm", { roomCode, armed: true, ticketCount: 1 });
+    const result = await alice.emit<AckResponse>("ticket:replace", { roomCode, ticketId: "tkt-0" });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, "REPLACE_NOT_ALLOWED");
+  });
+
+  test("BIN-509: ticket:replace rejects while game is RUNNING (GAME_RUNNING)", async () => {
+    const alice = await server.connectClient("token-alice");
+    const bob = await server.connectClient("token-bob");
+    const r1 = await alice.emit<AckResponse<{ roomCode: string }>>("room:create", { hallId: "hall-test" });
+    const roomCode = r1.data!.roomCode;
+    await bob.emit("room:create", { hallId: "hall-test" });
+    server.roomState.setVariantConfig(roomCode, {
+      gameType: "elvis",
+      config: {
+        ticketTypes: [{ name: "Elvis 1", type: "elvis", priceMultiplier: 2, ticketCount: 2 }],
+        patterns: [{ name: "Full House", claimType: "BINGO", prizePercent: 100, design: 0 }],
+        replaceAmount: 5,
+      },
+    });
+    await alice.emit("bet:arm", { roomCode, armed: true, ticketCount: 1 });
+    await bob.emit("bet:arm", { roomCode, armed: true, ticketCount: 1 });
+    const startResult = await alice.emit<AckResponse>("game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 });
+    assert.ok(startResult.ok, `game:start failed in GAME_RUNNING test: ${startResult.error?.message}`);
+    // Use the actual ticket id the engine assigned to Alice's in-game ticket.
+    // Since the display cache is cleared on game:start, any ticketId should
+    // trip the GAME_RUNNING guard in engine.chargeTicketReplacement before the
+    // cache lookup runs.
+    const result = await alice.emit<AckResponse>("ticket:replace", { roomCode, ticketId: "tkt-0" });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, "GAME_RUNNING");
   });
 
   // ── 3. ticket:mark ────────────────────────────────────────────────────────

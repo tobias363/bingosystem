@@ -417,7 +417,9 @@ const registerGameEvents = createGameEventHandlers({
   disarmPlayer: (code, id) => roomState.disarmPlayer(code, id),
   disarmAllPlayers: (code) => roomState.disarmAllPlayers(code),
   clearDisplayTicketCache: (code) => roomState.clearDisplayTicketCache(code),
+  replaceDisplayTicket: (code, id, ticketId, slug) => roomState.replaceDisplayTicket(code, id, ticketId, slug),
   resolveBingoHallGameConfigForRoom, requireActiveHallIdFromInput, buildLeaderboard,
+  getVariantConfig: (code) => roomState.getVariantConfig(code),
 });
 
 io.on("connection", (socket: Socket) => { registerGameEvents(socket); });

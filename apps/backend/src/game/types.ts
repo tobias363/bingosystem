@@ -44,6 +44,13 @@ export interface Ticket {
   // - Databingo60: 3x5 grid (3 rows, 5 cols), numbers 1-60, no free space.
   // - Bingo75:     5x5 grid (5 rows, 5 cols), numbers 1-75, center=0 (free).
   grid: number[][];
+  /**
+   * BIN-509: stable identifier for display (pre-round) tickets so the client can
+   * reference a specific ticket to replace. Assigned by RoomStateManager when
+   * tickets are generated; absent on in-game tickets because those aren't
+   * user-addressable (replacement is disallowed once a game is RUNNING).
+   */
+  id?: string;
   /** Display color name matching Unity TicketColorManager, e.g. "Small Yellow", "Elvis 1". */
   color?: string;
   /** Ticket type code for variant logic: "small", "large", "elvis", "traffic-red", etc. */
