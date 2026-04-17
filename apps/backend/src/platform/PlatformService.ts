@@ -105,6 +105,25 @@ export interface UpdateHallInput {
   isActive?: boolean;
 }
 
+/** BIN-503: DB-backed TV-display tokens. Plaintext never stored or read back. */
+export interface HallDisplayToken {
+  id: string;
+  hallId: string;
+  label: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  createdByUserId?: string;
+}
+
+/** Shape returned from createHallDisplayToken. Plaintext token is the only
+ *  time the raw secret is ever available — caller is responsible for
+ *  showing it to the operator once and never logging it. */
+export interface HallDisplayTokenWithPlaintext extends HallDisplayToken {
+  plaintextToken: string;
+  /** Composite "<hallSlug>:<plaintextToken>" used in admin-display:login. */
+  compositeToken: string;
+}
+
 export interface TerminalDefinition {
   id: string;
   hallId: string;
@@ -284,6 +303,17 @@ interface HallRow {
   tv_url: string | null;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+interface HallDisplayTokenRow {
+  id: string;
+  hall_id: string;
+  label: string;
+  token_hash: string;
+  created_by: string | null;
+  created_at: Date | string;
+  revoked_at: Date | string | null;
+  last_used_at: Date | string | null;
 }
 
 interface TerminalRow {
@@ -882,6 +912,129 @@ export class PlatformService {
     );
 
     return this.mapHall(rows[0]);
+  }
+
+  // ── BIN-503: TV-display tokens ──────────────────────────────────────────
+  //
+  // Tokens are per-hall secrets used by the public TV-kiosk page
+  // (`/web/tv/?hall=<slug>&token=<plaintext>`). Storage is hash-only so a
+  // leaked DB dump can't be replayed. The socket handler
+  // (`admin-display:login`) calls `verifyHallDisplayToken` on every
+  // connect.
+
+  async listHallDisplayTokens(hallReference: string): Promise<HallDisplayToken[]> {
+    await this.ensureInitialized();
+    const hall = await this.getHall(hallReference);
+    const { rows } = await this.pool.query<HallDisplayTokenRow>(
+      `SELECT id, hall_id, label, token_hash, created_by, created_at, revoked_at, last_used_at
+       FROM ${this.hallDisplayTokensTable()}
+       WHERE hall_id = $1 AND revoked_at IS NULL
+       ORDER BY created_at DESC`,
+      [hall.id]
+    );
+    return rows.map((r) => this.mapHallDisplayToken(r));
+  }
+
+  async createHallDisplayToken(
+    hallReference: string,
+    options?: { label?: string; createdByUserId?: string }
+  ): Promise<HallDisplayTokenWithPlaintext> {
+    await this.ensureInitialized();
+    const hall = await this.getHall(hallReference);
+    const label = (options?.label ?? "").trim().slice(0, 80);
+    const plaintext = randomBytes(24).toString("base64url");
+    const tokenHash = hashToken(plaintext);
+    const id = randomUUID();
+    const { rows } = await this.pool.query<HallDisplayTokenRow>(
+      `INSERT INTO ${this.hallDisplayTokensTable()} (id, hall_id, label, token_hash, created_by)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, hall_id, label, token_hash, created_by, created_at, revoked_at, last_used_at`,
+      [id, hall.id, label, tokenHash, options?.createdByUserId ?? null]
+    );
+    const base = this.mapHallDisplayToken(rows[0]);
+    return {
+      ...base,
+      plaintextToken: plaintext,
+      compositeToken: `${hall.slug}:${plaintext}`,
+    };
+  }
+
+  async revokeHallDisplayToken(tokenId: string, hallReference?: string): Promise<void> {
+    await this.ensureInitialized();
+    if (hallReference) {
+      // Scope the revoke to the caller's hall so a sloppy UI can't nuke
+      // another hall's token by ID.
+      const hall = await this.getHall(hallReference);
+      const { rowCount } = await this.pool.query(
+        `UPDATE ${this.hallDisplayTokensTable()}
+         SET revoked_at = now()
+         WHERE id = $1 AND hall_id = $2 AND revoked_at IS NULL`,
+        [tokenId, hall.id]
+      );
+      if (!rowCount) {
+        throw new DomainError("DISPLAY_TOKEN_NOT_FOUND", "Display-token finnes ikke for denne hallen.");
+      }
+      return;
+    }
+    const { rowCount } = await this.pool.query(
+      `UPDATE ${this.hallDisplayTokensTable()}
+       SET revoked_at = now()
+       WHERE id = $1 AND revoked_at IS NULL`,
+      [tokenId]
+    );
+    if (!rowCount) {
+      throw new DomainError("DISPLAY_TOKEN_NOT_FOUND", "Display-token finnes ikke.");
+    }
+  }
+
+  /**
+   * Socket-handler path: given the composite "<hallSlug>:<plaintext>" that
+   * the TV-kiosk sent in `admin-display:login`, resolve to a hallId if the
+   * token is active. Bumps `last_used_at` (best-effort, non-blocking).
+   *
+   * Throws DomainError on any mismatch so the socket handler can ack
+   * failure uniformly.
+   */
+  async verifyHallDisplayToken(compositeToken: string): Promise<{ hallId: string; tokenId: string }> {
+    await this.ensureInitialized();
+    const colon = compositeToken.indexOf(":");
+    if (colon <= 0) {
+      throw new DomainError("DISPLAY_TOKEN_FORMAT", "Token-format ugyldig.");
+    }
+    const hallSlug = compositeToken.slice(0, colon).trim().toLowerCase();
+    const secret = compositeToken.slice(colon + 1).trim();
+    if (!hallSlug || !secret) {
+      throw new DomainError("DISPLAY_TOKEN_FORMAT", "Token-format ugyldig.");
+    }
+    const tokenHash = hashToken(secret);
+    const { rows } = await this.pool.query<{ id: string; hall_id: string; hall_slug: string }>(
+      `SELECT t.id, t.hall_id, h.slug AS hall_slug
+       FROM ${this.hallDisplayTokensTable()} t
+       JOIN ${this.hallsTable()} h ON h.id = t.hall_id
+       WHERE t.token_hash = $1
+         AND t.revoked_at IS NULL
+         AND h.is_active = true
+       LIMIT 1`,
+      [tokenHash]
+    );
+    const hit = rows[0];
+    if (!hit) {
+      throw new DomainError("DISPLAY_TOKEN_INVALID", "Ugyldig display-token.");
+    }
+    // The slug in the composite must match the hall the hash belongs to.
+    // This stops a token from one hall being replayed against another
+    // hall's TV-page.
+    if (hit.hall_slug.toLowerCase() !== hallSlug) {
+      throw new DomainError("DISPLAY_TOKEN_HALL_MISMATCH", "Token hører ikke til oppgitt hall.");
+    }
+    // Fire-and-forget last_used_at bump. Failures here are diagnostic-only.
+    this.pool
+      .query(
+        `UPDATE ${this.hallDisplayTokensTable()} SET last_used_at = now() WHERE id = $1`,
+        [hit.id]
+      )
+      .catch((err) => console.warn("[BIN-503] last_used_at bump failed", err));
+    return { hallId: hit.hall_id, tokenId: hit.id };
   }
 
   // ── Spilleplan — CRUD (§ 64) ────────────────────────────────────────────
@@ -1616,6 +1769,17 @@ export class PlatformService {
     };
   }
 
+  private mapHallDisplayToken(row: HallDisplayTokenRow): HallDisplayToken {
+    return {
+      id: row.id,
+      hallId: row.hall_id,
+      label: row.label ?? "",
+      createdAt: asIso(row.created_at),
+      lastUsedAt: row.last_used_at ? asIso(row.last_used_at) : undefined,
+      createdByUserId: row.created_by ?? undefined,
+    };
+  }
+
   private mapTerminal(row: TerminalRow): TerminalDefinition {
     return {
       id: row.id,
@@ -2134,6 +2298,10 @@ export class PlatformService {
 
   private terminalsTable(): string {
     return `"${this.schema}"."app_terminals"`;
+  }
+
+  private hallDisplayTokensTable(): string {
+    return `"${this.schema}"."app_hall_display_tokens"`;
   }
 
   private hallGameConfigTable(): string {

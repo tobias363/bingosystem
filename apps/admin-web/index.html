@@ -337,6 +337,7 @@
               <a href="#section-game-settings">Spillinnstillinger</a>
               <a href="#section-games">Spillkatalog (andre spill)</a>
               <a href="#section-halls">Haller</a>
+              <a href="#section-hall-display">TV-display-tokens</a>
               <a href="#section-terminals">Terminaler</a>
               <a href="#section-hall-rules">Hall-spillregler</a>
               <a href="#section-wallet-compliance">Wallet Compliance</a>
@@ -467,6 +468,46 @@
             <button id="reloadHallsBtn" class="secondary">Oppdater hall-liste</button>
           </div>
           <pre id="hallStatus" class="status">Ingen haller lastet.</pre>
+        </article>
+
+        <article id="section-hall-display" class="card admin-section">
+          <h2>TV-display-tokens</h2>
+          <p class="muted" style="margin-top: 0;">
+            Hver hall-TV bruker en rotert token for å logge inn på <code>/web/tv/</code>-siden.
+            Token vises kun én gang ved generering — kopier den med én gang.
+          </p>
+          <div class="toolbar">
+            <div class="field">
+              <label for="displayTokenLabel">Etikett (valgfri)</label>
+              <input id="displayTokenLabel" placeholder="f.eks. TV-kiosk 1" maxlength="80" />
+            </div>
+            <button id="createDisplayTokenBtn">Generer ny token</button>
+            <button id="reloadDisplayTokensBtn" class="secondary">Oppdater liste</button>
+          </div>
+          <div id="displayTokenReveal" style="display: none; margin-top: 12px; padding: 12px; background: #fff7db; border: 1px solid #d97706; border-radius: 8px;">
+            <strong>Ny token generert — lagre nå, vises ikke igjen:</strong>
+            <pre id="displayTokenPlaintext" style="margin: 8px 0; padding: 8px; background: #fff; border: 1px solid #d1d5db; word-break: break-all; white-space: pre-wrap;"></pre>
+            <div style="display: flex; gap: 12px; align-items: flex-start;">
+              <div>
+                <div class="muted" style="margin-bottom: 4px;">Kiosk-URL:</div>
+                <a id="displayTokenKioskLink" target="_blank" rel="noopener" style="word-break: break-all;"></a>
+              </div>
+              <img id="displayTokenQr" alt="QR-kode til TV-kiosk" style="width: 180px; height: 180px; border: 1px solid #d1d5db; background: #fff;" />
+            </div>
+            <button id="dismissDisplayTokenBtn" class="secondary" style="margin-top: 8px;">Jeg har kopiert den</button>
+          </div>
+          <table id="displayTokenTable" style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+            <thead>
+              <tr style="text-align: left; border-bottom: 1px solid #d1d5db;">
+                <th style="padding: 6px;">Etikett</th>
+                <th style="padding: 6px;">Opprettet</th>
+                <th style="padding: 6px;">Sist brukt</th>
+                <th style="padding: 6px;">Handling</th>
+              </tr>
+            </thead>
+            <tbody id="displayTokenList"></tbody>
+          </table>
+          <pre id="displayTokenStatus" class="status">Velg en hall for å se tokens.</pre>
         </article>
 
         <article id="section-terminals" class="card admin-section">

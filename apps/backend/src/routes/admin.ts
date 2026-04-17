@@ -513,6 +513,49 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
     }
   });
 
+  // ── BIN-503: Hall TV-display tokens ───────────────────────────────────────
+  //
+  // DB-backed rotation for the tokens used by the `/web/tv/` kiosk page.
+  // Plaintext is returned exactly once (POST) and never read back.
+
+  router.get("/api/admin/halls/:hallId/display-tokens", async (req, res) => {
+    try {
+      await requireAdminPermissionUser(req, "HALL_READ");
+      const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+      const tokens = await platformService.listHallDisplayTokens(hallId);
+      apiSuccess(res, tokens);
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
+
+  router.post("/api/admin/halls/:hallId/display-tokens", async (req, res) => {
+    try {
+      const adminUser = await requireAdminPermissionUser(req, "HALL_WRITE");
+      const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+      const label = typeof req.body?.label === "string" ? req.body.label : undefined;
+      const token = await platformService.createHallDisplayToken(hallId, {
+        label,
+        createdByUserId: adminUser.id,
+      });
+      apiSuccess(res, token);
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
+
+  router.delete("/api/admin/halls/:hallId/display-tokens/:tokenId", async (req, res) => {
+    try {
+      await requireAdminPermissionUser(req, "HALL_WRITE");
+      const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+      const tokenId = mustBeNonEmptyString(req.params.tokenId, "tokenId");
+      await platformService.revokeHallDisplayToken(tokenId, hallId);
+      apiSuccess(res, { ok: true });
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
+
   // ── Terminals ─────────────────────────────────────────────────────────────
 
   router.get("/api/admin/terminals", async (req, res) => {
