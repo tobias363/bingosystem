@@ -126,6 +126,7 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 |---------|----------------|-----------------|----------------|----------------------|--------------|-----------|
 | Rakettstabling / animasjon | 🔴 | 🔵 | ✅ | ❌ | 🟡 | [BIN-529](https://linear.app/bingosystem/issue/BIN-529) — `components/RocketStack.ts` (60 segmenter, GSAP stacking) |
 | Paginering (multiple tickets) | 🔴 | 🔵 | ✅ | ❌ | 🟡 | Drag + prev/next-knapper + page-indikator i `TicketScroller` |
+| Billettfarger (index-cycle TICKET_THEMES) | 🔴 | 🔵 | ✅ | ❌ | 🟡 | Delt med G5; 8 varianter fra G1 `TICKET_THEMES` |
 | Blind ticket purchase (`Game2BuyBlindTickets`) | 🔴 | ❌ | ❌ | ❌ | ❌ | [BIN-511](https://linear.app/bingosystem/issue/BIN-511) |
 
 ### 3.3 Canonical spec status
@@ -211,7 +212,7 @@ Alle fire kolonner må være **✅** for at raden er fullført.
 | `SwapTicket` (bytt midt i runde) | 🔴 | ❌ | ❌ | ❌ | ❌ | [BIN-510](https://linear.app/bingosystem/issue/BIN-510) |
 | `SelectWofAuto` / `SelectRouletteAuto` | 🔴 | ❌ | ❌ | ❌ | ❌ | [BIN-519](https://linear.app/bingosystem/issue/BIN-519) |
 | `checkForWinners` eksplisitt | 🔴 | ❌ | ❌ | ❌ | ❌ | [BIN-512](https://linear.app/bingosystem/issue/BIN-512) |
-| Billettfarger (4 varianter) | 🔴 | 🔵 | ❌ | ❌ | ❌ | Egen issue som del av G5 paritet |
+| Billettfarger (index-cycle gjennom TICKET_THEMES) | 🔴 | 🔵 | ✅ | ❌ | 🟡 | Delt med G2; 8 varianter fra G1 `TICKET_THEMES` via `getTicketThemeByName` |
 
 ### 5.3 Canonical spec status
 

@@ -205,7 +205,7 @@ Samme som G1/G2. `BINGO_CHECKPOINT_ENABLED=true` default. Shared gap-deteksjon f
 | KYC-gate for verifiserte spillere | ❌ | [BIN-514](https://linear.app/bingosystem/issue/BIN-514) |
 | `checkForWinners` on-demand | ❌ | [BIN-512](https://linear.app/bingosystem/issue/BIN-512) |
 | SelectWofAuto / SelectRouletteAuto | ❌ | [BIN-519](https://linear.app/bingosystem/issue/BIN-519) |
-| 4 billettfarger (blå, grønn, rød, lilla) | ❌ (kun "standard" i dag) | Del av G5 paritet |
+| 4+ billettfarger (index-cycle) | ✅ Portet — gjenbruker G1 `TICKET_THEMES` (8 varianter) via `getTicketThemeByName(ticket.color, i)`. `ticket.color` fra backend tillater framtidig SwapTicket. | — |
 | Rulett med fysikk (Rigidbody2D + Collider2D) | 🟡 Ren GSAP, ingen fysikk | Egen issue hvis fysikk må matches |
 | DrumRotation (kontinuerlig) | ❌ | Egen issue |
 
