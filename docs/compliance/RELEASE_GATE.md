@@ -90,7 +90,7 @@ This gate covers **backend money flow only**. It does NOT cover:
 - The Socket.IO wire layer (covered by `apps/backend/src/sockets/__tests__/wireContract.test.ts` + `packages/game-client/src/bridge/__tests__/wireContract.test.ts` per BIN-527).
 - The Postgres/Redis persistence layer (covered by integration tests that do spin up Docker — separate follow-up).
 - The client-side rendering (covered by vitest suites in `packages/game-client/`).
-- Spillvett cross-game limits (covered by BIN-541, not merged yet).
+- Spillvett cross-game limits — covered by BIN-541 (`apps/backend/src/spillevett/__tests__/cross-game.test.ts`, 20 tests across 4 game slugs × 4 rules + 4 fail-closed). Runs as part of `test:compliance`.
 
 When one of those layers breaks, their own tests fail — this test stays green because it exercises a layer below.
 
