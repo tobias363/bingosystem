@@ -99,3 +99,37 @@ npm --prefix apps/backend run build
 
 > Note: The legacy Unity project lives under `legacy/unity-client/` and has its
 > own test tooling. See [legacy/README.md](../../legacy/README.md) for details.
+
+## 7) Legacy-avkobling Done-policy
+
+**Applies only to issues in the Linear project [Legacy-avkobling: Game 1–5 + backend-paritet](https://linear.app/bingosystem/project/legacy-avkobling-game-1-5-backend-paritet-a973e623234a).**
+
+Vedtatt 2026-04-17 etter senior-PM-review som avdekket at fire issues (BIN-494, 498, 501, 520) var merket Done uten at koden var merget til `main`. Dette er formalisert i BIN-534.
+
+### Tre krav før en legacy-avkobling-task kan lukkes
+
+1. **Commit merget til `main`.** Issues kan ikke lukkes basert på PR-åpning eller feature-branch-commit. Merge-commit-SHA må dokumenteres i en kommentar på issuen.
+2. **`file:line`-bevis i ny struktur.** En kommentar med eksakt path (`apps/backend/...`, `packages/...`, `legacy/...` osv.) som viser endringen, ikke bare en generell beskrivelse.
+3. **Verifiserende test er grønn i CI.** Enten ny test, eller eksisterende test oppdatert, som fanger regresjon av oppførselen. Link til CI-kjøring er anbefalt.
+
+### Hvorfor
+
+Spillorama er et regulert pengespillsystem. Å påstå at et kontrollpunkt er lukket uten at koden er i drift, er en revisjonsrisiko:
+
+- Regulatorisk revisjon (Lotteritilsynet) kan kreve bevis på at funn er lukket.
+- Interne audits av legacy-avkobling trenger én sannhets-kilde.
+- Prosjekt-DoD ([prosjektbeskrivelse](https://linear.app/bingosystem/project/legacy-avkobling-game-1-5-backend-paritet-a973e623234a)) avhenger av at parity-matrix (BIN-525) er korrekt — som igjen avhenger av at Done er ekte Done.
+
+### Hva skjer hvis en issue lukkes feilaktig
+
+1. Reviewer/PM reåpner issuen og legger inn kommentar med kravet som mangler.
+2. Prioritet kan justeres (f.eks. ned til Low hvis lite kritisk, eller opp til Urgent hvis den blokkerer release-gate).
+3. Hvis mønsteret gjentar seg, eskaleres til prosjektlederen.
+
+### PR-template
+
+`.github/pull_request_template.md` har en egen seksjon "Legacy-avkobling Done-policy" med sjekkliste for å huske kravene.
+
+### Retrospektiv validering
+
+Ved prosjektets oppstart (2026-04-17) ble alle eksisterende Done-issues i prosjektet validert mot policyen. Fire ble reåpnet (BIN-494, 498, 501, 520). BIN-495 ble bekreftet OK.
