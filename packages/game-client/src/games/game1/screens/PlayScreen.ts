@@ -178,7 +178,10 @@ export class PlayScreen extends Container {
       onPreBuy: () => {
         const fee = this.lastState?.entryFee || 10;
         const types = this.lastState?.ticketTypes ?? [];
-        this.buyPopup?.showWithTypes(fee, types);
+        // Unity: Game1PurchaseTicket.cs:69 — fratrekk allerede-kjøpte brett
+        // fra 30-grensen før plus-knappene evalueres.
+        const alreadyPurchased = this.lastState?.myTickets?.length ?? 0;
+        this.buyPopup?.showWithTypes(fee, types, alreadyPurchased);
       },
       onSelectLuckyNumber: () => {
         this.onLuckyNumberTap?.();
@@ -186,7 +189,8 @@ export class PlayScreen extends Container {
       onBuyMoreTickets: () => {
         const fee = this.lastState?.entryFee || 10;
         const types = this.lastState?.ticketTypes ?? [];
-        this.buyPopup?.showWithTypes(fee, types);
+        const alreadyPurchased = this.lastState?.myTickets?.length ?? 0;
+        this.buyPopup?.showWithTypes(fee, types, alreadyPurchased);
       },
       onCancelTickets: () => {
         this.onCancelTickets?.();
@@ -307,7 +311,13 @@ export class PlayScreen extends Container {
     }
 
     // Show buy popup — only with backend ticket types (no client fallback)
-    this.buyPopup?.showWithTypes(state.entryFee || 10, state.ticketTypes ?? []);
+    // Unity: Game1PurchaseTicket.cs:69 — pass myTickets.length så 30-grensen
+    // respekterer allerede-kjøpte brett fra server.
+    this.buyPopup?.showWithTypes(
+      state.entryFee || 10,
+      state.ticketTypes ?? [],
+      state.myTickets?.length ?? 0,
+    );
 
     // Update info panels
     this.updateInfo(state);
@@ -342,7 +352,11 @@ export class PlayScreen extends Container {
       const hadTypes = prevTypes && prevTypes.length > 0;
       const hasTypes = state.ticketTypes && state.ticketTypes.length > 0;
       if (!hadTypes && hasTypes) {
-        this.buyPopup?.showWithTypes(state.entryFee || 10, state.ticketTypes);
+        this.buyPopup?.showWithTypes(
+          state.entryFee || 10,
+          state.ticketTypes,
+          state.myTickets?.length ?? 0,
+        );
       }
     }
 

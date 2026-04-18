@@ -1,11 +1,30 @@
 import type { HtmlOverlayManager } from "./HtmlOverlayManager.js";
 
 /**
+ * Maks antall vektede brett én spiller kan kjøpe per runde.
+ *
+ * Speiler Unity `BingoTemplates.cs:86` (`maxPurchaseTicket = 30`) og backend
+ * håndhevelse i `apps/backend/src/sockets/gameEvents.ts:533-547` + DB CHECK i
+ * `migrations/20260413000002_max_tickets_30_all_games.sql`.
+ *
+ * Én "Large"/"Elvis" med `ticketCount=3` teller som 3 vektede brett. Klienten
+ * er kun UX-lag — serveren er autoritativ.
+ */
+const MAX_WEIGHTED_TICKETS = 30;
+
+/**
  * Game 1 ticket purchase popup — 3-column grid with +/- per type.
  *
  * Shows each ticket type from the backend with its own quantity selector.
  * Player adjusts quantities and clicks "Kjøp" to arm for the next round.
  * Transparent backdrop so the draw is visible behind.
+ *
+ * Implementerer også Unity-avledet 30-brett-grense:
+ *   - Plus-knapp per rad disables når rad ville overskride remaining-kapasitet
+ *     (Unity: `Game1PurchaseTicket.cs:67-93`, `PrefabGame1TicketPurchaseSubType.cs:48-58`).
+ *   - `alreadyPurchased` (antall brett allerede kjøpt denne runden) fratrekkes
+ *     før remaining beregnes (Unity: `Game1PurchaseTicket.cs:69`).
+ *   - X-knapp per rad nullstiller qty (klient-state, ingen popup).
  */
 export class Game1BuyPopup {
   private backdrop: HTMLDivElement;
@@ -16,12 +35,16 @@ export class Game1BuyPopup {
   private buyBtn: HTMLButtonElement;
 
   private onBuy: ((selections: Array<{ type: string; qty: number }>) => void) | null = null;
+  private alreadyPurchased = 0;
   private typeRows: Array<{
     type: string;
     price: number;
     ticketCount: number;
     qty: number;
     qtyLabel: HTMLSpanElement;
+    plusBtn: HTMLButtonElement;
+    minusBtn: HTMLButtonElement;
+    clearBtn: HTMLButtonElement;
   }> = [];
 
   constructor(private overlay: HtmlOverlayManager) {
@@ -124,13 +147,20 @@ export class Game1BuyPopup {
    * Show popup with ticket types from backend.
    * Each type gets a card with +/- qty selector in a 3-column grid.
    * If ticketTypes is empty, does nothing (waits for backend data).
+   *
+   * @param alreadyPurchased Antall brett spilleren allerede har kjøpt denne
+   *   runden (typisk `state.myTickets.length`). Speiler Unity
+   *   `Game1PurchaseTicket.cs:69` hvor serveren-gitt ticket-count subtraheres
+   *   fra 30-grensen før plus-knappene evalueres.
    */
   showWithTypes(
     entryFee: number,
     ticketTypes: Array<{ name: string; type: string; priceMultiplier: number; ticketCount: number }>,
+    alreadyPurchased = 0,
   ): void {
     if (ticketTypes.length === 0) return;
 
+    this.alreadyPurchased = Math.max(0, alreadyPurchased);
     this.typesContainer.innerHTML = "";
     this.typeRows = [];
 
@@ -140,11 +170,7 @@ export class Game1BuyPopup {
     }
 
     this.updateTotal();
-    this.statusMsg.textContent = "";
-    this.buyBtn.disabled = false;
     this.buyBtn.textContent = "Kjøp";
-    this.buyBtn.style.opacity = "1";
-    this.buyBtn.style.cursor = "pointer";
     this.backdrop.style.display = "flex";
   }
 
@@ -201,7 +227,37 @@ export class Game1BuyPopup {
       border: "1px solid rgba(255,255,255,0.12)",
       borderRadius: "10px",
       padding: "10px 8px",
+      position: "relative",
     });
+
+    // X-knapp (delete/clear) — synlig kun når qty > 0. Klient-state, ingen popup.
+    // Mønster fra Unity `Game1ViewPurchaseElvisTicket.cs:17,49-76` (deleteBtn),
+    // tilpasset til vår per-rad UX: X nullstiller qty i stedet for å delete
+    // en ikke-eksisterende server-bong.
+    const clearBtn = document.createElement("button");
+    clearBtn.textContent = "\u00d7";
+    clearBtn.setAttribute("aria-label", `Fjern ${name}`);
+    Object.assign(clearBtn.style, {
+      position: "absolute",
+      top: "4px",
+      right: "4px",
+      width: "22px",
+      height: "22px",
+      borderRadius: "50%",
+      border: "1px solid rgba(255,255,255,0.3)",
+      background: "rgba(0,0,0,0.5)",
+      color: "#fff",
+      fontSize: "14px",
+      lineHeight: "1",
+      fontWeight: "700",
+      cursor: "pointer",
+      padding: "0",
+      display: "none",
+      opacity: "1",
+      transition: "opacity 0.15s",
+      fontFamily: "inherit",
+    });
+    card.appendChild(clearBtn);
 
     const nameEl = document.createElement("div");
     nameEl.textContent = ticketCount > 1 ? `${name} (${ticketCount} brett)` : name;
@@ -228,17 +284,45 @@ export class Game1BuyPopup {
       minWidth: "32px", textAlign: "center",
     });
 
-    const entry = { type, price, ticketCount, qty: 0, qtyLabel };
+    const minusBtn = this.createRoundBtn("\u2212");
+    const plusBtn = this.createRoundBtn("+");
+
+    const entry = {
+      type,
+      price,
+      ticketCount,
+      qty: 0,
+      qtyLabel,
+      plusBtn,
+      minusBtn,
+      clearBtn,
+    };
     this.typeRows.push(entry);
 
-    const minusBtn = this.createRoundBtn("\u2212");
     minusBtn.addEventListener("click", () => {
-      if (entry.qty > 0) { entry.qty--; qtyLabel.textContent = String(entry.qty); this.updateTotal(); }
+      if (entry.qty > 0) {
+        entry.qty--;
+        qtyLabel.textContent = String(entry.qty);
+        this.updateTotal();
+      }
     });
 
-    const plusBtn = this.createRoundBtn("+");
     plusBtn.addEventListener("click", () => {
-      entry.qty++; qtyLabel.textContent = String(entry.qty); this.updateTotal();
+      if (plusBtn.disabled) return;
+      entry.qty++;
+      qtyLabel.textContent = String(entry.qty);
+      this.updateTotal();
+    });
+
+    clearBtn.addEventListener("click", () => {
+      if (entry.qty === 0) return;
+      // 150ms fade på X-knappen i det raden resettes (UX-valg jf. PR-3-plan).
+      clearBtn.style.opacity = "0";
+      entry.qty = 0;
+      qtyLabel.textContent = "0";
+      this.updateTotal();
+      // updateTotal() skjuler X via display:none når qty=0; opacity nullstilles
+      // via reset i updateTotal slik at neste visning starter på full opacity.
     });
 
     qtyRow.appendChild(minusBtn);
@@ -249,20 +333,74 @@ export class Game1BuyPopup {
     this.typesContainer.appendChild(card);
   }
 
+  /**
+   * Rekalkuler total, status-melding og per-rad plus/X-knapp tilgjengelighet.
+   *
+   * Vektet logikk: `remaining = MAX - alreadyPurchased - Σ(qty × ticketCount)`.
+   * Plus-knapp for rad disables når å legge til én til ville overskride remaining
+   * (dvs. når `ticketCount > remaining`). Mønster fra Unity
+   * `PrefabGame1TicketPurchaseSubType.cs:48-58,76` (`AllowMorePurchase`).
+   *
+   * Edge case: dersom `alreadyPurchased >= MAX` skjules alle plus-knapper, buy
+   * disables, og en dedikert melding vises.
+   */
   private updateTotal(): void {
     const total = this.typeRows.reduce((sum, r) => sum + r.qty * r.price, 0);
-    const totalTickets = this.typeRows.reduce((sum, r) => sum + r.qty, 0);
+    const weightedSelected = this.typeRows.reduce((sum, r) => sum + r.qty * r.ticketCount, 0);
+    const remaining = MAX_WEIGHTED_TICKETS - this.alreadyPurchased - weightedSelected;
+
     this.totalLabel.textContent = `Totalt: ${total} kr`;
 
-    if (totalTickets === 0) {
+    // Edge case: spiller har allerede nådd 30 → ingen flere brett kan legges til.
+    const atHardCap = this.alreadyPurchased >= MAX_WEIGHTED_TICKETS;
+
+    for (const row of this.typeRows) {
+      // Plus disables når rad-vekten ikke får plass i remaining, eller ved hard cap.
+      const disable = atHardCap || row.ticketCount > remaining;
+      row.plusBtn.disabled = disable;
+      row.plusBtn.style.opacity = disable ? "0.35" : "1";
+      row.plusBtn.style.cursor = disable ? "not-allowed" : "pointer";
+
+      // X-knapp synlig kun når qty > 0. Reset opacity til 1 når vi skjuler den
+      // slik at neste visning starter rent (pairs med fade-out i onClick).
+      if (row.qty > 0) {
+        row.clearBtn.style.display = "block";
+        row.clearBtn.style.opacity = "1";
+      } else {
+        row.clearBtn.style.display = "none";
+        row.clearBtn.style.opacity = "1";
+      }
+    }
+
+    // Status-melding og buy-knapp state
+    if (atHardCap) {
+      this.statusMsg.style.color = "#ffe83d";
+      this.statusMsg.textContent = "Du har maks 30 brett denne runden";
       this.buyBtn.disabled = true;
       this.buyBtn.style.opacity = "0.5";
       this.buyBtn.style.cursor = "default";
-    } else {
-      this.buyBtn.disabled = false;
-      this.buyBtn.style.opacity = "1";
-      this.buyBtn.style.cursor = "pointer";
+      return;
     }
+
+    if (weightedSelected === 0) {
+      this.statusMsg.textContent = "";
+      this.buyBtn.disabled = true;
+      this.buyBtn.style.opacity = "0.5";
+      this.buyBtn.style.cursor = "default";
+      return;
+    }
+
+    if (remaining === 0) {
+      // Sum av alreadyPurchased + selected == MAX → grønn "maks valgt"-melding.
+      this.statusMsg.style.color = "#81c784";
+      this.statusMsg.textContent = "Maks 30 brett valgt";
+    } else {
+      this.statusMsg.textContent = "";
+    }
+
+    this.buyBtn.disabled = false;
+    this.buyBtn.style.opacity = "1";
+    this.buyBtn.style.cursor = "pointer";
   }
 
   private handleBuy(): void {
@@ -286,11 +424,15 @@ export class Game1BuyPopup {
       background: "rgba(255,255,255,0.08)",
       color: "#fff", fontSize: "22px", fontWeight: "700",
       cursor: "pointer", display: "flex", alignItems: "center",
-      justifyContent: "center", transition: "background 0.15s",
+      justifyContent: "center", transition: "background 0.15s, opacity 0.15s",
       fontFamily: "inherit",
     });
-    btn.addEventListener("mouseenter", () => { btn.style.background = "rgba(255,255,255,0.18)"; });
-    btn.addEventListener("mouseleave", () => { btn.style.background = "rgba(255,255,255,0.08)"; });
+    btn.addEventListener("mouseenter", () => {
+      if (!btn.disabled) btn.style.background = "rgba(255,255,255,0.18)";
+    });
+    btn.addEventListener("mouseleave", () => {
+      if (!btn.disabled) btn.style.background = "rgba(255,255,255,0.08)";
+    });
     return btn;
   }
 
