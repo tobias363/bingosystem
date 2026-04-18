@@ -350,10 +350,28 @@ app.get("/metrics", async (_req, res) => {
 });
 
 app.get("/health", async (_req, res) => {
-  try {
-    const [wallets, games, halls] = await Promise.all([walletAdapter.listAccounts(), platformService.listGames({ includeDisabled: true }), platformService.listHalls({ includeInactive: true })]);
-    apiSuccess(res, { rooms: engine.getAllRoomCodes().length, wallets: wallets.length, games: games.length, halls: halls.length, walletProvider: walletRuntime.provider, swedbankConfigured: swedbankPayService.isConfigured(), ...drawScheduler.healthSummary(), timestamp: new Date().toISOString() });
-  } catch (error) { apiFailure(res, error); }
+  // Per-dependency try/catch so a single failing subsystem doesn't 500 the
+  // whole endpoint. Render's health probe only cares about HTTP 200 + reachable;
+  // full subsystem-status lives in the JSON body. Failed subsystems get
+  // `status: "error"` + message so ops can see what's degraded.
+  const checks: Record<string, unknown> = { timestamp: new Date().toISOString() };
+  async function safe<T>(name: string, fn: () => Promise<T> | T): Promise<void> {
+    try { checks[name] = await fn(); }
+    catch (err) {
+      console.error(`[/health] ${name} failed:`, err);
+      checks[name] = { status: "error", message: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  await Promise.all([
+    safe("wallets", async () => (await walletAdapter.listAccounts()).length),
+    safe("games", async () => (await platformService.listGames({ includeDisabled: true })).length),
+    safe("halls", async () => (await platformService.listHalls({ includeInactive: true })).length),
+    safe("rooms", () => engine.getAllRoomCodes().length),
+    safe("drawScheduler", () => drawScheduler.healthSummary()),
+  ]);
+  checks.walletProvider = walletRuntime.provider;
+  checks.swedbankConfigured = swedbankPayService.isConfigured();
+  res.json({ ok: true, data: checks });
 });
 
 app.get("/health/draw-engine", (_req, res) => {
