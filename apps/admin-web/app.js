@@ -10,6 +10,7 @@ const CHAT3_SECTION_ACCESS_RULES = {
   "section-wallet-compliance": { permissions: ["WALLET_COMPLIANCE_READ"], mode: "all" },
   "section-prize-policy": { permissions: ["PRIZE_POLICY_READ"], mode: "all" },
   "section-room-control": { permissions: ["ROOM_CONTROL_READ"], mode: "all" },
+  "section-payment-requests": { permissions: ["PAYMENT_REQUEST_READ"], mode: "all" },
   "section-dashboard": { permissions: ["ROOM_CONTROL_READ", "DAILY_REPORT_READ"], mode: "any" },
   "section-settings-change-log": { permissions: ["GAME_SETTINGS_CHANGELOG_READ"], mode: "all" }
 };
@@ -50,7 +51,10 @@ const CHAT3_ACTION_PERMISSION_RULES = {
   loadPrizePolicyBtn: "PRIZE_POLICY_READ",
   savePrizePolicyBtn: "PRIZE_POLICY_WRITE",
   awardExtraPrizeBtn: "EXTRA_PRIZE_AWARD",
-  settingsLogLoadBtn: "GAME_SETTINGS_CHANGELOG_READ"
+  settingsLogLoadBtn: "GAME_SETTINGS_CHANGELOG_READ",
+  // BIN-589: payment-requests
+  reloadPaymentRequestsBtn: "PAYMENT_REQUEST_READ"
+  // Accept/reject-knapper rendres dynamisk per rad; gate i render-funksjonen.
 };
 // Chat3: RBAC block end
 const SECTION_HASH_PREFIX = "#section-";
@@ -192,6 +196,15 @@ const elements = {
   resumeGameBtn: document.getElementById("resumeGameBtn"),
   forceEndBtn: document.getElementById("forceEndBtn"),
   hallEventStatus: document.getElementById("hallEventStatus"),
+
+  // BIN-589: Payment-requests admin-UI.
+  paymentRequestHallFilter: document.getElementById("paymentRequestHallFilter"),
+  paymentRequestTypeFilter: document.getElementById("paymentRequestTypeFilter"),
+  paymentRequestStatusFilter: document.getElementById("paymentRequestStatusFilter"),
+  reloadPaymentRequestsBtn: document.getElementById("reloadPaymentRequestsBtn"),
+  paymentRequestsList: document.getElementById("paymentRequestsList"),
+  paymentRequestsStatus: document.getElementById("paymentRequestsStatus"),
+
   // BIN-517: Dashboard elements.
   refreshDashboardBtn: document.getElementById("refreshDashboardBtn"),
   dashboardAutoRefresh: document.getElementById("dashboardAutoRefresh"),
@@ -741,6 +754,15 @@ function applyAdminSection(sectionId, options = {}) {
     if (window.location.hash !== hash) {
       window.history.replaceState(null, "", hash);
     }
+  }
+
+  // BIN-589: auto-load payment-requests når seksjonen åpnes — sparer et klikk
+  // for hall-operator som svarer på pending requests. Samme lazy-load-mønster
+  // som brukes andre steder (ingen prefetch før seksjonen vises).
+  if (targetSectionId === "section-payment-requests" && chat3HasPermission("PAYMENT_REQUEST_READ")) {
+    loadPaymentRequests().catch((err) => {
+      setStatus(elements.paymentRequestsStatus, err.message || "Kunne ikke laste forespørsler.", "error");
+    });
   }
 }
 
@@ -1775,6 +1797,15 @@ function renderHallOptions() {
   setSelectOptions(elements.complianceHallSelect, hallOptionsAll, previousComplianceHall, "Ingen haller");
   setSelectOptions(elements.prizePolicyHallSelect, hallOptionsAll, previousPrizePolicyHall, "Ingen haller");
   setSelectOptions(elements.extraPrizeHallSelect, hallOptionsAll, previousExtraPrizeHall, "Ingen haller");
+
+  // BIN-589: payment-requests filter keeps an "Alle haller" option (value="")
+  // so ADMIN can see all halls at once. HALL_OPERATOR is backend-scoped via
+  // BIN-591 regardless of filter choice.
+  if (elements.paymentRequestHallFilter) {
+    const previousPaymentHall = elements.paymentRequestHallFilter.value;
+    const paymentHallOptions = [{ value: "", label: "Alle haller" }, ...hallOptionsAll];
+    setSelectOptions(elements.paymentRequestHallFilter, paymentHallOptions, previousPaymentHall, "Ingen haller");
+  }
 
   renderSelectedHallEditor();
   renderSelectedHallGameConfig();
@@ -3171,6 +3202,184 @@ async function handleRevokeDisplayToken(tokenId) {
   setStatus(elements.displayTokenStatus, "Token tilbakekalt.", "success");
 }
 
+// ── BIN-589: Payment-requests (deposit/withdraw-kø) ─────────────────────────
+
+function formatPaymentAmount(amountCents) {
+  const kr = Number(amountCents || 0) / 100;
+  return kr.toLocaleString("nb-NO", { style: "currency", currency: "NOK" });
+}
+
+function formatPaymentDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("nb-NO", { dateStyle: "short", timeStyle: "short" });
+}
+
+function getPaymentRequestHallName(hallId) {
+  if (!hallId) return "—";
+  const hall = (state.halls || []).find((h) => h.id === hallId);
+  return hall ? hall.name : hallId;
+}
+
+function renderPaymentRequests(requests) {
+  elements.paymentRequestsList.innerHTML = "";
+  if (!Array.isArray(requests) || requests.length === 0) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 7;
+    td.style.padding = "8px";
+    td.className = "muted";
+    td.textContent = "Ingen forespørsler matcher filteret.";
+    tr.appendChild(td);
+    elements.paymentRequestsList.appendChild(tr);
+    return;
+  }
+  const canWrite = chat3HasPermission("PAYMENT_REQUEST_WRITE");
+  for (const req of requests) {
+    const tr = document.createElement("tr");
+    tr.style.borderBottom = "1px solid #e5e7eb";
+
+    const typeCell = document.createElement("td");
+    typeCell.style.padding = "6px";
+    typeCell.style.fontWeight = "600";
+    typeCell.style.color = req.kind === "deposit" ? "#047857" : "#b45309";
+    typeCell.textContent = req.kind === "deposit" ? "Innskudd" : "Uttak";
+
+    const hallCell = document.createElement("td");
+    hallCell.style.padding = "6px";
+    hallCell.textContent = getPaymentRequestHallName(req.hallId);
+
+    const playerCell = document.createElement("td");
+    playerCell.style.padding = "6px";
+    playerCell.innerHTML = `<div>${req.userId || "—"}</div><div class="muted" style="font-size: 11px;">${req.walletId || "—"}</div>`;
+
+    const amountCell = document.createElement("td");
+    amountCell.style.padding = "6px";
+    amountCell.style.fontFamily = "monospace";
+    amountCell.textContent = formatPaymentAmount(req.amountCents);
+
+    const createdCell = document.createElement("td");
+    createdCell.style.padding = "6px";
+    createdCell.textContent = formatPaymentDate(req.createdAt);
+
+    const statusCell = document.createElement("td");
+    statusCell.style.padding = "6px";
+    const statusLabel = {
+      PENDING: "Pending",
+      ACCEPTED: "Godkjent",
+      REJECTED: "Avvist"
+    }[req.status] || req.status;
+    const statusColor = {
+      PENDING: "#d97706",
+      ACCEPTED: "#047857",
+      REJECTED: "#991b1b"
+    }[req.status] || "#374151";
+    statusCell.innerHTML = `<span style="color: ${statusColor}; font-weight: 600;">${statusLabel}</span>`;
+    if (req.status === "REJECTED" && req.rejectionReason) {
+      const reason = document.createElement("div");
+      reason.className = "muted";
+      reason.style.fontSize = "11px";
+      reason.textContent = req.rejectionReason;
+      statusCell.appendChild(reason);
+    }
+
+    const actionCell = document.createElement("td");
+    actionCell.style.padding = "6px";
+    if (req.status === "PENDING" && canWrite) {
+      const acceptBtn = document.createElement("button");
+      acceptBtn.textContent = "Godkjenn";
+      acceptBtn.style.marginRight = "6px";
+      acceptBtn.addEventListener("click", () => {
+        handleAcceptPaymentRequest(req).catch((err) => {
+          setStatus(elements.paymentRequestsStatus, err.message || "Klarte ikke godkjenne.", "error");
+        });
+      });
+      const rejectBtn = document.createElement("button");
+      rejectBtn.className = "secondary";
+      rejectBtn.textContent = "Avvis";
+      rejectBtn.addEventListener("click", () => {
+        handleRejectPaymentRequest(req).catch((err) => {
+          setStatus(elements.paymentRequestsStatus, err.message || "Klarte ikke avvise.", "error");
+        });
+      });
+      actionCell.appendChild(acceptBtn);
+      actionCell.appendChild(rejectBtn);
+    } else if (req.status === "PENDING" && !canWrite) {
+      // RBAC: READ-only-rollen (SUPPORT) ser forespørsler, men ikke handlings-knappene.
+      const note = document.createElement("span");
+      note.className = "muted";
+      note.style.fontSize = "11px";
+      note.textContent = "Krever PAYMENT_REQUEST_WRITE";
+      actionCell.appendChild(note);
+    } else {
+      actionCell.className = "muted";
+      actionCell.textContent = "—";
+    }
+
+    tr.append(typeCell, hallCell, playerCell, amountCell, createdCell, statusCell, actionCell);
+    elements.paymentRequestsList.appendChild(tr);
+  }
+}
+
+async function loadPaymentRequests() {
+  const params = new URLSearchParams();
+  const type = (elements.paymentRequestTypeFilter.value || "").trim();
+  const status = (elements.paymentRequestStatusFilter.value || "").trim();
+  const hallId = (elements.paymentRequestHallFilter.value || "").trim();
+  if (type) params.set("type", type);
+  if (status) params.set("status", status);
+  if (hallId) params.set("hallId", hallId);
+  const qs = params.toString();
+  try {
+    const data = await apiRequest(
+      `/api/admin/payments/requests${qs ? `?${qs}` : ""}`,
+      { auth: true }
+    );
+    const requests = Array.isArray(data?.requests) ? data.requests : [];
+    renderPaymentRequests(requests);
+    setStatus(
+      elements.paymentRequestsStatus,
+      `${requests.length} forespørsel${requests.length === 1 ? "" : "er"} lastet.`,
+      "success"
+    );
+  } catch (error) {
+    renderPaymentRequests([]);
+    setStatus(elements.paymentRequestsStatus, error.message || "Kunne ikke laste forespørsler.", "error");
+  }
+}
+
+async function handleAcceptPaymentRequest(req) {
+  const label = req.kind === "deposit" ? "innskudd" : "uttak";
+  const amount = formatPaymentAmount(req.amountCents);
+  if (!window.confirm(`Godkjenne ${label} på ${amount} for wallet ${req.walletId}?\n\nWallet-saldoen oppdateres med én gang.`)) {
+    return;
+  }
+  await apiRequest(
+    `/api/admin/payments/requests/${encodeURIComponent(req.id)}/accept`,
+    { method: "POST", auth: true, body: { type: req.kind } }
+  );
+  setStatus(elements.paymentRequestsStatus, `Forespørsel godkjent (${amount}).`, "success");
+  await loadPaymentRequests();
+}
+
+async function handleRejectPaymentRequest(req) {
+  const label = req.kind === "deposit" ? "innskudd" : "uttak";
+  const reason = window.prompt(`Grunn for å avvise ${label} på ${formatPaymentAmount(req.amountCents)}?`);
+  if (reason === null) return; // Avbrutt
+  const trimmed = (reason || "").trim();
+  if (!trimmed) {
+    setStatus(elements.paymentRequestsStatus, "Avvis-grunn kan ikke være tom.", "error");
+    return;
+  }
+  await apiRequest(
+    `/api/admin/payments/requests/${encodeURIComponent(req.id)}/reject`,
+    { method: "POST", auth: true, body: { type: req.kind, reason: trimmed } }
+  );
+  setStatus(elements.paymentRequestsStatus, "Forespørsel avvist.", "success");
+  await loadPaymentRequests();
+}
+
 function buildTerminalPayload() {
   const hallId = (elements.terminalHallId.value || "").trim();
   const terminalCode = (elements.terminalCode.value || "").trim();
@@ -3603,6 +3812,29 @@ async function bootstrap() {
   elements.dismissDisplayTokenBtn.addEventListener("click", () => {
     hideDisplayTokenReveal();
   });
+
+  // BIN-589: payment-requests list + filters.
+  if (elements.reloadPaymentRequestsBtn) {
+    elements.reloadPaymentRequestsBtn.addEventListener("click", () => {
+      loadPaymentRequests().catch((err) => {
+        setStatus(elements.paymentRequestsStatus, err.message || "Kunne ikke laste forespørsler.", "error");
+      });
+    });
+  }
+  // Re-laste automatisk ved endring av filter gir raskere operatør-flyt — samme
+  // mønster som andre filter-drevne seksjoner. Ingen debounce trengs: tre selects.
+  for (const filter of [
+    elements.paymentRequestHallFilter,
+    elements.paymentRequestTypeFilter,
+    elements.paymentRequestStatusFilter
+  ]) {
+    if (!filter) continue;
+    filter.addEventListener("change", () => {
+      loadPaymentRequests().catch((err) => {
+        setStatus(elements.paymentRequestsStatus, err.message || "Kunne ikke laste forespørsler.", "error");
+      });
+    });
+  }
 
   elements.createHallBtn.addEventListener("click", () => {
     handleCreateHall().catch((error) => {

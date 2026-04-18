@@ -342,6 +342,7 @@
               <a href="#section-wallet-compliance">Wallet Compliance</a>
               <a href="#section-prize-policy">Prize Policy & Extra Prize</a>
               <a href="#section-room-control">Romkontroll</a>
+              <a href="#section-payment-requests">Deposit/Withdraw-forespørsler</a>
               <a href="#section-dashboard">Dashboard</a>
               <a href="#section-hall-display">TV-display-tokens</a>
             </nav>
@@ -896,6 +897,57 @@
             <pre id="hallEventStatus" class="status" style="margin-top: 8px;">Klar.</pre>
           </div>
           <pre id="roomStatus" class="status">Ingen rom valgt.</pre>
+        </article>
+
+        <!-- BIN-589: Deposit/Withdraw-kø admin-UI (BIN-586 backend-port). -->
+        <article id="section-payment-requests" class="card admin-section">
+          <h2>Deposit/Withdraw-forespørsler</h2>
+          <p class="muted">
+            Hall-operatører godkjenner eller avviser innskudd/uttak. Wallet-operasjonen skjer
+            først når admin klikker «Godkjenn» — opprettelse alene rører ikke saldoen.
+          </p>
+          <div class="grid">
+            <div class="field">
+              <label for="paymentRequestHallFilter">Hall</label>
+              <select id="paymentRequestHallFilter">
+                <option value="">Alle haller</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="paymentRequestTypeFilter">Type</label>
+              <select id="paymentRequestTypeFilter">
+                <option value="">Alle</option>
+                <option value="deposit">Innskudd (deposit)</option>
+                <option value="withdraw">Uttak (withdraw)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="paymentRequestStatusFilter">Status</label>
+              <select id="paymentRequestStatusFilter">
+                <option value="PENDING" selected>Pending</option>
+                <option value="ACCEPTED">Godkjent</option>
+                <option value="REJECTED">Avvist</option>
+              </select>
+            </div>
+          </div>
+          <div class="toolbar">
+            <button id="reloadPaymentRequestsBtn" class="secondary">Oppdater liste</button>
+          </div>
+          <table id="paymentRequestsTable" style="width: 100%; border-collapse: collapse; margin-top: 12px;">
+            <thead>
+              <tr style="text-align: left; border-bottom: 1px solid #d1d5db;">
+                <th style="padding: 6px;">Type</th>
+                <th style="padding: 6px;">Hall</th>
+                <th style="padding: 6px;">Spiller / Wallet</th>
+                <th style="padding: 6px;">Beløp</th>
+                <th style="padding: 6px;">Opprettet</th>
+                <th style="padding: 6px;">Status</th>
+                <th style="padding: 6px;">Handling</th>
+              </tr>
+            </thead>
+            <tbody id="paymentRequestsList"></tbody>
+          </table>
+          <pre id="paymentRequestsStatus" class="status">Ingen forespørsler lastet.</pre>
         </article>
           </div>
         </div>
