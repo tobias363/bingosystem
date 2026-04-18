@@ -230,9 +230,17 @@ Append one row per event — **both** staging rehearsals and prod hall cutovers.
 | 2026-04-18T07:32:50Z | staging (Render free) | staging-hall-1 | rehearsal — step 7 (admin hall-events: pause + resume via socket) | agent-2 | 07:32:50Z | 07:32:50Z | **blocked** | Admin socket connected OK. `room:create` socket ack returned `{code:"INTERNAL_ERROR",message:"Uventet feil i server."}`. Same root cause as step 4 — `createRoom` path traverses `platformService.requireActiveHall` → `app_halls` SELECT, which fails with the missing-column error. Re-run this step once staging DB is fixed (see Findings §S1). [BIN-515](https://linear.app/bingosystem/issue/BIN-515). |
 | 2026-04-18T07:32:50Z | staging (Render free) | staging-hall-1 | rehearsal — step 3 (TV-display subscribe + draw mirror) | agent-2 | 07:32:50Z | 07:32:50Z | **blocked** | `POST /api/admin/halls/hall-default/display-tokens` returned 400 `INTERNAL_ERROR`. Same root cause as step 4 — the `listHallDisplayTokens` / `createHallDisplayToken` CRUD calls `platformService.getHall(...)` under the hood, which runs the same broken hall-SELECT. Re-run once staging DB is fixed. [BIN-498](https://linear.app/bingosystem/issue/BIN-498) / [BIN-503](https://linear.app/bingosystem/issue/BIN-503). |
 | 2026-04-18T07:32:51Z | staging (Render free) | staging-hall-1 | rehearsal — step 5 (late-join spectator, 2 clients) | agent-2 | 07:32:51Z | 07:32:51Z | **blocked** | Client A + B both logged in and socket-connected OK. Client A `room:create` ack returned `{code:"INTERNAL_ERROR"}`. Same root cause as step 4. Re-run once staging DB is fixed. [BIN-500](https://linear.app/bingosystem/issue/BIN-500) / [BIN-507](https://linear.app/bingosystem/issue/BIN-507). |
-| _(neste rad: re-run step 3/5/7 post-fix via `apps/backend/scripts/staging-rehearsal.mjs STEPS=3,5,7`)_ | staging | staging-hall-1 | rehearsal — hands-on step 3/5/7 re-run | | | | | |
+| 2026-04-18T08:04:03Z | staging (Render free, post S1/S2/S3 fix) | staging-hall-1 | rehearsal — step 7 (admin hall-events: pause + resume via socket) — re-run | agent-2 | 08:04:03Z | 08:04:05Z | pass | room `BINGO1`, `room:create` OK (admin passed `playerId` per BIN-46 derivation rule), `admin:login` ack role=ADMIN canControlRooms=true, `admin:pause-game` ack OK → broadcast received (kind=`paused`, roomCode match), 1.5 s pause, `admin:resume-game` ack OK → broadcast received (kind=`resumed`). Varighet 2.2 s. Sanity note: one `draw:next` pre-pause tripped `DRAW_TOO_FAST` (1.4 s rate limit per BIN-253) — unrelated to the pause/resume invariant being tested. [BIN-515](https://linear.app/bingosystem/issue/BIN-515). |
+| 2026-04-18T08:04:05Z | staging (Render free, post S1/S2/S3 fix) | staging-hall-1 | rehearsal — step 4 (feature-flag switch web → unity → web, full round-trip) — re-run | agent-2 | 08:04:05Z | 08:04:05Z | pass | Baseline admin-view=public-view=`web`. `PUT /api/admin/halls/hall-default` with `{clientVariant:"unity"}` → admin ack `unity` + public read `/api/halls/staging-hall-1/client-variant` → `unity` (cache-invalidated post PR [#163](https://github.com/tobias363/Spillorama-system/pull/163), no TTL wait needed). Restored to `web` — admin ack + public read consistent. Round-trip < 1 s. [BIN-540](https://linear.app/bingosystem/issue/BIN-540). |
+| 2026-04-18T08:04:05Z | staging (Render free, post S1 fix) | staging-hall-1 | rehearsal — step 3 (TV-display subscribe + draw mirror) — re-run | agent-2 | 08:04:05Z | 08:04:05Z | **blocked** | `POST /api/admin/halls/hall-default/display-tokens` still returns 400 `INTERNAL_ERROR` after S1 column-fix. Root cause is a **different** missing migration: `20260418150000_hall_display_tokens.sql` (creates the `app_hall_display_tokens` table itself). S1 only added columns to `app_halls`; the separate BIN-503 token table was never created on staging. See **Findings — S4** below. Re-run step 3 after the table is created. [BIN-498](https://linear.app/bingosystem/issue/BIN-498) / [BIN-503](https://linear.app/bingosystem/issue/BIN-503). |
+| 2026-04-18T08:04:06Z | staging (Render free, post S1/S2/S3 fix) | staging-hall-1 | rehearsal — step 5 (late-join spectator: B joins after draws, receives live broadcasts) — re-run | agent-2 | 08:04:06Z | 08:04:10Z | pass | Clients A + B logged in + socket-connected. A created room `BINGO1`, armed bet, started game, drew tall. B called `room:join` mid-game — ack returned a snapshot with `currentGame.status=RUNNING` and `drawnNumbers.length=2` (SPECTATING-phase signal). A drew one more tall; B's socket received a live `draw:new` event within 10 s. Invariant satisfied: late-join observes an already-running game and receives subsequent live events. Sanity note: A's 5 draw attempts were throttled by BIN-253 (1.4 s between draws) so only 2 landed before B joined — an integration-test detail, not a protocol-level fault. [BIN-500](https://linear.app/bingosystem/issue/BIN-500) / [BIN-507](https://linear.app/bingosystem/issue/BIN-507). |
+| _(neste rad: step 3 re-run post-S4 fix via `STEPS=3 node apps/backend/scripts/staging-rehearsal.mjs`)_ | staging | staging-hall-1 | rehearsal — step 3 re-run (display-tokens post-migration) | | | | | |
 
-### Findings — S1: staging `app_halls` queries return `INTERNAL_ERROR` (2026-04-18 rehearsal)
+### Findings — S1: staging `app_halls` queries return `INTERNAL_ERROR` (2026-04-18 rehearsal) — ✅ resolved
+
+**Resolution** (2026-04-18T07:37Z): slot-1 added the missing `client_variant` and `tv_url` columns manually on staging DB. Admin endpoints confirmed 200 on re-run at 08:04 (see §7 rows). Kept below for traceability and as a pre-pilot regression test to re-apply if any future staging DB reset skips migrations.
+
+
 
 **Symptom.** Every admin or engine code-path that runs a full `SELECT ... FROM app_halls` against the current staging deploy (`spillorama-system.onrender.com`, Postgres 18) returns `INTERNAL_ERROR`. The public `GET /api/halls/:slug/client-variant` endpoint appears healthy only because it wraps errors with a fail-closed `"unity"` default (see [`BingoEngine` → `getHallClientVariant`](../../apps/backend/src/platform/PlatformService.ts)).
 
@@ -278,15 +286,60 @@ Append one row per event — **both** staging rehearsals and prod hall cutovers.
 
 **Scope.** These blockers affect rehearsal steps 3, 5, 7 — all blocked on the same root cause. Re-running after fix should flip all three to pass without further code changes. **This is a pre-pilot blocker** — pilot F1 cannot start while admin-halls endpoints are 500 in prod/staging.
 
-### Findings — S2: BIN-540 missing admin-setter endpoint
+### Findings — S2: BIN-540 missing admin-setter endpoint — ✅ resolved
+
+**Resolution** (2026-04-18, PR [#163](https://github.com/tobias363/Spillorama-system/pull/163) merged as `99cbdea5`): `PUT /api/admin/halls/:hallId` now accepts `{ clientVariant }` in the body. Admin flip round-trip (web → unity → web) verified in rehearsal §7 row 2026-04-18T08:04:05Z. Cache-invalidation on flip confirmed (next public read is fresh, not waiting for the 60 s TTL).
+
+**Original text** (kept for traceability):
+
 
 `/api/admin/halls/:id/client-variant` (PUT/POST) does **not** exist. BIN-540 shipped only the read path + DB column + the feature-flag reader cache. The intended admin flip mechanism from the rollback-runbook is a direct `UPDATE app_halls SET client_variant = 'web' WHERE slug = '<slug>'` via psql, which is operationally ugly and makes the admin-web UI's cutover claim misleading.
 
 **Recommendation:** add a small `router.put("/api/admin/halls/:hallId/client-variant", ...)` in `apps/backend/src/routes/admin.ts` that accepts `{ clientVariant: "unity" | "web" | "unity-fallback" }`, writes via `PlatformService.updateHall` (needs to be extended to accept `clientVariant`), clears the read-through cache, and audit-logs the flip. Small PR, ~30 min. File as BIN-540 follow-up; blocks pilot F1 cutover via admin-web.
 
-### Findings — S3: BIN-540 update-hall does not support `clientVariant` field
+### Findings — S3: BIN-540 update-hall does not support `clientVariant` field — ✅ resolved
+
+**Resolution** (2026-04-18, same PR [#163](https://github.com/tobias363/Spillorama-system/pull/163)): `PlatformService.updateHall` whitelist extended to accept `clientVariant`. See [`apps/backend/src/platform/PlatformService.ts`](../../apps/backend/src/platform/PlatformService.ts) for current signature.
+
+**Original text** (kept for traceability):
+
 
 `PlatformService.updateHall` (line 871) whitelists `slug / name / region / address / organization_number / settlement_account / invoice_method / is_active` — `clientVariant` is not in the update path. The admin-web Halls-editor therefore cannot flip the flag even if an endpoint existed. Needs to go in with S2.
+
+### Findings — S4: staging `app_hall_display_tokens` table missing (2026-04-18 re-run)
+
+**Symptom.** On the 08:04 re-run (post-S1 column-fix), `POST /api/admin/halls/:hallId/display-tokens` still returns 400 `INTERNAL_ERROR`. Reproducible with a simple curl against staging. Step 3 (TV-display) blocks on this — the rehearsal creates a display token first, then logs in on the `/web/tv/` socket channel with that token.
+
+**Root cause.** Migration `apps/backend/migrations/20260418150000_hall_display_tokens.sql` was not applied to staging. This migration creates the `app_hall_display_tokens` table used by BIN-503. S1's manual column-fix at 07:37 only added two columns to the existing `app_halls` table — it did not run pending migrations in general. Any `INSERT INTO app_hall_display_tokens …` (from `createHallDisplayToken`) will fail until the table exists.
+
+**Not affected:** `admin-display:login` with the BIN-498 env-var fallback path (`HALL_DISPLAY_TOKEN_<SLUG>` env var). If that variable is set for the staging hall, TV-display can still be exercised without the DB-backed token path. We didn't confirm whether staging has the env-var set — worth checking before running §S4 mitigation.
+
+**Triage for Tobias (ordered, ~5 min):**
+
+1. Render shell into backend: `render shell srv-d7bvpel8nd3s73fi7r4g`.
+2. Run the outstanding migration:
+   ```bash
+   npm --prefix apps/backend run migrate
+   ```
+   This is `node-pg-migrate`-driven and is idempotent — already-applied migrations are no-ops. It should add the `app_hall_display_tokens` table plus any other pending migrations (there shouldn't be more after 07:37's manual column-add, but running it is the belt-and-braces answer).
+3. Sanity probe from outside:
+   ```bash
+   TOKEN=$(curl -sS -X POST https://spillorama-system.onrender.com/api/auth/login \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"admin@spillorama.staging","password":"StagingAdmin2026!"}' \
+     | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["accessToken"])')
+   curl -sS -X POST https://spillorama-system.onrender.com/api/admin/halls/hall-default/display-tokens \
+     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+     -d '{"label":"s4-probe"}'
+   ```
+   Expect `{"ok":true,"data":{"id":"…","compositeToken":"staging-hall-1:…"}}`.
+4. Re-run step 3 only:
+   ```bash
+   STEPS=3 node apps/backend/scripts/staging-rehearsal.mjs
+   ```
+5. Paste the resulting log row back into §7.
+
+**Scope.** S4 blocks rehearsal step 3 and any post-pilot operator rotating display tokens via admin-web. It does **not** block pilot F1 per se — `admin-display:login` falls back to the env-var path if `HALL_DISPLAY_TOKEN_<SLUG>` is set. But the admin UI button for generating a TV-kiosk token will be broken until S4 is fixed, so operators will fall back to editing Render env-vars manually, which is not the pre-pilot UX.
 
 ### Rehearsal-script
 

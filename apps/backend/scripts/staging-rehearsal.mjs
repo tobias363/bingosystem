@@ -118,6 +118,34 @@ function waitForEvent(eventsArr, eventName, predicate = () => true, { timeoutMs 
   });
 }
 
+// ── Cleanup helper ────────────────────────────────────────────────────────
+
+/**
+ * Force-end + destroy every active room in the target hall so subsequent
+ * steps can room:create fresh. Uses the admin HTTP path (no socket
+ * required). Idempotent — silently tolerates 404.
+ */
+async function cleanupHallRooms(adminToken) {
+  try {
+    const rooms = await httpJson("GET", "/api/admin/rooms", { token: adminToken });
+    const list = rooms.data ?? [];
+    const targets = list.filter((r) => r.hallId === env.HALL_ID || r.hallId === env.HALL_SLUG);
+    for (const r of targets) {
+      try {
+        await httpJson("POST", `/api/admin/rooms/${encodeURIComponent(r.code)}/end`, {
+          token: adminToken, body: { reason: "Rehearsal cleanup" },
+        });
+      } catch {/* ignore — may already be ENDED */}
+      try {
+        await httpJson("DELETE", `/api/admin/rooms/${encodeURIComponent(r.code)}`, { token: adminToken });
+      } catch {/* ignore — may still be running, just leave it */}
+    }
+    if (targets.length > 0) log(`cleanup: ended + destroyed ${targets.length} room(s) in hall ${env.HALL_SLUG}`);
+  } catch (err) {
+    log(`cleanup: skipped — ${err.message}`);
+  }
+}
+
 // ── Row builder ───────────────────────────────────────────────────────────
 
 function recordRow({ step, env: rehearsalEnv, hall, event, start, end, outcome, issuesRefs }) {
@@ -139,21 +167,25 @@ async function step7_adminHallEvents({ adminToken, adminUser }) {
   hostSocket.on("room:update", (p) => hostEvents.push({ at: iso(), event: "room:update", payload: p }));
 
   try {
-    // Create room
+    // Step 7 is admin-driven. Admins must pass `playerId` on every
+    // room-scoped event (regular users have it derived from their token).
+    // The `playerId` comes from room:create's ack.
     const created = await emit(hostSocket, "room:create",
       { playerName: "Rehearsal Host", hallId: env.HALL_ID, gameSlug: "bingo" }, adminToken);
     if (!created.ok) throw new Error(`room:create failed: ${JSON.stringify(created.error)}`);
     const roomCode = created.data.roomCode;
-    log(`step 7: room created ${roomCode}`);
+    const playerId = created.data.playerId;
+    log(`step 7: room created ${roomCode} playerId=${playerId}`);
 
-    // Arm bet + start
-    await emit(hostSocket, "bet:arm", { roomCode, armed: true, ticketCount: 1 }, adminToken);
-    const started = await emit(hostSocket, "game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 }, adminToken);
+    // Arm bet + start — admin needs playerId in payload
+    await emit(hostSocket, "bet:arm", { roomCode, playerId, armed: true, ticketCount: 1 }, adminToken);
+    const started = await emit(hostSocket, "game:start",
+      { roomCode, playerId, entryFee: 10, ticketsPerPlayer: 1 }, adminToken);
     if (!started.ok) throw new Error(`game:start failed: ${JSON.stringify(started.error)}`);
 
     // Draw a couple of numbers so we have a "running" state
     for (let i = 0; i < 2; i += 1) {
-      const d = await emit(hostSocket, "draw:next", { roomCode }, adminToken);
+      const d = await emit(hostSocket, "draw:next", { roomCode, playerId }, adminToken);
       if (!d.ok) log(`draw:next ${i} failed: ${JSON.stringify(d.error)}`);
     }
 
@@ -186,7 +218,7 @@ async function step7_adminHallEvents({ adminToken, adminUser }) {
     log(`step 7: resumed broadcast received`);
 
     // Cleanup: end the game to release the hall
-    await emit(hostSocket, "game:end", { roomCode, reason: "Rehearsal cleanup" }, adminToken);
+    await emit(hostSocket, "game:end", { roomCode, playerId, reason: "Rehearsal cleanup" }, adminToken);
 
     const endIso = iso();
     recordRow({
@@ -214,51 +246,75 @@ async function step4_featureFlagSwitch({ adminToken }) {
   log("== Step 4: feature-flag switch ==");
   const startIso = iso();
 
-  // Scope reality: BIN-540 shipped the DB column + public reader
-  // (`GET /api/halls/:slug/client-variant` with a 60 s cache) + a
-  // rollback-runbook, but the admin-side flip is documented as a
-  // direct `UPDATE app_halls SET client_variant = …` — there is
-  // intentionally no admin REST endpoint yet. That means this step
-  // can only verify the read-path end-to-end, and surface the
-  // missing admin-setter as a rehearsal finding.
+  // Post-PR#163 (BIN-540 S2+S3): `PUT /api/admin/halls/:hallId` now
+  // accepts a `clientVariant` field and writes through PlatformService.
+  // The admin-setter also clears the read-through cache so the next
+  // public read is fresh (not waiting out the 60s TTL).
   try {
-    // Admin-view is unreachable on the current staging deploy (see findings
-    // block below — `GET /api/admin/halls` returns INTERNAL_ERROR). Fall
-    // back to the public read path which is explicitly fail-closed and
-    // therefore resilient to the same schema issue.
-    let adminView = null;
-    let adminErr = null;
-    try {
-      const halls = await httpJson("GET", "/api/admin/halls", { token: adminToken });
-      const target = halls.data.find((h) => h.slug === env.HALL_SLUG || h.id === env.HALL_ID);
-      adminView = target?.clientVariant ?? null;
-      log(`step 4: admin-view clientVariant=${adminView}`);
-    } catch (err) {
-      adminErr = err.message;
-      log(`step 4: admin-view UNREACHABLE: ${adminErr}`);
+    // Baseline: admin view + public view
+    const halls = await httpJson("GET", "/api/admin/halls", { token: adminToken });
+    const target = halls.data.find((h) => h.slug === env.HALL_SLUG || h.id === env.HALL_ID);
+    if (!target) throw new Error(`hall not found: slug=${env.HALL_SLUG} id=${env.HALL_ID}`);
+    const baseline = target.clientVariant;
+    log(`step 4: baseline admin-view clientVariant=${baseline}`);
+
+    const baselineLookup = await httpJson("GET", `/api/halls/${env.HALL_SLUG}/client-variant`);
+    const baselinePublic = baselineLookup.data?.clientVariant ?? baselineLookup.clientVariant;
+    log(`step 4: baseline public-view=${baselinePublic}`);
+    if (baseline !== baselinePublic) {
+      throw new Error(`baseline admin/public mismatch: admin=${baseline} public=${baselinePublic}`);
     }
 
-    const lookup = await httpJson("GET", `/api/halls/${env.HALL_SLUG}/client-variant`);
-    const publicView = lookup.data?.clientVariant ?? lookup.clientVariant;
-    log(`step 4: public-view clientVariant=${publicView}`);
+    // Pick a target that is NOT the baseline so the flip is observable.
+    const flipTarget = baseline === "web" ? "unity" : "web";
+    log(`step 4: flipping to ${flipTarget}`);
+    const flipRes = await httpJson("PUT", `/api/admin/halls/${encodeURIComponent(target.id)}`, {
+      token: adminToken, body: { clientVariant: flipTarget },
+    });
+    const flipAdminView = flipRes.data?.clientVariant ?? flipRes.clientVariant;
+    if (flipAdminView !== flipTarget) throw new Error(`flip admin ack mismatch: expected ${flipTarget} got ${flipAdminView}`);
 
-    const adminPublicMatch = adminView !== null && adminView === publicView;
-    const summary = adminView !== null
-      ? `admin-view=\`${adminView}\` public-view=\`${publicView}\` (match=${adminPublicMatch})`
-      : `admin-view unreachable (\`${adminErr}\`); public-view=\`${publicView}\``;
+    // Public read should reflect the flip immediately (PR #163 clears cache).
+    // Allow a tiny grace window just in case.
+    let flipPublic = null;
+    for (let i = 0; i < 3; i += 1) {
+      const lookup = await httpJson("GET", `/api/halls/${env.HALL_SLUG}/client-variant`);
+      flipPublic = lookup.data?.clientVariant ?? lookup.clientVariant;
+      if (flipPublic === flipTarget) break;
+      await sleep(2_000);
+    }
+    if (flipPublic !== flipTarget) throw new Error(`public-view did not reflect flip to ${flipTarget} within 6s (got ${flipPublic})`);
+    log(`step 4: flip verified admin=${flipAdminView} public=${flipPublic}`);
+
+    // Restore baseline
+    const restoreRes = await httpJson("PUT", `/api/admin/halls/${encodeURIComponent(target.id)}`, {
+      token: adminToken, body: { clientVariant: baseline },
+    });
+    const restoredAdmin = restoreRes.data?.clientVariant ?? restoreRes.clientVariant;
+    if (restoredAdmin !== baseline) throw new Error(`restore admin ack mismatch: expected ${baseline} got ${restoredAdmin}`);
+
+    let restoredPublic = null;
+    for (let i = 0; i < 3; i += 1) {
+      const lookup = await httpJson("GET", `/api/halls/${env.HALL_SLUG}/client-variant`);
+      restoredPublic = lookup.data?.clientVariant ?? lookup.clientVariant;
+      if (restoredPublic === baseline) break;
+      await sleep(2_000);
+    }
+    if (restoredPublic !== baseline) throw new Error(`public-view did not restore to ${baseline} within 6s (got ${restoredPublic})`);
+    log(`step 4: restore verified admin=${restoredAdmin} public=${restoredPublic}`);
 
     recordRow({
       step: 4, env: "staging (Render free)", hall: env.HALL_SLUG,
-      event: "rehearsal — step 4 (feature-flag switch — read-path end-to-end; gaps surfaced)",
-      start: startIso, end: iso(), outcome: adminView === null ? "partial" : "partial",
-      issuesRefs: `${summary}. **Gap 1:** BIN-540 did not ship an admin REST endpoint for mutating \`client_variant\`; flip still requires direct \`UPDATE app_halls …\` per rollback-runbook. **Gap 2:** on current staging deploy, \`GET /api/admin/halls\` + \`/api/admin/dashboard/live\` + \`/api/admin/halls/:id/display-tokens\` + \`/api/admin/halls/:id/game-config\` all return \`INTERNAL_ERROR\`; public \`/api/halls/:slug/client-variant\` works via its fail-closed fallback. Root cause likely a missing migration against \`app_halls\` on staging DB. [BIN-540](https://linear.app/bingosystem/issue/BIN-540) / [BIN-525](https://linear.app/bingosystem/issue/BIN-525).`,
+      event: `rehearsal — step 4 (feature-flag switch ${baseline} → ${flipTarget} → ${baseline}, full round-trip)`,
+      start: startIso, end: iso(), outcome: "pass",
+      issuesRefs: `Baseline \`${baseline}\`. \`PUT /api/admin/halls/${target.id}\` with \`clientVariant=${flipTarget}\` → admin ack + public read \`${flipTarget}\` (cache-invalidated, no TTL wait). Restored \`${baseline}\` — admin ack + public read \`${baseline}\`. [BIN-540](https://linear.app/bingosystem/issue/BIN-540) / PR [#163](https://github.com/tobias363/Spillorama-system/pull/163).`,
     });
-    return { ok: true, note: "read-path verified, admin-setter + admin-halls-500 gaps surfaced" };
+    return { ok: true };
   } catch (err) {
     log(`step 4 FAIL: ${err.message}`);
     recordRow({
       step: 4, env: "staging (Render free)", hall: env.HALL_SLUG,
-      event: "rehearsal — step 4 (feature-flag switch — read-path end-to-end)",
+      event: "rehearsal — step 4 (feature-flag switch — full round-trip)",
       start: startIso, end: iso(), outcome: "fail",
       issuesRefs: `${err.message}. [BIN-540](https://linear.app/bingosystem/issue/BIN-540).`,
     });
@@ -303,10 +359,11 @@ async function step3_tvDisplaySubscribe({ adminToken }) {
       { playerName: "Rehearsal Host (step 3)", hallId: env.HALL_ID, gameSlug: "bingo" }, adminToken);
     if (!created.ok) throw new Error(`room:create failed: ${JSON.stringify(created.error)}`);
     const roomCode = created.data.roomCode;
-    await emit(hostSocket, "bet:arm", { roomCode, armed: true, ticketCount: 1 }, adminToken);
-    await emit(hostSocket, "game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 }, adminToken);
+    const playerId = created.data.playerId;
+    await emit(hostSocket, "bet:arm", { roomCode, playerId, armed: true, ticketCount: 1 }, adminToken);
+    await emit(hostSocket, "game:start", { roomCode, playerId, entryFee: 10, ticketsPerPlayer: 1 }, adminToken);
     for (let i = 0; i < 3; i += 1) {
-      await emit(hostSocket, "draw:next", { roomCode }, adminToken);
+      await emit(hostSocket, "draw:next", { roomCode, playerId }, adminToken);
       await sleep(600);
     }
 
@@ -316,7 +373,7 @@ async function step3_tvDisplaySubscribe({ adminToken }) {
     log(`step 3: TV received ${drawCount} draw:new events`);
 
     // Cleanup: end + revoke display token
-    await emit(hostSocket, "game:end", { roomCode, reason: "Rehearsal cleanup" }, adminToken);
+    await emit(hostSocket, "game:end", { roomCode, playerId, reason: "Rehearsal cleanup" }, adminToken);
     hostSocket.disconnect();
     tvSocket.disconnect();
     await httpJson("DELETE", `/api/admin/halls/${env.HALL_ID}/display-tokens/${tokenId}`, { token: adminToken });
@@ -363,7 +420,8 @@ async function step5_lateJoinSpectator({ userAToken, userBToken }) {
 
     for (let i = 0; i < 5; i += 1) {
       await emit(a.socket, "draw:next", { roomCode }, userAToken);
-      await sleep(400);
+      // Server enforces ≥ 1.4 s between draws (BIN-253) — give a 100 ms margin.
+      await sleep(1_500);
     }
     log(`step 5: A drew 5 numbers`);
 
@@ -418,13 +476,24 @@ async function step5_lateJoinSpectator({ userAToken, userBToken }) {
   log(`admin login ok: ${admin.user.email} role=${admin.user.role}`);
 
   const results = {};
-  if (STEPS.has("7")) results.step7 = await step7_adminHallEvents({ adminToken: admin.token, adminUser: admin.user });
+  // Cleanup once at the start, then again between steps so that
+  // `enforceSingleRoomPerHall` doesn't reuse leftover state.
+  await cleanupHallRooms(admin.token);
+
+  if (STEPS.has("7")) {
+    results.step7 = await step7_adminHallEvents({ adminToken: admin.token, adminUser: admin.user });
+    await cleanupHallRooms(admin.token);
+  }
   if (STEPS.has("4")) results.step4 = await step4_featureFlagSwitch({ adminToken: admin.token });
-  if (STEPS.has("3")) results.step3 = await step3_tvDisplaySubscribe({ adminToken: admin.token });
+  if (STEPS.has("3")) {
+    results.step3 = await step3_tvDisplaySubscribe({ adminToken: admin.token });
+    await cleanupHallRooms(admin.token);
+  }
   if (STEPS.has("5")) {
     const userA = await loginAs(env.TEST_USER_A_EMAIL, env.TEST_USER_A_PASSWORD);
     const userB = await loginAs(env.TEST_USER_B_EMAIL, env.TEST_USER_B_PASSWORD);
     results.step5 = await step5_lateJoinSpectator({ userAToken: userA.token, userBToken: userB.token });
+    await cleanupHallRooms(admin.token);
   }
 
   console.log("\n## §7 Rehearsal-log rows (paste into PILOT_CUTOVER_RUNBOOK.md):\n");
