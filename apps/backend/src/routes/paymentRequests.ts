@@ -25,6 +25,8 @@ import type {
 import {
   ADMIN_ACCESS_POLICY as _ADMIN_ACCESS_POLICY,
   assertAdminPermission,
+  assertUserHallScope,
+  resolveHallScopeFilter,
   type AdminPermission,
 } from "../platform/AdminAccessPolicy.js";
 import {
@@ -140,12 +142,14 @@ export function createPaymentRequestsRouter(
 
   router.get("/api/admin/payments/requests", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "PAYMENT_REQUEST_READ");
+      const adminUser = await requireAdminPermissionUser(req, "PAYMENT_REQUEST_READ");
       const typeRaw = typeof req.query.type === "string" ? req.query.type : undefined;
       const kind = typeRaw ? parseKind(typeRaw, "type") : undefined;
       const status = parseStatus(req.query.status);
       const hallIdRaw = typeof req.query.hallId === "string" ? req.query.hallId.trim() : "";
-      const hallId = hallIdRaw.length ? hallIdRaw : undefined;
+      const hallIdInput = hallIdRaw.length ? hallIdRaw : undefined;
+      // BIN-591: HALL_OPERATOR tvinges til sin egen hall
+      const hallId = resolveHallScopeFilter(adminUser, hallIdInput);
       const limitRaw =
         typeof req.query.limit === "string" && req.query.limit.trim()
           ? Number(req.query.limit)
@@ -171,6 +175,18 @@ export function createPaymentRequestsRouter(
       const adminUser = await requireAdminPermissionUser(req, "PAYMENT_REQUEST_WRITE");
       const requestId = mustBeNonEmptyString(req.params.id, "id");
       const kind = extractTypeFromBody(req.body);
+
+      // BIN-591: sjekk at HALL_OPERATOR eier forespørselens hall
+      const existing = await paymentRequestService.getRequest(kind, requestId);
+      if (existing.hallId) {
+        assertUserHallScope(adminUser, existing.hallId);
+      } else if (adminUser.role === "HALL_OPERATOR") {
+        // Uten hall_id på requesten kan vi ikke hall-scope-sjekke — fail closed
+        throw new DomainError(
+          "FORBIDDEN",
+          "Forespørselen er ikke bundet til en hall — kan ikke godkjennes av hall-operator."
+        );
+      }
 
       const result =
         kind === "deposit"
@@ -199,6 +215,17 @@ export function createPaymentRequestsRouter(
       }
       const kind = parseKind(req.body.type);
       const reason = parseRejectionReason(req.body.reason);
+
+      // BIN-591: samme hall-scope-sjekk som accept
+      const existing = await paymentRequestService.getRequest(kind, requestId);
+      if (existing.hallId) {
+        assertUserHallScope(adminUser, existing.hallId);
+      } else if (adminUser.role === "HALL_OPERATOR") {
+        throw new DomainError(
+          "FORBIDDEN",
+          "Forespørselen er ikke bundet til en hall — kan ikke avvises av hall-operator."
+        );
+      }
 
       const result =
         kind === "deposit"

@@ -8,9 +8,11 @@ import { APP_USER_ROLES } from "../platform/PlatformService.js";
 import {
   ADMIN_ACCESS_POLICY,
   assertAdminPermission,
+  assertUserHallScope,
   canAccessAdminPermission,
   getAdminPermissionMap,
   listAdminPermissionsForRole,
+  resolveHallScopeFilter,
   type AdminPermission
 } from "../platform/AdminAccessPolicy.js";
 import type { PublicAppUser } from "../platform/PlatformService.js";
@@ -364,6 +366,30 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
     }
   });
 
+  /**
+   * BIN-591: tildel/fjern hall for HALL_OPERATOR. ADMIN-only.
+   * Body: { hallId: string | null }
+   */
+  router.put("/api/admin/users/:userId/hall", async (req, res) => {
+    try {
+      await requireAdminPermissionUser(req, "USER_ROLE_WRITE");
+      const userId = mustBeNonEmptyString(req.params.userId, "userId");
+      const rawHallId = req.body?.hallId;
+      const hallId =
+        rawHallId === null || rawHallId === undefined || rawHallId === ""
+          ? null
+          : typeof rawHallId === "string"
+            ? rawHallId.trim() || null
+            : (() => {
+                throw new DomainError("INVALID_INPUT", "hallId må være en streng eller null.");
+              })();
+      const updated = await platformService.updateUserHallAssignment(userId, hallId);
+      apiSuccess(res, updated);
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
+
   // ── Games ─────────────────────────────────────────────────────────────────
 
   router.get("/api/admin/games", async (req, res) => {
@@ -579,14 +605,16 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.post("/api/admin/terminals", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "TERMINAL_WRITE");
+      const adminUser = await requireAdminPermissionUser(req, "TERMINAL_WRITE");
+      const hallId = mustBeNonEmptyString(req.body?.hallId, "hallId");
+      assertUserHallScope(adminUser, hallId); // BIN-591
       const terminalCode = mustBeNonEmptyString(req.body?.terminalCode, "terminalCode");
       const displayName =
         typeof req.body?.displayName === "string" && req.body.displayName.trim()
           ? req.body.displayName
           : terminalCode;
       const terminal = await platformService.createTerminal({
-        hallId: mustBeNonEmptyString(req.body?.hallId, "hallId"),
+        hallId,
         terminalCode,
         displayName,
         isActive: typeof req.body?.isActive === "boolean" ? req.body.isActive : undefined
@@ -599,8 +627,10 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.put("/api/admin/terminals/:terminalId", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "TERMINAL_WRITE");
+      const adminUser = await requireAdminPermissionUser(req, "TERMINAL_WRITE");
       const terminalId = mustBeNonEmptyString(req.params.terminalId, "terminalId");
+      const existing = await platformService.getTerminal(terminalId);
+      assertUserHallScope(adminUser, existing.hallId); // BIN-591
       const terminal = await platformService.updateTerminal(terminalId, {
         terminalCode: typeof req.body?.terminalCode === "string" ? req.body.terminalCode : undefined,
         displayName: typeof req.body?.displayName === "string" ? req.body.displayName : undefined,
@@ -632,8 +662,9 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.put("/api/admin/halls/:hallId/game-config/:gameSlug", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "HALL_GAME_CONFIG_WRITE");
+      const adminUser = await requireAdminPermissionUser(req, "HALL_GAME_CONFIG_WRITE");
       const hallId = mustBeNonEmptyString(req.params.hallId, "hallId");
+      assertUserHallScope(adminUser, hallId); // BIN-591
       const gameSlug = mustBeNonEmptyString(req.params.gameSlug, "gameSlug");
       const maxTicketsPerPlayer = parseOptionalInteger(req.body?.maxTicketsPerPlayer, "maxTicketsPerPlayer");
       const minRoundIntervalMs = parseOptionalInteger(req.body?.minRoundIntervalMs, "minRoundIntervalMs");
@@ -758,16 +789,37 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   // ── Rooms ─────────────────────────────────────────────────────────────────
 
+  // BIN-591: hall-scope guard for room-control endpoints. Loads snapshot,
+  // asserts user has access to the room's hall, returns snapshot for reuse.
+  function requireRoomHallScope(
+    adminUser: PublicAppUser,
+    roomCodeRaw: string
+  ): { roomCode: string; hallId: string } {
+    const roomCode = mustBeNonEmptyString(roomCodeRaw, "roomCode").toUpperCase();
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    if (!snapshot.hallId) {
+      throw new DomainError(
+        "ROOM_MISSING_HALL",
+        "Rommet er ikke knyttet til en hall — kan ikke hall-scope-sjekkes."
+      );
+    }
+    assertUserHallScope(adminUser, snapshot.hallId);
+    return { roomCode, hallId: snapshot.hallId };
+  }
+
   router.get("/api/admin/rooms", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
+      const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
       const includeSnapshots = parseBooleanQueryValue(req.query.includeSnapshots, false);
       const rooms = engine.listRoomSummaries();
+      // BIN-591: filter list to user's hall when HALL_OPERATOR
+      const scopeHallId = resolveHallScopeFilter(adminUser);
+      const scopedRooms = scopeHallId ? rooms.filter((r) => r.hallId === scopeHallId) : rooms;
       if (!includeSnapshots) {
-        apiSuccess(res, rooms);
+        apiSuccess(res, scopedRooms);
         return;
       }
-      const detailed = rooms.map((room) => ({
+      const detailed = scopedRooms.map((room) => ({
         ...room,
         snapshot: buildRoomUpdatePayload(engine.getRoomSnapshot(room.code))
       }));
@@ -779,9 +831,11 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.get("/api/admin/rooms/:roomCode", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
+      const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_READ");
       const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
-      const snapshot = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
+      const raw = engine.getRoomSnapshot(roomCode);
+      if (raw.hallId) assertUserHallScope(adminUser, raw.hallId); // BIN-591
+      const snapshot = buildRoomUpdatePayload(raw);
       apiSuccess(res, snapshot);
     } catch (error) {
       apiFailure(res, error);
@@ -792,6 +846,7 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
     try {
       const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
       const hallId = await requireActiveHallIdFromInput(req.body?.hallId);
+      assertUserHallScope(adminUser, hallId); // BIN-591
 
       // Enforce single room per hall — block creation if a canonical room already exists
       if (enforceSingleRoomPerHall) {
@@ -831,8 +886,8 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.delete("/api/admin/rooms/:roomCode", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
-      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+      const { roomCode } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
       engine.destroyRoom(roomCode);
       drawScheduler.releaseRoom(roomCode);
       roomConfiguredEntryFeeByRoom.delete(roomCode);
@@ -844,8 +899,8 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
-      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+      const { roomCode } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
       const entryFee = parseOptionalNonNegativeNumber(req.body?.entryFee, "entryFee") ?? getRoomConfiguredEntryFee(roomCode);
       const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
       const requestedTicketsPerPlayer = parseOptionalTicketsPerPlayerInput(req.body?.ticketsPerPlayer);
@@ -879,7 +934,7 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
     try {
       // BIN-254: Capture actual admin actor for audit log — not just the room host ID
       const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
-      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      const { roomCode } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
       const snapshot = engine.getRoomSnapshot(roomCode);
       const drawResult = await engine.drawNextNumber({
         roomCode,
@@ -911,7 +966,7 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
   router.post("/api/admin/rooms/:roomCode/end", async (req, res) => {
     try {
       const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
-      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      const { roomCode } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
       const reason = typeof req.body?.reason === "string" ? req.body.reason : "Manual end from admin";
       const beforeEndSnapshot = engine.getRoomSnapshot(roomCode);
       await engine.endGame({
@@ -945,7 +1000,7 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
   router.post("/api/admin/rooms/:roomCode/room-ready", async (req, res) => {
     try {
       const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
-      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      const { roomCode } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
       const countdownRaw = req.body?.countdownSeconds;
       const countdownSeconds = Number.isFinite(Number(countdownRaw))
         ? Math.max(0, Math.min(300, Math.floor(Number(countdownRaw))))
@@ -976,8 +1031,8 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.post("/api/admin/rooms/:roomCode/game/pause", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
-      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+      const { roomCode } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
       const message = typeof req.body?.message === "string" ? req.body.message : undefined;
       engine.pauseGame(roomCode, message);
       const snapshot = await emitRoomUpdate(roomCode);
@@ -989,8 +1044,8 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.post("/api/admin/rooms/:roomCode/game/resume", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
-      const roomCode = mustBeNonEmptyString(req.params.roomCode, "roomCode").toUpperCase();
+      const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
+      const { roomCode } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
       engine.resumeGame(roomCode);
       const snapshot = await emitRoomUpdate(roomCode);
       apiSuccess(res, { roomCode, isPaused: false, snapshot });
@@ -1210,11 +1265,13 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.get("/api/admin/ledger/entries", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "LEDGER_READ");
+      const adminUser = await requireAdminPermissionUser(req, "LEDGER_READ");
       const limit = parseLimit(req.query.limit, 200);
       const dateFrom = typeof req.query.dateFrom === "string" ? req.query.dateFrom.trim() : undefined;
       const dateTo = typeof req.query.dateTo === "string" ? req.query.dateTo.trim() : undefined;
-      const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+      const hallIdInput = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+      // BIN-591: HALL_OPERATOR tvinges til sin egen hall
+      const hallId = resolveHallScopeFilter(adminUser, hallIdInput);
       const gameType = parseOptionalLedgerGameType(req.query.gameType);
       const channel = parseOptionalLedgerChannel(req.query.channel);
       const entries = engine.listComplianceLedgerEntries({
@@ -1259,9 +1316,12 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.post("/api/admin/reports/daily/run", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "DAILY_REPORT_RUN");
+      const adminUser = await requireAdminPermissionUser(req, "DAILY_REPORT_RUN");
       const date = typeof req.body?.date === "string" ? req.body.date.trim() : undefined;
-      const hallId = typeof req.body?.hallId === "string" ? req.body.hallId.trim() : undefined;
+      const hallIdInput = typeof req.body?.hallId === "string" ? req.body.hallId.trim() : undefined;
+      // BIN-591: HALL_OPERATOR kan kun kjøre rapport for sin egen hall.
+      // For ADMIN/SUPPORT sendes hallId igjennom uendret (inkl. undefined → alle haller).
+      const hallId = resolveHallScopeFilter(adminUser, hallIdInput);
       const gameType = parseOptionalLedgerGameType(req.body?.gameType);
       const channel = parseOptionalLedgerChannel(req.body?.channel);
       const report = await engine.runDailyReportJob({
@@ -1278,9 +1338,10 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
 
   router.get("/api/admin/reports/daily", async (req, res) => {
     try {
-      await requireAdminPermissionUser(req, "DAILY_REPORT_READ");
+      const adminUser = await requireAdminPermissionUser(req, "DAILY_REPORT_READ");
       const date = mustBeNonEmptyString(req.query.date, "date");
-      const hallId = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+      const hallIdInput = typeof req.query.hallId === "string" ? req.query.hallId.trim() : undefined;
+      const hallId = resolveHallScopeFilter(adminUser, hallIdInput); // BIN-591
       const gameType = parseOptionalLedgerGameType(req.query.gameType);
       const channel = parseOptionalLedgerChannel(req.query.channel);
       const format = typeof req.query.format === "string" ? req.query.format.trim().toLowerCase() : "json";

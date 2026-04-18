@@ -129,15 +129,15 @@ class FixedTicketBingoAdapter implements BingoSystemAdapter {
 const TEST_USERS: Record<string, PublicAppUser> = {
   "token-alice": {
     id: "user-alice", email: "alice@test.no", displayName: "Alice", walletId: "wallet-alice",
-    role: "PLAYER", kycStatus: "VERIFIED", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", balance: 1000,
+    role: "PLAYER", hallId: null, kycStatus: "VERIFIED", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", balance: 1000,
   },
   "token-bob": {
     id: "user-bob", email: "bob@test.no", displayName: "Bob", walletId: "wallet-bob",
-    role: "PLAYER", kycStatus: "VERIFIED", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", balance: 1000,
+    role: "PLAYER", hallId: null, kycStatus: "VERIFIED", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", balance: 1000,
   },
   "token-admin": {
     id: "user-admin", email: "admin@test.no", displayName: "Admin", walletId: "wallet-admin",
-    role: "ADMIN", kycStatus: "VERIFIED", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", balance: 0,
+    role: "ADMIN", hallId: null, kycStatus: "VERIFIED", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", balance: 0,
   },
 };
 
