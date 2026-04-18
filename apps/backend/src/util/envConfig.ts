@@ -34,6 +34,16 @@ export interface BingoRuntimeConfig {
   // Daily report
   dailyReportJobEnabled: boolean;
   dailyReportJobIntervalMs: number;
+  // BIN-582: legacy-cron ports (master + per-job toggles)
+  jobsEnabled: boolean;
+  jobSwedbankEnabled: boolean;
+  jobSwedbankIntervalMs: number;
+  jobBankIdEnabled: boolean;
+  jobBankIdIntervalMs: number;
+  jobBankIdRunAtHour: number;
+  jobRgCleanupEnabled: boolean;
+  jobRgCleanupIntervalMs: number;
+  jobRgCleanupRunAtHour: number;
   // Storage
   usePostgresBingoAdapter: boolean;
   checkpointConnectionString: string;
@@ -94,6 +104,21 @@ export function loadBingoRuntimeConfig(): BingoRuntimeConfig {
   const dailyReportJobEnabled = parseBooleanEnv(process.env.DAILY_REPORT_JOB_ENABLED, true);
   const dailyReportJobIntervalMs = Math.max(60_000, parsePositiveIntEnv(process.env.DAILY_REPORT_JOB_INTERVAL_MS, 60 * 60 * 1000));
 
+  // BIN-582: legacy-cron ports. Each job is individually togglable, with a
+  // master `JOBS_ENABLED` kill-switch for ops. Defaults mirror legacy cadence:
+  // Swedbank hourly, BankID/RG daily. Daily jobs poll at a shorter interval
+  // and guard themselves via a date-key; that matches the existing
+  // DailyReport pattern and avoids a hard cron dependency.
+  const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, true);
+  const jobSwedbankEnabled = parseBooleanEnv(process.env.JOB_SWEDBANK_ENABLED, true);
+  const jobSwedbankIntervalMs = Math.max(60_000, parsePositiveIntEnv(process.env.JOB_SWEDBANK_INTERVAL_MS, 60 * 60 * 1000));
+  const jobBankIdEnabled = parseBooleanEnv(process.env.JOB_BANKID_ENABLED, true);
+  const jobBankIdIntervalMs = Math.max(60_000, parsePositiveIntEnv(process.env.JOB_BANKID_INTERVAL_MS, 15 * 60 * 1000));
+  const jobBankIdRunAtHour = Math.min(23, Math.max(0, Math.floor(parseNonNegativeNumberEnv(process.env.JOB_BANKID_RUN_AT_HOUR, 7))));
+  const jobRgCleanupEnabled = parseBooleanEnv(process.env.JOB_RG_CLEANUP_ENABLED, true);
+  const jobRgCleanupIntervalMs = Math.max(60_000, parsePositiveIntEnv(process.env.JOB_RG_CLEANUP_INTERVAL_MS, 15 * 60 * 1000));
+  const jobRgCleanupRunAtHour = Math.min(23, Math.max(0, Math.floor(parseNonNegativeNumberEnv(process.env.JOB_RG_CLEANUP_RUN_AT_HOUR, 0))));
+
   // BIN-159/BIN-240: PostgreSQL checkpointing
   const checkpointConnectionString = process.env.APP_PG_CONNECTION_STRING?.trim() || process.env.WALLET_PG_CONNECTION_STRING?.trim() || "";
   const usePostgresBingoAdapter = parseBooleanEnv(process.env.BINGO_CHECKPOINT_ENABLED, true) && checkpointConnectionString.length > 0;
@@ -128,6 +153,9 @@ export function loadBingoRuntimeConfig(): BingoRuntimeConfig {
     allowAutoplayInProduction, forceAutoStart, forceAutoDraw, enforceSingleRoomPerHall,
     autoplayAllowed, schedulerTickMs, runtimeBingoSettings,
     dailyReportJobEnabled, dailyReportJobIntervalMs,
+    jobsEnabled, jobSwedbankEnabled, jobSwedbankIntervalMs,
+    jobBankIdEnabled, jobBankIdIntervalMs, jobBankIdRunAtHour,
+    jobRgCleanupEnabled, jobRgCleanupIntervalMs, jobRgCleanupRunAtHour,
     usePostgresBingoAdapter, checkpointConnectionString,
     roomStateProvider, redisUrl, useRedisLock, kycMinAge, kycProvider,
     pgSsl, pgSchema, sessionTtlHours,
