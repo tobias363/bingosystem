@@ -46,9 +46,9 @@ import { createAdminHallHandlers } from "./sockets/adminHallEvents.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
-const frontendDir = path.resolve(__dirname, "../../frontend");
+const adminWebDir = path.resolve(__dirname, "../../admin-web");
 const publicDir = path.resolve(__dirname, "../public");
-const adminFrontendFile = path.resolve(frontendDir, "admin/index.html");
+const adminFrontendFile = path.resolve(adminWebDir, "index.html");
 const projectDir = path.resolve(__dirname, "../..");
 
 // BIN-539: Sentry — init before the HTTP server exists so the error reporter
@@ -80,7 +80,7 @@ app.use(httpRateLimiter.middleware());
 
 // BIN-278: Root redirects to web shell (must be before express.static)
 app.get(["/", "/index.html"], (_req, res) => { res.redirect(302, "/web/"); });
-app.use("/admin", express.static(path.join(frontendDir, "admin")));
+app.use("/admin", express.static(adminWebDir));
 app.use(express.static(publicDir));
 
 const server = http.createServer(app);
