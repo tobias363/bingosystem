@@ -86,6 +86,36 @@ test("assertAdminPermission avviser ulovlige writes for operator/support", () =>
   assert.throws(() => assertAdminPermission("SUPPORT", "HALL_WRITE"));
 });
 
+// ── BIN-587 B2.2: KYC-moderasjon permissions ────────────────────────────────
+
+test("BIN-587 B2.2: PLAYER_KYC_READ tillatt for ADMIN + SUPPORT, ikke HALL_OPERATOR/PLAYER", () => {
+  assert.equal(canAccessAdminPermission("ADMIN", "PLAYER_KYC_READ"), true);
+  assert.equal(canAccessAdminPermission("SUPPORT", "PLAYER_KYC_READ"), true);
+  assert.equal(canAccessAdminPermission("HALL_OPERATOR", "PLAYER_KYC_READ"), false);
+  assert.equal(canAccessAdminPermission("PLAYER", "PLAYER_KYC_READ"), false);
+});
+
+test("BIN-587 B2.2: PLAYER_KYC_MODERATE tillatt for ADMIN + SUPPORT, ikke HALL_OPERATOR/PLAYER", () => {
+  assert.equal(canAccessAdminPermission("ADMIN", "PLAYER_KYC_MODERATE"), true);
+  assert.equal(canAccessAdminPermission("SUPPORT", "PLAYER_KYC_MODERATE"), true);
+  assert.equal(canAccessAdminPermission("HALL_OPERATOR", "PLAYER_KYC_MODERATE"), false);
+  assert.equal(canAccessAdminPermission("PLAYER", "PLAYER_KYC_MODERATE"), false);
+});
+
+test("BIN-587 B2.2: PLAYER_KYC_OVERRIDE kun ADMIN (destructive-path)", () => {
+  assert.equal(canAccessAdminPermission("ADMIN", "PLAYER_KYC_OVERRIDE"), true);
+  assert.equal(canAccessAdminPermission("SUPPORT", "PLAYER_KYC_OVERRIDE"), false);
+  assert.equal(canAccessAdminPermission("HALL_OPERATOR", "PLAYER_KYC_OVERRIDE"), false);
+  assert.equal(canAccessAdminPermission("PLAYER", "PLAYER_KYC_OVERRIDE"), false);
+});
+
+test("BIN-587 B2.2: assertAdminPermission kaster for HALL_OPERATOR på KYC-endepunkter", () => {
+  assert.throws(() => assertAdminPermission("HALL_OPERATOR", "PLAYER_KYC_READ"));
+  assert.throws(() => assertAdminPermission("HALL_OPERATOR", "PLAYER_KYC_MODERATE"));
+  assert.throws(() => assertAdminPermission("HALL_OPERATOR", "PLAYER_KYC_OVERRIDE"));
+  assert.throws(() => assertAdminPermission("SUPPORT", "PLAYER_KYC_OVERRIDE"));
+});
+
 // ── BIN-591: hall-scope ─────────────────────────────────────────────────────
 
 test("BIN-591: ADMIN har alltid hall-scope (global)", () => {

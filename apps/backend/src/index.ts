@@ -52,6 +52,7 @@ import { createWalletRouter } from "./routes/wallet.js";
 import { createPaymentsRouter } from "./routes/payments.js";
 import { createPaymentRequestsRouter } from "./routes/paymentRequests.js";
 import { createPlayersRouter } from "./routes/players.js";
+import { createAdminPlayersRouter } from "./routes/adminPlayers.js";
 import { createGameRouter } from "./routes/game.js";
 import { createGameEventHandlers } from "./sockets/gameEvents.js";
 import { initSentry, setSocketSentryContext, addBreadcrumb, captureError, flushSentry } from "./observability/sentry.js";
@@ -420,6 +421,13 @@ app.use(createAuthRouter({
 app.use(createPlayersRouter({
   platformService,
   auditLogService,
+}));
+app.use(createAdminPlayersRouter({
+  platformService,
+  auditLogService,
+  emailService,
+  webBaseUrl,
+  supportEmail,
 }));
 
 app.use(createAdminRouter({
