@@ -64,6 +64,9 @@ import { AgentService } from "./agent/AgentService.js";
 import { AgentShiftService } from "./agent/AgentShiftService.js";
 import { createAdminPhysicalTicketsRouter } from "./routes/adminPhysicalTickets.js";
 import { PhysicalTicketService } from "./compliance/PhysicalTicketService.js";
+import { createAdminVouchersRouter } from "./routes/adminVouchers.js";
+import { VoucherService } from "./compliance/VoucherService.js";
+import { createAdminUniqueIdsAndPayoutsRouter } from "./routes/adminUniqueIdsAndPayouts.js";
 import { createGameRouter } from "./routes/game.js";
 import { createGameEventHandlers } from "./sockets/gameEvents.js";
 import { initSentry, setSocketSentryContext, addBreadcrumb, captureError, flushSentry } from "./observability/sentry.js";
@@ -265,6 +268,12 @@ void securityService.warmBlockedIpCache().catch((err) => {
 // BIN-587 B4a: physical papirbillett-admin. Agent-POS-salget (BIN-583)
 // oppdaterer samme tabell via agent-endepunkt.
 const physicalTicketService = new PhysicalTicketService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+
+// BIN-587 B4b: voucher admin-CRUD (redemption-flow i G2/G3 er follow-up).
+const voucherService = new VoucherService({
   connectionString: platformConnectionString,
   schema: pgSchema,
 });
@@ -536,6 +545,17 @@ app.use(createAdminPhysicalTicketsRouter({
   platformService,
   auditLogService,
   physicalTicketService,
+}));
+app.use(createAdminVouchersRouter({
+  platformService,
+  auditLogService,
+  voucherService,
+}));
+app.use(createAdminUniqueIdsAndPayoutsRouter({
+  platformService,
+  auditLogService,
+  physicalTicketService,
+  engine,
 }));
 
 // BIN-583 B3.1: agent auth/shift + admin agent-CRUD.

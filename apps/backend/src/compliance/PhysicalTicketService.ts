@@ -560,6 +560,59 @@ export class PhysicalTicketService {
     return { voided: rowCount ?? 0 };
   }
 
+  /**
+   * BIN-587 B4b: list unique-IDs (admin-view). Filter på hallId + status.
+   * Begrenset til 500 rader som default — for større uttrekk brukes
+   * CSV-eksport (B2.3-pattern) eller paginering.
+   */
+  async listUniqueIds(filter: { hallId?: string; status?: PhysicalTicketStatus; limit?: number } = {}): Promise<PhysicalTicket[]> {
+    await this.ensureInitialized();
+    const limit = filter.limit && filter.limit > 0 ? Math.min(Math.floor(filter.limit), 500) : 100;
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (filter.hallId) {
+      params.push(filter.hallId);
+      conditions.push(`hall_id = $${params.length}`);
+    }
+    if (filter.status) {
+      params.push(filter.status);
+      conditions.push(`status = $${params.length}`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    params.push(limit);
+    const { rows } = await this.pool.query<TicketRow>(
+      `SELECT id, batch_id, unique_id, hall_id, status, price_cents, assigned_game_id,
+              sold_at, sold_by, buyer_user_id, voided_at, voided_by, voided_reason,
+              created_at, updated_at
+       FROM ${this.ticketsTable()}
+       ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+    return rows.map((r) => this.mapTicket(r));
+  }
+
+  /**
+   * BIN-587 B4b: finn billett via unique-ID. Brukt av admin-search +
+   * checkUniqueId-endepunkt for å verifisere billett-eksistens + status.
+   */
+  async findByUniqueId(uniqueId: string): Promise<PhysicalTicket | null> {
+    await this.ensureInitialized();
+    if (!uniqueId?.trim()) {
+      throw new DomainError("INVALID_INPUT", "uniqueId er påkrevd.");
+    }
+    const { rows } = await this.pool.query<TicketRow>(
+      `SELECT id, batch_id, unique_id, hall_id, status, price_cents, assigned_game_id,
+              sold_at, sold_by, buyer_user_id, voided_at, voided_by, voided_reason,
+              created_at, updated_at
+       FROM ${this.ticketsTable()}
+       WHERE unique_id = $1`,
+      [uniqueId.trim()]
+    );
+    return rows[0] ? this.mapTicket(rows[0]) : null;
+  }
+
   async getLastRegisteredUniqueId(hallId: string): Promise<{ hallId: string; lastUniqueId: string | null; maxRangeEnd: number | null }> {
     await this.ensureInitialized();
     const { rows } = await this.pool.query<{ max_range_end: string | number | null }>(

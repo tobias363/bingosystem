@@ -197,6 +197,28 @@ test("BIN-587 B4a: assertAdminPermission kaster for SUPPORT/PLAYER på physical-
   assert.throws(() => assertAdminPermission("PLAYER", "PHYSICAL_TICKET_WRITE"));
 });
 
+// ── BIN-587 B4b: voucher permissions ─────────────────────────────────────
+
+test("BIN-587 B4b: VOUCHER_READ tillatt for ADMIN + HALL_OPERATOR + SUPPORT", () => {
+  assert.equal(canAccessAdminPermission("ADMIN", "VOUCHER_READ"), true);
+  assert.equal(canAccessAdminPermission("HALL_OPERATOR", "VOUCHER_READ"), true);
+  assert.equal(canAccessAdminPermission("SUPPORT", "VOUCHER_READ"), true);
+  assert.equal(canAccessAdminPermission("PLAYER", "VOUCHER_READ"), false);
+});
+
+test("BIN-587 B4b: VOUCHER_WRITE kun ADMIN (marketing er sentralt)", () => {
+  assert.equal(canAccessAdminPermission("ADMIN", "VOUCHER_WRITE"), true);
+  assert.equal(canAccessAdminPermission("HALL_OPERATOR", "VOUCHER_WRITE"), false);
+  assert.equal(canAccessAdminPermission("SUPPORT", "VOUCHER_WRITE"), false);
+  assert.equal(canAccessAdminPermission("PLAYER", "VOUCHER_WRITE"), false);
+});
+
+test("BIN-587 B4b: assertAdminPermission kaster for HALL_OPERATOR/SUPPORT på VOUCHER_WRITE", () => {
+  assert.throws(() => assertAdminPermission("HALL_OPERATOR", "VOUCHER_WRITE"));
+  assert.throws(() => assertAdminPermission("SUPPORT", "VOUCHER_WRITE"));
+  assert.throws(() => assertAdminPermission("PLAYER", "VOUCHER_READ"));
+});
+
 // ── BIN-591: hall-scope ─────────────────────────────────────────────────────
 
 test("BIN-591: ADMIN har alltid hall-scope (global)", () => {
