@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
-import { ClaimSubmitPayloadSchema, TicketReplacePayloadSchema } from "@spillorama/shared-types/socket-events";
+import { ClaimSubmitPayloadSchema, TicketReplacePayloadSchema, TicketSwapPayloadSchema } from "@spillorama/shared-types/socket-events";
 import { DomainError, toPublicError } from "../game/BingoEngine.js";
 import { addBreadcrumb, captureError } from "../observability/sentry.js";
 import { metrics as promMetrics } from "../util/metrics.js";
@@ -711,6 +711,44 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
 
         await emitRoomUpdate(roomCode);
         ackSuccess(callback, { ticketId, debitedAmount });
+      } catch (error) {
+        ackFailure(callback, error);
+      }
+    }));
+
+    // BIN-585: ticket:swap — free pre-round ticket swap for Game 5 (Spillorama).
+    // Legacy parity with `SwapTicket` (unity-backend Game5 GameController.swapTicket).
+    // Shares the display-cache mechanic with ticket:replace but skips the wallet
+    // debit — Game 5 tickets are slot-style cosmetic, so legacy gives a free
+    // re-roll in the Waiting phase. Gated by gameSlug === "spillorama" so paid
+    // games continue to use ticket:replace; relaxing the gate later is a
+    // one-line change if product wants free swap in other variants.
+    socket.on("ticket:swap", rateLimited("ticket:swap", async (payload: unknown, callback: (response: AckResponse<{ ticketId: string }>) => void) => {
+      try {
+        const parsed = TicketSwapPayloadSchema.safeParse(payload);
+        if (!parsed.success) {
+          const first = parsed.error.issues[0];
+          const field = first?.path.join(".") || "payload";
+          throw new DomainError("INVALID_INPUT", `ticket:swap payload invalid (${field}: ${first?.message ?? "unknown"}).`);
+        }
+        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(parsed.data);
+        const ticketId = parsed.data.ticketId;
+
+        const snapshot = engine.getRoomSnapshot(roomCode);
+        if (snapshot.currentGame?.status === "RUNNING") {
+          throw new DomainError("GAME_RUNNING", "Kan ikke bytte billett mens spillet pågår.");
+        }
+        if (snapshot.gameSlug !== "spillorama") {
+          throw new DomainError("SWAP_NOT_ALLOWED", "Gratis billettbytte er kun tilgjengelig i Spillorama.");
+        }
+
+        const newTicket = deps.replaceDisplayTicket?.(roomCode, playerId, ticketId, snapshot.gameSlug) ?? null;
+        if (!newTicket) {
+          throw new DomainError("TICKET_NOT_FOUND", `Ingen pre-round billett med id=${ticketId}.`);
+        }
+
+        await emitRoomUpdate(roomCode);
+        ackSuccess(callback, { ticketId });
       } catch (error) {
         ackFailure(callback, error);
       }

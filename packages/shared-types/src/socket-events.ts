@@ -12,6 +12,7 @@ export {
   DrawNewPayloadSchema,
   ClaimSubmitPayloadSchema,
   TicketReplacePayloadSchema,
+  TicketSwapPayloadSchema,
   MiniGameTypeSchema,
   MiniGamePlayResultSchema,
   MiniGameActivatedPayloadSchema,
@@ -35,6 +36,7 @@ import type {
   DrawNewPayload as DrawNewPayloadT,
   ClaimSubmitPayload as ClaimSubmitPayloadT,
   TicketReplacePayload as TicketReplacePayloadT,
+  TicketSwapPayload as TicketSwapPayloadT,
   MiniGamePlayResult as MiniGamePlayResultT,
   MiniGameActivatedPayload as MiniGameActivatedPayloadT,
   BetArmPayload as BetArmPayloadT,
@@ -62,6 +64,8 @@ export const SocketEvents = {
   TICKET_MARK: "ticket:mark",
   /** BIN-509: swap a pre-round ticket for a new one (debits replaceAmount). */
   TICKET_REPLACE: "ticket:replace",
+  /** BIN-585: free pre-round ticket swap (Game 5 / Spillorama). Legacy alias: SwapTicket. */
+  TICKET_SWAP: "ticket:swap",
   CLAIM_SUBMIT: "claim:submit",
   LUCKY_SET: "lucky:set",
   CHAT_SEND: "chat:send",
@@ -147,6 +151,13 @@ export type ClaimSubmitPayload = ClaimSubmitPayloadT;
  * currentGame is not RUNNING; debits `gameVariant.replaceAmount`.
  */
 export type TicketReplacePayload = TicketReplacePayloadT;
+
+/**
+ * BIN-585: payload for `ticket:swap`. Runtime-validated via
+ * `TicketSwapPayloadSchema`. Free pre-round swap; gated to Game 5
+ * (Spillorama) by gameSlug so paid games continue to use ticket:replace.
+ */
+export type TicketSwapPayload = TicketSwapPayloadT;
 
 export interface LuckyNumberPayload extends RoomActionPayload {
   luckyNumber: number;

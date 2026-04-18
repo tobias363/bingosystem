@@ -223,6 +223,104 @@ describe("Socket.IO integration", () => {
     assert.equal(result.error?.code, "GAME_RUNNING");
   });
 
+  // ── 2c. BIN-585: ticket:swap (Spillorama / Game 5 free swap) ─────────────
+
+  test("BIN-585: ticket:swap re-rolls one pre-round ticket without charging the wallet", async () => {
+    const alice = await server.connectClient("token-alice");
+
+    const r1 = await alice.emit<AckResponse<{ roomCode: string; playerId: string }>>(
+      "room:create", { hallId: "hall-test", gameSlug: "spillorama" },
+    );
+    const roomCode = r1.data!.roomCode;
+    const playerId = r1.data!.playerId;
+
+    await alice.emit("bet:arm", { roomCode, armed: true, ticketCount: 2 });
+    const originalTickets = server.roomState.getOrCreateDisplayTickets(roomCode, playerId, 2, "spillorama");
+    const toSwap = originalTickets[0];
+    const kept = originalTickets[1];
+    assert.ok(toSwap.id, "ticket must have a stable id");
+
+    const balanceBefore = await server.walletAdapter.getBalance("wallet-alice");
+    const result = await alice.emit<AckResponse<{ ticketId: string }>>(
+      "ticket:swap", { roomCode, playerId, ticketId: toSwap.id! },
+    );
+    assert.ok(result.ok, `ticket:swap failed: ${result.error?.message}`);
+    assert.equal(result.data!.ticketId, toSwap.id);
+    const balanceAfter = await server.walletAdapter.getBalance("wallet-alice");
+    assert.equal(balanceBefore, balanceAfter, "wallet must not be debited on free swap");
+
+    const newTickets = server.roomState.getOrCreateDisplayTickets(roomCode, playerId, 2, "spillorama");
+    const swapped = newTickets.find((t) => t.id === toSwap.id);
+    assert.ok(swapped, "swapped ticket keeps its stable id");
+    assert.notDeepStrictEqual(swapped!.grid, toSwap.grid, "grid must change on swap");
+    const retained = newTickets.find((t) => t.id === kept.id);
+    assert.deepStrictEqual(retained?.grid, kept.grid, "the other ticket is unchanged");
+  });
+
+  test("BIN-585: ticket:swap rejects for non-Spillorama games (SWAP_NOT_ALLOWED)", async () => {
+    const alice = await server.connectClient("token-alice");
+    const r1 = await alice.emit<AckResponse<{ roomCode: string; playerId: string }>>(
+      "room:create", { hallId: "hall-test", gameSlug: "bingo" },
+    );
+    const roomCode = r1.data!.roomCode;
+    const playerId = r1.data!.playerId;
+    await alice.emit("bet:arm", { roomCode, armed: true, ticketCount: 1 });
+    server.roomState.getOrCreateDisplayTickets(roomCode, playerId, 1, "bingo");
+    const result = await alice.emit<AckResponse>("ticket:swap", { roomCode, playerId, ticketId: "tkt-0" });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, "SWAP_NOT_ALLOWED");
+  });
+
+  test("BIN-585: ticket:swap rejects while game is RUNNING", async () => {
+    const alice = await server.connectClient("token-alice");
+    const bob = await server.connectClient("token-bob");
+    const r1 = await alice.emit<AckResponse<{ roomCode: string }>>(
+      "room:create", { hallId: "hall-test", gameSlug: "spillorama" },
+    );
+    const roomCode = r1.data!.roomCode;
+    await bob.emit("room:create", { hallId: "hall-test", gameSlug: "spillorama" });
+    await alice.emit("bet:arm", { roomCode, armed: true, ticketCount: 1 });
+    await bob.emit("bet:arm", { roomCode, armed: true, ticketCount: 1 });
+    const startResult = await alice.emit<AckResponse>("game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 });
+    assert.ok(startResult.ok, `game:start failed: ${startResult.error?.message}`);
+    const result = await alice.emit<AckResponse>("ticket:swap", { roomCode, ticketId: "tkt-0" });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, "GAME_RUNNING");
+  });
+
+  test("BIN-585: ticket:swap rejects unknown ticketId (TICKET_NOT_FOUND)", async () => {
+    const alice = await server.connectClient("token-alice");
+    const r1 = await alice.emit<AckResponse<{ roomCode: string; playerId: string }>>(
+      "room:create", { hallId: "hall-test", gameSlug: "spillorama" },
+    );
+    const roomCode = r1.data!.roomCode;
+    const playerId = r1.data!.playerId;
+    await alice.emit("bet:arm", { roomCode, armed: true, ticketCount: 1 });
+    server.roomState.getOrCreateDisplayTickets(roomCode, playerId, 1, "spillorama");
+    const result = await alice.emit<AckResponse>(
+      "ticket:swap", { roomCode, playerId, ticketId: "does-not-exist" },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.code, "TICKET_NOT_FOUND");
+  });
+
+  test("BIN-585: legacy SwapTicket alias dispatches to ticket:swap", async () => {
+    const alice = await server.connectClient("token-alice");
+    const r1 = await alice.emit<AckResponse<{ roomCode: string; playerId: string }>>(
+      "room:create", { hallId: "hall-test", gameSlug: "spillorama" },
+    );
+    const roomCode = r1.data!.roomCode;
+    const playerId = r1.data!.playerId;
+    await alice.emit("bet:arm", { roomCode, armed: true, ticketCount: 1 });
+    const [original] = server.roomState.getOrCreateDisplayTickets(roomCode, playerId, 1, "spillorama");
+    assert.ok(original.id);
+    const result = await alice.emit<AckResponse<{ ticketId: string }>>(
+      "SwapTicket", { roomCode, playerId, ticketId: original.id! },
+    );
+    assert.ok(result.ok, `legacy SwapTicket alias failed: ${result.error?.message}`);
+    assert.equal(result.data!.ticketId, original.id);
+  });
+
   // ── 3. ticket:mark ────────────────────────────────────────────────────────
 
   test("ticket:mark acknowledges ok", async () => {

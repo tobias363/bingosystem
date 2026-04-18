@@ -48,6 +48,7 @@ import { errorReporter } from "./middleware/errorReporter.js";
 import { PostgresChatMessageStore, type ChatMessageStore } from "./store/ChatMessageStore.js";
 import { createAdminDisplayHandlers } from "./sockets/adminDisplayEvents.js";
 import { createAdminHallHandlers } from "./sockets/adminHallEvents.js";
+import { registerLegacyEventAliases } from "./sockets/legacyEventAliases.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -572,6 +573,9 @@ io.on("connection", (socket: Socket) => {
   registerGameEvents(socket);
   registerAdminDisplayEvents(socket);
   registerAdminHallEvents(socket);
+  // BIN-585: Unity fallback-klient bruker legacy event-navn. Må registreres
+  // SIST slik at canonical-handlers finnes når aliaset re-dispatcher.
+  registerLegacyEventAliases(socket);
 });
 
 // ── Debug/test endpoint — room gap detection (localhost-only) ─────────────────
