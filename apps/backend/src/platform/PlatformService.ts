@@ -1512,7 +1512,7 @@ export class PlatformService {
     await this.ensureInitialized();
     const userId = this.assertEntityReference(userIdInput, "userId");
     const { rows } = await this.pool.query<UserRow>(
-      `SELECT id, email, display_name, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at
+      `SELECT id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at, compliance_data
        FROM ${this.usersTable()}
        WHERE id = $1`,
       [userId]
@@ -1658,6 +1658,186 @@ export class PlatformService {
        WHERE id = $1`,
       [id]
     );
+  }
+
+  /**
+   * BIN-587 B2.2: list spillere filtrert på KYC-status. Brukes av
+   * KYC-moderasjons-kø. Kun PLAYER-rollen returneres — admin/support/
+   * hall-operator er aldri i moderasjons-kø.
+   */
+  async listUsersByKycStatus(
+    status: KycStatus,
+    options?: { limit?: number }
+  ): Promise<AppUser[]> {
+    await this.ensureInitialized();
+    const limit = options?.limit && options.limit > 0 ? Math.min(options.limit, 500) : 100;
+    const { rows } = await this.pool.query<UserRow>(
+      `SELECT id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at, compliance_data
+       FROM ${this.usersTable()}
+       WHERE kyc_status = $1 AND role = 'PLAYER'
+       ORDER BY created_at ASC
+       LIMIT $2`,
+      [status, limit]
+    );
+    return rows.map((r) => this.mapUser(r));
+  }
+
+  /**
+   * BIN-587 B2.2: admin approve av KYC. Setter VERIFIED og stempler
+   * providerRef = "admin-override:<actorId>" så historikken er synlig.
+   */
+  async approveKycAsAdmin(input: {
+    userId: string;
+    actorId: string;
+  }): Promise<AppUser> {
+    await this.ensureInitialized();
+    const userId = this.assertEntityReference(input.userId, "userId");
+    const actorId = this.assertEntityReference(input.actorId, "actorId");
+    const current = await this.getUserById(userId);
+    if (!current.birthDate) {
+      throw new DomainError(
+        "KYC_BIRTHDATE_MISSING",
+        "Spiller har ikke oppgitt fødselsdato — KYC kan ikke godkjennes uten denne."
+      );
+    }
+    return this.updateKycStatus({
+      userId: current.id,
+      status: "VERIFIED",
+      birthDate: current.birthDate,
+      providerRef: `admin-override:${actorId}`,
+      verifiedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * BIN-587 B2.2: admin reject av KYC. `reason` lagres i compliance_data.
+   */
+  async rejectKycAsAdmin(input: {
+    userId: string;
+    actorId: string;
+    reason: string;
+  }): Promise<AppUser> {
+    await this.ensureInitialized();
+    const userId = this.assertEntityReference(input.userId, "userId");
+    const actorId = this.assertEntityReference(input.actorId, "actorId");
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new DomainError("INVALID_INPUT", "reason er påkrevd ved avvisning.");
+    }
+    if (reason.length > 500) {
+      throw new DomainError("INVALID_INPUT", "reason er for lang (maks 500 tegn).");
+    }
+    const current = await this.getUserById(userId);
+    const { rows } = await this.pool.query<UserRow>(
+      `UPDATE ${this.usersTable()}
+       SET kyc_status = 'REJECTED',
+           kyc_provider_ref = $2,
+           kyc_verified_at = now(),
+           compliance_data = COALESCE(compliance_data, '{}'::jsonb)
+             || jsonb_build_object(
+                  'kycRejectionReason', $3::text,
+                  'kycRejectedBy', $4::text,
+                  'kycRejectedAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                ),
+           updated_at = now()
+       WHERE id = $1
+       RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at, compliance_data`,
+      [current.id, `admin-override:${actorId}`, reason, actorId]
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new DomainError("USER_NOT_FOUND", "Bruker finnes ikke.");
+    }
+    return this.mapUser(row);
+  }
+
+  /**
+   * BIN-587 B2.2: resubmit — åpner KYC på nytt. Setter UNVERIFIED og
+   * nullstiller provider-ref + verifiedAt. compliance_data får et
+   * `kycResubmitLog`-entry (liste over resubmits for auditspor).
+   */
+  async resubmitKycAsAdmin(input: {
+    userId: string;
+    actorId: string;
+  }): Promise<AppUser> {
+    await this.ensureInitialized();
+    const userId = this.assertEntityReference(input.userId, "userId");
+    const actorId = this.assertEntityReference(input.actorId, "actorId");
+    const current = await this.getUserById(userId);
+    if (current.kycStatus !== "REJECTED") {
+      throw new DomainError(
+        "KYC_NOT_REJECTED",
+        "Resubmit er kun tillatt for spillere med kyc_status = REJECTED."
+      );
+    }
+    const { rows } = await this.pool.query<UserRow>(
+      `UPDATE ${this.usersTable()}
+       SET kyc_status = 'UNVERIFIED',
+           kyc_provider_ref = NULL,
+           kyc_verified_at = NULL,
+           compliance_data = COALESCE(compliance_data, '{}'::jsonb)
+             || jsonb_build_object(
+                  'kycResubmittedBy', $2::text,
+                  'kycResubmittedAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+                ),
+           updated_at = now()
+       WHERE id = $1
+       RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at, compliance_data`,
+      [current.id, actorId]
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new DomainError("USER_NOT_FOUND", "Bruker finnes ikke.");
+    }
+    return this.mapUser(row);
+  }
+
+  /**
+   * BIN-587 B2.2: admin kan overstyre kyc_status manuelt (PLAYER_KYC_OVERRIDE
+   * — ADMIN only). Bruker samme log-struktur som reject. Status må være
+   * en gyldig KycStatus.
+   */
+  async overrideKycStatusAsAdmin(input: {
+    userId: string;
+    actorId: string;
+    status: KycStatus;
+    reason: string;
+  }): Promise<AppUser> {
+    await this.ensureInitialized();
+    const userId = this.assertEntityReference(input.userId, "userId");
+    const actorId = this.assertEntityReference(input.actorId, "actorId");
+    const reason = input.reason.trim();
+    if (!reason) {
+      throw new DomainError("INVALID_INPUT", "reason er påkrevd for override.");
+    }
+    if (!["UNVERIFIED", "PENDING", "VERIFIED", "REJECTED"].includes(input.status)) {
+      throw new DomainError("INVALID_INPUT", "Ugyldig kyc_status.");
+    }
+    const current = await this.getUserById(userId);
+    const verifiedAtSql =
+      input.status === "VERIFIED" ? "now()" : "NULL";
+    const { rows } = await this.pool.query<UserRow>(
+      `UPDATE ${this.usersTable()}
+       SET kyc_status = $2,
+           kyc_provider_ref = $3,
+           kyc_verified_at = ${verifiedAtSql},
+           compliance_data = COALESCE(compliance_data, '{}'::jsonb)
+             || jsonb_build_object(
+                  'kycOverrideReason', $4::text,
+                  'kycOverriddenBy', $5::text,
+                  'kycOverriddenAt', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                  'kycOverrideStatus', $2::text
+                ),
+           updated_at = now()
+       WHERE id = $1
+       RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at, compliance_data`,
+      [current.id, input.status, `admin-override:${actorId}`, reason, actorId]
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new DomainError("USER_NOT_FOUND", "Bruker finnes ikke.");
+    }
+    return this.mapUser(row);
   }
 
   /**

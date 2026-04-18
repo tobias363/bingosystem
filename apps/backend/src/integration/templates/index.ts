@@ -26,12 +26,24 @@ import {
   ROLE_CHANGED_SUBJECT,
   ROLE_CHANGED_TEXT,
 } from "./role-changed.js";
+import {
+  KYC_APPROVED_HTML,
+  KYC_APPROVED_SUBJECT,
+  KYC_APPROVED_TEXT,
+} from "./kyc-approved.js";
+import {
+  KYC_REJECTED_HTML,
+  KYC_REJECTED_SUBJECT,
+  KYC_REJECTED_TEXT,
+} from "./kyc-rejected.js";
 
 export type TemplateKey =
   | "verify-email"
   | "reset-password"
   | "bankid-expiry-reminder"
-  | "role-changed";
+  | "role-changed"
+  | "kyc-approved"
+  | "kyc-rejected";
 
 export interface EmailTemplate {
   subject: string;
@@ -59,6 +71,16 @@ export const EMAIL_TEMPLATES: Record<TemplateKey, EmailTemplate> = {
     subject: ROLE_CHANGED_SUBJECT,
     html: ROLE_CHANGED_HTML,
     text: ROLE_CHANGED_TEXT,
+  },
+  "kyc-approved": {
+    subject: KYC_APPROVED_SUBJECT,
+    html: KYC_APPROVED_HTML,
+    text: KYC_APPROVED_TEXT,
+  },
+  "kyc-rejected": {
+    subject: KYC_REJECTED_SUBJECT,
+    html: KYC_REJECTED_HTML,
+    text: KYC_REJECTED_TEXT,
   },
 };
 

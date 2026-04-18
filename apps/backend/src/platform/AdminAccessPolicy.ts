@@ -30,7 +30,16 @@ const ADMIN_ACCESS_POLICY_DEFINITION = {
   ROOM_CONTROL_WRITE: ["ADMIN", "HALL_OPERATOR"],
   /** BIN-586: manuell deposit/withdraw-kø (kontant i hall, uttak over terskel). */
   PAYMENT_REQUEST_READ: ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
-  PAYMENT_REQUEST_WRITE: ["ADMIN", "HALL_OPERATOR"]
+  PAYMENT_REQUEST_WRITE: ["ADMIN", "HALL_OPERATOR"],
+  /**
+   * BIN-587 B2.2: KYC-moderasjon. ADMIN + SUPPORT kan se pending/rejected-
+   * kø og approve/reject. HALL_OPERATOR er eksplisitt utelatt — compliance
+   * er sentralt, ikke delegert per hall.
+   */
+  PLAYER_KYC_READ: ["ADMIN", "SUPPORT"],
+  PLAYER_KYC_MODERATE: ["ADMIN", "SUPPORT"],
+  /** PLAYER_KYC_OVERRIDE er destructive-path (forbi adapter-beslutning) — kun ADMIN. */
+  PLAYER_KYC_OVERRIDE: ["ADMIN"]
 } as const;
 
 export type AdminPermission = keyof typeof ADMIN_ACCESS_POLICY_DEFINITION;
