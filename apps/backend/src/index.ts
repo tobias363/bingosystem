@@ -31,6 +31,10 @@ import { getPrimaryRoomForHall, findPlayerInRoomByWallet, buildRoomUpdatePayload
 import { RoomStateManager } from "./util/roomState.js";
 import { toDrawSchedulerSettings, createSchedulerCallbacks, createDailyReportScheduler, type PendingBingoSettingsUpdate } from "./util/schedulerSetup.js";
 import { loadBingoRuntimeConfig } from "./util/envConfig.js";
+import { createJobScheduler } from "./jobs/JobScheduler.js";
+import { createSwedbankPaymentSyncJob } from "./jobs/swedbankPaymentSync.js";
+import { createBankIdExpiryReminderJob } from "./jobs/bankIdExpiryReminder.js";
+import { createSelfExclusionCleanupJob } from "./jobs/selfExclusionCleanup.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { createWalletRouter } from "./routes/wallet.js";
@@ -116,6 +120,9 @@ const {
   isProductionRuntime, bingoMinPlayersToStart, fixedAutoDrawIntervalMs,
   allowAutoplayInProduction, forceAutoStart, forceAutoDraw, enforceSingleRoomPerHall,
   autoplayAllowed, schedulerTickMs, dailyReportJobEnabled, dailyReportJobIntervalMs,
+  jobsEnabled, jobSwedbankEnabled, jobSwedbankIntervalMs,
+  jobBankIdEnabled, jobBankIdIntervalMs, jobBankIdRunAtHour,
+  jobRgCleanupEnabled, jobRgCleanupIntervalMs, jobRgCleanupRunAtHour,
   usePostgresBingoAdapter, checkpointConnectionString, roomStateProvider, redisUrl, useRedisLock,
   kycMinAge, kycProvider, pgSsl, pgSchema, sessionTtlHours,
 } = cfg;
@@ -298,6 +305,52 @@ drawScheduler = new DrawScheduler({
 drawScheduler.start();
 
 const dailyReportScheduler = createDailyReportScheduler({ engine, enabled: dailyReportJobEnabled, intervalMs: dailyReportJobIntervalMs });
+
+// ── BIN-582: Legacy-cron ports (Swedbank sync, BankID expiry, RG cleanup) ────
+
+const jobScheduler = createJobScheduler({
+  enabled: jobsEnabled,
+  // Reuse existing Redis scheduler lock when configured, so only one
+  // instance runs each tick in a multi-node deploy. In-memory deploys
+  // get no lock and run unconditionally (single-node dev).
+  lock: redisSchedulerLock,
+});
+
+jobScheduler.register({
+  name: "swedbank-payment-sync",
+  description: "Reconcile pending Swedbank top-up intents (legacy hourly cron).",
+  intervalMs: jobSwedbankIntervalMs,
+  enabled: jobSwedbankEnabled,
+  run: createSwedbankPaymentSyncJob({
+    pool: platformService.getPool(),
+    schema: pgSchema,
+    swedbankPayService,
+  }),
+});
+
+jobScheduler.register({
+  name: "bankid-expiry-reminder",
+  description: "Remind users of imminent BankID/ID expiry and mark expired (legacy daily cron).",
+  intervalMs: jobBankIdIntervalMs,
+  enabled: jobBankIdEnabled,
+  run: createBankIdExpiryReminderJob({
+    pool: platformService.getPool(),
+    schema: pgSchema,
+    runAtHourLocal: jobBankIdRunAtHour,
+  }),
+});
+
+jobScheduler.register({
+  name: "self-exclusion-cleanup",
+  description: "Clear expired voluntary pauses + self-exclusion minimums (legacy daily cron).",
+  intervalMs: jobRgCleanupIntervalMs,
+  enabled: jobRgCleanupEnabled,
+  run: createSelfExclusionCleanupJob({
+    pool: platformService.getPool(),
+    schema: pgSchema,
+    runAtHourLocal: jobRgCleanupRunAtHour,
+  }),
+});
 
 // ── Mount routers ─────────────────────────────────────────────────────────────
 
@@ -555,6 +608,7 @@ const PORT = Number(process.env.PORT ?? 4000);
   }
 
   dailyReportScheduler.start();
+  jobScheduler.start();
 
   // BIN-170: Load rooms from Redis on startup (if Redis provider)
   if (roomStateProvider === "redis") {
@@ -610,6 +664,7 @@ function handleShutdown(signal: string) {
   httpRateLimiter.stop();
   socketRateLimiter.stop();
   dailyReportScheduler.stop();
+  jobScheduler.stop();
   drawScheduler.gracefulStop()
     .then(async () => {
       await roomStateStore.shutdown();
