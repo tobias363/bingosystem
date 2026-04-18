@@ -11,7 +11,8 @@ Dette dokumentet forklarer hvordan de to betalings-systemene i backend henger sa
 - **`PaymentRequestService`** håndterer **manuell kontant** (kasse) og **manuell bank-basert uttak**. Operatør må godkjenne hver enkelt forespørsel i admin-UI.
 - **`SwedbankPayService`** håndterer **automatiske kort-innskudd** via Swedbank Pay Checkout. Wallet-kreditering skjer via callback eller klient-initiert avstemming.
 - Begge tjenester er byggeklosser over den samme `WalletAdapter` — wallet-ledger er felles sannhetskilde.
-- Det finnes **ingen refund-flyt** og **ingen webhook-signaturverifisering** per 2026-04-18. Se [§ Gaps](#gaps).
+- Det finnes **ingen refund-flyt** per 2026-04-18. Se [§ Gaps](#gaps).
+- Swedbank webhook-endepunktet bruker **HMAC-SHA256-signaturverifisering** (BIN-603, 2026-04-18) — se [§ 3.1](#31-webhook-hmac-verifisering).
 
 ---
 
@@ -187,6 +188,37 @@ Hvis Swedbank-callback ikke kommer (nettverksfeil, delay), kan klienten trigge a
 
 Se [`payments.ts:45-81`](../../apps/backend/src/routes/payments.ts) for klient-endepunktene.
 
+### 3.1. Webhook HMAC-verifisering
+
+**Lagt til i BIN-603 (2026-04-18).** Alle innkommende webhook-POST-er til `/api/payments/swedbank/callback` må signeres med en HMAC-SHA256 av rå request-body. `SwedbankPayService.processCallback` kalles kun hvis signaturen er gyldig.
+
+**Hvorfor raw-body:** JSON-parsing + re-serialisering kan normalisere whitespace og nøkkel-rekkefølge, som ødelegger signaturen. `express.json()` er wired med en `verify`-hook ([`index.ts:91-104`](../../apps/backend/src/index.ts)) som lagrer rå UTF-8-bytes på `req.rawBody` før parsing.
+
+**Header og format:**
+- `X-Swedbank-Signature: sha256=<hex>` (foretrukket)
+- `X-Swedbank-Signature: <hex>` (bar hex uten prefiks også akseptert)
+- HMAC-SHA256-digest, 64 hex-tegn, case-insensitive
+
+**Konstant-tid-sammenligning:** `crypto.timingSafeEqual` brukes slik at response-tid ikke lekker signatur-shape under brute-force-forsøk.
+
+**Fail-closed ved mis-konfig:** Hvis `SWEDBANK_WEBHOOK_SECRET` er uset eller tom, returnerer endepunktet `503 WEBHOOK_NOT_CONFIGURED` og logger en error. Dette tvinger ops til å merke misconfiguration umiddelbart i prod (ingen silent fall-through).
+
+**Status-koder:**
+
+| Scenario | HTTP |
+|---|---|
+| Gyldig signatur + gyldig payload | `200 { ok: true }` |
+| Ugyldig signatur eller manglende header | `401 INVALID_SIGNATURE` |
+| `SWEDBANK_WEBHOOK_SECRET` ikke konfigurert | `503 WEBHOOK_NOT_CONFIGURED` |
+| Intern feil (DB, Swedbank API timeout, etc.) | `500` |
+
+**Kode-referanser:**
+- Signatur-helper: [`apps/backend/src/payments/swedbankSignature.ts`](../../apps/backend/src/payments/swedbankSignature.ts)
+- Handler-integrasjon: [`apps/backend/src/routes/payments.ts` (swedbank/callback-handler)](../../apps/backend/src/routes/payments.ts)
+- Tester: [`apps/backend/src/payments/swedbankSignature.test.ts`](../../apps/backend/src/payments/swedbankSignature.test.ts) (15 unit-tests), [`apps/backend/src/routes/__tests__/paymentsWebhook.test.ts`](../../apps/backend/src/routes/__tests__/paymentsWebhook.test.ts) (7 integration-tests)
+
+**Forsvars-i-dybden:** Selv med HMAC-gate verifiserer `reconcileRow` fortsatt autoritativ status mot Swedbank API før wallet-kreditering — ingen av lagene kan omgås alene. HMAC hindrer DoS/log-spam og matcher bransjestandard for webhook-hygiene.
+
 ---
 
 ## 4. Idempotency
@@ -243,7 +275,7 @@ Begge tjenester garanterer **ingen dobbel-kreditering/-debitering** selv om samm
 Dette er **ikke implementert** per 2026-04-18 — flaggede for fremtidige issues:
 
 - **Refund-flyt.** Hverken PaymentRequestService eller SwedbankPayService har refund-stier. Manuelle tilbakebetalinger håndteres i dag via `WalletAdapter.debit` fra admin direkte, uten at original-transaksjonen lenkes. Gap eskaleres hvis Lotteritilsynet krever full refund-sporing.
-- **Swedbank webhook-signaturverifisering.** `processCallback` leser callback-body og sammenligner *direkte mot Swedbank API* (fetch `/paymentorders/{id}`). Ingen HMAC/JWT-sjekk av selve webhook-payloaden. Sikkerhetsmessig OK fordi wallet-kreditering kun skjer etter verifisert API-respons, men webhook-endepunktet er eksponert åpent på nettet — bør flagges i sikkerhetsaudit (BIN-592 eller senere).
+- ~~**Swedbank webhook-signaturverifisering.**~~ **Lukket i BIN-603 (PR #TBD).** `processCallback` får nå kun lov å kjøre etter at HMAC-SHA256 over rå-bytes er verifisert mot `SWEDBANK_WEBHOOK_SECRET`. Se [§ 3.1](#31-webhook-hmac-verifisering).
 - **Sentral `AuditLogService`-integrasjon.** Se `[TODO (BIN-588)]`-kommentarene. P.t. er strukturert `log.info` + tabell-feltene audit-dekningen.
 - **Auto-escalation til manuell gate ved AML/RG-terskel.** Ingen kode-gate som tvinger kort-innskudd over N NOK gjennom manuell godkjenning. Hvis pilot krever dette, må det inn før go-live. Pr i dag stoler vi på at RG-grenser i WalletAdapter (BIN-541) blokkerer ulovlige beløp *etter* kreditering — som i praksis betyr at Swedbank-intenten godtas men spill blokkeres av Spillevett. Akseptabelt for pilot, ikke for prod.
 - **Payout-flyt til bankkonto.** Uttak i `PaymentRequestService` gir kun wallet-debit, ikke faktisk penge-utbetaling. HALL_OPERATOR må utbetale kontant ved hall-kasse. Swedbank Payout API er ikke integrert.

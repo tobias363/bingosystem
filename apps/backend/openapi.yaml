@@ -1763,8 +1763,33 @@ paths:
   /api/payments/swedbank/callback:
     post:
       tags: [Payments]
-      summary: Swedbank Pay server-side callback (webhook — no auth required)
+      summary: Swedbank Pay server-side callback (webhook — HMAC-verified)
+      description: |
+        **BIN-603:** HMAC-SHA256 signature verification (no Bearer auth).
+
+        The handler computes `HMAC-SHA256(rawBody, SWEDBANK_WEBHOOK_SECRET)`
+        and compares constant-time against the digest in
+        `X-Swedbank-Signature`. `sha256=<hex>` and bare `<hex>` are both
+        accepted; the digest is 64 hex chars (SHA-256 output).
+
+        If the server is mis-configured (no secret), the endpoint
+        returns 503 — fail-closed so ops notices immediately rather
+        than silently accepting unsigned callbacks.
+
+        Defense-in-depth: even with a valid signature, `processCallback`
+        still fetches the authoritative payment status from Swedbank API
+        before crediting the wallet. Neither layer can be bypassed alone.
       security: []
+      parameters:
+        - in: header
+          name: X-Swedbank-Signature
+          required: true
+          schema:
+            type: string
+            pattern: "^(sha256=)?[0-9a-fA-F]{64}$"
+          description: |
+            HMAC-SHA256 digest (hex) of the raw request body, optionally
+            prefixed with `sha256=`.
       requestBody:
         required: true
         content:
@@ -1774,7 +1799,7 @@ paths:
               description: Raw Swedbank Pay callback payload
       responses:
         "200":
-          description: Acknowledged
+          description: Acknowledged — signature verified, callback processed
           content:
             application/json:
               schema:
@@ -1782,6 +1807,18 @@ paths:
                 properties:
                   ok:
                     type: boolean
+        "401":
+          description: INVALID_SIGNATURE — signature missing, malformed, or does not match
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: WEBHOOK_NOT_CONFIGURED — SWEDBANK_WEBHOOK_SECRET is not set on the server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 
   # ── Admin — Auth ──────────────────────────────────────────────────────────
 

@@ -88,8 +88,18 @@ const corsOrigins: string[] | "*" = corsAllowedOriginsRaw
   : "*";
 app.use(cors({ origin: corsOrigins, credentials: true }));
 // LAV-3: 100 KB for all endpoints, except registration which carries compressed photo IDs (~2 * 100KB base64)
+//
+// BIN-603: also stash the raw UTF-8 body on `req.rawBody` so the Swedbank
+// webhook-handler can HMAC-verify the original bytes. JSON re-serialisation
+// would desync on whitespace/key-order so we cannot regenerate the signed
+// payload after parsing.
 app.use((req, _res, next) => {
-  express.json({ limit: req.path === "/api/auth/register" ? "5mb" : "100kb" })(req, _res, next);
+  express.json({
+    limit: req.path === "/api/auth/register" ? "5mb" : "100kb",
+    verify: (rawReq, _rawRes, buf) => {
+      (rawReq as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
+    },
+  })(req, _res, next);
 });
 
 // BIN-277: REST API rate limiting — sliding-window per IP per route tier
@@ -454,7 +464,14 @@ app.use(createAdminRouter({
 }));
 
 app.use(createWalletRouter({ platformService, engine, walletAdapter, swedbankPayService, emitWalletRoomUpdates }));
-app.use(createPaymentsRouter({ platformService, swedbankPayService, emitWalletRoomUpdates }));
+app.use(createPaymentsRouter({
+  platformService,
+  swedbankPayService,
+  emitWalletRoomUpdates,
+  // BIN-603: HMAC-verifisering av Swedbank webhook. Tom secret → callback
+  // fail-closed med 503 slik at ops merker det med én gang i prod.
+  swedbankWebhookSecret: (process.env.SWEDBANK_WEBHOOK_SECRET ?? "").trim(),
+}));
 app.use(createPaymentRequestsRouter({ platformService, paymentRequestService, emitWalletRoomUpdates }));
 app.use(createGameRouter({ platformService, engine, drawScheduler, emitRoomUpdate, buildRoomUpdatePayload, assertUserCanAccessRoom, assertUserCanActAsPlayer }));
 

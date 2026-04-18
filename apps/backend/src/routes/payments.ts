@@ -3,6 +3,10 @@ import { toPublicError } from "../game/BingoEngine.js";
 import type { PlatformService, PublicAppUser } from "../platform/PlatformService.js";
 import type { SwedbankPayService } from "../payments/SwedbankPayService.js";
 import {
+  SWEDBANK_SIGNATURE_HEADER,
+  verifySwedbankSignature,
+} from "../payments/swedbankSignature.js";
+import {
   apiSuccess,
   apiFailure,
   getAccessTokenFromRequest,
@@ -15,10 +19,18 @@ export interface PaymentsRouterDeps {
   platformService: PlatformService;
   swedbankPayService: SwedbankPayService;
   emitWalletRoomUpdates: (walletIds: string[]) => Promise<void>;
+  /**
+   * BIN-603: shared secret for Swedbank webhook HMAC-SHA256 verification.
+   * Empty string = webhook is treated as mis-configured and returns 503
+   * (fail-closed). The raw bytes of the request body must reach this
+   * router via `req.rawBody` — see the `express.json` `verify` hook in
+   * index.ts.
+   */
+  swedbankWebhookSecret: string;
 }
 
 export function createPaymentsRouter(deps: PaymentsRouterDeps): express.Router {
-  const { platformService, swedbankPayService, emitWalletRoomUpdates } = deps;
+  const { platformService, swedbankPayService, emitWalletRoomUpdates, swedbankWebhookSecret } = deps;
   const router = express.Router();
 
   async function getAuthenticatedUser(req: express.Request): Promise<PublicAppUser> {
@@ -81,6 +93,39 @@ export function createPaymentsRouter(deps: PaymentsRouterDeps): express.Router {
   });
 
   router.post("/api/payments/swedbank/callback", async (req, res) => {
+    // BIN-603: HMAC-SHA256 verification over the raw request body BEFORE we
+    // touch processCallback. The callback path is internet-exposed; without
+    // signature verification anyone can POST a plausible Swedbank payload
+    // and force us to hit Swedbank's API for reconciliation. Wallet credit
+    // is still gated by the authoritative fetchPaymentOrder call inside
+    // reconcileRow, so unsigned spam can't steal money — but it is DoS /
+    // log-noise and diverges from industry standard. Verified here,
+    // fail-closed on any mis-configuration.
+    if (!swedbankWebhookSecret) {
+      console.error("[swedbank-callback] SWEDBANK_WEBHOOK_SECRET is not configured; refusing callback");
+      res.status(503).json({
+        ok: false,
+        error: { code: "WEBHOOK_NOT_CONFIGURED", message: "Swedbank webhook-verifisering er ikke konfigurert." },
+      });
+      return;
+    }
+    const rawBody = (req as unknown as { rawBody?: string }).rawBody ?? "";
+    const signatureHeader = req.headers[SWEDBANK_SIGNATURE_HEADER];
+    if (!verifySwedbankSignature(rawBody, signatureHeader, swedbankWebhookSecret)) {
+      const orderReference =
+        typeof req.body?.orderReference === "string" ? req.body.orderReference : undefined;
+      console.warn("[swedbank-callback] signature verification failed", {
+        orderReference,
+        hasHeader: Boolean(signatureHeader),
+        bodyLength: rawBody.length,
+      });
+      res.status(401).json({
+        ok: false,
+        error: { code: "INVALID_SIGNATURE", message: "Swedbank webhook-signatur er ugyldig." },
+      });
+      return;
+    }
+
     try {
       const result = await swedbankPayService.processCallback(req.body);
       if (result.walletCreditedNow) {
