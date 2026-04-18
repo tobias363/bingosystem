@@ -22,6 +22,12 @@ export interface AppUser {
   complianceData?: Record<string, unknown>;
   walletId: string;
   role: UserRole;
+  /**
+   * BIN-591: hall scope for HALL_OPERATOR. `null` for ADMIN/SUPPORT/PLAYER
+   * og for en HALL_OPERATOR som ennå ikke er tildelt en hall (fail closed
+   * for hall-scoped write-operasjoner).
+   */
+  hallId: string | null;
   kycStatus: KycStatus;
   birthDate?: string;
   kycVerifiedAt?: string;
@@ -273,6 +279,7 @@ interface UserRow {
   phone: string | null;
   wallet_id: string;
   role: UserRole;
+  hall_id: string | null;
   kyc_status: KycStatus;
   birth_date: Date | string | null;
   kyc_verified_at: Date | string | null;
@@ -525,7 +532,7 @@ export class PlatformService {
         `INSERT INTO ${this.usersTable()}
           (id, email, display_name, surname, password_hash, wallet_id, role, phone, birth_date, compliance_data)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10::jsonb)
-         RETURNING id, email, display_name, surname, compliance_data, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at, phone`,
+         RETURNING id, email, display_name, surname, compliance_data, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at, phone`,
         [userId, email, displayName, surname, passwordHash, walletId, role, phone, birthDate, complianceData ? JSON.stringify(complianceData) : null]
       );
       await client.query("COMMIT");
@@ -557,7 +564,7 @@ export class PlatformService {
         password_hash: string;
       }
     >(
-      `SELECT id, email, display_name, surname, phone, password_hash, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at
+      `SELECT id, email, display_name, surname, phone, password_hash, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at
        FROM ${this.usersTable()}
        WHERE email = $1`,
       [email]
@@ -602,7 +609,7 @@ export class PlatformService {
     }
 
     const { rows } = await this.pool.query<UserRow>(
-      `SELECT u.id, u.email, u.display_name, u.surname, u.wallet_id, u.role, u.kyc_status, u.birth_date, u.kyc_verified_at, u.kyc_provider_ref, u.created_at, u.updated_at
+      `SELECT u.id, u.email, u.display_name, u.surname, u.wallet_id, u.role, u.kyc_status, u.birth_date, u.kyc_verified_at, u.kyc_provider_ref, u.hall_id, u.created_at, u.updated_at
        FROM ${this.sessionsTable()} s
        JOIN ${this.usersTable()} u ON u.id = s.user_id
        WHERE s.token_hash = $1
@@ -1294,6 +1301,26 @@ export class PlatformService {
     return this.mapTerminal(rows[0]);
   }
 
+  /**
+   * BIN-591: used by route handlers to enforce hall-scope on a terminal
+   * before mutating it.
+   */
+  async getTerminal(terminalIdInput: string): Promise<TerminalDefinition> {
+    await this.ensureInitialized();
+    const terminalId = this.assertEntityReference(terminalIdInput, "terminalId");
+    const { rows } = await this.pool.query<TerminalRow>(
+      `SELECT id, hall_id, terminal_code, display_name, is_active, last_seen_at, created_at, updated_at
+       FROM ${this.terminalsTable()}
+       WHERE id = $1`,
+      [terminalId]
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new DomainError("TERMINAL_NOT_FOUND", "Terminalen finnes ikke.");
+    }
+    return this.mapTerminal(row);
+  }
+
   async updateTerminal(terminalIdInput: string, update: UpdateTerminalInput): Promise<TerminalDefinition> {
     await this.ensureInitialized();
     const terminalId = this.assertEntityReference(terminalIdInput, "terminalId");
@@ -1485,7 +1512,7 @@ export class PlatformService {
     await this.ensureInitialized();
     const userId = this.assertEntityReference(userIdInput, "userId");
     const { rows } = await this.pool.query<UserRow>(
-      `SELECT id, email, display_name, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at
+      `SELECT id, email, display_name, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at
        FROM ${this.usersTable()}
        WHERE id = $1`,
       [userId]
@@ -1542,7 +1569,7 @@ export class PlatformService {
       `UPDATE ${this.usersTable()}
        SET ${sets.join(", ")}
        WHERE id = $${idx}
-       RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at`,
+       RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at`,
       values
     );
     if (!rows[0]) {
@@ -1618,7 +1645,7 @@ export class PlatformService {
     try {
       await client.query("BEGIN");
       const { rows: existingRows } = await client.query<UserRow>(
-        `SELECT id, email, display_name, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at
+        `SELECT id, email, display_name, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at
          FROM ${this.usersTable()}
          WHERE id = $1
          FOR UPDATE`,
@@ -1646,7 +1673,7 @@ export class PlatformService {
          SET role = $2,
              updated_at = now()
          WHERE id = $1
-         RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at`,
+         RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at`,
         [userId, nextRole]
       );
       await client.query("COMMIT");
@@ -1657,6 +1684,46 @@ export class PlatformService {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * BIN-591: tildel (eller fjern) en hall til en bruker. Kun meningsfylt
+   * for HALL_OPERATOR; validerer at hallen finnes hvis ikke null.
+   */
+  async updateUserHallAssignment(
+    userIdInput: string,
+    hallIdInput: string | null
+  ): Promise<PublicAppUser> {
+    await this.ensureInitialized();
+    const userId = this.assertEntityReference(userIdInput, "userId");
+    const nextHallId =
+      hallIdInput === null || hallIdInput === undefined
+        ? null
+        : this.assertEntityReference(hallIdInput, "hallId");
+
+    if (nextHallId !== null) {
+      const { rows: hallRows } = await this.pool.query(
+        `SELECT id FROM ${this.hallsTable()} WHERE id = $1`,
+        [nextHallId]
+      );
+      if (!hallRows[0]) {
+        throw new DomainError("HALL_NOT_FOUND", "Hallen finnes ikke.");
+      }
+    }
+
+    const { rows } = await this.pool.query<UserRow>(
+      `UPDATE ${this.usersTable()}
+       SET hall_id = $2,
+           updated_at = now()
+       WHERE id = $1
+       RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at`,
+      [userId, nextHallId]
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new DomainError("USER_NOT_FOUND", "Bruker finnes ikke.");
+    }
+    return this.withBalance(this.mapUser(row));
   }
 
   assertUserEligibleForGameplay(user: PublicAppUser): void {
@@ -1698,7 +1765,7 @@ export class PlatformService {
     // Validate old token and get user
     const { rows } = await this.pool.query<UserRow & { session_id: string }>(
       `SELECT s.id AS session_id, u.id, u.email, u.display_name, u.surname, u.wallet_id, u.role, u.kyc_status,
-              u.birth_date, u.kyc_verified_at, u.kyc_provider_ref, u.created_at, u.updated_at
+              u.birth_date, u.kyc_verified_at, u.kyc_provider_ref, u.hall_id, u.created_at, u.updated_at
        FROM ${this.sessionsTable()} s
        JOIN ${this.usersTable()} u ON u.id = s.user_id
        WHERE s.token_hash = $1
@@ -1767,6 +1834,7 @@ export class PlatformService {
       complianceData: row.compliance_data ?? undefined,
       walletId: row.wallet_id,
       role: row.role,
+      hallId: row.hall_id ?? null,
       kycStatus: row.kyc_status,
       birthDate,
       kycVerifiedAt: row.kyc_verified_at ? asIso(row.kyc_verified_at) : undefined,
@@ -2056,7 +2124,7 @@ export class PlatformService {
            kyc_verified_at = $5,
            updated_at = now()
        WHERE id = $1
-       RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, created_at, updated_at`,
+       RETURNING id, email, display_name, surname, phone, wallet_id, role, kyc_status, birth_date, kyc_verified_at, kyc_provider_ref, hall_id, created_at, updated_at`,
       [input.userId, input.status, input.birthDate, providerRef, verifiedAt]
     );
     const row = rows[0];
@@ -2187,6 +2255,17 @@ export class PlatformService {
           `ALTER TABLE ${this.hallsTable()} ADD COLUMN IF NOT EXISTS ${col}`
         ).catch(() => {});
       }
+
+      // BIN-591: HALL_OPERATOR hall-scope. Added AFTER halls table exists
+      // so the FK target is valid on a fresh schema.
+      await client.query(
+        `ALTER TABLE ${this.usersTable()}
+         ADD COLUMN IF NOT EXISTS hall_id TEXT NULL REFERENCES ${this.hallsTable()}(id) ON DELETE SET NULL`
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_${this.schema}_app_users_hall_id
+         ON ${this.usersTable()}(hall_id) WHERE hall_id IS NOT NULL`
+      );
 
       await client.query(
         `CREATE TABLE IF NOT EXISTS ${this.terminalsTable()} (

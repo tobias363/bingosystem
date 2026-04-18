@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   ADMIN_ACCESS_POLICY,
   assertAdminPermission,
-  canAccessAdminPermission
+  assertUserHallScope,
+  canAccessAdminPermission,
+  resolveHallScopeFilter
 } from "./AdminAccessPolicy.js";
 import type { AdminPermission } from "./AdminAccessPolicy.js";
 import type { UserRole } from "./PlatformService.js";
@@ -82,4 +84,83 @@ test("assertAdminPermission avviser ulovlige writes for operator/support", () =>
   assert.throws(() => assertAdminPermission("HALL_OPERATOR", "GAME_CATALOG_WRITE"));
   assert.throws(() => assertAdminPermission("SUPPORT", "GAME_CATALOG_WRITE"));
   assert.throws(() => assertAdminPermission("SUPPORT", "HALL_WRITE"));
+});
+
+// ── BIN-591: hall-scope ─────────────────────────────────────────────────────
+
+test("BIN-591: ADMIN har alltid hall-scope (global)", () => {
+  assert.doesNotThrow(() => assertUserHallScope({ role: "ADMIN", hallId: null }, "hall-a"));
+  assert.doesNotThrow(() => assertUserHallScope({ role: "ADMIN", hallId: "hall-x" }, "hall-b"));
+});
+
+test("BIN-591: SUPPORT har global hall-scope (read-only)", () => {
+  assert.doesNotThrow(() => assertUserHallScope({ role: "SUPPORT", hallId: null }, "hall-a"));
+  assert.doesNotThrow(() => assertUserHallScope({ role: "SUPPORT", hallId: "hall-x" }, "hall-b"));
+});
+
+test("BIN-591: HALL_OPERATOR tildelt Hall A når hall-scope matcher", () => {
+  assert.doesNotThrow(() =>
+    assertUserHallScope({ role: "HALL_OPERATOR", hallId: "hall-a" }, "hall-a")
+  );
+});
+
+test("BIN-591: HALL_OPERATOR får FORBIDDEN ved mismatch", () => {
+  assert.throws(
+    () => assertUserHallScope({ role: "HALL_OPERATOR", hallId: "hall-a" }, "hall-b"),
+    /Du har ikke tilgang/
+  );
+});
+
+test("BIN-591: HALL_OPERATOR uten tildelt hall fail-closed", () => {
+  assert.throws(
+    () => assertUserHallScope({ role: "HALL_OPERATOR", hallId: null }, "hall-a"),
+    /ikke tildelt en hall/
+  );
+});
+
+test("BIN-591: PLAYER får FORBIDDEN på hall-scope-check", () => {
+  assert.throws(
+    () => assertUserHallScope({ role: "PLAYER", hallId: null }, "hall-a"),
+    /ikke tilgang/
+  );
+});
+
+test("BIN-591: resolveHallScopeFilter returnerer undefined for ADMIN uten filter", () => {
+  assert.equal(resolveHallScopeFilter({ role: "ADMIN", hallId: null }), undefined);
+});
+
+test("BIN-591: resolveHallScopeFilter respekterer ADMIN eksplisitt filter", () => {
+  assert.equal(
+    resolveHallScopeFilter({ role: "ADMIN", hallId: null }, "hall-c"),
+    "hall-c"
+  );
+});
+
+test("BIN-591: resolveHallScopeFilter tvinger HALL_OPERATOR til egen hall", () => {
+  assert.equal(
+    resolveHallScopeFilter({ role: "HALL_OPERATOR", hallId: "hall-a" }),
+    "hall-a"
+  );
+  assert.equal(
+    resolveHallScopeFilter({ role: "HALL_OPERATOR", hallId: "hall-a" }, "hall-a"),
+    "hall-a"
+  );
+});
+
+test("BIN-591: resolveHallScopeFilter avviser HALL_OPERATOR som prøver annen hall", () => {
+  assert.throws(
+    () =>
+      resolveHallScopeFilter(
+        { role: "HALL_OPERATOR", hallId: "hall-a" },
+        "hall-b"
+      ),
+    /ikke tilgang til denne hallen/
+  );
+});
+
+test("BIN-591: resolveHallScopeFilter fail-closed for HALL_OPERATOR uten tildelt hall", () => {
+  assert.throws(
+    () => resolveHallScopeFilter({ role: "HALL_OPERATOR", hallId: null }),
+    /ikke tildelt en hall/
+  );
 });

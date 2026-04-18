@@ -62,3 +62,62 @@ export function assertAdminPermission(role: UserRole, permission: AdminPermissio
   }
   throw new DomainError("FORBIDDEN", message ?? "Du har ikke tilgang til dette endepunktet.");
 }
+
+/**
+ * BIN-591: hall-scope guard for HALL_OPERATOR.
+ *
+ * Regler:
+ *  - ADMIN: alltid tilgang (globalt scope). `targetHallId` ignoreres.
+ *  - SUPPORT: tilsvarende globalt scope for read-operasjoner — kallsteder
+ *    som trenger write-restriksjon må kontrollere rolle eksplisitt.
+ *  - HALL_OPERATOR: må ha en `hallId` satt, og den må matche
+ *    `targetHallId`. En operator uten tildelt hall (`hallId === null`)
+ *    får FORBIDDEN — fail closed. En operator med annen hall får FORBIDDEN.
+ *  - PLAYER: skal ikke nå hit (dekkes av assertAdminPermission), men
+ *    fall-through blir FORBIDDEN.
+ */
+export function assertUserHallScope(
+  user: { role: UserRole; hallId: string | null },
+  targetHallId: string,
+  message?: string
+): void {
+  if (user.role === "ADMIN" || user.role === "SUPPORT") {
+    return;
+  }
+  if (user.role !== "HALL_OPERATOR") {
+    throw new DomainError("FORBIDDEN", message ?? "Du har ikke tilgang til denne hallen.");
+  }
+  if (!user.hallId) {
+    throw new DomainError(
+      "FORBIDDEN",
+      message ?? "Din bruker er ikke tildelt en hall — kontakt admin."
+    );
+  }
+  if (user.hallId !== targetHallId) {
+    throw new DomainError("FORBIDDEN", message ?? "Du har ikke tilgang til denne hallen.");
+  }
+}
+
+/**
+ * BIN-591: returner hallId-filter for list-queries. `undefined` betyr
+ * «ingen filter» (ADMIN/SUPPORT ser alt). For HALL_OPERATOR tvinges
+ * filter til deres hallId; operator uten hall får FORBIDDEN.
+ */
+export function resolveHallScopeFilter(
+  user: { role: UserRole; hallId: string | null },
+  explicitHallId?: string
+): string | undefined {
+  if (user.role === "HALL_OPERATOR") {
+    if (!user.hallId) {
+      throw new DomainError(
+        "FORBIDDEN",
+        "Din bruker er ikke tildelt en hall — kontakt admin."
+      );
+    }
+    if (explicitHallId && explicitHallId !== user.hallId) {
+      throw new DomainError("FORBIDDEN", "Du har ikke tilgang til denne hallen.");
+    }
+    return user.hallId;
+  }
+  return explicitHallId;
+}
