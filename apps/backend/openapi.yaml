@@ -51,6 +51,8 @@ tags:
     description: Player-resource endpoints — profile, GDPR self-service account deletion. BIN-587 B2.1.
   - name: Admin — Users
     description: User-role and hall-assignment management. BIN-591.
+  - name: Admin — Players
+    description: Player KYC-moderation — list pending/rejected, approve, reject, resubmit, override. BIN-587 B2.2.
 
 components:
   securitySchemes:
@@ -470,6 +472,153 @@ components:
             Target hall-id for HALL_OPERATOR scoping. Pass `null` (or empty string)
             to clear the assignment. Only meaningful for HALL_OPERATOR — other
             roles ignore the field.
+
+    # ── Admin — Players / KYC-moderation (BIN-587 B2.2) ───────────────────
+
+    KycStatus:
+      type: string
+      enum: [UNVERIFIED, PENDING, VERIFIED, REJECTED]
+      description: |
+        Player KYC lifecycle. `UNVERIFIED` = aldri innsendt, `PENDING` = awaiting
+        moderator, `VERIFIED` = godkjent, `REJECTED` = avvist (spiller kan sende
+        på nytt hvis admin kaller `/resubmit`).
+
+    PlayerSummary:
+      type: object
+      description: |
+        Moderator-view of a player. Strips wallet/session-detaljer — bruk
+        `/api/admin/wallets/...` for compliance-visning.
+      required: [id, email, displayName, kycStatus, hallId, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        surname:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        kycStatus:
+          $ref: "#/components/schemas/KycStatus"
+        birthDate:
+          type: string
+          format: date
+          nullable: true
+        kycVerifiedAt:
+          type: string
+          format: date-time
+          nullable: true
+        kycProviderRef:
+          type: string
+          nullable: true
+          description: Provider-side referanse (BankID-sesjons-id el.l.) hvis tilgjengelig.
+        hallId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        complianceData:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Fri-formet metadata fra KYC-provider — rå payload for audit.
+
+    PlayerDetail:
+      allOf:
+        - $ref: "#/components/schemas/PlayerSummary"
+      description: Detail-response har for øyeblikket samme shape som summary; felt-sett kan utvides uten å bryte client-kontrakt.
+
+    # Alias-navn for briefens terminologi — peker begge på PlayerSummary
+    # siden list-endpoints bare differensierer via `kycStatus`-verdien.
+    PendingPlayer:
+      allOf:
+        - $ref: "#/components/schemas/PlayerSummary"
+      description: PlayerSummary der `kycStatus=PENDING`.
+
+    RejectedPlayer:
+      allOf:
+        - $ref: "#/components/schemas/PlayerSummary"
+      description: PlayerSummary der `kycStatus=REJECTED`.
+
+    KYCApprovalInput:
+      type: object
+      description: Body for approve. Note-feltet er valgfritt og trimmes til maks 500 tegn før audit-log.
+      properties:
+        note:
+          type: string
+          maxLength: 500
+
+    KYCRejectionInput:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Påkrevd. Persistert i audit-log og sendt til spilleren i rejection-e-post.
+
+    KYCOverrideInput:
+      type: object
+      required: [status, reason]
+      description: Admin-only override (PLAYER_KYC_OVERRIDE). Bypasser normal moderator-flyt; krever at `reason` dokumenterer hvorfor.
+      properties:
+        status:
+          $ref: "#/components/schemas/KycStatus"
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+
+    AuditActorType:
+      type: string
+      enum: [USER, ADMIN, HALL_OPERATOR, SUPPORT, PLAYER, SYSTEM]
+
+    AuditLogEntry:
+      type: object
+      description: |
+        Persistert audit-hendelse. Returneres av
+        `GET /api/admin/players/{id}/audit` filtrert på `resource=user`.
+      required: [id, actorType, action, resource, createdAt]
+      properties:
+        id:
+          type: string
+        actorId:
+          type: string
+          nullable: true
+        actorType:
+          $ref: "#/components/schemas/AuditActorType"
+        action:
+          type: string
+          description: Stable dotted verb, f.eks. `player.kyc.approve`, `player.kyc.reject`, `player.kyc.override`.
+        resource:
+          type: string
+          description: Entity kind, f.eks. `user`.
+        resourceId:
+          type: string
+          nullable: true
+        details:
+          type: object
+          additionalProperties: true
+          description: Action-spesifikke felt (f.eks. `reason`, `newStatus`, `note`).
+        ipAddress:
+          type: string
+          nullable: true
+        userAgent:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
 
 security:
   - BearerAuth: []
@@ -3434,6 +3583,397 @@ paths:
                 $ref: "#/components/schemas/ApiError"
         "403":
           description: FORBIDDEN — caller lacks USER_ROLE_WRITE
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: USER_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ── Admin — Players / KYC-moderation (BIN-587 B2.2) ───────────────────────
+
+  /api/admin/players/pending:
+    get:
+      tags: [Admin — Players]
+      summary: List players whose KYC is awaiting moderator review
+      description: |
+        **RBAC:** `PLAYER_KYC_READ` (ADMIN, HALL_OPERATOR, SUPPORT). Returns
+        players with `kycStatus = PENDING`, ordered newest-first.
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Pending list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [players, count]
+                        properties:
+                          players:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/PendingPlayer"
+                          count:
+                            type: integer
+        "403":
+          description: FORBIDDEN — caller lacks PLAYER_KYC_READ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/players/rejected:
+    get:
+      tags: [Admin — Players]
+      summary: List players whose KYC was rejected
+      description: |
+        **RBAC:** `PLAYER_KYC_READ`. Same shape as `/pending` but filtered on
+        `kycStatus = REJECTED`. Useful for follow-up, resubmit-flow.
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Rejected list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [players, count]
+                        properties:
+                          players:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/RejectedPlayer"
+                          count:
+                            type: integer
+        "403":
+          description: FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/players/{id}:
+    get:
+      tags: [Admin — Players]
+      summary: Get full detail (incl. complianceData) for a single player
+      description: |
+        **RBAC:** `PLAYER_KYC_READ`. Returns the same fields as the list
+        endpoints plus the raw `complianceData` blob from the KYC provider.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Player detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PlayerDetail"
+        "403":
+          description: FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: USER_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/players/{id}/audit:
+    get:
+      tags: [Admin — Players]
+      summary: List audit-log events for a single player
+      description: |
+        **RBAC:** `PLAYER_KYC_READ`. Returns the audit stream filtered to
+        `resource=user`, `resourceId={id}`, newest-first. Includes KYC
+        moderation actions (`player.kyc.approve|reject|resubmit|override`)
+        plus profile-updates and GDPR-deletion.
+
+        The endpoint first verifies the user exists before reading the
+        audit store so a missing user returns `USER_NOT_FOUND` instead of
+        leaking "no events" (which could be confused with an empty history).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Audit events
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [events, count]
+                        properties:
+                          events:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/AuditLogEntry"
+                          count:
+                            type: integer
+        "403":
+          description: FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: USER_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/players/{id}/approve:
+    post:
+      tags: [Admin — Players]
+      summary: Approve a player's KYC (transitions status to VERIFIED)
+      description: |
+        **RBAC:** `PLAYER_KYC_MODERATE` (ADMIN, HALL_OPERATOR, SUPPORT).
+
+        Side effects:
+        - Writes `player.kyc.approve` audit-log entry (fire-and-forget).
+        - Sends `kyc-approved` template e-mail to the player (fire-and-forget;
+          SMTP failures do NOT block the status change).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KYCApprovalInput"
+      responses:
+        "200":
+          description: Player approved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PlayerSummary"
+        "403":
+          description: FORBIDDEN — caller lacks PLAYER_KYC_MODERATE
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: USER_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: KYC_STATE_CONFLICT — brukeren er ikke i PENDING-state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/players/{id}/reject:
+    post:
+      tags: [Admin — Players]
+      summary: Reject a player's KYC with a required reason
+      description: |
+        **RBAC:** `PLAYER_KYC_MODERATE`. Transitions status to REJECTED.
+        Reason is required (maks 500 tegn), persistert i audit-log og
+        inkludert i rejection-e-post til spilleren. Spiller kan sende på
+        nytt dersom admin senere kaller `/resubmit`.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KYCRejectionInput"
+      responses:
+        "200":
+          description: Player rejected
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PlayerSummary"
+        "400":
+          description: INVALID_INPUT — reason mangler eller er for lang
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: USER_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: KYC_STATE_CONFLICT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/players/{id}/resubmit:
+    post:
+      tags: [Admin — Players]
+      summary: Reopen KYC so a rejected/verified player can submit fresh documents
+      description: |
+        **RBAC:** `PLAYER_KYC_MODERATE`. Transitions status to UNVERIFIED.
+        Writes `player.kyc.resubmit` audit-log; ingen e-post sendes i
+        denne versjonen — moderator informerer spilleren ut-av-bånd.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: KYC reopened
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PlayerSummary"
+        "403":
+          description: FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: USER_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/players/{id}/kyc-status:
+    put:
+      tags: [Admin — Players]
+      summary: Admin-only override of a player's KYC status (bypasses normal moderator flow)
+      description: |
+        **RBAC:** `PLAYER_KYC_OVERRIDE` (ADMIN only). Brukes til manuell
+        korreksjon: rulle tilbake en feil-godkjennelse, eller tvinge
+        VERIFIED uten standard-flyt (f.eks. etter manuell dokumentsjekk).
+
+        Audit-log-entry (`player.kyc.override`) får både ny status og
+        reason — viktig fordi denne ruten bypasser approve/reject-guards.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KYCOverrideInput"
+      responses:
+        "200":
+          description: Status overridden
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PlayerSummary"
+        "400":
+          description: INVALID_INPUT — status må være UNVERIFIED/PENDING/VERIFIED/REJECTED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: FORBIDDEN — caller lacks PLAYER_KYC_OVERRIDE (ADMIN only)
           content:
             application/json:
               schema:
