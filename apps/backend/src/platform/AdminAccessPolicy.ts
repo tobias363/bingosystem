@@ -93,7 +93,16 @@ const ADMIN_ACCESS_POLICY_DEFINITION = {
    * papirbillett-administrasjon er hall-lokalt. SUPPORT er bevisst
    * utelatt — er ikke hall-operativ rolle.
    */
-  PHYSICAL_TICKET_WRITE: ["ADMIN", "HALL_OPERATOR"]
+  PHYSICAL_TICKET_WRITE: ["ADMIN", "HALL_OPERATOR"],
+  /**
+   * BIN-587 B4b: voucher-konfigurasjon (rabatt-koder).
+   *   - VOUCHER_READ: liste + detalj. ADMIN + HALL_OPERATOR + SUPPORT
+   *     (SUPPORT kan trenge å verifisere koder under kundestøtte).
+   *   - VOUCHER_WRITE: opprette, endre, deaktivere — kun ADMIN siden
+   *     marketing-rabatter er sentralt.
+   */
+  VOUCHER_READ: ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
+  VOUCHER_WRITE: ["ADMIN"]
 } as const;
 
 export type AdminPermission = keyof typeof ADMIN_ACCESS_POLICY_DEFINITION;
