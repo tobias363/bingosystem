@@ -21,20 +21,21 @@ import type {
 } from "../../payments/PaymentRequestService.js";
 
 function makeUser(
-  overrides: Partial<PublicAppUser> & { id: string; role: PublicAppUser["role"]; hallId: string | null }
+  id: string,
+  role: PublicAppUser["role"],
+  hallId: string | null
 ): PublicAppUser {
   return {
-    id: overrides.id,
-    email: overrides.email ?? `${overrides.id}@test.no`,
-    displayName: overrides.displayName ?? overrides.id,
-    walletId: overrides.walletId ?? `wallet-${overrides.id}`,
-    role: overrides.role,
-    hallId: overrides.hallId,
+    id,
+    email: `${id}@test.no`,
+    displayName: id,
+    walletId: `wallet-${id}`,
+    role,
+    hallId,
     kycStatus: "VERIFIED",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     balance: 0,
-    ...overrides,
   };
 }
 
@@ -45,18 +46,22 @@ function makeRequest(
 ): PaymentRequest {
   return {
     id,
+    kind,
     userId: "player-1",
     walletId: "wallet-player-1",
     amountCents: 1000,
     hallId,
     submittedBy: "player-1",
-    kind,
     status: "PENDING",
-    submittedAt: "2026-04-18T00:00:00Z",
-    reviewedBy: null,
-    reviewedAt: null,
     rejectionReason: null,
-  } as PaymentRequest;
+    acceptedBy: null,
+    acceptedAt: null,
+    rejectedBy: null,
+    rejectedAt: null,
+    walletTransactionId: null,
+    createdAt: "2026-04-18T00:00:00Z",
+    updatedAt: "2026-04-18T00:00:00Z",
+  };
 }
 
 async function withServer(
@@ -154,7 +159,7 @@ async function request(
 
 test("BIN-591: HALL_OPERATOR (Hall A) kan approve request i Hall A", async () => {
   const users = {
-    "op-a": makeUser({ id: "op-a", role: "HALL_OPERATOR", hallId: "hall-a" }),
+    "op-a": makeUser("op-a", "HALL_OPERATOR", "hall-a"),
   };
   const requests = { "req-1": makeRequest("req-1", "hall-a") };
   await withServer(users, requests, async (baseUrl, spies) => {
@@ -168,7 +173,7 @@ test("BIN-591: HALL_OPERATOR (Hall A) kan approve request i Hall A", async () =>
 
 test("BIN-591: HALL_OPERATOR (Hall A) kan IKKE approve request i Hall B", async () => {
   const users = {
-    "op-a": makeUser({ id: "op-a", role: "HALL_OPERATOR", hallId: "hall-a" }),
+    "op-a": makeUser("op-a", "HALL_OPERATOR", "hall-a"),
   };
   const requests = { "req-2": makeRequest("req-2", "hall-b") };
   await withServer(users, requests, async (baseUrl, spies) => {
@@ -183,7 +188,7 @@ test("BIN-591: HALL_OPERATOR (Hall A) kan IKKE approve request i Hall B", async 
 
 test("BIN-591: HALL_OPERATOR (Hall A) kan IKKE reject request i Hall B", async () => {
   const users = {
-    "op-a": makeUser({ id: "op-a", role: "HALL_OPERATOR", hallId: "hall-a" }),
+    "op-a": makeUser("op-a", "HALL_OPERATOR", "hall-a"),
   };
   const requests = { "req-3": makeRequest("req-3", "hall-b", "withdraw") };
   await withServer(users, requests, async (baseUrl, spies) => {
@@ -199,7 +204,7 @@ test("BIN-591: HALL_OPERATOR (Hall A) kan IKKE reject request i Hall B", async (
 
 test("BIN-591: ADMIN kan approve på tvers av haller", async () => {
   const users = {
-    "admin-1": makeUser({ id: "admin-1", role: "ADMIN", hallId: null }),
+    "admin-1": makeUser("admin-1", "ADMIN", null),
   };
   const requests = {
     "req-4": makeRequest("req-4", "hall-a"),
@@ -220,7 +225,7 @@ test("BIN-591: ADMIN kan approve på tvers av haller", async () => {
 
 test("BIN-591: HALL_OPERATOR uten tildelt hall får FORBIDDEN (fail closed)", async () => {
   const users = {
-    "op-unassigned": makeUser({ id: "op-unassigned", role: "HALL_OPERATOR", hallId: null }),
+    "op-unassigned": makeUser("op-unassigned", "HALL_OPERATOR", null),
   };
   const requests = { "req-6": makeRequest("req-6", "hall-a") };
   await withServer(users, requests, async (baseUrl, spies) => {
@@ -235,7 +240,7 @@ test("BIN-591: HALL_OPERATOR uten tildelt hall får FORBIDDEN (fail closed)", as
 
 test("BIN-591: HALL_OPERATOR får FORBIDDEN på request uten hall-binding (fail closed)", async () => {
   const users = {
-    "op-a": makeUser({ id: "op-a", role: "HALL_OPERATOR", hallId: "hall-a" }),
+    "op-a": makeUser("op-a", "HALL_OPERATOR", "hall-a"),
   };
   const requests = { "req-7": makeRequest("req-7", null) }; // request uten hallId
   await withServer(users, requests, async (baseUrl, spies) => {
@@ -250,8 +255,8 @@ test("BIN-591: HALL_OPERATOR får FORBIDDEN på request uten hall-binding (fail 
 
 test("BIN-591: GET /api/admin/payments/requests filtrerer liste for HALL_OPERATOR", async () => {
   const users = {
-    "op-a": makeUser({ id: "op-a", role: "HALL_OPERATOR", hallId: "hall-a" }),
-    "admin-1": makeUser({ id: "admin-1", role: "ADMIN", hallId: null }),
+    "op-a": makeUser("op-a", "HALL_OPERATOR", "hall-a"),
+    "admin-1": makeUser("admin-1", "ADMIN", null),
   };
   const requests = {
     "req-a1": makeRequest("req-a1", "hall-a"),
@@ -274,7 +279,7 @@ test("BIN-591: GET /api/admin/payments/requests filtrerer liste for HALL_OPERATO
 
 test("BIN-591: HALL_OPERATOR kan IKKE spørre etter en annen halls requests via query-param", async () => {
   const users = {
-    "op-a": makeUser({ id: "op-a", role: "HALL_OPERATOR", hallId: "hall-a" }),
+    "op-a": makeUser("op-a", "HALL_OPERATOR", "hall-a"),
   };
   await withServer(users, {}, async (baseUrl) => {
     const res = await request(
