@@ -335,7 +335,24 @@ async function step3_tvDisplaySubscribe({ adminToken }) {
     const tokenId = tokenResp.data.id;
     log(`step 3: display token created id=${tokenId}`);
 
-    // Connect a second "TV" socket — admin-display:login, then admin-display:subscribe.
+    // Drive the mini-game FIRST so the canonical hall room exists before
+    // the TV socket subscribes. Per BIN-498 `admin-display:subscribe`
+    // resolves the hall's active room at subscribe-time and only joins
+    // that room-code — a TV that subscribes before a game exists gets
+    // the hall-display broadcast room but NOT the per-room event stream.
+    const hostSocket = (await connectSocket(adminToken, "admin-host-step3")).socket;
+    const created = await emit(hostSocket, "room:create",
+      { playerName: "Rehearsal Host (step 3)", hallId: env.HALL_ID, gameSlug: "bingo" }, adminToken);
+    if (!created.ok) throw new Error(`room:create failed: ${JSON.stringify(created.error)}`);
+    const roomCode = created.data.roomCode;
+    const playerId = created.data.playerId;
+    await emit(hostSocket, "bet:arm", { roomCode, playerId, armed: true, ticketCount: 1 }, adminToken);
+    await emit(hostSocket, "game:start", { roomCode, playerId, entryFee: 10, ticketsPerPlayer: 1 }, adminToken);
+    log(`step 3: host room=${roomCode} game started`);
+
+    // Now connect the TV socket — admin-display:login + subscribe.
+    // Subscribe resolves the active hall room (which now exists) and
+    // joins it, so subsequent draw:new broadcasts reach the TV.
     const tvSocket = io(URL, { transports: ["websocket", "polling"], reconnection: false, timeout: 20_000 });
     const tvEvents = [];
     ["admin:hall-event", "room:update", "draw:new", "pattern:won", "connect_error"]
@@ -351,20 +368,13 @@ async function step3_tvDisplaySubscribe({ adminToken }) {
     log(`step 3: TV login ok hallId=${tvLogin.data.hallId}`);
     const tvSubscribe = await emit(tvSocket, "admin-display:subscribe", {});
     if (!tvSubscribe.ok) throw new Error(`admin-display:subscribe failed: ${JSON.stringify(tvSubscribe.error)}`);
-    log(`step 3: TV subscribed`);
+    log(`step 3: TV subscribed (post room creation)`);
 
-    // Drive a mini-game on a separate admin socket so TV receives broadcasts.
-    const hostSocket = (await connectSocket(adminToken, "admin-host-step3")).socket;
-    const created = await emit(hostSocket, "room:create",
-      { playerName: "Rehearsal Host (step 3)", hallId: env.HALL_ID, gameSlug: "bingo" }, adminToken);
-    if (!created.ok) throw new Error(`room:create failed: ${JSON.stringify(created.error)}`);
-    const roomCode = created.data.roomCode;
-    const playerId = created.data.playerId;
-    await emit(hostSocket, "bet:arm", { roomCode, playerId, armed: true, ticketCount: 1 }, adminToken);
-    await emit(hostSocket, "game:start", { roomCode, playerId, entryFee: 10, ticketsPerPlayer: 1 }, adminToken);
+    // Now drive 3 draws — TV should mirror each one.
     for (let i = 0; i < 3; i += 1) {
       await emit(hostSocket, "draw:next", { roomCode, playerId }, adminToken);
-      await sleep(600);
+      // BIN-253 rate-limit is 1.4s — give some headroom.
+      await sleep(1_500);
     }
 
     // Wait for TV to see at least one draw:new for this room.
