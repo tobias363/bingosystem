@@ -43,6 +43,14 @@ tags:
     description: Compliance ledger entries and daily reports
   - name: Admin — Overskudd
     description: Surplus distribution to organisations (pengespillforskriften)
+  - name: Payment Requests
+    description: Manual cash/bank deposit + withdraw queue (player-side endpoints). BIN-586.
+  - name: Admin — Payment Requests
+    description: Hall-operator accept/reject for the manual deposit/withdraw queue. BIN-586.
+  - name: Players
+    description: Player-resource endpoints — profile, GDPR self-service account deletion. BIN-587 B2.1.
+  - name: Admin — Users
+    description: User-role and hall-assignment management. BIN-591.
 
 components:
   securitySchemes:
@@ -276,6 +284,192 @@ components:
           type: string
         points:
           type: number
+
+    # ── Payment requests (BIN-586) ────────────────────────────────────────
+
+    PaymentRequestKind:
+      type: string
+      enum: [deposit, withdraw]
+      description: Whether the queued request is an incoming (deposit) or outgoing (withdraw) wallet move.
+
+    PaymentRequestStatus:
+      type: string
+      enum: [PENDING, ACCEPTED, REJECTED]
+
+    PaymentRequest:
+      type: object
+      required:
+        [id, kind, userId, walletId, amountCents, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          $ref: "#/components/schemas/PaymentRequestKind"
+        userId:
+          type: string
+        walletId:
+          type: string
+        amountCents:
+          type: integer
+          minimum: 1
+          description: Amount in minor units (øre). `10000` = 100 NOK.
+        hallId:
+          type: string
+          nullable: true
+          description: Hall where the request was submitted. HALL_OPERATOR is scoped to their own hall (BIN-591).
+        submittedBy:
+          type: string
+          nullable: true
+          description: User ID of the actor who submitted the request (terminal staff or the player themselves).
+        status:
+          $ref: "#/components/schemas/PaymentRequestStatus"
+        rejectionReason:
+          type: string
+          nullable: true
+        acceptedBy:
+          type: string
+          nullable: true
+        acceptedAt:
+          type: string
+          format: date-time
+          nullable: true
+        rejectedBy:
+          type: string
+          nullable: true
+        rejectedAt:
+          type: string
+          format: date-time
+          nullable: true
+        walletTransactionId:
+          type: string
+          nullable: true
+          description: |
+            Set once the request is ACCEPTED. Links to the ledger entry that
+            credited (deposit) or debited (withdraw) the player's wallet.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    DepositRequestInput:
+      type: object
+      required: [amountCents]
+      properties:
+        amountCents:
+          type: integer
+          minimum: 1
+        hallId:
+          type: string
+          description: Optional. Required in practice when HALL_OPERATOR submits on behalf of a player.
+
+    WithdrawRequestInput:
+      allOf:
+        - $ref: "#/components/schemas/DepositRequestInput"
+      description: Same shape as deposit; amount is still positive, direction determined by endpoint.
+
+    AcceptPaymentRequestInput:
+      type: object
+      required: [type]
+      properties:
+        type:
+          $ref: "#/components/schemas/PaymentRequestKind"
+
+    RejectPaymentRequestInput:
+      type: object
+      required: [type, reason]
+      properties:
+        type:
+          $ref: "#/components/schemas/PaymentRequestKind"
+        reason:
+          type: string
+          minLength: 1
+          description: Human-readable rejection reason stored on the row for audit.
+
+    # ── Auth (BIN-587 B2.1 — password reset, email verify) ────────────────
+
+    PasswordResetTokenValid:
+      type: object
+      description: Returned by GET /api/auth/reset-password/{token} when the token is valid.
+      required: [valid, userId]
+      properties:
+        valid:
+          type: boolean
+          enum: [true]
+        userId:
+          type: string
+
+    ResetPasswordInput:
+      type: object
+      required: [newPassword]
+      properties:
+        newPassword:
+          type: string
+          minLength: 12
+
+    # ── Players (BIN-587 B2.1) ────────────────────────────────────────────
+
+    PlayerProfile:
+      type: object
+      required: [id, email, displayName, hallId, kycStatus, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+        surname:
+          type: string
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        hallId:
+          type: string
+          description: Primary hall association.
+        kycStatus:
+          type: string
+          enum: [PENDING, VERIFIED, REJECTED]
+        birthDate:
+          type: string
+          format: date
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    PlayerProfileUpdateInput:
+      type: object
+      description: All fields optional — only the supplied fields are updated.
+      properties:
+        displayName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+
+    # ── Admin — Users (BIN-591) ───────────────────────────────────────────
+
+    AdminUserHallAssignmentInput:
+      type: object
+      required: [hallId]
+      properties:
+        hallId:
+          type: string
+          nullable: true
+          description: |
+            Target hall-id for HALL_OPERATOR scoping. Pass `null` (or empty string)
+            to clear the assignment. Only meaningful for HALL_OPERATOR — other
+            roles ignore the field.
 
 security:
   - BearerAuth: []
@@ -2766,3 +2960,487 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiSuccess"
+
+  # ── Payment Requests — Player (BIN-586) ───────────────────────────────────
+
+  /api/payments/deposit-request:
+    post:
+      tags: [Payment Requests]
+      summary: Create a PENDING manual cash/bank deposit request
+      description: |
+        Queues a deposit request. The wallet is **not** credited until a
+        HALL_OPERATOR accepts it via
+        `POST /api/admin/payments/requests/{id}/accept`.
+
+        Authentication: Bearer token (player). The userId and walletId are
+        resolved from the token — the client does not pass them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepositRequestInput"
+      responses:
+        "200":
+          description: Pending request created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentRequest"
+        "400":
+          description: INVALID_INPUT — amountCents missing or not a positive integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/payments/withdraw-request:
+    post:
+      tags: [Payment Requests]
+      summary: Create a PENDING manual withdraw request
+      description: |
+        Queues a withdraw request. The wallet is **not** debited until a
+        HALL_OPERATOR accepts it. Current MVP pays out as cash at the hall;
+        bank-transfer payout (Swedbank Payout) is not implemented.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WithdrawRequestInput"
+      responses:
+        "200":
+          description: Pending request created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PaymentRequest"
+        "400":
+          description: INVALID_INPUT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ── Payment Requests — Admin (BIN-586, BIN-591) ───────────────────────────
+
+  /api/admin/payments/requests:
+    get:
+      tags: [Admin — Payment Requests]
+      summary: List deposit/withdraw requests (filterable)
+      description: |
+        **RBAC:** `PAYMENT_REQUEST_READ` (ADMIN, HALL_OPERATOR, SUPPORT).
+        **BIN-591 hall-scope:** if the caller is HALL_OPERATOR, the
+        `hallId` filter is forcibly set to the operator's hall regardless
+        of the query-string input.
+      parameters:
+        - in: query
+          name: type
+          required: false
+          schema:
+            $ref: "#/components/schemas/PaymentRequestKind"
+        - in: query
+          name: status
+          required: false
+          schema:
+            $ref: "#/components/schemas/PaymentRequestStatus"
+          description: Defaults to PENDING when omitted.
+        - in: query
+          name: hallId
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: Sorted newest-first, mixed kinds allowed
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          requests:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/PaymentRequest"
+        "403":
+          description: FORBIDDEN — caller lacks PAYMENT_REQUEST_READ
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/payments/requests/{id}/accept:
+    post:
+      tags: [Admin — Payment Requests]
+      summary: Accept a PENDING request and perform the wallet operation
+      description: |
+        **RBAC:** `PAYMENT_REQUEST_WRITE` (ADMIN, HALL_OPERATOR).
+        **BIN-591 hall-scope:** HALL_OPERATOR may only accept requests
+        bound to their own hall. Accepting a request with no `hall_id`
+        (legacy rows) is forbidden for HALL_OPERATOR — fail-closed.
+
+        Idempotent: the underlying wallet operation uses key
+        `payment-request:{kind}:{id}`. Re-accepting an already-ACCEPTED
+        request returns PAYMENT_REQUEST_ALREADY_RESOLVED.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptPaymentRequestInput"
+      responses:
+        "200":
+          description: Request accepted, wallet credited/debited
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          request:
+                            $ref: "#/components/schemas/PaymentRequest"
+        "400":
+          description: INSUFFICIENT_FUNDS (withdraw) or INVALID_INPUT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: FORBIDDEN — hall-scope violation or missing permission
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: PAYMENT_REQUEST_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/admin/payments/requests/{id}/reject:
+    post:
+      tags: [Admin — Payment Requests]
+      summary: Reject a PENDING request with a reason
+      description: |
+        **RBAC:** `PAYMENT_REQUEST_WRITE`. Same hall-scope rules as accept.
+        Wallet is never touched on reject — the row's status, rejection
+        reason, and rejected_by/rejected_at are persisted for audit.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectPaymentRequestInput"
+      responses:
+        "200":
+          description: Request rejected
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          request:
+                            $ref: "#/components/schemas/PaymentRequest"
+        "403":
+          description: FORBIDDEN
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: PAYMENT_REQUEST_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ── Auth — Password Reset + Email Verify (BIN-587 B2.1) ───────────────────
+
+  /api/auth/reset-password/{token}:
+    get:
+      tags: [Auth]
+      summary: Validate a password-reset token (used by the UI before showing the new-password form)
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PasswordResetTokenValid"
+        "400":
+          description: TOKEN_INVALID or TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    post:
+      tags: [Auth]
+      summary: Consume a password-reset token and set a new password
+      description: |
+        Consumes the token atomically (one-shot) and writes a new password
+        hash. Existing sessions are revoked as a side effect of
+        `platformService.setPassword`.
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordInput"
+      responses:
+        "200":
+          description: Password reset
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          reset:
+                            type: boolean
+                            enum: [true]
+        "400":
+          description: TOKEN_INVALID, TOKEN_EXPIRED, or password too weak
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/auth/verify-email/{token}:
+    post:
+      tags: [Auth]
+      summary: Confirm a user's email address via the one-shot token from the sign-up email
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Email verified
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          verified:
+                            type: boolean
+                            enum: [true]
+        "400":
+          description: TOKEN_INVALID or TOKEN_EXPIRED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  # ── Players (BIN-587 B2.1) ────────────────────────────────────────────────
+
+  /api/players/me/profile:
+    get:
+      tags: [Players]
+      summary: Get the authenticated player's profile-view fields
+      description: |
+        Returns only fields the player is allowed to see and edit. Password,
+        compliance, and internal flags are excluded — use `/api/auth/me`
+        for the fuller auth view, and admin endpoints for compliance.
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PlayerProfile"
+    put:
+      tags: [Players]
+      summary: Update the authenticated player's display name, email, or phone
+      description: |
+        Only the fields present in the request body are updated. Writes an
+        `player.profile.update` entry to the audit log (fire-and-forget).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlayerProfileUpdateInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AppUser"
+        "400":
+          description: INVALID_INPUT (e.g. malformed email)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/players/me:
+    delete:
+      tags: [Players]
+      summary: GDPR self-service account deletion (soft-anonymize)
+      description: |
+        Same semantics as `DELETE /api/auth/me` but lives under the player
+        resource so the admin roadmap can evolve them independently. Writes
+        a `player.account.delete` audit entry with `reason="gdpr-self-service"`
+        and a **redacted** email-domain marker only — the plaintext email is
+        never persisted in the audit trail.
+      responses:
+        "200":
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          deleted:
+                            type: boolean
+                            enum: [true]
+
+  # ── Admin — Users (BIN-591) ───────────────────────────────────────────────
+
+  /api/admin/users/{userId}/hall:
+    put:
+      tags: [Admin — Users]
+      summary: Assign or clear the primary hall for a user (HALL_OPERATOR scoping)
+      description: |
+        **RBAC:** `USER_ROLE_WRITE` (ADMIN only). Pass `hallId: null` or an
+        empty string to clear the assignment. Only relevant for
+        HALL_OPERATOR — other roles ignore the field, but the endpoint is
+        callable for any user id the caller can manage.
+
+        Writes a `user.hall.assign` audit-log entry with the actor, target
+        user, and the new hall id.
+      parameters:
+        - in: path
+          name: userId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminUserHallAssignmentInput"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AppUser"
+        "400":
+          description: INVALID_INPUT — hallId is neither a string nor null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: FORBIDDEN — caller lacks USER_ROLE_WRITE
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: USER_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
