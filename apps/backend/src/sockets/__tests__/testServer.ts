@@ -21,6 +21,7 @@ import {
 import type { Ticket, RoomSnapshot } from "../../game/types.js";
 import type { PublicAppUser, HallDefinition } from "../../platform/PlatformService.js";
 import { createGameEventHandlers, type GameEventsDeps } from "../gameEvents.js";
+import { registerLegacyEventAliases } from "../legacyEventAliases.js";
 import { SocketRateLimiter } from "../../middleware/socketRateLimit.js";
 import { RoomStateManager } from "../../util/roomState.js";
 import {
@@ -229,6 +230,8 @@ export async function createTestServer(): Promise<TestServer> {
     "claim:submit":   { windowMs: 1000, maxEvents: 100 },
     "room:state":     { windowMs: 1000, maxEvents: 100 },
     "bet:arm":        { windowMs: 1000, maxEvents: 100 },
+    "ticket:replace": { windowMs: 1000, maxEvents: 100 },
+    "ticket:swap":    { windowMs: 1000, maxEvents: 100 },
   };
   const socketRateLimiter = new SocketRateLimiter(testRateLimits);
   const roomState = new RoomStateManager();
@@ -309,7 +312,11 @@ export async function createTestServer(): Promise<TestServer> {
   };
 
   const registerGameEvents = createGameEventHandlers(deps);
-  io.on("connection", (socket: Socket) => registerGameEvents(socket));
+  io.on("connection", (socket: Socket) => {
+    registerGameEvents(socket);
+    // BIN-585: må registreres sist slik at canonical-handlers finnes.
+    registerLegacyEventAliases(socket);
+  });
 
   // Start on random port
   await new Promise<void>((resolve) => server.listen(0, resolve));

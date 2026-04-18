@@ -180,6 +180,20 @@ export const TicketReplacePayloadSchema = z.object({
 export type TicketReplacePayload = z.infer<typeof TicketReplacePayloadSchema>;
 
 /**
+ * BIN-585: ticket:swap — free pre-round swap (Game 5 / Spillorama).
+ * Same wire shape as ticket:replace, but the handler skips the wallet debit.
+ * Gated by gameSlug so paid games continue to use ticket:replace.
+ * Legacy alias: `SwapTicket` (Unity fallback-klient).
+ */
+export const TicketSwapPayloadSchema = z.object({
+  accessToken: z.string().optional(),
+  roomCode: z.string().min(1),
+  playerId: z.string().optional(),
+  ticketId: z.string().min(1),
+});
+export type TicketSwapPayload = z.infer<typeof TicketSwapPayloadSchema>;
+
+/**
  * BIN-505/506: MiniGamePlayResult — sent as the ack payload from
  * `minigame:play`. The 4-way rotation (wheel → chest → mystery → colorDraft)
  * uses this shape for all variants.
