@@ -90,7 +90,6 @@ const elements = {
   reloadBtn: document.getElementById("reloadBtn"),
   logoutBtn: document.getElementById("logoutBtn"),
 
-
   hallEditorSelect: document.getElementById("hallEditorSelect"),
   hallSlug: document.getElementById("hallSlug"),
   hallName: document.getElementById("hallName"),
@@ -1841,6 +1840,56 @@ async function loadHallGameConfigs() {
   setStatus(elements.configStatus, `Lastet ${state.hallGameConfigs.length} konfig-linjer for valgt hall.`, "success");
 }
 
+function millisecondsToSecondsString(value, fallback = "") {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return fallback;
+  }
+  return String(Math.round(numeric / 10) / 100);
+}
+
+function isoToDatetimeLocalValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  const seconds = String(parsed.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+}
+
+function datetimeLocalToIso(value, fieldName) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return undefined;
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`${fieldName} må være en gyldig dato/tid.`);
+  }
+  return parsed.toISOString();
+}
+
+function parseSecondsToMilliseconds(value, label) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    throw new Error(`${label} må fylles ut.`);
+  }
+  const parsedSeconds = Number(raw);
+  if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0) {
+    throw new Error(`${label} må være et tall større enn 0.`);
+  }
+  return Math.round(parsedSeconds * 1000);
+}
+
 function ensurePrizePolicyEffectiveFromDefault() {
   if (!elements.prizePolicyEffectiveFrom) {
     return;
@@ -2188,6 +2237,144 @@ async function loadTerminals() {
 
 function formatRoomSummary(room) {
   return `${room.code} | hall=${room.hallId} | players=${room.playerCount} | status=${room.gameStatus}`;
+}
+
+function renderRoomOptions() {
+  const previous = elements.roomSelect.value;
+  setSelectOptions(
+    elements.roomSelect,
+    state.rooms.map((room) => ({
+      value: room.code,
+      label: formatRoomSummary(room)
+    })),
+    previous,
+    "Ingen rom"
+  );
+}
+
+async function loadRooms() {
+  // TODO BIN-580: verifiser endpoint i apps/backend
+  const rooms = await apiRequest("/api/admin/rooms", { auth: true });
+  state.rooms = Array.isArray(rooms) ? rooms : [];
+  renderRoomOptions();
+  if ((elements.roomSelect.value || "").trim()) {
+    await showSelectedRoomSnapshot();
+  } else {
+    setStatus(elements.roomStatus, "Ingen rom valgt.");
+  }
+}
+
+async function showSelectedRoomSnapshot() {
+  const roomCode = (elements.roomSelect.value || "").trim().toUpperCase();
+  if (!roomCode) {
+    setStatus(elements.roomStatus, "Ingen rom valgt.");
+    return;
+  }
+  // TODO BIN-580: verifiser endpoint i apps/backend
+  const snapshot = await apiRequest(`/api/admin/rooms/${encodeURIComponent(roomCode)}`, { auth: true });
+  const game = snapshot?.currentGame;
+  const maxPayoutBudget = Number(game?.maxPayoutBudget);
+  const remainingPayoutBudget = Number(game?.remainingPayoutBudget);
+  const payoutPercent = Number(game?.payoutPercent);
+  const hasRtp =
+    Number.isFinite(maxPayoutBudget) &&
+    maxPayoutBudget >= 0 &&
+    Number.isFinite(remainingPayoutBudget) &&
+    Number.isFinite(payoutPercent);
+  const boundedRemaining = hasRtp ? Math.min(maxPayoutBudget, Math.max(0, remainingPayoutBudget)) : 0;
+  const usedPercent = hasRtp && maxPayoutBudget > 0 ? ((maxPayoutBudget - boundedRemaining) / maxPayoutBudget) * 100 : 0;
+  const rtpWarning =
+    hasRtp && game?.status === "RUNNING"
+      ? usedPercent >= 100 || boundedRemaining <= 0
+        ? "RTP-GRENSE NÅDD"
+        : usedPercent >= 90
+          ? "RTP > 90%"
+          : usedPercent >= 80
+            ? "RTP > 80%"
+            : ""
+      : "";
+  setStatus(
+    elements.roomStatus,
+    [
+      `Rom: ${snapshot.code}`,
+      `Hall: ${snapshot.hallId}`,
+      `Host playerId: ${snapshot.hostPlayerId}`,
+      `Spillere: ${Array.isArray(snapshot.players) ? snapshot.players.length : 0}`,
+      `Status: ${game?.status || "NONE"}`,
+      `Trukket: ${game?.drawnNumbers?.length || 0}`,
+      hasRtp
+        ? `RTP: ${Math.round(payoutPercent * 100) / 100}% | Brukt: ${Math.max(0, Math.min(100, Math.round(usedPercent * 100) / 100))}%`
+        : "RTP: -",
+      rtpWarning ? `Varsel: ${rtpWarning}` : "Varsel: Ingen"
+    ].join("\n"),
+    rtpWarning === "RTP-GRENSE NÅDD" || rtpWarning === "RTP > 90%" ? "error" : "success"
+  );
+}
+
+function getSelectedRoomCode() {
+  const roomCode = (elements.roomSelect.value || "").trim().toUpperCase();
+  if (!roomCode) {
+    throw new Error("Velg rom først.");
+  }
+  return roomCode;
+}
+
+function getSelectedRoomHallId() {
+  const hallId = (elements.hallSelect.value || "").trim();
+  if (!hallId) {
+    throw new Error("Velg hall først.");
+  }
+  return hallId;
+}
+
+async function handleCreateRoom() {
+  const hallId = getSelectedRoomHallId();
+  const hostName = (elements.hostName.value || "").trim();
+  const hostWalletId = (elements.hostWalletId.value || "").trim();
+
+  setLoading(elements.createRoomBtn, true, "Oppretter...", "Opprett rom");
+  try {
+    // TODO BIN-580: verifiser endpoint i apps/backend
+    const result = await apiRequest("/api/admin/rooms", {
+      method: "POST",
+      auth: true,
+      body: {
+        hallId,
+        hostName: hostName || undefined,
+        hostWalletId: hostWalletId || undefined
+      }
+    });
+
+    await loadRooms();
+    elements.roomSelect.value = result.roomCode;
+    setStatus(
+      elements.roomStatus,
+      [
+        `Rom opprettet: ${result.roomCode}`,
+        `Host playerId: ${result.playerId}`,
+        `Hall: ${result.snapshot?.hallId || hallId}`,
+        `Spillstatus: ${result.snapshot?.currentGame?.status || "NONE"}`
+      ].join("\n"),
+      "success"
+    );
+  } catch (error) {
+    setStatus(elements.roomStatus, error.message || "Klarte ikke opprette rom.", "error");
+  } finally {
+    setLoading(elements.createRoomBtn, false, "Oppretter...", "Opprett rom");
+  }
+}
+
+function getRoomStartPayload() {
+  let entryFee = Number(elements.entryFee.value || 0);
+  if (!Number.isFinite(entryFee) || entryFee < 0) {
+    entryFee = 0;
+  }
+
+  const ticketsPerPlayer = Number.parseInt(elements.ticketsPerPlayer.value || "4", 10);
+  if (!Number.isInteger(ticketsPerPlayer) || ticketsPerPlayer < 1 || ticketsPerPlayer > 5) {
+    throw new Error("ticketsPerPlayer må være et heltall mellom 1 og 5.");
+  }
+  return { entryFee, ticketsPerPlayer };
 }
 
 async function handleStartRoom() {
@@ -3577,7 +3764,6 @@ async function bootstrap() {
   });
 
   elements.roomSelect.addEventListener("change", () => {
-    const roomCode = (elements.roomSelect.value || "").trim().toUpperCase();
     showSelectedRoomSnapshot().catch((error) => {
       setStatus(elements.roomStatus, error.message || "Kunne ikke hente romstatus.", "error");
     });
