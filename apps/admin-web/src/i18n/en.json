@@ -1771,6 +1771,8 @@
   "search_by_username_email_phone": "Search by username, email or phone",
   "include_deleted": "Include deleted",
   "export_csv": "Export CSV",
+  "load_more": "Load more",
+  "csv_export_too_many": "Too many rows for CSV export",
   "view": "View",
   "player_details": "Player Details",
   "player_profile": "Player Profile",

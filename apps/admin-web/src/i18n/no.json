@@ -1764,6 +1764,8 @@
   "search_by_username_email_phone": "Søk etter brukernavn, e-post eller telefon",
   "include_deleted": "Inkluder slettede",
   "export_csv": "Eksporter CSV",
+  "load_more": "Last flere",
+  "csv_export_too_many": "For mange rader for CSV-eksport",
   "view": "Vis",
   "player_details": "Spillerdetaljer",
   "player_profile": "Spillerprofil",
