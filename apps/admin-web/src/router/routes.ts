@@ -77,6 +77,9 @@ export const routes: RouteDef[] = [
   // PR-A4b — detail routes resolved via payout dispatcher (hash-regex).
 
   { path: "/riskCountry", titleKey: "risk_country", roles: ["admin", "super-admin"] },
+  // PR-B6 (BIN-664) — security / blocked-IP. SECURITY_READ lists; SECURITY_WRITE mutations
+  // via add/edit modal on the list page (no dedicated /blockedIp/add route).
+  { path: "/blockedIp", titleKey: "blocked_ip_table", module: "Security Management", roles: ["admin", "super-admin"] },
   { path: "/hallAccountReport", titleKey: "hall_account_report" },
   // PR-A4b — dynamic detail + settlement routes resolved via hallAccount
   // dispatcher (hash-regex match).
@@ -94,6 +97,8 @@ export const routes: RouteDef[] = [
   { path: "/withdraw/list/emails", titleKey: "add_email_account", module: "Withdraw Management" },
 
   { path: "/leaderboard", titleKey: "leaderboard_management" },
+  // PR-B6 (BIN-664) — Leaderboard tier add (PLACEHOLDER until BIN-668 ships).
+  { path: "/addLeaderboard", titleKey: "add_leaderboard_tier", module: "Leaderboard Management" },
   { path: "/voucher", titleKey: "voucher_management" },
   { path: "/loyaltyManagement", titleKey: "players_loyalty_management", module: "Loyalty Management" },
   { path: "/loyalty", titleKey: "loyalty_type", module: "Loyalty Management" },

@@ -23,6 +23,9 @@ import { isAmountwithdrawRoute, mountAmountwithdrawRoute } from "./pages/amountw
 import { isTransactionRoute, mountTransactionRoute } from "./pages/transactions/index.js";
 import { isWalletRoute, mountWalletRoute } from "./pages/wallets/index.js";
 import { isProductsRoute, mountProductsRoute } from "./pages/products/index.js";
+import { isSecurityRoute, mountSecurityRoute } from "./pages/security/index.js";
+import { isRiskCountryRoute, mountRiskCountryRoute } from "./pages/riskCountry/index.js";
+import { isLeaderboardRoute, mountLeaderboardRoute } from "./pages/leaderboard/index.js";
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
@@ -124,6 +127,18 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isProductsRoute(bare)) {
         mountProductsRoute(container, bare);
+        return;
+      }
+      if (isSecurityRoute(bare)) {
+        mountSecurityRoute(container, bare);
+        return;
+      }
+      if (isRiskCountryRoute(bare)) {
+        mountRiskCountryRoute(container, bare);
+        return;
+      }
+      if (isLeaderboardRoute(bare)) {
+        mountLeaderboardRoute(container, bare);
         return;
       }
       renderUnknown(container, path);
@@ -246,6 +261,18 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isProductsRoute(route.path)) {
     mountProductsRoute(container, route.path);
+    return;
+  }
+  if (isSecurityRoute(route.path)) {
+    mountSecurityRoute(container, route.path);
+    return;
+  }
+  if (isRiskCountryRoute(route.path)) {
+    mountRiskCountryRoute(container, route.path);
+    return;
+  }
+  if (isLeaderboardRoute(route.path)) {
+    mountLeaderboardRoute(container, route.path);
     return;
   }
   renderPlaceholder(container, route);
