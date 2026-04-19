@@ -151,6 +151,13 @@ const GameVariantSchema = z.object({
       isDisplay: z.boolean(),
     })
     .optional(),
+  /**
+   * Per-ticket entry fee for the room. Surfaced even when no game is
+   * RUNNING so the buy popup can show real prices on first render.
+   * Mirrors `currentGame.entryFee` mid-game; falls back to the room's
+   * configured fee when between rounds.
+   */
+  entryFee: z.number().optional(),
 });
 
 /**
