@@ -318,10 +318,17 @@ export interface G2JackpotListUpdatePayload {
   roomCode: string;
   gameId: string;
   /**
-   * Map of draw number → prize. Matches legacy jackPotNumber object in
-   * gamehelper/game2.js:1466-1625.
+   * Computed per-draw prize list — mirrors legacy processJackpotNumbers
+   * output (gamehelper/game2.js:1489-1506). Each entry:
+   *   - number: "9".."13" or "14-21" (display form for the 1421 bucket)
+   *   - prize:  computed kr amount (cash passthrough, or percent-of-pool)
+   *   - type:   "gain" for 13 and 1421, "jackpot" otherwise
    */
-  jackpotTable: Record<string, { price: number; isCash: boolean }>;
+  jackpotList: Array<{
+    number: string;
+    prize: number;
+    type: "gain" | "jackpot";
+  }>;
   /** Current draw index (1-based). */
   currentDraw: number;
 }

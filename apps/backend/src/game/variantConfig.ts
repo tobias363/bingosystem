@@ -78,9 +78,27 @@ export interface GameVariantConfig {
   /**
    * BIN-615 / PR-C1: When to evaluate patterns for winners.
    * - "manual-claim" (default): evaluate only on explicit claim:submit from player (G1 behaviour).
-   * - "auto-claim-on-draw": evaluate after every draw server-side (G3 behaviour, implemented in PR-C3).
+   * - "auto-claim-on-draw": evaluate after every draw server-side (G2 full-plate, G3 patterns).
    */
   patternEvalMode?: "manual-claim" | "auto-claim-on-draw";
+  /**
+   * BIN-615 / PR-C2: Game 2 jackpot-number-table — per-draw-count prize mapping.
+   *
+   * Legacy ref: Game/Common/Controllers/GameController.js:28-35 (createGame2JackpotDefinition)
+   * and gamehelper/game2.js:1466-1625 (normalizeGame2JackpotData + processJackpotNumbers).
+   *
+   * Keys are draw-count strings: "9", "10", "11", "12", "13" and the special
+   * "1421" entry which matches any draw count in the 14..21 range (legacy
+   * "1421" bucket, see GameProcess.js:1538-1540).
+   *
+   * Value shape:
+   *   - { price: N, isCash: true }  → fixed kr amount, paid when that draw-count hits
+   *   - { price: P, isCash: false } → P percent of (ticketCount × ticketPrice), computed at payout
+   *
+   * Multi-winner split: price / winnerCount (legacy game2.js:1550-1553),
+   * rounded via Math.round, audited through PayoutAuditTrail.
+   */
+  jackpotNumberTable?: Record<string, { price: number; isCash: boolean }>;
 }
 
 // ── Default configs ───────────────────────────────────────────────────────────
@@ -124,6 +142,31 @@ export const DEFAULT_TRAFFIC_LIGHT_CONFIG: GameVariantConfig = {
   patterns: DEFAULT_STANDARD_CONFIG.patterns,
 };
 
+/**
+ * BIN-615 / PR-C2: Game 2 (Rocket/Tallspill) default variant config.
+ *
+ * - Single 3×3-ticket type, priceMultiplier=1 (legacy G2 uses flat ticket price)
+ * - 1..21 drawbag, max 21 draws (Helper/bingo.js:996-1012, GameProcess.js:167,175)
+ * - No patterns (full-plate-only winner predicate via hasFull3x3)
+ * - patternEvalMode="auto-claim-on-draw" — Game2Engine auto-checks after each draw
+ * - jackpotNumberTable matches PM-approved values:
+ *     Draw 9 → 25 000 kr fixed
+ *     Draw 14-21 → 5% of pool (ticketCount × ticketPrice)
+ */
+export const DEFAULT_GAME2_CONFIG: GameVariantConfig = {
+  ticketTypes: [
+    { name: "Rocket", type: "game2-3x3", priceMultiplier: 1, ticketCount: 1 },
+  ],
+  patterns: [],
+  maxBallValue: 21,
+  drawBagSize: 21,
+  patternEvalMode: "auto-claim-on-draw",
+  jackpotNumberTable: {
+    "9":    { price: 25000, isCash: true },
+    "1421": { price: 5,     isCash: false }, // 5% of (ticketCount × ticketPrice)
+  },
+};
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Get default variant config for a game_type. */
@@ -131,6 +174,11 @@ export function getDefaultVariantConfig(gameType: string): GameVariantConfig {
   switch (gameType) {
     case "elvis": return DEFAULT_ELVIS_CONFIG;
     case "traffic-light": return DEFAULT_TRAFFIC_LIGHT_CONFIG;
+    // BIN-615 / PR-C2: Game 2 Rocket/Tallspill — 3x3 + 1..21 drawbag
+    case "game_2":
+    case "rocket":
+    case "tallspill":
+      return DEFAULT_GAME2_CONFIG;
     default: return DEFAULT_STANDARD_CONFIG;
   }
 }
@@ -164,6 +212,9 @@ export function parseVariantConfig(json: unknown, gameType: string): GameVariant
       ? Math.floor(obj.drawBagSize)
       : defaults.drawBagSize,
     patternEvalMode,
+    jackpotNumberTable: (obj.jackpotNumberTable && typeof obj.jackpotNumberTable === "object")
+      ? (obj.jackpotNumberTable as GameVariantConfig["jackpotNumberTable"])
+      : defaults.jackpotNumberTable,
   };
 }
 
