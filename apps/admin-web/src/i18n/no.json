@@ -2031,5 +2031,28 @@
   "add_leaderboard_tier": "Legg til leaderboard-nivå",
   "edit_leaderboard_tier": "Rediger leaderboard-nivå",
   "leaderboard_backend_pending": "Backend for leaderboard tier-konfig er ikke implementert ennå. Spores som BIN-668 (Leaderboard tier CRUD backend, P3). Frontend er kun lesende placeholder inntil backend mergers.",
-  "select_country_placeholder": "-- velg land --"
+  "select_country_placeholder": "-- velg land --",
+
+  "terms_of_service": "Vilkår for tjenesten",
+  "responsible_gaming": "Ansvarlig spill",
+  "question": "Spørsmål",
+  "cms_placeholder_banner": "CMS-backend (BIN-A6-CMS) er ikke implementert ennå. Endringer lagres lokalt inntil backend merges.",
+  "cms_spillvett_audit_required_title": "Regulatorisk lås: Spillvett-tekst",
+  "cms_spillvett_audit_required_body": "Endring av Spillvett-tekst krever AuditLog + versjonshistorikk i henhold til §11 pengespillforskriften. Backend-audit (BIN-A6-SPILLVETT-AUDIT) må implementeres før redigering tillates.",
+
+  "maintenance_management": "Vedlikeholdsstyring",
+  "maintenance_message": "Vedlikeholdsmelding",
+  "maintenance_start_date": "Startdato",
+  "maintenance_end_date": "Sluttdato",
+  "maintenance_status": "Status",
+  "show_before_minutes": "Vis melding før (minutter)",
+  "restart_server": "Start server på nytt",
+  "settings_placeholder_banner": "System-settings-backend (BIN-A6-SETTINGS) er ikke implementert ennå. Endringer lagres lokalt inntil backend merges.",
+  "per_hall_spillvett_override_info": "Spiller-tak (daglig/månedlig) er kun lesbart her. Per-hall Spillvett-grenser (regulatoriske) tar presedens — administreres per hall.",
+
+  "system_information_body": "Systeminformasjon-innhold",
+  "system_information_placeholder_banner": "SystemInformation-backend (BIN-A6-SYS) er ikke implementert ennå. Endringer lagres lokalt inntil backend merges.",
+
+  "wheel_of_fortune_prize": "Lykkehjul-premier",
+  "other_games_placeholder_banner": "Mini-spill-backend (BIN-A6-OG) er ikke implementert ennå. Premie-konfigurasjon lagres lokalt inntil backend merges."
 }
