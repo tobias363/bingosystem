@@ -14,6 +14,7 @@ import { isPendingRoute, mountPendingRoute } from "./pages/pending/index.js";
 import { isRejectedRoute, mountRejectedRoute } from "./pages/rejected/index.js";
 import { isBankIdRoute, mountBankIdRoute } from "./pages/bankid/index.js";
 import { isTrackSpendingRoute, mountTrackSpendingRoute } from "./pages/track-spending/index.js";
+import { isGamesRoute, mountGamesRoute } from "./pages/games/index.js";
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
@@ -53,7 +54,8 @@ function mountShell(_root: HTMLElement, session: Session): void {
     onUnknown: (path, container) => {
       unmountDashboard();
       // Strip query string for routes that carry params
-      // (e.g. `/players/view?id=X` or `/bankid/verify?sessionId=Y`).
+      // (e.g. `/agent/sellPhysicalTickets?gameId=X`, `/players/view?id=X`,
+      // `/bankid/verify?sessionId=Y`, `/gameType/view/:id`).
       const bare = path.split("?")[0] ?? path;
       if (isCashInOutRoute(bare)) {
         mountCashInOutRoute(container, bare);
@@ -77,6 +79,11 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isTrackSpendingRoute(bare)) {
         mountTrackSpendingRoute(container, bare);
+        return;
+      }
+      if (isGamesRoute(bare)) {
+        // Dynamic games-stack routes (view/:id, edit/:id, typeId-scoped).
+        mountGamesRoute(container, bare);
         return;
       }
       renderUnknown(container, path);
@@ -153,6 +160,12 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isTrackSpendingRoute(route.path)) {
     mountTrackSpendingRoute(container, route.path);
+    return;
+  }
+  if (isGamesRoute(route.path)) {
+    mountGamesRoute(container, route.path);
+    container.setAttribute("data-route", route.path);
+    container.setAttribute("data-title", t(route.titleKey));
     return;
   }
   renderPlaceholder(container, route);

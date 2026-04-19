@@ -9,17 +9,49 @@ export type GameStatus = "WAITING" | "RUNNING" | "ENDED";
 // ── Pattern system ──────────────────────────────────────────────────────────
 
 /**
- * 25-bit bitmask representing a 5×5 bingo pattern.
+ * 25-bit bitmask encoding a 5x5 pattern (Game 3 Mønsterbingo).
  *
- * Bit `i` (0-indexed, row-major) is set when cell `i` must be marked for the
- * pattern to match. Full House = 0x1FFFFFF (all 25 bits). Shared between
- * backend PatternMatcher (Game 3 Mønsterbingo) and admin-UI pattern editor so
- * both sides agree on the wire representation of custom patterns.
+ * Bit layout (LSB = bit 0 = top-left cell, MSB = bit 24 = bottom-right):
  *
- * Stored as `number` — a plain 32-bit JS integer is more than enough for
- * 25 bits, and AND/OR are cheap (single CPU op).
+ * ```
+ *  bit:  0  1  2  3  4   ← row 0 (top)
+ *        5  6  7  8  9   ← row 1
+ *       10 11 12 13 14   ← row 2 (center = bit 12)
+ *       15 16 17 18 19   ← row 3
+ *       20 21 22 23 24   ← row 4 (bottom)
+ * ```
+ *
+ * `(row, col) → bit = row * 5 + col`.
+ *
+ * The center cell (bit 12) is the Bingo75 free space; patterns that require
+ * the center should set bit 12. Patterns that leave it unset treat it as an
+ * optional match (engine marks it automatically).
+ *
+ * Encoded as a JavaScript number (safe up to 2^53 — 25 bits is well within).
+ * Serialized over the wire as a plain integer in JSON.
+ *
+ * Shared between:
+ * - `apps/admin-web` — patternManagement/PatternAddPage bitmask-grid editor (PR-A3)
+ * - `apps/backend` — Game 3 PatternMatcher / PatternCycler runtime (PR-C3)
+ * - `packages/game-client` — client-side pattern visualisation
+ *
+ * @example
+ *   // Full top row (Game 1 "Line" equivalent):
+ *   const topRow: PatternMask = 0b11111; // bits 0–4 set → 31
+ *
+ *   // Full house (bingo — all 25 cells):
+ *   const fullHouse: PatternMask = 0x1FFFFFF; // bits 0–24 → 33554431
+ *
+ *   // Diagonal TL→BR:
+ *   const diag: PatternMask = (1<<0) | (1<<6) | (1<<12) | (1<<18) | (1<<24);
  */
 export type PatternMask = number;
+
+/** Utility: the full 25-bit mask (all cells). */
+export const PATTERN_MASK_FULL: PatternMask = 0x1ffffff;
+
+/** Utility: bit index of the center cell (row 2, col 2). */
+export const PATTERN_MASK_CENTER_BIT = 12;
 
 export interface PatternDefinition {
   id: string;
@@ -31,6 +63,12 @@ export interface PatternDefinition {
   order: number;
   /** UI design identifier (1 = row, 2 = full house, 0 = custom). */
   design: number;
+  /**
+   * 25-bit bitmask of required cells (Game 3 custom patterns only).
+   * Undefined for Game 1/Game 2 line+bingo patterns where the shape is
+   * implied by `design`.
+   */
+  mask?: PatternMask;
 }
 
 export interface PatternResult {
