@@ -51,28 +51,37 @@ export function makeShuffledBallBag(maxNumber = 60): number[] {
  */
 export const BINGO75_SLUGS: ReadonlySet<string> = new Set(["bingo", "game_1"]);
 
+/** BIN-615 / PR-C2: Game slugs that use 3×3 1..21 tickets (Rocket/Tallspill). */
+export const GAME2_SLUGS: ReadonlySet<string> = new Set(["game_2", "rocket", "tallspill"]);
+
 /** True if a room/game with this slug should use the 75-ball / 5x5 format. */
 export function uses75Ball(gameSlug: string | null | undefined): boolean {
   return BINGO75_SLUGS.has(gameSlug ?? "");
+}
+
+/** True if a room/game with this slug should use the 3×3 / 1..21 format (Game 2). */
+export function uses3x3Ticket(gameSlug: string | null | undefined): boolean {
+  return GAME2_SLUGS.has(gameSlug ?? "");
 }
 
 /**
  * Generate a single ticket for the given game slug.
  *
  * - 75-ball games (Game 1 / "bingo"): 5x5 grid with free centre cell.
+ * - Game 2 (Rocket/Tallspill): 3×3 grid with 9 unique picks from 1..21.
  * - All other games: 3x5 Databingo60 grid (no free cell).
  *
  * Use this everywhere a ticket is created so the format stays consistent
- * with `uses75Ball` and the engine's draw-bag selection.
+ * with `uses75Ball` / `uses3x3Ticket` and the engine's draw-bag selection.
  */
 export function generateTicketForGame(
   gameSlug: string | null | undefined,
   color?: string,
   type?: string,
 ): Ticket {
-  return uses75Ball(gameSlug)
-    ? generateBingo75Ticket(color, type)
-    : generateDatabingo60Ticket();
+  if (uses3x3Ticket(gameSlug)) return generate3x3Ticket(color, type);
+  if (uses75Ball(gameSlug)) return generateBingo75Ticket(color, type);
+  return generateDatabingo60Ticket();
 }
 
 export function generateBingo75Ticket(color?: string, type?: string): Ticket {
@@ -102,6 +111,49 @@ export function generateBingo75Ticket(color?: string, type?: string): Ticket {
   if (color) ticket.color = color;
   if (type) ticket.type = type;
   return ticket;
+}
+
+/**
+ * BIN-615 / PR-C2: Game 2 (Rocket/Tallspill) ticket — 3×3 grid of 9 unique
+ * numbers drawn from 1..21.
+ *
+ * Legacy ref: Helper/bingo.js:996-1012 (`data.slug == 'game_2'`) — 9 random
+ * picks from 1..21 with no column segmentation. No free space.
+ *
+ * Winner predicate is `hasFull3x3` — there are no line-wins in Game 2, only
+ * full-plate (9/9 matched).
+ */
+export function generate3x3Ticket(color?: string, type?: string): Ticket {
+  const picks = pickUniqueInRange(1, 21, 9);
+  const grid: number[][] = [
+    [picks[0], picks[1], picks[2]],
+    [picks[3], picks[4], picks[5]],
+    [picks[6], picks[7], picks[8]],
+  ];
+  const ticket: Ticket = { grid };
+  if (color) ticket.color = color;
+  if (type) ticket.type = type;
+  return ticket;
+}
+
+/**
+ * BIN-615 / PR-C2: Full-plate predicate for Game 2 (all 9 cells marked).
+ *
+ * Legacy ref: Game/Game2/Controllers/GameProcess.js:287-312 — `matched.length > 8`
+ * (9 cells matched on a 3×3 ticket).
+ */
+export function hasFull3x3(ticket: Ticket, marks: Set<number>): boolean {
+  if (ticket.grid.length !== 3) return false;
+  for (let row = 0; row < 3; row += 1) {
+    const cells = ticket.grid[row];
+    if (!cells || cells.length !== 3) return false;
+    for (let col = 0; col < 3; col += 1) {
+      const cell = cells[col];
+      if (cell === undefined) return false;
+      if (cell !== 0 && !marks.has(cell)) return false;
+    }
+  }
+  return true;
 }
 
 export function generateDatabingo60Ticket(): Ticket {

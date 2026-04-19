@@ -111,8 +111,8 @@ export class RoomStateManager {
     const key = `${roomCode}:${playerId}`;
     const cached = this.displayTicketCache.get(key);
     if (cached && cached.length === count) return cached;
-    // Format (5x5 75-ball vs 3x5 60-ball) is decided by `generateTicketForGame`,
-    // which reads `BINGO75_SLUGS` from ticket.ts — single source of truth.
+    // Format is decided by `generateTicketForGame` in ticket.ts — single source
+    // of truth for all game slugs (Game 1 75-ball, Game 2 3×3, others 60-ball).
     const tickets: Ticket[] = [];
     for (let i = 0; i < count; i++) tickets.push({ ...generateTicketForGame(gameSlug), id: `tkt-${i}` });
     this.displayTicketCache.set(key, tickets);

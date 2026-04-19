@@ -5,6 +5,7 @@ import { DomainError, toPublicError } from "../game/BingoEngine.js";
 import { addBreadcrumb, captureError } from "../observability/sentry.js";
 import { metrics as promMetrics } from "../util/metrics.js";
 import type { BingoEngine } from "../game/BingoEngine.js";
+import { Game2Engine, type G2DrawEffects } from "../game/Game2Engine.js";
 import type { PlatformService, PublicAppUser } from "../platform/PlatformService.js";
 import type { SocketRateLimiter } from "../middleware/socketRateLimit.js";
 import type { RoomSnapshot, Ticket, ClaimType } from "../game/types.js";
@@ -14,6 +15,50 @@ import { assertTicketsPerPlayerWithinHallLimit } from "../game/compliance.js";
 import { logger as rootLogger } from "../util/logger.js";
 
 const logger = rootLogger.child({ module: "gameEvents" });
+
+/**
+ * BIN-615 / PR-C2: Emit Game 2 wire-contract events from a single draw's
+ * stashed side-effects. Legacy parity:
+ *   - g2:jackpot:list-update → always (every G2 draw, legacy game2JackpotUpdate)
+ *   - g2:rocket:launch       → broadcast when the round ends with winners
+ *   - g2:ticket:completed    → broadcast per winner (legacy TicketCompleted;
+ *                              legacy emitted to socketId only, we broadcast
+ *                              so all viewers see completions)
+ */
+function emitG2DrawEvents(io: Server, effects: G2DrawEffects): void {
+  // Per-draw jackpot list — emitted on every G2 draw regardless of winners.
+  // Legacy ref: Game2/Controllers/GameController.js:873-891 (game2JackpotUpdate).
+  io.to(effects.roomCode).emit("g2:jackpot:list-update", {
+    roomCode: effects.roomCode,
+    gameId: effects.gameId,
+    jackpotList: effects.jackpotList,
+    currentDraw: effects.drawIndex,
+  });
+
+  if (effects.winners.length === 0) return;
+
+  // Rocket-launch celebratory broadcast — one per round at terminal draw.
+  // Legacy emitted Game2RocketLaunch at round-start; PM Q2 decision: reuse for
+  // ticket-completion semantics (matches the C1-reserved payload shape).
+  for (const winner of effects.winners) {
+    io.to(effects.roomCode).emit("g2:rocket:launch", {
+      roomCode: effects.roomCode,
+      gameId: effects.gameId,
+      playerId: winner.playerId,
+      ticketId: winner.ticketId,
+      drawIndex: effects.drawIndex,
+      totalDraws: effects.drawIndex,
+    });
+    // Per-winner ticket-completed — legacy Game2/GameProcess.js:343-354.
+    io.to(effects.roomCode).emit("g2:ticket:completed", {
+      roomCode: effects.roomCode,
+      gameId: effects.gameId,
+      playerId: winner.playerId,
+      ticketId: winner.ticketId,
+      drawIndex: effects.drawIndex,
+    });
+  }
+}
 
 // ── Socket payload types ──────────────────────────────────────────────────────
 
@@ -615,6 +660,14 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
         const { roomCode, playerId } = await requireAuthenticatedPlayerAction(payload);
         const { number, drawIndex, gameId } = await engine.drawNextNumber({ roomCode, actorPlayerId: playerId });
         io.to(roomCode).emit("draw:new", { number, drawIndex, gameId });
+
+        // BIN-615 / PR-C2: emit Game 2 wire events for any G2 draw effects
+        // stashed by Game2Engine.onDrawCompleted. No-op for non-G2 rooms.
+        if (engine instanceof Game2Engine) {
+          const effects = engine.getG2LastDrawEffects(roomCode);
+          if (effects) emitG2DrawEvents(io, effects);
+        }
+
         const snapshot = await emitRoomUpdate(roomCode);
         ackSuccess(callback, { number, snapshot });
       } catch (error) {

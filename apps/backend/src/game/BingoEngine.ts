@@ -199,7 +199,8 @@ const MIN_MANUAL_DRAW_INTERVAL_MS = 500;
 
 export class BingoEngine {
   /** HOEY-7: Pluggable room state store (in-memory or Redis-backed). */
-  private readonly rooms: RoomStateStore;
+  // BIN-615 / PR-C2: protected so Game2Engine can persist rooms after auto-claim payouts.
+  protected readonly rooms: RoomStateStore;
   private readonly roomLastRoundStartMs = new Map<string, number>();
   /** BIN-253: Tracks last draw timestamp per room for minimum-interval enforcement. */
   private readonly roomLastDrawMs = new Map<string, number>();
@@ -212,20 +213,25 @@ export class BingoEngine {
   private readonly minPlayersToStart: number;
   private readonly maxDrawsPerRound: number;
   private readonly persistence?: ResponsibleGamingPersistenceAdapter;
-  private readonly compliance: ComplianceManager;
-  private readonly prizePolicy: PrizePolicyManager;
-  private readonly payoutAudit: PayoutAuditTrail;
-  private readonly ledger: ComplianceLedger;
+  // BIN-615 / PR-C2: protected so Game2Engine (subclass) can access these
+  // for auto-claim payout flow. Keep `readonly` — subclasses read, don't rebind.
+  protected readonly compliance: ComplianceManager;
+  protected readonly prizePolicy: PrizePolicyManager;
+  protected readonly payoutAudit: PayoutAuditTrail;
+  protected readonly ledger: ComplianceLedger;
   private readonly drawBagFactory?: (size: number) => number[];
   /**
    * BIN-615 / PR-C1: Per-room variantConfig cache for hook access (e.g. onDrawCompleted
    * needs to know patternEvalMode). Populated on startGame, cleared when the round ends.
+   * BIN-615 / PR-C2: protected so Game2Engine can look up variantConfig in its hook.
    */
-  private readonly variantConfigByRoom = new Map<string, import("./variantConfig.js").GameVariantConfig>();
+  protected readonly variantConfigByRoom = new Map<string, import("./variantConfig.js").GameVariantConfig>();
 
   constructor(
-    private readonly bingoAdapter: BingoSystemAdapter,
-    private readonly walletAdapter: WalletAdapter,
+    // BIN-615 / PR-C2: protected so Game2Engine can invoke adapter hooks
+    // (onClaimLogged, onCheckpoint) and wallet transfers for auto-claim payouts.
+    protected readonly bingoAdapter: BingoSystemAdapter,
+    protected readonly walletAdapter: WalletAdapter,
     options: ComplianceOptions = {},
     /** HOEY-7: Pluggable room state store. Defaults to in-memory. */
     rooms?: RoomStateStore
@@ -2245,7 +2251,8 @@ export class BingoEngine {
     }
   }
 
-  private async finishPlaySessionsForGame(room: RoomState, game: GameState, endedAtMs: number): Promise<void> {
+  // BIN-615 / PR-C2: protected so Game2Engine can finalize play sessions on auto-end.
+  protected async finishPlaySessionsForGame(room: RoomState, game: GameState, endedAtMs: number): Promise<void> {
     for (const playerId of game.tickets.keys()) {
       const player = room.players.get(playerId);
       if (!player) {
@@ -2271,7 +2278,8 @@ export class BingoEngine {
     }
   }
 
-  private requireRoom(roomCode: string): RoomState {
+  // BIN-615 / PR-C2: protected so Game2Engine can resolve rooms in auto-claim helpers.
+  protected requireRoom(roomCode: string): RoomState {
     const room = this.rooms.get(roomCode);
     if (!room) {
       throw new DomainError("ROOM_NOT_FOUND", "Rommet finnes ikke.");
@@ -2491,7 +2499,8 @@ export class BingoEngine {
   }
 
   /** HOEY-6: Write a GAME_END checkpoint for any termination path. */
-  private async writeGameEndCheckpoint(room: RoomState, game: GameState): Promise<void> {
+  // BIN-615 / PR-C2: protected so Game2Engine can finalize on auto-claim-end.
+  protected async writeGameEndCheckpoint(room: RoomState, game: GameState): Promise<void> {
     if (!this.bingoAdapter.onCheckpoint) return;
     try {
       await this.bingoAdapter.onCheckpoint({
@@ -2510,7 +2519,8 @@ export class BingoEngine {
   }
 
   /** Write payout checkpoint with one retry. Logs CRITICAL on final failure but does not throw. */
-  private async writePayoutCheckpointWithRetry(
+  // BIN-615 / PR-C2: protected so Game2Engine can checkpoint after jackpot payouts.
+  protected async writePayoutCheckpointWithRetry(
     room: RoomState,
     game: GameState,
     claimId: string,
