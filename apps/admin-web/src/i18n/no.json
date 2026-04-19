@@ -1734,5 +1734,8 @@
   "product_sale_success": "Produktsalg registrert",
   "select_slot_provider": "Velg spillautomat",
   "registered_ticket_count": "Registrerte billetter",
-  "daily_sales": "Dagens salg"
+  "daily_sales": "Dagens salg",
+  "loading": "Laster…",
+  "pending_backend_endpoint": "Venter på backend-endpoint",
+  "number_of_minimum_tickets_to_start_the_Game": "Minimum antall billetter for å starte spillet"
 }
