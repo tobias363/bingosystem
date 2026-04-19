@@ -734,3 +734,132 @@ export const DailyScheduleDetailsResponseSchema = z.object({
     .nullable(),
 });
 export type DailyScheduleDetailsResponse = z.infer<typeof DailyScheduleDetailsResponseSchema>;
+
+// ── BIN-627: Pattern CRUD + dynamic-menu wire schemas ───────────────────────
+// Admin-CRUD for bingo-mønstre (25-bit bitmask). Samme PatternMask-type som
+// shared-types/game.ts + backend PatternMatcher. Admin-UI editor sender
+// mask som integer på wire; legacy-streng-format ("0,1,1...") eksponeres
+// ikke lenger (admin-web konverterer via legacyGridToMask/maskToLegacyGrid
+// hvis det trengs for rendering).
+//
+// Felter speiler migration `20260423000000_patterns.sql`. PatternRow i
+// apps/admin-web/.../PatternState.ts er kanonisert her.
+
+const PatternStatus = z.enum(["active", "inactive"]);
+const PatternClaimType = z.enum(["LINE", "BINGO"]);
+
+/** 25-bit bitmask. 0 ≤ mask < 2^25 = 33554432. */
+const PatternMaskSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(33554431);
+
+export const PatternRowSchema = z.object({
+  id: z.string().min(1),
+  gameTypeId: z.string().min(1),
+  gameName: z.string().min(1).max(200),
+  patternNumber: z.string().min(1).max(200),
+  name: z.string().min(1).max(200),
+  /** 25-bit bitmask encoding of the 5x5 grid. */
+  mask: PatternMaskSchema,
+  claimType: PatternClaimType,
+  prizePercent: z.number().min(0).max(100),
+  orderIndex: z.number().int().nonnegative(),
+  design: z.number().int().nonnegative(),
+  status: PatternStatus,
+  /** Legacy Game 1 optional flags — default false. */
+  isWoF: z.boolean(),
+  isTchest: z.boolean(),
+  isMys: z.boolean(),
+  isRowPr: z.boolean(),
+  rowPercentage: z.number().nonnegative(),
+  isJackpot: z.boolean(),
+  isGameTypeExtra: z.boolean(),
+  isLuckyBonus: z.boolean(),
+  /** Legacy pattern-place (Game 3/4 number-range slug, f.eks. "1-15"). */
+  patternPlace: z.string().nullable(),
+  extra: z.record(z.string(), z.unknown()),
+  createdBy: z.string().nullable(),
+  createdAt: IsoDateString,
+  updatedAt: IsoDateString,
+});
+export type PatternRow = z.infer<typeof PatternRowSchema>;
+
+export const CreatePatternSchema = z.object({
+  gameTypeId: z.string().min(1).max(200),
+  /** Display-navn for game (f.eks. "Game1", "Game3"). */
+  gameName: z.string().min(1).max(200).optional(),
+  /** Auto-genereres av service hvis ikke satt. */
+  patternNumber: z.string().min(1).max(200).optional(),
+  name: z.string().min(1).max(200),
+  mask: PatternMaskSchema,
+  claimType: PatternClaimType.optional(),
+  prizePercent: z.number().min(0).max(100).optional(),
+  orderIndex: z.number().int().nonnegative().optional(),
+  design: z.number().int().nonnegative().optional(),
+  status: PatternStatus.optional(),
+  isWoF: z.boolean().optional(),
+  isTchest: z.boolean().optional(),
+  isMys: z.boolean().optional(),
+  isRowPr: z.boolean().optional(),
+  rowPercentage: z.number().nonnegative().optional(),
+  isJackpot: z.boolean().optional(),
+  isGameTypeExtra: z.boolean().optional(),
+  isLuckyBonus: z.boolean().optional(),
+  patternPlace: z.string().min(1).max(200).nullable().optional(),
+  extra: z.record(z.string(), z.unknown()).optional(),
+});
+export type CreatePatternInput = z.infer<typeof CreatePatternSchema>;
+
+export const UpdatePatternSchema = z.object({
+  gameName: z.string().min(1).max(200).optional(),
+  patternNumber: z.string().min(1).max(200).optional(),
+  name: z.string().min(1).max(200).optional(),
+  mask: PatternMaskSchema.optional(),
+  claimType: PatternClaimType.optional(),
+  prizePercent: z.number().min(0).max(100).optional(),
+  orderIndex: z.number().int().nonnegative().optional(),
+  design: z.number().int().nonnegative().optional(),
+  status: PatternStatus.optional(),
+  isWoF: z.boolean().optional(),
+  isTchest: z.boolean().optional(),
+  isMys: z.boolean().optional(),
+  isRowPr: z.boolean().optional(),
+  rowPercentage: z.number().nonnegative().optional(),
+  isJackpot: z.boolean().optional(),
+  isGameTypeExtra: z.boolean().optional(),
+  isLuckyBonus: z.boolean().optional(),
+  patternPlace: z.string().min(1).max(200).nullable().optional(),
+  extra: z.record(z.string(), z.unknown()).optional(),
+}).refine((v) => Object.keys(v).length > 0, {
+  message: "Ingen endringer oppgitt.",
+});
+export type UpdatePatternInput = z.infer<typeof UpdatePatternSchema>;
+
+/**
+ * Dynamic-menu-entry: ett mønster som en oppføring i admin-UI-dropdown.
+ * Sub-menu på gameType (toppnivå) → liste av mønstre sortert etter order_index.
+ */
+export const PatternDynamicMenuEntrySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  patternNumber: z.string().min(1),
+  /** 25-bit bitmask — admin-UI kan tegne preview uten separat fetch. */
+  mask: PatternMaskSchema,
+  orderIndex: z.number().int().nonnegative(),
+  status: PatternStatus,
+  claimType: PatternClaimType,
+  design: z.number().int().nonnegative(),
+});
+export type PatternDynamicMenuEntry = z.infer<typeof PatternDynamicMenuEntrySchema>;
+
+export const PatternDynamicMenuResponseSchema = z.object({
+  /** GameType slug menuen er for (eller null hvis alle). */
+  gameTypeId: z.string().min(1).nullable(),
+  /** Ordnet liste av mønstre (aktive først, deretter etter orderIndex). */
+  entries: z.array(PatternDynamicMenuEntrySchema),
+  /** Totalt antall mønstre (før evt. limit). */
+  count: z.number().int().nonnegative(),
+});
+export type PatternDynamicMenuResponse = z.infer<typeof PatternDynamicMenuResponseSchema>;
