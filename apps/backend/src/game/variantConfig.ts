@@ -64,6 +64,23 @@ export interface GameVariantConfig {
     /** If true, show jackpot info to players. */
     isDisplay: boolean;
   };
+  /**
+   * BIN-615 / PR-C1: Maximum ball value (inclusive) for this variant.
+   * Standard/Elvis/TrafficLight = 60, Bingo75 = 75, Game 2 Rocket/Tallspill = 21.
+   * Falls back to gameSlug-derived default when omitted (keeps existing configs valid).
+   */
+  maxBallValue?: number;
+  /**
+   * BIN-615 / PR-C1: Number of balls generated into the draw bag.
+   * Typically equal to maxBallValue. Legacy Game 2 draws from 1..21 with bag size 21.
+   */
+  drawBagSize?: number;
+  /**
+   * BIN-615 / PR-C1: When to evaluate patterns for winners.
+   * - "manual-claim" (default): evaluate only on explicit claim:submit from player (G1 behaviour).
+   * - "auto-claim-on-draw": evaluate after every draw server-side (G3 behaviour, implemented in PR-C3).
+   */
+  patternEvalMode?: "manual-claim" | "auto-claim-on-draw";
 }
 
 // ── Default configs ───────────────────────────────────────────────────────────
@@ -124,6 +141,10 @@ export function parseVariantConfig(json: unknown, gameType: string): GameVariant
   if (!json || typeof json !== "object") return defaults;
 
   const obj = json as Record<string, unknown>;
+  const patternEvalMode =
+    obj.patternEvalMode === "auto-claim-on-draw" || obj.patternEvalMode === "manual-claim"
+      ? obj.patternEvalMode
+      : defaults.patternEvalMode;
   return {
     ticketTypes: Array.isArray(obj.ticketTypes) && obj.ticketTypes.length > 0
       ? (obj.ticketTypes as TicketTypeConfig[])
@@ -132,19 +153,34 @@ export function parseVariantConfig(json: unknown, gameType: string): GameVariant
       ? (obj.patterns as PatternConfig[])
       : defaults.patterns,
     replaceAmount: typeof obj.replaceAmount === "number" ? obj.replaceAmount : defaults.replaceAmount,
+    luckyNumberPrize: typeof obj.luckyNumberPrize === "number" ? obj.luckyNumberPrize : defaults.luckyNumberPrize,
+    jackpot: (obj.jackpot && typeof obj.jackpot === "object")
+      ? (obj.jackpot as GameVariantConfig["jackpot"])
+      : defaults.jackpot,
+    maxBallValue: typeof obj.maxBallValue === "number" && obj.maxBallValue > 0
+      ? Math.floor(obj.maxBallValue)
+      : defaults.maxBallValue,
+    drawBagSize: typeof obj.drawBagSize === "number" && obj.drawBagSize > 0
+      ? Math.floor(obj.drawBagSize)
+      : defaults.drawBagSize,
+    patternEvalMode,
   };
 }
 
 /** Convert PatternConfig[] to PatternDefinition[] (adds id and order). */
 export function patternConfigToDefinitions(patterns: PatternConfig[]): PatternDefinition[] {
-  return patterns.map((p, i) => ({
-    id: `pattern-${i}`,
-    name: p.name,
-    claimType: p.claimType,
-    prizePercent: p.prizePercent,
-    order: i,
-    design: p.design,
-  }));
+  return patterns.map((p, i) => {
+    const def: PatternDefinition = {
+      id: `pattern-${i}`,
+      name: p.name,
+      claimType: p.claimType,
+      prizePercent: p.prizePercent,
+      order: i,
+      design: p.design,
+    };
+    if (p.patternDataList) def.patternDataList = [...p.patternDataList];
+    return def;
+  });
 }
 
 /**

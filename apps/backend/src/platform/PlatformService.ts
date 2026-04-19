@@ -6,6 +6,7 @@ import type { KycAdapter } from "../adapters/KycAdapter.js";
 import type { WalletAdapter } from "../adapters/WalletAdapter.js";
 import { WalletError } from "../adapters/WalletAdapter.js";
 import { DomainError } from "../game/BingoEngine.js";
+import { SubGameManager, type PlannedChildGame, type SubGameInput } from "../game/SubGameManager.js";
 
 const scrypt = promisify(scryptCallback);
 
@@ -198,6 +199,12 @@ export interface ScheduleSlot {
   sortOrder: number;
   /** BIN-436: Variant config with ticket types, patterns, prices. */
   variantConfig: Record<string, unknown>;
+  /** BIN-615 / PR-C1: Parent schedule id — set on child rows spawned by SubGameManager. */
+  parentScheduleId?: string | null;
+  /** BIN-615 / PR-C1: 1-based sequence within parent (null on parent rows). */
+  subGameSequence?: number | null;
+  /** BIN-615 / PR-C1: Legacy-compatible gameNumber "CH_<seq>_<ts>_G2|G3" (null on parent rows). */
+  subGameNumber?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -376,6 +383,9 @@ interface ScheduleSlotRow {
   is_active: boolean;
   sort_order: number;
   variant_config?: Record<string, unknown>;
+  parent_schedule_id?: string | null;
+  sub_game_sequence?: number | null;
+  sub_game_number?: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -1349,6 +1359,119 @@ export class PlatformService {
   async deleteScheduleSlot(slotId: string): Promise<void> {
     await this.ensureInitialized();
     await this.pool.query(`DELETE FROM ${this.scheduleTable()} WHERE id = $1`, [slotId]);
+  }
+
+  /**
+   * BIN-615 / PR-C1: Create N child sub-game rows under an existing parent
+   * schedule (Game 2 / Game 3). Matches legacy eager-creation semantics
+   * (Common/Controllers/GameController.js:334-521 — all children are written
+   * up front when the parent is created).
+   *
+   * Steps:
+   *   1. SubGameManager.planChildren builds specs (sequence, subGameNumber, sorted patterns).
+   *   2. One transactional INSERT per child row, sharing parent's hallId/startTime defaults.
+   *   3. Returns the planned specs (callers can fetch rows separately via listSubGameChildren).
+   *
+   * Throws:
+   *   - SCHEDULE_SLOT_NOT_FOUND if parentScheduleId is unknown
+   *   - INVALID_GAME_TYPE if parent.gameType is not game_2 or game_3
+   */
+  async createSubGameChildren(
+    parentScheduleId: string,
+    subGames: SubGameInput[]
+  ): Promise<PlannedChildGame[]> {
+    await this.ensureInitialized();
+    if (!subGames || subGames.length === 0) {
+      throw new DomainError("INVALID_SUB_GAMES", "subGames må være ikke-tom.");
+    }
+    const { rows: parentRows } = await this.pool.query<ScheduleSlotRow>(
+      `SELECT id, hall_id, game_type, display_name, day_of_week, start_time::text,
+              prize_description, max_tickets, is_active, sort_order, variant_config,
+              parent_schedule_id, sub_game_sequence, sub_game_number,
+              created_at, updated_at
+       FROM ${this.scheduleTable()} WHERE id = $1`,
+      [parentScheduleId]
+    );
+    if (!parentRows[0]) {
+      throw new DomainError("SCHEDULE_SLOT_NOT_FOUND", "Parent-spilleplansslot finnes ikke.");
+    }
+    const parent = this.mapScheduleSlot(parentRows[0]);
+    if (parent.gameType !== "game_2" && parent.gameType !== "game_3") {
+      throw new DomainError(
+        "INVALID_GAME_TYPE",
+        `Sub-games støttes kun for game_2 og game_3 (fikk ${parent.gameType}).`
+      );
+    }
+    if (parent.parentScheduleId) {
+      throw new DomainError(
+        "INVALID_PARENT",
+        "Kan ikke opprette sub-games under en sub-game (nestede parents er ikke tillatt)."
+      );
+    }
+
+    const planner = new SubGameManager();
+    const plan = planner.planChildren({
+      parentScheduleId: parent.id,
+      gameType: parent.gameType as "game_2" | "game_3",
+      subGames
+    });
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      for (const child of plan) {
+        await client.query(
+          `INSERT INTO ${this.scheduleTable()}
+            (id, hall_id, game_type, display_name, day_of_week, start_time,
+             prize_description, max_tickets, is_active, sort_order,
+             variant_config, parent_schedule_id, sub_game_sequence, sub_game_number)
+           VALUES ($1,$2,$3,$4,$5,$6::time,$7,$8,$9,$10,$11::jsonb,$12,$13,$14)`,
+          [
+            randomUUID(),
+            parent.hallId,
+            parent.gameType,
+            child.displayName,
+            parent.dayOfWeek,
+            parent.startTime,
+            parent.prizeDescription,
+            parent.maxTickets,
+            parent.isActive,
+            parent.sortOrder + child.sequence, // keep children ordered after parent
+            JSON.stringify(child.variantConfig),
+            parent.id,
+            child.sequence,
+            child.subGameNumber
+          ]
+        );
+      }
+      await client.query("COMMIT");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    return plan;
+  }
+
+  /**
+   * BIN-615 / PR-C1: List all child sub-games for a parent schedule,
+   * ordered by sub_game_sequence ascending.
+   */
+  async listSubGameChildren(parentScheduleId: string): Promise<ScheduleSlot[]> {
+    await this.ensureInitialized();
+    const { rows } = await this.pool.query<ScheduleSlotRow>(
+      `SELECT id, hall_id, game_type, display_name, day_of_week, start_time::text,
+              prize_description, max_tickets, is_active, sort_order, variant_config,
+              parent_schedule_id, sub_game_sequence, sub_game_number,
+              created_at, updated_at
+       FROM ${this.scheduleTable()}
+       WHERE parent_schedule_id = $1
+       ORDER BY sub_game_sequence ASC`,
+      [parentScheduleId]
+    );
+    return rows.map((r) => this.mapScheduleSlot(r));
   }
 
   async logScheduledGame(input: {
@@ -2864,6 +2987,9 @@ export class PlatformService {
       isActive: row.is_active,
       sortOrder: Number(row.sort_order),
       variantConfig: row.variant_config ?? {},
+      parentScheduleId: row.parent_schedule_id ?? null,
+      subGameSequence: row.sub_game_sequence != null ? Number(row.sub_game_sequence) : null,
+      subGameNumber: row.sub_game_number ?? null,
       createdAt: asIso(row.created_at),
       updatedAt: asIso(row.updated_at)
     };

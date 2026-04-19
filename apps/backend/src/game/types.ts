@@ -16,6 +16,26 @@ export interface PatternDefinition {
   order: number;
   /** UI design identifier (1 = row, 2 = full house, 0 = custom). */
   design: number;
+  /**
+   * BIN-615 / PR-C1: 25-cell bitmask (row-major, 5×5) for custom G3 patterns.
+   * Populated from PatternConfig.patternDataList. Consumed by PR-C3 PatternMatcher.
+   */
+  patternDataList?: number[];
+  /**
+   * BIN-615 / PR-C1: G3 — pattern deactivates after this many balls drawn without a winner.
+   * Used by PR-C3 pattern-cycler (evaluatePatternsAndUpdateGameData in legacy).
+   */
+  ballNumberThreshold?: number;
+  /**
+   * BIN-615 / PR-C1: G3 — alternative jackpot prize when pattern wins within ballNumberThreshold.
+   * Legacy field name: prize1.
+   */
+  prize1?: number;
+  /**
+   * BIN-615 / PR-C1: G3 — prize-calculation variant.
+   * "percent" = prizePercent of pool (default). "fixed" = prizePercent is a fixed kr amount.
+   */
+  winningType?: "percent" | "fixed";
 }
 
 export interface PatternResult {

@@ -11,9 +11,9 @@ import {
   findFirstCompleteLinePatternIndex,
   hasFullBingo,
   makeRoomCode,
-  makeShuffledBallBag,
   ticketContainsNumber
 } from "./ticket.js";
+import { buildDrawBag, resolveDrawBagConfig } from "./DrawBagStrategy.js";
 import type {
   ClaimRecord,
   ClaimType,
@@ -192,10 +192,7 @@ interface ComplianceOptions {
 
 const DEFAULT_SELF_EXCLUSION_MIN_MS = 365 * 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_DRAWS_PER_ROUND = 30;
-const MAX_BINGO_BALLS_60 = 60;
 const MAX_BINGO_BALLS_75 = 75;
-/** Game slugs that use 75-ball format. */
-const BINGO75_SLUGS = new Set(["bingo", "game_1"]);
 const DEFAULT_BONUS_TRIGGER_PATTERN_INDEX = 1;
 /** BIN-253: Minimum milliseconds between successive manual draw calls to prevent rapid-fire draws. */
 const MIN_MANUAL_DRAW_INTERVAL_MS = 500;
@@ -220,6 +217,11 @@ export class BingoEngine {
   private readonly payoutAudit: PayoutAuditTrail;
   private readonly ledger: ComplianceLedger;
   private readonly drawBagFactory?: (size: number) => number[];
+  /**
+   * BIN-615 / PR-C1: Per-room variantConfig cache for hook access (e.g. onDrawCompleted
+   * needs to know patternEvalMode). Populated on startGame, cleared when the round ends.
+   */
+  private readonly variantConfigByRoom = new Map<string, import("./variantConfig.js").GameVariantConfig>();
 
   constructor(
     private readonly bingoAdapter: BingoSystemAdapter,
@@ -682,7 +684,10 @@ export class BingoEngine {
       payoutPercent: normalizedPayoutPercent,
       maxPayoutBudget,
       remainingPayoutBudget: maxPayoutBudget,
-      drawBag: (this.drawBagFactory ?? makeShuffledBallBag)(BINGO75_SLUGS.has(room.gameSlug ?? "") ? MAX_BINGO_BALLS_75 : MAX_BINGO_BALLS_60),
+      // BIN-615 / PR-C1: draw-bag resolved from variantConfig (maxBallValue/drawBagSize),
+      // with a gameSlug-based fallback for configs that pre-date PR-C1. Replaces the
+      // previous BINGO75_SLUGS hardcoded switch so Game 2 (1..21) and future variants work.
+      drawBag: buildDrawBag(resolveDrawBagConfig(room.gameSlug, variantConfig), this.drawBagFactory),
       drawnNumbers: [],
       tickets,
       marks,
@@ -696,6 +701,8 @@ export class BingoEngine {
 
     room.currentGame = game;
     this.roomLastRoundStartMs.set(room.code, Date.parse(game.startedAt));
+    // BIN-615 / PR-C1: cache variantConfig for per-draw hook access (onDrawCompleted).
+    this.variantConfigByRoom.set(room.code, variantConfig);
 
     // BIN-161/BIN-241: Log SHA-256 hash of drawBag only — full sequence is preserved in PostgreSQL checkpoint (BIN-243).
     // Plaintext drawBag removed to prevent insiders from predicting future draws via log access.
@@ -738,6 +745,32 @@ export class BingoEngine {
         playerIds: eligiblePlayers.map((player) => player.id)
       });
     }
+  }
+
+  /**
+   * BIN-615 / PR-C1: Post-draw hook. Default implementation is a no-op.
+   *
+   * Subclasses (Game3Engine in PR-C3) override to implement:
+   *   - Pattern-cycling (ballNumberThreshold — deactivate unwon patterns)
+   *   - Server-side auto-claim against custom 25-bitmask patterns
+   *   - PatternChange broadcast when active pattern list mutates
+   *
+   * Contract:
+   *   - Called after drawnNumbers.push + onNumberDrawn adapter, before checkpoint.
+   *   - May mutate game state (claims, patterns, patternResults) — mutations are
+   *     persisted by the subsequent writeDrawCheckpoint.
+   *   - Thrown errors are logged and swallowed; must not block draws.
+   *
+   * Protected so subclasses can override without exposing to the public API.
+   */
+  protected async onDrawCompleted(_ctx: {
+    room: RoomState;
+    game: GameState;
+    lastBall: number;
+    drawIndex: number;
+    variantConfig: import("./variantConfig.js").GameVariantConfig | undefined;
+  }): Promise<void> {
+    // No-op by default. G1 uses manual-claim (existing claim:submit flow).
   }
 
   async drawNextNumber(input: DrawNextInput): Promise<{ number: number; drawIndex: number; gameId: string }> {
@@ -798,6 +831,20 @@ export class BingoEngine {
         number: nextNumber,
         drawIndex: game.drawnNumbers.length
       });
+    }
+    // BIN-615 / PR-C1: variant-specific post-draw hook (no-op by default).
+    // Subclasses (Game3Engine in PR-C3) override to implement auto-claim /
+    // pattern-cycling after each ball. Errors are logged but do not fail the draw.
+    try {
+      await this.onDrawCompleted({
+        room,
+        game,
+        lastBall: nextNumber,
+        drawIndex: game.drawnNumbers.length,
+        variantConfig: this.variantConfigByRoom.get(room.code)
+      });
+    } catch (err) {
+      logger.error({ err, gameId: game.id, roomCode: room.code }, "onDrawCompleted hook failed");
     }
     // HOEY-3: Checkpoint after each draw — persists draw sequence state
     await this.writeDrawCheckpoint(room, game);
@@ -1541,6 +1588,7 @@ export class BingoEngine {
     this.rooms.delete(code);
     this.roomLastRoundStartMs.delete(code);
     this.lastDrawAtByRoom.delete(code);
+    this.variantConfigByRoom.delete(code); // BIN-615 / PR-C1
     this.roomStateStore?.delete(code); // BIN-251
   }
 
