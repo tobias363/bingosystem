@@ -11,13 +11,18 @@ import { renderGameTypeListPage } from "./gameType/GameTypeListPage.js";
 import { renderGameTypeAddPage, renderGameTypeEditPage } from "./gameType/GameTypeAddEditPage.js";
 import { renderGameTypeViewPage } from "./gameType/GameTypeViewPage.js";
 import { renderGameTypeTestPage } from "./gameType/GameTypeTestPage.js";
+import { renderSubGameListPage } from "./subGame/SubGameListPage.js";
+import { renderSubGameAddPage, renderSubGameEditPage } from "./subGame/SubGameAddEditPage.js";
+import { renderSubGameViewPage } from "./subGame/SubGameViewPage.js";
 
 /** Static routes that resolve via routes.ts directly (no params). */
 const STATIC_GAMES_ROUTES = new Set<string>([
   "/gameType",
   "/gameType/add",
   "/gameType/test",
-  // subGame — bolk 2 will expand this
+  // subGame — bolk 2 (PR-A3)
+  "/subGame",
+  "/subGame/add",
   // patternManagement — bolk 3
   // gameManagement — bolk 4
   // savedGameList — bolk 5
@@ -36,9 +41,10 @@ export function isGamesRoute(path: string): boolean {
   // Dynamic patterns — keep in sync with renderGamesRoute below.
   return (
     /^\/gameType\/view\/[^/]+$/.test(bare) ||
-    /^\/gameType\/edit\/[^/]+$/.test(bare)
+    /^\/gameType\/edit\/[^/]+$/.test(bare) ||
+    /^\/subGame\/view\/[^/]+$/.test(bare) ||
+    /^\/subGame\/edit\/[^/]+$/.test(bare)
     // Extended per bolk:
-    //   /subGame/view/:id, /subGame/add
     //   /patternManagement/:typeId + /add + /view/:id
     //   /gameManagement/:typeId/(list|add|view|...)
     //   /savedGameList/:typeId/(add|view|edit)
@@ -65,6 +71,12 @@ export function mountGamesRoute(container: HTMLElement, path: string): void {
     case "/gameType/test":
       void renderGameTypeTestPage(container);
       return;
+    case "/subGame":
+      void renderSubGameListPage(container);
+      return;
+    case "/subGame/add":
+      void renderSubGameAddPage(container);
+      return;
   }
 
   // Dynamic: /gameType/view/:id
@@ -78,6 +90,20 @@ export function mountGamesRoute(container: HTMLElement, path: string): void {
   const editMatch = /^\/gameType\/edit\/([^/]+)$/.exec(bare);
   if (editMatch && editMatch[1]) {
     void renderGameTypeEditPage(container, decodeURIComponent(editMatch[1]));
+    return;
+  }
+
+  // Dynamic: /subGame/view/:id
+  const subViewMatch = /^\/subGame\/view\/([^/]+)$/.exec(bare);
+  if (subViewMatch && subViewMatch[1]) {
+    void renderSubGameViewPage(container, decodeURIComponent(subViewMatch[1]));
+    return;
+  }
+
+  // Dynamic: /subGame/edit/:id
+  const subEditMatch = /^\/subGame\/edit\/([^/]+)$/.exec(bare);
+  if (subEditMatch && subEditMatch[1]) {
+    void renderSubGameEditPage(container, decodeURIComponent(subEditMatch[1]));
     return;
   }
 

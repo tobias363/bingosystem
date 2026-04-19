@@ -26,6 +26,9 @@ export const routes: RouteDef[] = [
   // dispatcher (hash-regex match, mirrors cash-inout pattern).
   { path: "/gameType/add", titleKey: "add_game", module: "Game Type" },
   { path: "/gameType/test", titleKey: "game_type", module: "Game Type" },
+  // PR-A3 bolk 2: SubGame — edit/:id and view/:id via dispatcher.
+  { path: "/subGame", titleKey: "sub_game", module: "Sub Game" },
+  { path: "/subGame/add", titleKey: "add_sub_game", module: "Sub Game" },
   { path: "/schedules", titleKey: "schedule_management", module: "Schedule Management" },
   { path: "/gameManagement", titleKey: "game_creation_management", module: "Game Creation Management" },
   { path: "/savedGameList", titleKey: "saved_game_list", module: "Saved Game List" },
