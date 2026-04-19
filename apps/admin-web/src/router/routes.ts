@@ -22,6 +22,10 @@ export const routes: RouteDef[] = [
   { path: "/players/track-spending", titleKey: "tracking_player_spending", module: "Tracking Player Spending" },
 
   { path: "/gameType", titleKey: "game_type", module: "Game Type" },
+  // PR-A3: GameType add/test — edit/:id and view/:id resolve via the games
+  // dispatcher (hash-regex match, mirrors cash-inout pattern).
+  { path: "/gameType/add", titleKey: "add_game", module: "Game Type" },
+  { path: "/gameType/test", titleKey: "game_type", module: "Game Type" },
   { path: "/schedules", titleKey: "schedule_management", module: "Schedule Management" },
   { path: "/gameManagement", titleKey: "game_creation_management", module: "Game Creation Management" },
   { path: "/savedGameList", titleKey: "saved_game_list", module: "Saved Game List" },
