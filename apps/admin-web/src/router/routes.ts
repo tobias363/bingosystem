@@ -78,8 +78,10 @@ export const routes: RouteDef[] = [
   { path: "/hallAccountReport", titleKey: "hall_account_report" },
 
   { path: "/wallet", titleKey: "wallet_management", module: "Wallet Management" },
+  { path: "/wallet/view", titleKey: "view_wallet", module: "Wallet Management" },
   { path: "/deposit/requests", titleKey: "deposit_request", module: "Transactions Management" },
   { path: "/deposit/history", titleKey: "deposit_history", module: "Transactions Management" },
+  { path: "/deposit/transaction", titleKey: "deposit_transaction_history", module: "Transactions Management" },
 
   { path: "/withdraw/requests/hall", titleKey: "withdraw_request_in_hall", module: "Withdraw Management" },
   { path: "/withdraw/requests/bank", titleKey: "withdraw_request_in_bank", module: "Withdraw Management" },
