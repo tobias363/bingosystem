@@ -92,6 +92,20 @@ export const SocketEvents = {
   MINIGAME_ACTIVATED: "minigame:activated",
   // Server → Client (private, to marking socket only — BIN-499)
   TICKET_MARKED: "ticket:marked",
+
+  // BIN-615 / PR-C1: reserved event names for Game 2 / Game 3.
+  // Names are part of the wire contract now so Agent A/B/5 can plan UI
+  // scaffolding. Handlers are implemented in PR-C2 (Game 2) and PR-C3 (Game 3).
+  /** BIN-615 / PR-C2: Game 2 — broadcast when a player completes 3x3 ticket. */
+  G2_ROCKET_LAUNCH: "g2:rocket:launch",
+  /** BIN-615 / PR-C2: Game 2 — jackpot-number-table state per draw. */
+  G2_JACKPOT_LIST_UPDATE: "g2:jackpot:list-update",
+  /** BIN-615 / PR-C2: Game 2 — ticket fully marked (all 9 cells). */
+  G2_TICKET_COMPLETED: "g2:ticket:completed",
+  /** BIN-615 / PR-C3: Game 3 — active pattern list changed mid-round (cycling). */
+  G3_PATTERN_CHANGED: "g3:pattern:changed",
+  /** BIN-615 / PR-C3: Game 3 — server auto-claimed a pattern for a player. */
+  G3_PATTERN_AUTO_WON: "g3:pattern:auto-won",
 } as const;
 
 // ── Generic ack response ────────────────────────────────────────────────────
@@ -283,6 +297,75 @@ export interface MiniGamePlayPayload extends RoomActionPayload {
  * Runtime-validated via `MiniGamePlayResultSchema`.
  */
 export type MiniGamePlayResult = MiniGamePlayResultT;
+
+// ── BIN-615 / PR-C1: reserved Game 2 / Game 3 broadcast payloads ────────────
+// Types are part of the wire contract now; backend emits in PR-C2 / PR-C3.
+
+/** BIN-615 / PR-C2: Game 2 rocket-launch broadcast (player completed 3x3). */
+export interface G2RocketLaunchPayload {
+  roomCode: string;
+  gameId: string;
+  playerId: string;
+  ticketId?: string;
+  /** Draw index at which the ticket completed (1-based). */
+  drawIndex: number;
+  /** Total draws so far in the round. */
+  totalDraws: number;
+}
+
+/** BIN-615 / PR-C2: Game 2 jackpot-number-table update (per-draw prize mapping). */
+export interface G2JackpotListUpdatePayload {
+  roomCode: string;
+  gameId: string;
+  /**
+   * Map of draw number → prize. Matches legacy jackPotNumber object in
+   * gamehelper/game2.js:1466-1625.
+   */
+  jackpotTable: Record<string, { price: number; isCash: boolean }>;
+  /** Current draw index (1-based). */
+  currentDraw: number;
+}
+
+/** BIN-615 / PR-C2: Game 2 ticket-completed broadcast (all 9 cells marked). */
+export interface G2TicketCompletedPayload {
+  roomCode: string;
+  gameId: string;
+  playerId: string;
+  ticketId?: string;
+  drawIndex: number;
+}
+
+/** BIN-615 / PR-C3: Game 3 pattern-list mutation (cycling during round). */
+export interface G3PatternChangedPayload {
+  roomCode: string;
+  gameId: string;
+  /** Full current list of active patterns after the mutation. */
+  activePatterns: Array<{
+    id: string;
+    name: string;
+    design: number;
+    /** 25-cell bitmask for custom patterns. */
+    patternDataList?: number[];
+    /** Ball threshold at which pattern deactivates if unwon. */
+    ballNumberThreshold?: number;
+  }>;
+  /** Current draw index that triggered the change (1-based). */
+  drawIndex: number;
+}
+
+/** BIN-615 / PR-C3: Game 3 server auto-claim broadcast. */
+export interface G3PatternAutoWonPayload {
+  roomCode: string;
+  gameId: string;
+  patternId: string;
+  patternName: string;
+  /** Winner player ids — multiple when several tickets completed same pattern on the same draw. */
+  winnerPlayerIds: string[];
+  /** Prize per winner after splitting (kr). */
+  prizePerWinner: number;
+  /** Draw index at which the pattern was won (1-based). */
+  drawIndex: number;
+}
 
 // ── Scheduler settings (sent inside room:update scheduler field) ────────────
 
