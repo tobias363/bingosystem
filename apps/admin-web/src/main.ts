@@ -17,6 +17,9 @@ import { isTrackSpendingRoute, mountTrackSpendingRoute } from "./pages/track-spe
 import { isGamesRoute, mountGamesRoute } from "./pages/games/index.js";
 import { isPhysicalTicketsRoute, mountPhysicalTicketsRoute } from "./pages/physical-tickets/index.js";
 import { isReportRoute, mountReportRoute } from "./pages/reports/index.js";
+import { isAmountwithdrawRoute, mountAmountwithdrawRoute } from "./pages/amountwithdraw/index.js";
+import { isTransactionRoute, mountTransactionRoute } from "./pages/transactions/index.js";
+import { isWalletRoute, mountWalletRoute } from "./pages/wallets/index.js";
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
@@ -94,6 +97,18 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isReportRoute(bare)) {
         mountReportRoute(container, bare);
+        return;
+      }
+      if (isAmountwithdrawRoute(bare)) {
+        mountAmountwithdrawRoute(container, bare);
+        return;
+      }
+      if (isTransactionRoute(bare)) {
+        mountTransactionRoute(container, bare);
+        return;
+      }
+      if (isWalletRoute(bare)) {
+        mountWalletRoute(container, bare);
         return;
       }
       renderUnknown(container, path);
@@ -188,6 +203,18 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
     mountReportRoute(container, route.path);
     container.setAttribute("data-route", route.path);
     container.setAttribute("data-title", t(route.titleKey));
+    return;
+  }
+  if (isAmountwithdrawRoute(route.path)) {
+    mountAmountwithdrawRoute(container, route.path);
+    return;
+  }
+  if (isTransactionRoute(route.path)) {
+    mountTransactionRoute(container, route.path);
+    return;
+  }
+  if (isWalletRoute(route.path)) {
+    mountWalletRoute(container, route.path);
     return;
   }
   renderPlaceholder(container, route);
