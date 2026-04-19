@@ -1,0 +1,112 @@
+// PR-A5 (BIN-663) — admin-halls API-wrappers.
+//
+// Dekker hall CRUD + permissions-introspeksjon. Backend-endpoints ligger
+// i apps/backend/src/routes/admin.ts:
+//   GET    /api/admin/halls                 (HALL_READ)
+//   POST   /api/admin/halls                 (HALL_WRITE)
+//   PUT    /api/admin/halls/:hallId         (HALL_WRITE)
+//
+// Legacy hadde hard delete + bulk-player-move; ny backend gjør soft
+// disable via `isActive=false`. UI-siden (HallListPage) eksponerer
+// toggle + info-tekst om at spiller-migrering må gjøres manuelt
+// (PM-beslutning i PR-A5-plan §7.2 #3).
+//
+// GroupHall: full backend-gap — ingen CRUD-endpoints. Plassholder-sider
+// i apps/admin-web/src/pages/groupHall/ (PR-A5-plan §2.2 G1, Linear BIN-665).
+
+import { apiRequest } from "./client.js";
+
+// ── Kjerne-typer (speiler backend PlatformService HallDefinition) ────────────
+
+export type HallClientVariant = "unity" | "web" | "unity-fallback";
+
+export interface AdminHall {
+  id: string;
+  slug: string;
+  name: string;
+  region: string;
+  address: string;
+  organizationNumber?: string;
+  settlementAccount?: string;
+  invoiceMethod?: string;
+  isActive: boolean;
+  clientVariant: HallClientVariant;
+  tvUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Liste ────────────────────────────────────────────────────────────────────
+
+export interface ListHallsParams {
+  includeInactive?: boolean;
+}
+
+/**
+ * Liste haller. Backend returnerer direkte array (ikke envelope),
+ * men dashboard.ts-wrapper viser at noen instanser pakker inn `{ halls }`
+ * — normaliser her for å være defensive.
+ */
+export async function listHalls(params: ListHallsParams = {}): Promise<AdminHall[]> {
+  const qs = new URLSearchParams();
+  if (params.includeInactive) qs.set("includeInactive", "true");
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  const raw = await apiRequest<AdminHall[] | { halls: AdminHall[] }>(
+    `/api/admin/halls${suffix}`,
+    { auth: true }
+  );
+  if (Array.isArray(raw)) return raw;
+  return raw.halls ?? [];
+}
+
+// ── CRUD ─────────────────────────────────────────────────────────────────────
+
+export interface CreateHallInput {
+  slug: string;
+  name: string;
+  region?: string;
+  address?: string;
+  organizationNumber?: string;
+  settlementAccount?: string;
+  invoiceMethod?: string;
+  isActive?: boolean;
+}
+
+export function createHall(input: CreateHallInput): Promise<AdminHall> {
+  return apiRequest<AdminHall>("/api/admin/halls", {
+    method: "POST",
+    body: input,
+    auth: true,
+  });
+}
+
+export interface UpdateHallInput {
+  slug?: string;
+  name?: string;
+  region?: string;
+  address?: string;
+  organizationNumber?: string;
+  settlementAccount?: string;
+  invoiceMethod?: string;
+  isActive?: boolean;
+  clientVariant?: HallClientVariant;
+}
+
+export function updateHall(id: string, patch: UpdateHallInput): Promise<AdminHall> {
+  return apiRequest<AdminHall>(`/api/admin/halls/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: patch,
+    auth: true,
+  });
+}
+
+/**
+ * Toggle hall enabled/disabled (soft disable — BIN-663 PR-A5-plan §7.2 #3).
+ *
+ * Legacy støttet "slett hall" med modal for bulk-spiller-migrering; ny
+ * backend har kun `isActive`-flagg. UI viser infotekst om at admin må
+ * flytte spillere manuelt før deaktivering (Linear-gap: BIN-A5-HM).
+ */
+export function setHallActive(id: string, isActive: boolean): Promise<AdminHall> {
+  return updateHall(id, { isActive });
+}

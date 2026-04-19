@@ -26,6 +26,10 @@ import { isProductsRoute, mountProductsRoute } from "./pages/products/index.js";
 import { isSecurityRoute, mountSecurityRoute } from "./pages/security/index.js";
 import { isRiskCountryRoute, mountRiskCountryRoute } from "./pages/riskCountry/index.js";
 import { isLeaderboardRoute, mountLeaderboardRoute } from "./pages/leaderboard/index.js";
+import { isAdminUsersRoute, mountAdminUsersRoute } from "./pages/adminUsers/index.js";
+import { isRoleRoute, mountRoleRoute } from "./pages/role/index.js";
+import { isHallRoute, mountHallRoute } from "./pages/hall/index.js";
+import { isGroupHallRoute, mountGroupHallRoute } from "./pages/groupHall/index.js";
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
@@ -139,6 +143,22 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isLeaderboardRoute(bare)) {
         mountLeaderboardRoute(container, bare);
+        return;
+      }
+      if (isAdminUsersRoute(bare)) {
+        mountAdminUsersRoute(container, bare);
+        return;
+      }
+      if (isRoleRoute(bare)) {
+        mountRoleRoute(container, bare);
+        return;
+      }
+      if (isHallRoute(bare)) {
+        mountHallRoute(container, bare);
+        return;
+      }
+      if (isGroupHallRoute(bare)) {
+        mountGroupHallRoute(container, bare);
         return;
       }
       renderUnknown(container, path);
@@ -273,6 +293,22 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isLeaderboardRoute(route.path)) {
     mountLeaderboardRoute(container, route.path);
+    return;
+  }
+  if (isAdminUsersRoute(route.path)) {
+    mountAdminUsersRoute(container, route.path);
+    return;
+  }
+  if (isRoleRoute(route.path)) {
+    mountRoleRoute(container, route.path);
+    return;
+  }
+  if (isHallRoute(route.path)) {
+    mountHallRoute(container, route.path);
+    return;
+  }
+  if (isGroupHallRoute(route.path)) {
+    mountGroupHallRoute(container, route.path);
     return;
   }
   renderPlaceholder(container, route);
