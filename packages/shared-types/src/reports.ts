@@ -138,14 +138,58 @@ export interface PayoutTicketRow {
 
 // ── Hall account / settlement ───────────────────────────────────────────────
 
+/**
+ * Daily hall-report row. Wire-shape emitted by backend
+ * `HallAccountReportService.getDailyReport()` (see
+ * `apps/backend/src/compliance/HallAccountReportService.ts:40`).
+ *
+ * All monetary values are in øre/cents (integer). `gameType` is null for
+ * aggregate/"ALL" rows that carry only cash-flow totals (no ledger stakes).
+ */
 export interface HallAccountRow {
-  date: string;
+  date: string;                 // YYYY-MM-DD
+  gameType: string | null;
+  ticketsSoldCents: number;     // stake (omsetning)
+  winningsPaidCents: number;    // prize (utbetalt)
+  netRevenueCents: number;      // stake - prize
+  cashInCents: number;
+  cashOutCents: number;
+  cardInCents: number;
+  cardOutCents: number;
+}
+
+/**
+ * Account-balance snapshot. Wire-shape from
+ * `GET /api/admin/reports/halls/:hallId/account-balance`
+ * (`apps/backend/src/compliance/HallAccountReportService.ts:64`).
+ */
+export interface HallAccountBalanceDto {
   hallId: string;
-  grossTurnover: number;
-  prizesPaid: number;
-  net: number;
-  manualAdjustment: number;
-  balance: number;
+  hallCashBalance: number;
+  dropsafeBalance: number;
+  periodTotalCashInCents: number;
+  periodTotalCashOutCents: number;
+  periodTotalCardInCents: number;
+  periodTotalCardOutCents: number;
+  periodSellingByCustomerNumberCents: number;
+  periodManualAdjustmentCents: number;
+  periodNetCashFlowCents: number;
+}
+
+/**
+ * Manual hall-account adjustment (rekvisita/coffee/bank-deposit/etc).
+ * Wire-shape from `GET /api/admin/reports/halls/:hallId/manual-entries`
+ * (`apps/backend/src/compliance/HallAccountReportService.ts:25`).
+ */
+export interface ManualAdjustmentEntryDto {
+  id: string;
+  hallId: string;
+  amountCents: number;
+  category: "BANK_DEPOSIT" | "BANK_WITHDRAWAL" | "CORRECTION" | "REFUND" | "OTHER";
+  businessDate: string;         // YYYY-MM-DD
+  note: string;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface ShiftSettlementRow {

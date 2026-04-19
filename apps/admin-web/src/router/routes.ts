@@ -74,9 +74,12 @@ export const routes: RouteDef[] = [
 
   { path: "/payoutPlayer", titleKey: "payout_for_players", module: "Payout Management" },
   { path: "/payoutTickets", titleKey: "payout_for_ticket", module: "Payout Management" },
+  // PR-A4b — detail routes resolved via payout dispatcher (hash-regex).
 
   { path: "/riskCountry", titleKey: "risk_country", roles: ["admin", "super-admin"] },
   { path: "/hallAccountReport", titleKey: "hall_account_report" },
+  // PR-A4b — dynamic detail + settlement routes resolved via hallAccount
+  // dispatcher (hash-regex match).
 
   { path: "/wallet", titleKey: "wallet_management", module: "Wallet Management" },
   { path: "/wallet/view", titleKey: "view_wallet", module: "Wallet Management" },

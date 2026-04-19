@@ -21,6 +21,8 @@ import { apiRequest } from "./client.js";
 import type {
   GameReportResponse,
   HallAccountRow,
+  HallAccountBalanceDto,
+  ManualAdjustmentEntryDto,
   RevenueSummaryResponse,
   SessionsResponse,
   PayoutPlayerRow,
@@ -183,6 +185,46 @@ export async function getHallMonthlyReport(q: { hallId: string; year: number; mo
     `/api/admin/reports/halls/${encodeURIComponent(q.hallId)}/monthly?${qs}`,
     { auth: true }
   );
+}
+
+// ── 8b. /api/admin/reports/halls/:hallId/account-balance ────────────────────
+// PR-A4b (BIN-659) — used by hallAccountReport detail page.
+
+export interface AccountBalanceQuery {
+  hallId: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export async function getHallAccountBalance(q: AccountBalanceQuery): Promise<HallAccountBalanceDto> {
+  const qs = buildQs({ dateFrom: q.dateFrom, dateTo: q.dateTo });
+  const path = qs
+    ? `/api/admin/reports/halls/${encodeURIComponent(q.hallId)}/account-balance?${qs}`
+    : `/api/admin/reports/halls/${encodeURIComponent(q.hallId)}/account-balance`;
+  return apiRequest<HallAccountBalanceDto>(path, { auth: true });
+}
+
+// ── 8c. /api/admin/reports/halls/:hallId/manual-entries ─────────────────────
+
+export interface ManualEntriesQuery {
+  hallId: string;
+  dateFrom?: string;
+  dateTo?: string;
+  limit?: number;
+}
+
+export interface ManualEntriesResponse {
+  hallId: string;
+  rows: ManualAdjustmentEntryDto[];
+  count: number;
+}
+
+export async function getHallManualEntries(q: ManualEntriesQuery): Promise<ManualEntriesResponse> {
+  const qs = buildQs({ dateFrom: q.dateFrom, dateTo: q.dateTo, limit: q.limit });
+  const path = qs
+    ? `/api/admin/reports/halls/${encodeURIComponent(q.hallId)}/manual-entries?${qs}`
+    : `/api/admin/reports/halls/${encodeURIComponent(q.hallId)}/manual-entries`;
+  return apiRequest<ManualEntriesResponse>(path, { auth: true });
 }
 
 // ── 9. /api/admin/dashboard/game-history ────────────────────────────────────

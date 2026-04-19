@@ -17,6 +17,8 @@ import { isTrackSpendingRoute, mountTrackSpendingRoute } from "./pages/track-spe
 import { isGamesRoute, mountGamesRoute } from "./pages/games/index.js";
 import { isPhysicalTicketsRoute, mountPhysicalTicketsRoute } from "./pages/physical-tickets/index.js";
 import { isReportRoute, mountReportRoute } from "./pages/reports/index.js";
+import { isHallAccountRoute, mountHallAccountRoute } from "./pages/hallAccountReport/index.js";
+import { isPayoutRoute, mountPayoutRoute } from "./pages/payout/index.js";
 import { isAmountwithdrawRoute, mountAmountwithdrawRoute } from "./pages/amountwithdraw/index.js";
 import { isTransactionRoute, mountTransactionRoute } from "./pages/transactions/index.js";
 import { isWalletRoute, mountWalletRoute } from "./pages/wallets/index.js";
@@ -98,6 +100,14 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isReportRoute(bare)) {
         mountReportRoute(container, bare);
+        return;
+      }
+      if (isHallAccountRoute(bare)) {
+        mountHallAccountRoute(container, bare);
+        return;
+      }
+      if (isPayoutRoute(bare)) {
+        mountPayoutRoute(container, bare);
         return;
       }
       if (isAmountwithdrawRoute(bare)) {
@@ -206,6 +216,18 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isReportRoute(route.path)) {
     mountReportRoute(container, route.path);
+    container.setAttribute("data-route", route.path);
+    container.setAttribute("data-title", t(route.titleKey));
+    return;
+  }
+  if (isHallAccountRoute(route.path)) {
+    mountHallAccountRoute(container, route.path);
+    container.setAttribute("data-route", route.path);
+    container.setAttribute("data-title", t(route.titleKey));
+    return;
+  }
+  if (isPayoutRoute(route.path)) {
+    mountPayoutRoute(container, route.path);
     container.setAttribute("data-route", route.path);
     container.setAttribute("data-title", t(route.titleKey));
     return;
