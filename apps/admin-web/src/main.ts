@@ -16,6 +16,7 @@ import { isBankIdRoute, mountBankIdRoute } from "./pages/bankid/index.js";
 import { isTrackSpendingRoute, mountTrackSpendingRoute } from "./pages/track-spending/index.js";
 import { isGamesRoute, mountGamesRoute } from "./pages/games/index.js";
 import { isPhysicalTicketsRoute, mountPhysicalTicketsRoute } from "./pages/physical-tickets/index.js";
+import { isReportRoute, mountReportRoute } from "./pages/reports/index.js";
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
@@ -89,6 +90,10 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isPhysicalTicketsRoute(bare)) {
         mountPhysicalTicketsRoute(container, bare);
+        return;
+      }
+      if (isReportRoute(bare)) {
+        mountReportRoute(container, bare);
         return;
       }
       renderUnknown(container, path);
@@ -175,6 +180,12 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isPhysicalTicketsRoute(route.path)) {
     mountPhysicalTicketsRoute(container, route.path);
+    container.setAttribute("data-route", route.path);
+    container.setAttribute("data-title", t(route.titleKey));
+    return;
+  }
+  if (isReportRoute(route.path)) {
+    mountReportRoute(container, route.path);
     container.setAttribute("data-route", route.path);
     container.setAttribute("data-title", t(route.titleKey));
     return;
