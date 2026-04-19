@@ -50,9 +50,15 @@ export const routes: RouteDef[] = [
   { path: "/patternMenu", titleKey: "pattern_management", module: "Pattern Management" },
 
   { path: "/adminUser", titleKey: "admin_management", roles: ["admin", "super-admin"] },
+  { path: "/adminUser/add", titleKey: "add_admin", roles: ["admin", "super-admin"] },
   { path: "/agent", titleKey: "agent_management", roles: ["admin", "super-admin"] },
+  { path: "/agent/add", titleKey: "add_agent", roles: ["admin", "super-admin"] },
+  { path: "/user", titleKey: "user_management", roles: ["admin", "super-admin"] },
+  { path: "/user/add", titleKey: "add_user", roles: ["admin", "super-admin"] },
   { path: "/hall", titleKey: "hall_management", roles: ["admin", "super-admin"] },
+  { path: "/hall/add", titleKey: "add_hall", roles: ["admin", "super-admin"] },
   { path: "/groupHall", titleKey: "group_of_halls_management", roles: ["admin", "super-admin"] },
+  { path: "/groupHall/add", titleKey: "create_group_of_halls", roles: ["admin", "super-admin"] },
 
   { path: "/productList", titleKey: "product_list", module: "Product Management" },
   { path: "/categoryList", titleKey: "category_list", module: "Product Management" },
@@ -60,6 +66,8 @@ export const routes: RouteDef[] = [
   { path: "/orderHistory", titleKey: "order_history", module: "Product Management" },
 
   { path: "/role", titleKey: "role_management", roles: ["admin", "super-admin"] },
+  { path: "/role/matrix", titleKey: "role_management_table", roles: ["admin", "super-admin"] },
+  { path: "/role/assign", titleKey: "assign_role_to_agent", roles: ["admin", "super-admin"] },
 
   { path: "/reportGame1", titleKey: "game1", module: "Report Management" },
   { path: "/reportGame2", titleKey: "game2", module: "Report Management" },
