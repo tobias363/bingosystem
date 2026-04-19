@@ -1979,5 +1979,8 @@
   "game_id": "Game ID",
   "ticket_id": "Ticket ID",
   "created_at": "Created",
-  "physical_tickets_sold": "Physical tickets sold"
+  "physical_tickets_sold": "Physical tickets sold",
+  "player_id": "Player ID",
+  "payout_cross_game_aggregate_pending": "Cross-game aggregation is a planned follow-up (BIN-659). Look up one player/game at a time for now.",
+  "payout_ticket_detail_backend_pending": "Full per-ticket detail is a planned follow-up. See /payoutTickets for per-game aggregate."
 }

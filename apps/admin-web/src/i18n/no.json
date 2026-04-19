@@ -1972,5 +1972,8 @@
   "game_id": "Spill-ID",
   "ticket_id": "Billett-ID",
   "created_at": "Opprettet",
-  "physical_tickets_sold": "Fysiske billetter solgt"
+  "physical_tickets_sold": "Fysiske billetter solgt",
+  "player_id": "Spiller-ID",
+  "payout_cross_game_aggregate_pending": "Aggregat på tvers av alle spill er planlagt (BIN-659-oppfølging). Slå opp én spiller/spill om gangen for nå.",
+  "payout_ticket_detail_backend_pending": "Full billettdetalj per-ticketId er en planlagt oppfølging. Se listen på /payoutTickets for aggregat per spill."
 }
