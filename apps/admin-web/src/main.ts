@@ -29,6 +29,7 @@ import { isLeaderboardRoute, mountLeaderboardRoute } from "./pages/leaderboard/i
 import { isAdminUsersRoute, mountAdminUsersRoute } from "./pages/adminUsers/index.js";
 import { isRoleRoute, mountRoleRoute } from "./pages/role/index.js";
 import { isHallRoute, mountHallRoute } from "./pages/hall/index.js";
+import { isGroupHallRoute, mountGroupHallRoute } from "./pages/groupHall/index.js";
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
@@ -154,6 +155,10 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isHallRoute(bare)) {
         mountHallRoute(container, bare);
+        return;
+      }
+      if (isGroupHallRoute(bare)) {
+        mountGroupHallRoute(container, bare);
         return;
       }
       renderUnknown(container, path);
@@ -300,6 +305,10 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isHallRoute(route.path)) {
     mountHallRoute(container, route.path);
+    return;
+  }
+  if (isGroupHallRoute(route.path)) {
+    mountGroupHallRoute(container, route.path);
     return;
   }
   renderPlaceholder(container, route);
