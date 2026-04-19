@@ -28,6 +28,7 @@ import { isRiskCountryRoute, mountRiskCountryRoute } from "./pages/riskCountry/i
 import { isLeaderboardRoute, mountLeaderboardRoute } from "./pages/leaderboard/index.js";
 import { isAdminUsersRoute, mountAdminUsersRoute } from "./pages/adminUsers/index.js";
 import { isRoleRoute, mountRoleRoute } from "./pages/role/index.js";
+import { isHallRoute, mountHallRoute } from "./pages/hall/index.js";
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
@@ -149,6 +150,10 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isRoleRoute(bare)) {
         mountRoleRoute(container, bare);
+        return;
+      }
+      if (isHallRoute(bare)) {
+        mountHallRoute(container, bare);
         return;
       }
       renderUnknown(container, path);
@@ -291,6 +296,10 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isRoleRoute(route.path)) {
     mountRoleRoute(container, route.path);
+    return;
+  }
+  if (isHallRoute(route.path)) {
+    mountHallRoute(container, route.path);
     return;
   }
   renderPlaceholder(container, route);
