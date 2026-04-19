@@ -188,7 +188,18 @@ const ADMIN_ACCESS_POLICY_DEFINITION = {
    *     bevisst utelatt — compliance-rolle, ikke drift.
    */
   SCHEDULE_READ:  ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
-  SCHEDULE_WRITE: ["ADMIN", "HALL_OPERATOR"]
+  SCHEDULE_WRITE: ["ADMIN", "HALL_OPERATOR"],
+  /**
+   * BIN-627: Pattern CRUD (25-bit bitmask mønstre for Game 1 + Game 3).
+   *   - PATTERN_READ : liste + detalj + dynamic-menu. Alle admin-roller.
+   *     Mønstre er ikke hall-bundne — samme katalog for alle haller.
+   *   - PATTERN_WRITE: opprett/oppdatér/slett. ADMIN + HALL_OPERATOR
+   *     (hall-operator kan trenge å tilpasse mønster-katalog; cross-hall-
+   *     effekter er små siden hver plan refererer eksplisitt pattern-id).
+   *     SUPPORT er bevisst utelatt — kompeliance-rolle, ikke drift.
+   */
+  PATTERN_READ:  ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
+  PATTERN_WRITE: ["ADMIN", "HALL_OPERATOR"]
 } as const;
 
 export type AdminPermission = keyof typeof ADMIN_ACCESS_POLICY_DEFINITION;

@@ -98,6 +98,8 @@ import { createAdminGameManagementRouter } from "./routes/adminGameManagement.js
 import { GameManagementService } from "./admin/GameManagementService.js";
 import { createAdminDailySchedulesRouter } from "./routes/adminDailySchedules.js";
 import { DailyScheduleService } from "./admin/DailyScheduleService.js";
+import { createAdminPatternsRouter } from "./routes/adminPatterns.js";
+import { PatternService } from "./admin/PatternService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
 import { createAdminVouchersRouter } from "./routes/adminVouchers.js";
 import { VoucherService } from "./compliance/VoucherService.js";
@@ -344,6 +346,15 @@ const gameManagementService = new GameManagementService({
 // BIN-626: DailySchedule (daglig spill-plan per hall, kobler GameManagement
 // til hall + tidspunkt + subgames).
 const dailyScheduleService = new DailyScheduleService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+
+// BIN-627: Pattern CRUD (25-bit bitmask mønstre for Game 1 + Game 3).
+// PatternMatcher runtime (apps/backend/src/game/PatternMatcher.ts) leser
+// mask-feltet direkte, så admin-katalog og engine deler samme 25-bit-
+// representasjon (shared-types PatternMask).
+const patternService = new PatternService({
   connectionString: platformConnectionString,
   schema: pgSchema,
 });
@@ -660,6 +671,14 @@ app.use(createAdminDailySchedulesRouter({
   auditLogService,
   dailyScheduleService,
   gameManagementService,
+}));
+// BIN-627: Pattern CRUD + dynamic-menu. Aktiverer Agent A's
+// patternManagement-placeholder-sider fra PR-A3a (3 sider) og brukes av
+// Game3Engine runtime pattern-matching (mask-feltet).
+app.use(createAdminPatternsRouter({
+  platformService,
+  auditLogService,
+  patternService,
 }));
 // BIN-628: admin track-spending aggregat (regulatorisk P2 — pengespill-
 // forskriften §11). Gjenbruker de samme env-var-drevne loss-limitene som
