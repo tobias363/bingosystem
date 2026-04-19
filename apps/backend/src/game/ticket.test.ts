@@ -13,6 +13,9 @@ import {
   ticketContainsNumber,
   makeShuffledBallBag,
   makeRoomCode,
+  uses75Ball,
+  generateTicketForGame,
+  BINGO75_SLUGS,
 } from "./ticket.js";
 import type { Ticket } from "./types.js";
 
@@ -327,3 +330,84 @@ describe("makeRoomCode", () => {
     }
   });
 });
+
+// ── 75-ball slug helpers ────────────────────────────────────────────────────
+
+describe("uses75Ball", () => {
+  test("returns true for canonical Game 1 slug", () => {
+    assert.equal(uses75Ball("bingo"), true);
+  });
+
+  test("returns true for legacy numeric alias", () => {
+    assert.equal(uses75Ball("game_1"), true);
+  });
+
+  test("returns false for other game slugs", () => {
+    assert.equal(uses75Ball("rocket"), false);
+    assert.equal(uses75Ball("monsterbingo"), false);
+    assert.equal(uses75Ball("temabingo"), false);
+    assert.equal(uses75Ball("spillorama"), false);
+    assert.equal(uses75Ball("candy"), false);
+  });
+
+  test("returns false for nullish or empty input", () => {
+    assert.equal(uses75Ball(undefined), false);
+    assert.equal(uses75Ball(null), false);
+    assert.equal(uses75Ball(""), false);
+  });
+
+  test("BINGO75_SLUGS only contains the two known aliases", () => {
+    assert.deepEqual([...BINGO75_SLUGS].sort(), ["bingo", "game_1"]);
+  });
+});
+
+describe("generateTicketForGame", () => {
+  test("Game 1 (bingo) → 5x5 grid with free centre cell", () => {
+    const ticket = generateTicketForGame("bingo");
+    assert.equal(ticket.grid.length, 5);
+    assert.equal(ticket.grid[0].length, 5);
+    assert.equal(ticket.grid[2][2], 0);
+  });
+
+  test("Game 1 (game_1 alias) → 5x5 grid with free centre cell", () => {
+    const ticket = generateTicketForGame("game_1");
+    assert.equal(ticket.grid.length, 5);
+    assert.equal(ticket.grid[2][2], 0);
+  });
+
+  test("Game 1 ticket numbers are in B-I-N-G-O column ranges (1–75)", () => {
+    const ticket = generateTicketForGame("bingo");
+    for (let row = 0; row < 5; row++) {
+      for (let col = 0; col < 5; col++) {
+        const n = ticket.grid[row][col];
+        if (row === 2 && col === 2) continue;
+        const min = col * 15 + 1;
+        const max = col * 15 + 15;
+        assert.ok(n >= min && n <= max, `cell [${row}][${col}]=${n} outside ${min}-${max}`);
+      }
+    }
+  });
+
+  test("Other games → 3x5 Databingo60 grid (no free cell)", () => {
+    const ticket = generateTicketForGame("rocket");
+    assert.equal(ticket.grid.length, 3);
+    assert.equal(ticket.grid[0].length, 5);
+    for (const row of ticket.grid) {
+      for (const n of row) {
+        assert.ok(n >= 1 && n <= 60, `number ${n} outside 1-60`);
+      }
+    }
+  });
+
+  test("Undefined slug → 3x5 Databingo60 (defensive default)", () => {
+    const ticket = generateTicketForGame(undefined);
+    assert.equal(ticket.grid.length, 3);
+  });
+
+  test("color and type metadata pass through for 75-ball tickets", () => {
+    const ticket = generateTicketForGame("bingo", "Small Yellow", "small");
+    assert.equal(ticket.color, "Small Yellow");
+    assert.equal(ticket.type, "small");
+  });
+});
+

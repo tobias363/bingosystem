@@ -216,6 +216,25 @@ export class GameBridge {
       this.state.gameId = null;
     }
 
+    // The server's room:create ack returns a full RoomUpdatePayload, not a bare
+    // RoomSnapshot. Pull variant info from it so the buy popup gets ticket types
+    // immediately — otherwise we'd have to wait for the next room:update push,
+    // which can race with our listener registration.
+    const payload = snapshot as RoomSnapshot & { gameVariant?: RoomUpdatePayload["gameVariant"]; serverTimestamp?: number };
+    if (payload.gameVariant) {
+      this.state.gameType = payload.gameVariant.gameType ?? "standard";
+      this.state.ticketTypes = (payload.gameVariant.ticketTypes ?? []) as GameState["ticketTypes"];
+      this.state.replaceAmount = payload.gameVariant.replaceAmount ?? 0;
+      this.state.jackpot = payload.gameVariant.jackpot ?? null;
+      const variantFee = payload.gameVariant.entryFee;
+      if (typeof variantFee === "number" && variantFee > 0 && this.state.entryFee === 0) {
+        this.state.entryFee = variantFee;
+      }
+    }
+    if (typeof payload.serverTimestamp === "number") {
+      this.state.serverTimestamp = payload.serverTimestamp;
+    }
+
     this.emit("stateChanged", this.state);
   }
 
@@ -273,6 +292,13 @@ export class GameBridge {
       this.state.replaceAmount = payload.gameVariant.replaceAmount ?? 0;
       // F3 (BIN-431): Jackpot header info. null when variant has no jackpot.
       this.state.jackpot = payload.gameVariant.jackpot ?? null;
+      // Backend exposes the room's configured entry fee here so the buy popup
+      // can render prices before a game is RUNNING. Don't overwrite an active
+      // game's entryFee (already set via applyGameSnapshot below).
+      const variantFee = payload.gameVariant.entryFee;
+      if (typeof variantFee === "number" && variantFee > 0 && this.state.entryFee === 0) {
+        this.state.entryFee = variantFee;
+      }
     }
 
     // Game state

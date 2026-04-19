@@ -3,7 +3,7 @@
  * Extracted from index.ts. Owns: armed players, lucky numbers, display ticket cache,
  * per-room configured entry fees. All helpers are method wrappers around these Maps.
  */
-import { generateDatabingo60Ticket, generateBingo75Ticket } from "../game/ticket.js";
+import { generateTicketForGame } from "../game/ticket.js";
 import type { Ticket } from "../game/types.js";
 import type { GameVariantConfig } from "../game/variantConfig.js";
 
@@ -111,10 +111,10 @@ export class RoomStateManager {
     const key = `${roomCode}:${playerId}`;
     const cached = this.displayTicketCache.get(key);
     if (cached && cached.length === count) return cached;
-    // Game 1 (bingo) uses 75-ball 5x5 tickets; all other games use 60-ball 3x5 tickets.
-    const generator = gameSlug === "bingo" ? generateBingo75Ticket : generateDatabingo60Ticket;
+    // Format (5x5 75-ball vs 3x5 60-ball) is decided by `generateTicketForGame`,
+    // which reads `BINGO75_SLUGS` from ticket.ts — single source of truth.
     const tickets: Ticket[] = [];
-    for (let i = 0; i < count; i++) tickets.push({ ...generator(), id: `tkt-${i}` });
+    for (let i = 0; i < count; i++) tickets.push({ ...generateTicketForGame(gameSlug), id: `tkt-${i}` });
     this.displayTicketCache.set(key, tickets);
     return tickets;
   }
@@ -133,8 +133,7 @@ export class RoomStateManager {
     if (!cached) return null;
     const idx = cached.findIndex((t) => t.id === ticketId);
     if (idx < 0) return null;
-    const generator = gameSlug === "bingo" ? generateBingo75Ticket : generateDatabingo60Ticket;
-    const replacement: Ticket = { ...generator(), id: ticketId };
+    const replacement: Ticket = { ...generateTicketForGame(gameSlug), id: ticketId };
     cached[idx] = replacement;
     return replacement;
   }
