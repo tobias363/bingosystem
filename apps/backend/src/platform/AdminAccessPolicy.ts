@@ -165,7 +165,19 @@ const ADMIN_ACCESS_POLICY_DEFINITION = {
    *     hall-binding fortsatt lever i config_json).
    */
   GAME_MGMT_READ:  ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
-  GAME_MGMT_WRITE: ["ADMIN", "HALL_OPERATOR"]
+  GAME_MGMT_WRITE: ["ADMIN", "HALL_OPERATOR"],
+  /**
+   * BIN-628: regulatorisk track-spending aggregat (pengespillforskriften §11
+   * forebyggende tiltak). ADMIN + HALL_OPERATOR + SUPPORT:
+   *   - ADMIN ser på tvers av alle haller (global oversikt).
+   *   - HALL_OPERATOR ser aggregat for egen hall — hall-scope håndheves
+   *     i route via assertUserHallScope når hallId er satt.
+   *   - SUPPORT har read-tilgang for compliance-innsyn (samme mønster som
+   *     PLAYER_AML_READ). SUPPORT kan se på tvers av haller — kundestøtte
+   *     trenger fullstendig oversikt ved kundesamtaler.
+   * Ingen WRITE-variant: dette er et rent aggregat-endepunkt, ingen mutasjon.
+   */
+  TRACK_SPENDING_READ: ["ADMIN", "HALL_OPERATOR", "SUPPORT"]
 } as const;
 
 export type AdminPermission = keyof typeof ADMIN_ACCESS_POLICY_DEFINITION;
