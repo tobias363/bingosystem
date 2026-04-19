@@ -178,12 +178,22 @@ export function buildRoomUpdatePayload(
   const variantInfo = opts.getVariantConfig?.(snapshot.code);
   const effectiveGameType = variantInfo?.gameType ?? "standard";
   const effectiveConfig = variantInfo?.config ?? getDefaultVariantConfig(effectiveGameType);
+  // Resolve a single authoritative entry fee for the room, regardless of
+  // whether a game is currently running. The buy popup needs this BEFORE
+  // the first round starts — earlier code fell back to a hard-coded "10 kr"
+  // placeholder while the player was actually charged the configured price.
+  const variantEntryFee = snapshot.currentGame?.entryFee && snapshot.currentGame.entryFee > 0
+    ? snapshot.currentGame.entryFee
+    : opts.getRoomConfiguredEntryFee(snapshot.code);
   const gameVariant = {
     gameType: effectiveGameType,
     ticketTypes: effectiveConfig.ticketTypes,
     replaceAmount: effectiveConfig.replaceAmount,
     // F3 (BIN-431): Propagate jackpot info from variant config → client HeaderBar.
     jackpot: effectiveConfig.jackpot,
+    /** Per-ticket entry fee — populated even when no game is RUNNING so the
+     *  buy popup can show real prices on first render. */
+    entryFee: variantEntryFee,
   };
 
   // ── G15 (BIN-431): Enrich tickets with detail fields for flip-to-details ───

@@ -71,7 +71,9 @@ export function loadBingoRuntimeConfig(): BingoRuntimeConfig {
   // BIN-520: upper bound raised from 60 → 75. Databingo 75-ball needs up to 75
   // draws for a guaranteed BINGO; with the old clamp, long rounds could hang
   // at draw #60 before any player reached a full-card claim.
-  const bingoMaxDrawsPerRound = Math.min(75, Math.max(1, parsePositiveIntEnv(process.env.BINGO_MAX_DRAWS_PER_ROUND, 30)));
+  // Default raised to 75 so Game 1 works out of the box without env config —
+  // Game 2/3's 60-ball draw bag stops naturally at 60 and ignores the ceiling.
+  const bingoMaxDrawsPerRound = Math.min(75, Math.max(1, parsePositiveIntEnv(process.env.BINGO_MAX_DRAWS_PER_ROUND, 75)));
   const isProductionRuntime = (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
   const bingoMinPlayersToStart = 1;
   const fixedAutoDrawIntervalMs = 2000;

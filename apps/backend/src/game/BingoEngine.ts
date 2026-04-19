@@ -502,6 +502,13 @@ export class BingoEngine {
       const requested = input.armedPlayerTicketCounts?.[player.id] ?? ticketsPerPlayer;
       playerTicketCountMap.set(player.id, Math.min(requested, ticketsPerPlayer));
     }
+    // BIN-437: Resolve variant config up-front — needed both for the buy-in
+    // loop (per-type pricing) and the ticket-generation loop further down.
+    // Declaring it here avoids a TDZ trap where the buy-in loop crashed with
+    // "Cannot access 'variantConfig' before initialization".
+    const variantGameType = input.gameType ?? "standard";
+    const variantConfig = input.variantConfig ?? variantConfigModule.getDefaultVariantConfig(variantGameType);
+
     if (entryFee > 0 && !isTestGame) {
       try {
         for (const player of eligiblePlayers) {
@@ -569,9 +576,7 @@ export class BingoEngine {
     const tickets = new Map<string, Ticket[]>();
     const marks = new Map<string, Set<number>[]>();
 
-    // BIN-437: Use variant config for ticket colors (replaces hardcoded cycling).
-    const variantGameType = input.gameType ?? "standard";
-    const variantConfig = input.variantConfig ?? variantConfigModule.getDefaultVariantConfig(variantGameType);
+    // variantConfig + variantGameType already resolved above (before the buy-in loop).
 
     try {
       for (const player of eligiblePlayers) {
