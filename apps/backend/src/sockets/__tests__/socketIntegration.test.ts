@@ -902,10 +902,11 @@ describe("Socket.IO integration", () => {
     await bob.emit("bet:arm", { roomCode, armed: true });
     await alice.emit("game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 });
 
-    // Draw all numbers until the engine refuses
+    // Draw all numbers until the engine refuses. BIN-672: default is now
+    // 75-ball bingo (was 60-ball databingo), so loop up to 76.
     let drawCount = 0;
     let lastError: string | undefined;
-    for (let i = 0; i < 61; i++) {
+    for (let i = 0; i < 76; i++) {
       const drawResult = await alice.emit<AckResponse<{ number: number }>>("draw:next", { roomCode });
       if (!drawResult.ok) {
         lastError = drawResult.error?.code;

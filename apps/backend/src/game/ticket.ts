@@ -77,11 +77,19 @@ export const GAME3_SLUGS: ReadonlySet<string> = new Set([
  * caused the BIN-619/BIN-671 regression where a missing-gameSlug chain
  * produced 3×5 tickets in a Bingo75 game. Now the fallback throws; only
  * explicit slugs in this set get 3×5.
+ *
+ * Includes Game 5 (spillorama) which uses slot-style cosmetic tickets
+ * and historically relied on the 3×5 fallback. Game 4 (temabingo) is
+ * deactivated per BIN-496 and Game 6 (candy) uses an iframe — neither
+ * generates tickets via this path.
  */
 export const DATABINGO60_SLUGS: ReadonlySet<string> = new Set([
   "databingo",
   "databingo60",
   "bingo60",
+  "spillorama",
+  "game_5",
+  "temabingo",  // Game 4 — deactivated but may still appear in legacy fixtures
 ]);
 
 /** True if a room/game with this slug should use the 3×5 Databingo60 format. */
