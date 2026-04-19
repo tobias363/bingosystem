@@ -22,7 +22,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { BingoEngine } from "./BingoEngine.js";
+import { Game2Engine } from "./Game2Engine.js";
 import {
   PatternCycler,
   type PatternSpec,
@@ -121,28 +121,38 @@ export interface G3TicketWinner {
 
 // ── Engine ──────────────────────────────────────────────────────────────────
 
-export class Game3Engine extends BingoEngine {
+export class Game3Engine extends Game2Engine {
   /** Per-room pattern cycler, built lazily on the first draw of each G3 round. */
   private readonly cyclersByRoom = new Map<string, PatternCycler>();
   /** Per-room gameId the cycler was built for — reset when a new round starts. */
   private readonly cyclerGameIdByRoom = new Map<string, string>();
-  /** Atomic read-and-clear stash, mirroring Game2Engine.lastDrawEffectsByRoom. */
-  private readonly lastDrawEffectsByRoom = new Map<string, G3DrawEffects>();
+  /**
+   * Atomic read-and-clear stash, mirroring Game2Engine.lastDrawEffectsByRoom.
+   * Named distinctly (g3LastDrawEffectsByRoom) to avoid the TypeScript
+   * `private`-shadowing pitfall: `private` fields share the same runtime name,
+   * so reusing `lastDrawEffectsByRoom` would collide with the G2 base-class
+   * stash and leak G2 effects into `getG3LastDrawEffects`.
+   */
+  private readonly g3LastDrawEffectsByRoom = new Map<string, G3DrawEffects>();
 
   /**
    * Public reader for the socket layer. Returns undefined when the last draw
    * was not a G3 draw (or the effects have already been consumed).
    */
   getG3LastDrawEffects(roomCode: string): G3DrawEffects | undefined {
-    const effects = this.lastDrawEffectsByRoom.get(roomCode);
-    if (effects) this.lastDrawEffectsByRoom.delete(roomCode);
+    const effects = this.g3LastDrawEffectsByRoom.get(roomCode);
+    if (effects) this.g3LastDrawEffectsByRoom.delete(roomCode);
     return effects;
   }
 
   /**
    * BIN-615 / PR-C3b hook override:
-   *   - Non-G3 rooms  → fall through (no-op, preserves G1 manual-claim + G2 3×3).
+   *   - Delegates to Game2Engine first (G2 round → jackpot/3×3 auto-claim; no-op otherwise).
+   *   - Non-G3 rooms  → fall through (preserves G1 manual-claim + G2 3×3).
    *   - G3 rooms      → step cycler, scan tickets, auto-claim + split, end on Full House.
+   *
+   * G2 and G3 guards are mutually exclusive (G2 requires jackpotNumberTable, G3
+   * forbids it), so chaining super is safe — at most one branch fires per draw.
    */
   protected async onDrawCompleted(ctx: {
     room: RoomState;
@@ -151,6 +161,7 @@ export class Game3Engine extends BingoEngine {
     drawIndex: number;
     variantConfig: GameVariantConfig | undefined;
   }): Promise<void> {
+    await super.onDrawCompleted(ctx);
     const { room, game, lastBall, drawIndex, variantConfig } = ctx;
     if (!this.isGame3Round(room, variantConfig)) return;
 
@@ -179,7 +190,7 @@ export class Game3Engine extends BingoEngine {
       await this.rooms.persist(room.code);
     }
 
-    this.lastDrawEffectsByRoom.set(room.code, {
+    this.g3LastDrawEffectsByRoom.set(room.code, {
       roomCode: room.code,
       gameId: game.id,
       drawIndex,
