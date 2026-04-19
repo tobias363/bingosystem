@@ -96,6 +96,7 @@ import { createAdminPhysicalTicketsRouter } from "./routes/adminPhysicalTickets.
 import { PhysicalTicketService } from "./compliance/PhysicalTicketService.js";
 import { createAdminGameManagementRouter } from "./routes/adminGameManagement.js";
 import { GameManagementService } from "./admin/GameManagementService.js";
+import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
 import { createAdminVouchersRouter } from "./routes/adminVouchers.js";
 import { VoucherService } from "./compliance/VoucherService.js";
 import { createAdminUniqueIdsAndPayoutsRouter } from "./routes/adminUniqueIdsAndPayouts.js";
@@ -641,6 +642,25 @@ app.use(createAdminGameManagementRouter({
   platformService,
   auditLogService,
   gameManagementService,
+}));
+// BIN-628: admin track-spending aggregat (regulatorisk P2 — pengespill-
+// forskriften §11). Gjenbruker de samme env-var-drevne loss-limitene som
+// BingoEngine er konstruert med (`bingoDailyLossLimit` / `bingoMonthlyLossLimit`)
+// så regulatorisk tak presentert i UI matcher tak som håndheves per spill.
+// `hallOverrides` står tomt p.t. — per-hall-konfig lander som egen PR
+// (BIN-661 placeholder). `getDataAgeMs` returnerer 0 inntil cache-lag er
+// på plass; fail-closed-mekanikken er verifisert, men triggres ikke i prod
+// før cache introduserer staleness.
+app.use(createAdminTrackSpendingRouter({
+  platformService,
+  auditLogService,
+  engine,
+  regulatoryLimits: {
+    daily: bingoDailyLossLimit,
+    monthly: bingoMonthlyLossLimit,
+  },
+  hallOverrides: [],
+  getDataAgeMs: () => 0,
 }));
 app.use(createAdminUniqueIdsAndPayoutsRouter({
   platformService,
