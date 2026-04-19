@@ -77,6 +77,8 @@ export const routes: RouteDef[] = [
 
   { path: "/riskCountry", titleKey: "risk_country", roles: ["admin", "super-admin"] },
   { path: "/hallAccountReport", titleKey: "hall_account_report" },
+  // PR-A4b — dynamic detail + settlement routes resolved via hallAccount
+  // dispatcher (hash-regex match).
 
   { path: "/wallet", titleKey: "wallet_management", module: "Wallet Management" },
   { path: "/wallet/view", titleKey: "view_wallet", module: "Wallet Management" },

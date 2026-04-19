@@ -1,0 +1,58 @@
+// PR-A4b (BIN-659) — hallAccountReport dispatcher.
+//
+// Handles the 3 hallAccountReport routes:
+//   - /hallAccountReport            (list of halls)
+//   - /hallAccountReport/:hallId    (per-hall daily history)
+//   - /report/settlement/:hallId    (per-hall settlement list + edit)
+//
+// Mirrors pages/reports/index.ts dispatcher pattern.
+
+import { renderHallAccountListPage } from "./HallAccountListPage.js";
+import { renderHallAccountReportPage } from "./HallAccountReportPage.js";
+import { renderSettlementPage } from "./SettlementPage.js";
+
+const STATIC_ROUTES = new Set<string>(["/hallAccountReport"]);
+
+/** True if `path` is any hallAccount route handled here. */
+export function isHallAccountRoute(path: string): boolean {
+  const bare = path.split("?")[0] ?? path;
+  if (STATIC_ROUTES.has(bare)) return true;
+  return (
+    /^\/hallAccountReport\/[^/]+$/.test(bare) ||
+    /^\/report\/settlement\/[^/]+$/.test(bare)
+  );
+}
+
+export function mountHallAccountRoute(container: HTMLElement, path: string): void {
+  const bare = path.split("?")[0] ?? path;
+
+  if (bare === "/hallAccountReport") {
+    void renderHallAccountListPage(container);
+    return;
+  }
+  const detail = /^\/hallAccountReport\/([^/]+)$/.exec(bare);
+  if (detail && detail[1]) {
+    void renderHallAccountReportPage(container, decodeURIComponent(detail[1]));
+    return;
+  }
+  const settlement = /^\/report\/settlement\/([^/]+)$/.exec(bare);
+  if (settlement && settlement[1]) {
+    void renderSettlementPage(container, decodeURIComponent(settlement[1]));
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="box box-danger">
+      <div class="box-header with-border"><h3 class="box-title">404</h3></div>
+      <div class="box-body">
+        <p>Ukjent rute: <code>${escapeAttr(path)}</code></p>
+        <a href="#/admin" class="btn btn-primary btn-sm">← Dashbord</a>
+      </div>
+    </div>`;
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!
+  );
+}
