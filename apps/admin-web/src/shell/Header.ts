@@ -1,12 +1,7 @@
 import { t } from "../i18n/I18n.js";
 import type { Session } from "../auth/Session.js";
-import { apiRequest } from "../api/client.js";
 import { logout } from "../api/auth.js";
-
-interface NotificationCount {
-  depositCount: number;
-  withdrawCount: number;
-}
+import { listPendingRequests } from "../api/paymentRequests.js";
 
 export function renderHeader(container: HTMLElement, session: Session, maintenanceMode: boolean): void {
   container.innerHTML = "";
@@ -160,18 +155,20 @@ export function renderHeader(container: HTMLElement, session: Session, maintenan
 }
 
 async function refreshNotifications(session: Session, bellLi: HTMLElement): Promise<void> {
-  if (!session.hall[0]) return;
+  const hallId = session.hall[0]?.id;
   try {
-    const counts = await apiRequest<NotificationCount>(
-      `/notifications/count/hall/${session.hall[0].id}`,
-      { auth: true }
-    );
-    const total = (counts.depositCount ?? 0) + (counts.withdrawCount ?? 0);
-    bellLi.querySelectorAll<HTMLElement>(".depositPendingCount").forEach((n) => (n.textContent = String(counts.depositCount ?? 0)));
-    bellLi.querySelectorAll<HTMLElement>(".withdrawPendingCount").forEach((n) => (n.textContent = String(counts.withdrawCount ?? 0)));
+    const [deposits, withdraws] = await Promise.all([
+      listPendingRequests({ kind: "deposit", hallId, limit: 500 }).catch(() => []),
+      listPendingRequests({ kind: "withdraw", hallId, limit: 500 }).catch(() => []),
+    ]);
+    const depositCount = deposits.length;
+    const withdrawCount = withdraws.length;
+    const total = depositCount + withdrawCount;
+    bellLi.querySelectorAll<HTMLElement>(".depositPendingCount").forEach((n) => (n.textContent = String(depositCount)));
+    bellLi.querySelectorAll<HTMLElement>(".withdrawPendingCount").forEach((n) => (n.textContent = String(withdrawCount)));
     bellLi.querySelectorAll<HTMLElement>(".notificationsCount").forEach((n) => (n.textContent = String(total)));
   } catch {
-    // silent — endpoint may not exist yet
+    // silent — PAYMENT_REQUEST_READ may be missing for some operators
   }
 }
 

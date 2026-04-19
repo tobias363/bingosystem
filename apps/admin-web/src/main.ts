@@ -9,6 +9,7 @@ import { renderPlaceholder, renderUnknown } from "./pages/Placeholder.js";
 import { renderLoginPage } from "./pages/login/LoginPage.js";
 import { mountLegacySection, isLegacySectionRoute } from "./pages/legacy-sections/LegacySectionMount.js";
 import { isCashInOutRoute, mountCashInOutRoute } from "./pages/cash-inout/index.js";
+import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
 
@@ -43,8 +44,9 @@ function mountShell(_root: HTMLElement, session: Session): void {
   const refs = mountLayout("#app");
   const router = new Router({
     container: refs.contentHost,
-    renderer: (container, route) => renderPage(container, route),
+    renderer: (container, route) => renderPage(container, route, session),
     onUnknown: (path, container) => {
+      unmountDashboard();
       // Strip query string for cash-inout routes that carry params
       // (e.g. `/agent/sellPhysicalTickets?gameId=X`).
       const bare = path.split("?")[0] ?? path;
@@ -55,6 +57,8 @@ function mountShell(_root: HTMLElement, session: Session): void {
       renderUnknown(container, path);
     },
     onChange: (route, path) => {
+      // Stop dashboard-polling when navigating away from the dashboard route.
+      if (route?.path !== "/admin" && route?.path !== "/") unmountDashboard();
       renderLayoutChrome(refs, session, route, path, MAINTENANCE_MODE);
     },
   });
@@ -82,14 +86,20 @@ function mountShell(_root: HTMLElement, session: Session): void {
     const path = router.currentPath();
     const route = findRoute(path);
     renderLayoutChrome(refs, session, route, path, MAINTENANCE_MODE);
-    void renderPage(refs.contentHost, route ?? { path, titleKey: "dashboard" });
+    void renderPage(refs.contentHost, route ?? { path, titleKey: "dashboard" }, session);
   });
 
   // Unused but referenced for type-safety of LayoutRefs
   void (refs satisfies LayoutRefs);
 }
 
-function renderPage(container: HTMLElement, route: RouteDef): void | Promise<void> {
+function renderPage(container: HTMLElement, route: RouteDef, session: Session): void | Promise<void> {
+  container.setAttribute("data-route", route.path);
+  container.setAttribute("data-title", t(route.titleKey));
+  if (route.path === "/admin" || route.path === "/") {
+    return mountDashboard(container, session);
+  }
+  unmountDashboard();
   if (isLegacySectionRoute(route.path)) {
     mountLegacySection(container, route.path);
     return;
@@ -101,9 +111,6 @@ function renderPage(container: HTMLElement, route: RouteDef): void | Promise<voi
     return;
   }
   renderPlaceholder(container, route);
-  // 'loaded' marker for tests/debug
-  container.setAttribute("data-route", route.path);
-  container.setAttribute("data-title", t(route.titleKey));
 }
 
 void bootstrap();

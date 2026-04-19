@@ -1741,5 +1741,8 @@
   "product_sale_success": "Product sale registered",
   "select_slot_provider": "Select slot machine",
   "registered_ticket_count": "Registered tickets",
-  "daily_sales": "Daily sales"
+  "daily_sales": "Daily sales",
+  "loading": "Loading…",
+  "pending_backend_endpoint": "Awaiting backend endpoint",
+  "number_of_minimum_tickets_to_start_the_Game": "Number of Minimum Tickets to Start the Game"
 }
