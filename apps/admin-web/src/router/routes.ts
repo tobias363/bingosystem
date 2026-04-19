@@ -113,7 +113,17 @@ export const routes: RouteDef[] = [
 
   { path: "/sms-advertisement", titleKey: "sms_advertisement", roles: ["admin", "super-admin"] },
   { path: "/cms", titleKey: "cms_management", roles: ["admin", "super-admin"] },
+  // PR-A6 (BIN-674) — CMS sub-pages (FAQ CRUD + 5 tekst-seksjoner).
+  { path: "/faq", titleKey: "faq_management", roles: ["admin", "super-admin"] },
+  { path: "/addFAQ", titleKey: "add_faq", roles: ["admin", "super-admin"] },
+  { path: "/TermsofService", titleKey: "terms_of_service", roles: ["admin", "super-admin"] },
+  { path: "/Support", titleKey: "support", roles: ["admin", "super-admin"] },
+  { path: "/Aboutus", titleKey: "about_us", roles: ["admin", "super-admin"] },
+  { path: "/ResponsibleGameing", titleKey: "responsible_gaming", roles: ["admin", "super-admin"] },
+  { path: "/LinksofOtherAgencies", titleKey: "links_of_other_agencies", roles: ["admin", "super-admin"] },
   { path: "/settings", titleKey: "settings", roles: ["admin", "super-admin"] },
+  // PR-A6 — settings sub-pages (maintenance). Edit-route via hash-regex.
+  { path: "/maintenance", titleKey: "maintenance_management", roles: ["admin", "super-admin"] },
   { path: "/system/systemInformation", titleKey: "system_information", roles: ["admin", "super-admin"] },
 
   { path: "/agent/cashinout", titleKey: "cash_in_out", roles: ["agent"] },

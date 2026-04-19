@@ -30,6 +30,10 @@ import { isAdminUsersRoute, mountAdminUsersRoute } from "./pages/adminUsers/inde
 import { isRoleRoute, mountRoleRoute } from "./pages/role/index.js";
 import { isHallRoute, mountHallRoute } from "./pages/hall/index.js";
 import { isGroupHallRoute, mountGroupHallRoute } from "./pages/groupHall/index.js";
+import { isCmsRoute, mountCmsRoute } from "./pages/cms/index.js";
+import { isSettingsRoute, mountSettingsRoute } from "./pages/settings/index.js";
+import { isSystemInformationRoute, mountSystemInformationRoute } from "./pages/systemInformation/index.js";
+import { isOtherGamesRoute, mountOtherGamesRoute } from "./pages/otherGames/index.js";
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 
 const MAINTENANCE_MODE = false;
@@ -159,6 +163,22 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isGroupHallRoute(bare)) {
         mountGroupHallRoute(container, bare);
+        return;
+      }
+      if (isCmsRoute(bare)) {
+        mountCmsRoute(container, bare);
+        return;
+      }
+      if (isSettingsRoute(bare)) {
+        mountSettingsRoute(container, bare);
+        return;
+      }
+      if (isSystemInformationRoute(bare)) {
+        mountSystemInformationRoute(container, bare);
+        return;
+      }
+      if (isOtherGamesRoute(bare)) {
+        mountOtherGamesRoute(container, bare);
         return;
       }
       renderUnknown(container, path);
@@ -309,6 +329,22 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isGroupHallRoute(route.path)) {
     mountGroupHallRoute(container, route.path);
+    return;
+  }
+  if (isCmsRoute(route.path)) {
+    mountCmsRoute(container, route.path);
+    return;
+  }
+  if (isSettingsRoute(route.path)) {
+    mountSettingsRoute(container, route.path);
+    return;
+  }
+  if (isSystemInformationRoute(route.path)) {
+    mountSystemInformationRoute(container, route.path);
+    return;
+  }
+  if (isOtherGamesRoute(route.path)) {
+    mountOtherGamesRoute(container, route.path);
     return;
   }
   renderPlaceholder(container, route);
