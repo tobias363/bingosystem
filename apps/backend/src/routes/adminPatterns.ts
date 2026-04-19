@@ -15,10 +15,8 @@
  * Svar-formatet matcher `PatternRow` i admin-web — typer er kanonisert i
  * packages/shared-types/src/schemas.ts (PatternRowSchema).
  *
- * NB (commit 1): Write-endpoints (POST/PATCH/DELETE) + audit-logging lander
- * i commit 2. Denne filen har dem som 405 Method Not Allowed frem til
- * commit 2 — men foreløpig eksponerer vi dem ikke. Liste + detalj +
- * dynamic-menu er nok til at admin-UI kan vise eksisterende data.
+ * Audit: create/update/delete skriver til AuditLogService (fire-and-forget
+ * samme mønster som BIN-622 adminGameManagement.ts).
  */
 
 import express from "express";
@@ -88,6 +86,59 @@ function parseOptionalStatus(value: unknown): PatternStatus | undefined {
     );
   }
   return v;
+}
+
+function parseOptionalClaimType(value: unknown): PatternClaimType | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") {
+    throw new DomainError("INVALID_INPUT", "claimType må være en streng.");
+  }
+  const v = value.trim() as PatternClaimType;
+  if (v !== "LINE" && v !== "BINGO") {
+    throw new DomainError(
+      "INVALID_INPUT",
+      "claimType må være én av LINE, BINGO."
+    );
+  }
+  return v;
+}
+
+function parseOptionalBool(value: unknown, field: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (v === "true" || v === "1") return true;
+    if (v === "false" || v === "0") return false;
+  }
+  throw new DomainError("INVALID_INPUT", `${field} må være true/false.`);
+}
+
+function parseOptionalNumber(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    throw new DomainError("INVALID_INPUT", `${field} må være et tall.`);
+  }
+  return n;
+}
+
+function parseOptionalInt(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || !Number.isInteger(n)) {
+    throw new DomainError("INVALID_INPUT", `${field} må være et heltall.`);
+  }
+  return n;
+}
+
+function parseOptionalExtra(value: unknown): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new DomainError("INVALID_INPUT", "extra må være et objekt.");
+  }
+  return value as Record<string, unknown>;
 }
 
 /**
@@ -171,26 +222,220 @@ export function createAdminPatternsRouter(
     }
   });
 
-  // Write-endpoints (POST/PATCH/DELETE) lander i commit 2 — se plan i
-  // PR-C3-PROGRESS.md / BIN-627-issue.
-  // Referanser som forhindrer tree-shaking / unused-warnings:
-  void ((
-    _actorType: typeof actorTypeFromRole,
-    _ua: typeof userAgent,
-    _ip: typeof clientIp,
-    _fire: typeof fireAudit,
-    _input: CreatePatternInput | UpdatePatternInput | undefined,
-    _claim: PatternClaimType | undefined,
-    _isRecord: typeof isRecordObject
-  ) => undefined)(
-    actorTypeFromRole,
-    userAgent,
-    clientIp,
-    fireAudit,
-    undefined,
-    undefined,
-    isRecordObject
-  );
+  // ── Write: create ───────────────────────────────────────────────────
+
+  router.post("/api/admin/patterns", async (req, res) => {
+    try {
+      const actor = await requirePermission(req, "PATTERN_WRITE");
+      if (!isRecordObject(req.body)) {
+        throw new DomainError("INVALID_INPUT", "Payload må være et objekt.");
+      }
+      const body = req.body;
+      if (body.mask === undefined || body.mask === null) {
+        throw new DomainError("INVALID_INPUT", "mask er påkrevd.");
+      }
+      const maskNum = Number(body.mask);
+      if (!Number.isFinite(maskNum) || !Number.isInteger(maskNum)) {
+        throw new DomainError("INVALID_INPUT", "mask må være et heltall.");
+      }
+      const input: CreatePatternInput = {
+        gameTypeId: mustBeNonEmptyString(body.gameTypeId, "gameTypeId"),
+        name: mustBeNonEmptyString(body.name, "name"),
+        mask: maskNum,
+        createdBy: actor.id,
+      };
+      if (typeof body.gameName === "string" && body.gameName.trim()) {
+        input.gameName = body.gameName.trim();
+      }
+      if (typeof body.patternNumber === "string" && body.patternNumber.trim()) {
+        input.patternNumber = body.patternNumber.trim();
+      }
+      const claimType = parseOptionalClaimType(body.claimType);
+      if (claimType !== undefined) input.claimType = claimType;
+      const prizePercent = parseOptionalNumber(body.prizePercent, "prizePercent");
+      if (prizePercent !== undefined) input.prizePercent = prizePercent;
+      const orderIndex = parseOptionalInt(body.orderIndex, "orderIndex");
+      if (orderIndex !== undefined) input.orderIndex = orderIndex;
+      const design = parseOptionalInt(body.design, "design");
+      if (design !== undefined) input.design = design;
+      const status = parseOptionalStatus(body.status);
+      if (status !== undefined) input.status = status;
+      const rowPercentage = parseOptionalNumber(body.rowPercentage, "rowPercentage");
+      if (rowPercentage !== undefined) input.rowPercentage = rowPercentage;
+
+      const isWoF = parseOptionalBool(body.isWoF, "isWoF");
+      if (isWoF !== undefined) input.isWoF = isWoF;
+      const isTchest = parseOptionalBool(body.isTchest, "isTchest");
+      if (isTchest !== undefined) input.isTchest = isTchest;
+      const isMys = parseOptionalBool(body.isMys, "isMys");
+      if (isMys !== undefined) input.isMys = isMys;
+      const isRowPr = parseOptionalBool(body.isRowPr, "isRowPr");
+      if (isRowPr !== undefined) input.isRowPr = isRowPr;
+      const isJackpot = parseOptionalBool(body.isJackpot, "isJackpot");
+      if (isJackpot !== undefined) input.isJackpot = isJackpot;
+      const isGameTypeExtra = parseOptionalBool(body.isGameTypeExtra, "isGameTypeExtra");
+      if (isGameTypeExtra !== undefined) input.isGameTypeExtra = isGameTypeExtra;
+      const isLuckyBonus = parseOptionalBool(body.isLuckyBonus, "isLuckyBonus");
+      if (isLuckyBonus !== undefined) input.isLuckyBonus = isLuckyBonus;
+
+      if (body.patternPlace !== undefined) {
+        input.patternPlace =
+          typeof body.patternPlace === "string" ? body.patternPlace : null;
+      }
+      const extra = parseOptionalExtra(body.extra);
+      if (extra !== undefined) input.extra = extra;
+
+      const pattern = await patternService.create(input);
+      fireAudit({
+        actorId: actor.id,
+        actorType: actorTypeFromRole(actor.role),
+        action: "admin.pattern.created",
+        resource: "pattern",
+        resourceId: pattern.id,
+        details: {
+          gameTypeId: pattern.gameTypeId,
+          name: pattern.name,
+          mask: pattern.mask,
+          claimType: pattern.claimType,
+          orderIndex: pattern.orderIndex,
+          status: pattern.status,
+        },
+        ipAddress: clientIp(req),
+        userAgent: userAgent(req),
+      });
+      apiSuccess(res, toWireShape(pattern));
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
+
+  // ── Write: patch ────────────────────────────────────────────────────
+
+  router.patch("/api/admin/patterns/:id", async (req, res) => {
+    try {
+      const actor = await requirePermission(req, "PATTERN_WRITE");
+      const id = mustBeNonEmptyString(req.params.id, "id");
+      if (!isRecordObject(req.body)) {
+        throw new DomainError("INVALID_INPUT", "Payload må være et objekt.");
+      }
+      const body = req.body;
+      const update: UpdatePatternInput = {};
+
+      if (body.gameName !== undefined) {
+        if (typeof body.gameName !== "string") {
+          throw new DomainError("INVALID_INPUT", "gameName må være en streng.");
+        }
+        update.gameName = body.gameName;
+      }
+      if (body.patternNumber !== undefined) {
+        if (typeof body.patternNumber !== "string") {
+          throw new DomainError("INVALID_INPUT", "patternNumber må være en streng.");
+        }
+        update.patternNumber = body.patternNumber;
+      }
+      if (body.name !== undefined) {
+        if (typeof body.name !== "string") {
+          throw new DomainError("INVALID_INPUT", "name må være en streng.");
+        }
+        update.name = body.name;
+      }
+      if (body.mask !== undefined) {
+        const maskNum = Number(body.mask);
+        if (!Number.isFinite(maskNum) || !Number.isInteger(maskNum)) {
+          throw new DomainError("INVALID_INPUT", "mask må være et heltall.");
+        }
+        update.mask = maskNum;
+      }
+      const claimType = parseOptionalClaimType(body.claimType);
+      if (claimType !== undefined) update.claimType = claimType;
+      const prizePercent = parseOptionalNumber(body.prizePercent, "prizePercent");
+      if (prizePercent !== undefined) update.prizePercent = prizePercent;
+      const orderIndex = parseOptionalInt(body.orderIndex, "orderIndex");
+      if (orderIndex !== undefined) update.orderIndex = orderIndex;
+      const design = parseOptionalInt(body.design, "design");
+      if (design !== undefined) update.design = design;
+      const status = parseOptionalStatus(body.status);
+      if (status !== undefined) update.status = status;
+      const rowPercentage = parseOptionalNumber(body.rowPercentage, "rowPercentage");
+      if (rowPercentage !== undefined) update.rowPercentage = rowPercentage;
+
+      const isWoF = parseOptionalBool(body.isWoF, "isWoF");
+      if (isWoF !== undefined) update.isWoF = isWoF;
+      const isTchest = parseOptionalBool(body.isTchest, "isTchest");
+      if (isTchest !== undefined) update.isTchest = isTchest;
+      const isMys = parseOptionalBool(body.isMys, "isMys");
+      if (isMys !== undefined) update.isMys = isMys;
+      const isRowPr = parseOptionalBool(body.isRowPr, "isRowPr");
+      if (isRowPr !== undefined) update.isRowPr = isRowPr;
+      const isJackpot = parseOptionalBool(body.isJackpot, "isJackpot");
+      if (isJackpot !== undefined) update.isJackpot = isJackpot;
+      const isGameTypeExtra = parseOptionalBool(body.isGameTypeExtra, "isGameTypeExtra");
+      if (isGameTypeExtra !== undefined) update.isGameTypeExtra = isGameTypeExtra;
+      const isLuckyBonus = parseOptionalBool(body.isLuckyBonus, "isLuckyBonus");
+      if (isLuckyBonus !== undefined) update.isLuckyBonus = isLuckyBonus;
+
+      if (body.patternPlace !== undefined) {
+        update.patternPlace =
+          typeof body.patternPlace === "string" ? body.patternPlace : null;
+      }
+      const extra = parseOptionalExtra(body.extra);
+      if (extra !== undefined) update.extra = extra;
+
+      const pattern = await patternService.update(id, update);
+      fireAudit({
+        actorId: actor.id,
+        actorType: actorTypeFromRole(actor.role),
+        action: "admin.pattern.updated",
+        resource: "pattern",
+        resourceId: pattern.id,
+        details: {
+          gameTypeId: pattern.gameTypeId,
+          changed: Object.keys(update),
+          mask: pattern.mask,
+          status: pattern.status,
+        },
+        ipAddress: clientIp(req),
+        userAgent: userAgent(req),
+      });
+      apiSuccess(res, toWireShape(pattern));
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
+
+  // ── Write: delete ───────────────────────────────────────────────────
+
+  router.delete("/api/admin/patterns/:id", async (req, res) => {
+    try {
+      const actor = await requirePermission(req, "PATTERN_WRITE");
+      const id = mustBeNonEmptyString(req.params.id, "id");
+      const hardRaw = req.query.hard;
+      const hard =
+        typeof hardRaw === "string" && hardRaw.trim().toLowerCase() === "true";
+      const existing = await patternService.get(id);
+      const result = await patternService.remove(id, { hard });
+      fireAudit({
+        actorId: actor.id,
+        actorType: actorTypeFromRole(actor.role),
+        action: result.softDeleted
+          ? "admin.pattern.soft_deleted"
+          : "admin.pattern.deleted",
+        resource: "pattern",
+        resourceId: id,
+        details: {
+          gameTypeId: existing.gameTypeId,
+          name: existing.name,
+          softDeleted: result.softDeleted,
+          mask: existing.mask,
+        },
+        ipAddress: clientIp(req),
+        userAgent: userAgent(req),
+      });
+      apiSuccess(res, result);
+    } catch (error) {
+      apiFailure(res, error);
+    }
+  });
 
   return router;
 }
