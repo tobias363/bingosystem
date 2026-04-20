@@ -70,9 +70,27 @@ export interface AuditListFilter {
   limit?: number;
 }
 
+/**
+ * BIN-629: filter for per-player login-history reads.
+ *
+ * The store runs a narrower query than `list()`: we pin to an actor, scope
+ * to the `session` resource, filter action by the `auth.login*` prefix so
+ * both success (`auth.login`) and failure (`auth.login.failed`) rows are
+ * returned, and use an offset for opaque-cursor pagination. Kept separate
+ * from `list()` so callers can't accidentally widen it.
+ */
+export interface LoginHistoryFilter {
+  actorId: string;
+  from?: string; // ISO timestamp, inclusive
+  to?: string;   // ISO timestamp, inclusive
+  limit: number;
+  offset: number;
+}
+
 export interface AuditLogStore {
   append(input: AuditLogInput): Promise<void>;
   list(filter?: AuditListFilter): Promise<PersistedAuditEvent[]>;
+  listLoginHistory(filter: LoginHistoryFilter): Promise<PersistedAuditEvent[]>;
 }
 
 /**
@@ -261,6 +279,36 @@ export class PostgresAuditLogStore implements AuditLogStore {
       return [];
     }
   }
+
+  async listLoginHistory(filter: LoginHistoryFilter): Promise<PersistedAuditEvent[]> {
+    const limit = Math.max(1, Math.min(500, Math.floor(filter.limit)));
+    const offset = Math.max(0, Math.floor(filter.offset));
+    const params: unknown[] = [filter.actorId];
+    let sql = `SELECT id, actor_id, actor_type, action, resource, resource_id,
+                      details, ip_address, user_agent, created_at
+               FROM ${this.tableName}
+               WHERE actor_id = $1
+                 AND resource = 'session'
+                 AND action LIKE 'auth.login%'`;
+    if (filter.from) {
+      params.push(filter.from);
+      sql += ` AND created_at >= $${params.length}`;
+    }
+    if (filter.to) {
+      params.push(filter.to);
+      sql += ` AND created_at <= $${params.length}`;
+    }
+    params.push(limit);
+    params.push(offset);
+    sql += ` ORDER BY created_at DESC, id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    try {
+      const result: QueryResult<AuditLogRow> = await this.pool.query<AuditLogRow>(sql, params);
+      return result.rows.map(rowToEvent);
+    } catch (err) {
+      logger.warn({ err }, "[BIN-629] login-history query failed (returning empty)");
+      return [];
+    }
+  }
 }
 
 function rowToEvent(row: AuditLogRow): PersistedAuditEvent {
@@ -340,6 +388,25 @@ export class InMemoryAuditLogStore implements AuditLogStore {
     return filtered.map((e) => ({ ...e, details: { ...e.details } }));
   }
 
+  async listLoginHistory(filter: LoginHistoryFilter): Promise<PersistedAuditEvent[]> {
+    const limit = Math.max(1, Math.min(500, Math.floor(filter.limit)));
+    const offset = Math.max(0, Math.floor(filter.offset));
+    const filtered = this.events
+      .filter((e) => {
+        if (e.actorId !== filter.actorId) return false;
+        if (e.resource !== "session") return false;
+        if (!e.action.startsWith("auth.login")) return false;
+        if (filter.from && e.createdAt < filter.from) return false;
+        if (filter.to && e.createdAt > filter.to) return false;
+        return true;
+      })
+      .slice()
+      // Newest first (same as Postgres ORDER BY created_at DESC, id DESC).
+      .reverse();
+    const paged = filtered.slice(offset, offset + limit);
+    return paged.map((e) => ({ ...e, details: { ...e.details } }));
+  }
+
   /** Test helper. */
   clear(): void {
     this.events.length = 0;
@@ -366,5 +433,10 @@ export class AuditLogService {
 
   async list(filter?: AuditListFilter): Promise<PersistedAuditEvent[]> {
     return this.store.list(filter);
+  }
+
+  /** BIN-629: narrow read of `auth.login*` rows for a given actor. */
+  async listLoginHistory(filter: LoginHistoryFilter): Promise<PersistedAuditEvent[]> {
+    return this.store.listLoginHistory(filter);
   }
 }
