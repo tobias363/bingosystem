@@ -108,6 +108,8 @@ import { createAdminGameTypesRouter } from "./routes/adminGameTypes.js";
 import { GameTypeService } from "./admin/GameTypeService.js";
 import { createAdminSubGamesRouter } from "./routes/adminSubGames.js";
 import { SubGameService } from "./admin/SubGameService.js";
+import { createAdminLeaderboardTiersRouter } from "./routes/adminLeaderboardTiers.js";
+import { LeaderboardTierService } from "./admin/LeaderboardTierService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
 import { createAdminVouchersRouter } from "./routes/adminVouchers.js";
 import { VoucherService } from "./compliance/VoucherService.js";
@@ -403,6 +405,15 @@ const gameTypeService = new GameTypeService({
 // schema `subGame1` til app_sub_games med JSON-lagret pattern_rows +
 // ticket_colors og game_type_id-referanse til GameType.
 const subGameService = new SubGameService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+
+// BIN-668: LeaderboardTier CRUD (admin-konfig av plass→premie/poeng-
+// mapping). Ren admin-katalog — runtime /api/leaderboard (routes/game.ts)
+// aggregerer prize-points fra faktiske wins og er uavhengig. Blokkerer
+// Leaderboard-admin-sider i PR-B6 (placeholder inntil dette lander).
+const leaderboardTierService = new LeaderboardTierService({
   connectionString: platformConnectionString,
   schema: pgSchema,
 });
@@ -760,6 +771,15 @@ app.use(createAdminSubGamesRouter({
   platformService,
   auditLogService,
   subGameService,
+}));
+// BIN-668: LeaderboardTier CRUD. 5 endepunkter — list/detail/create/patch/
+// delete. Admin-konfigurert plass→premie/poeng-mapping.
+// LEADERBOARD_TIER_WRITE er ADMIN-only (matches GAME_TYPE_WRITE /
+// GAME_CATALOG_WRITE). Uavhengig av runtime /api/leaderboard.
+app.use(createAdminLeaderboardTiersRouter({
+  platformService,
+  auditLogService,
+  leaderboardTierService,
 }));
 // BIN-628: admin track-spending aggregat (regulatorisk P2 — pengespill-
 // forskriften §11). Gjenbruker de samme env-var-drevne loss-limitene som
