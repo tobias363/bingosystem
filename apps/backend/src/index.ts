@@ -112,6 +112,12 @@ import { createAdminSubGamesRouter } from "./routes/adminSubGames.js";
 import { SubGameService } from "./admin/SubGameService.js";
 import { createAdminLeaderboardTiersRouter } from "./routes/adminLeaderboardTiers.js";
 import { LeaderboardTierService } from "./admin/LeaderboardTierService.js";
+import { createAdminSettingsRouter } from "./routes/adminSettings.js";
+import { SettingsService } from "./admin/SettingsService.js";
+import { createAdminMaintenanceRouter } from "./routes/adminMaintenance.js";
+import { MaintenanceService } from "./admin/MaintenanceService.js";
+import { createAdminMiniGamesRouter } from "./routes/adminMiniGames.js";
+import { MiniGamesConfigService } from "./admin/MiniGamesConfigService.js";
 import { createAdminSavedGamesRouter } from "./routes/adminSavedGames.js";
 import { SavedGameService } from "./admin/SavedGameService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
@@ -432,6 +438,16 @@ const leaderboardTierService = new LeaderboardTierService({
   schema: pgSchema,
 });
 
+// BIN-679: MiniGames-konfig CRUD (Wheel + Chest + Mystery + Colordraft).
+// Fire singleton-rader i app_mini_games_config. Ren ADMIN-konfig — runtime
+// i Game 1 bruker i dag hardkodede prize-arrays (BingoEngine.MINIGAME_PRIZES);
+// wiring til å lese fra denne tabellen lander som egen PR slik at admin-UI
+// kan lande først uten runtime-risk.
+const miniGamesConfigService = new MiniGamesConfigService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+
 // BIN-624: SavedGame CRUD (gjenbrukbare GameManagement-templates). Admin
 // lagrer et komplett GameManagement-oppsett (ticket-farger, priser,
 // patterns, subgames, halls, days) som en navngitt mal; load-to-game-
@@ -440,6 +456,20 @@ const leaderboardTierService = new LeaderboardTierService({
 // template-payloaden lever som config_json (ingen normalisering i v1 siden
 // malen kopieres i sin helhet).
 const savedGameService = new SavedGameService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+
+// BIN-677: System settings + maintenance-vinduer. SettingsService bruker
+// key-value-registry (SYSTEM_SETTING_REGISTRY) — ukjente nøkler avvises.
+// MaintenanceService håndhever aktiv-invariant (max ett aktivt vindu av
+// gangen). Begge er sentrale ADMIN-only endepunkter; HALL_OPERATOR styrer
+// per-hall-Spillvett via adminHalls.ts.
+const settingsService = new SettingsService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+const maintenanceService = new MaintenanceService({
   connectionString: platformConnectionString,
   schema: pgSchema,
 });
@@ -816,6 +846,18 @@ app.use(createAdminLeaderboardTiersRouter({
   auditLogService,
   leaderboardTierService,
 }));
+// BIN-679: MiniGames config CRUD. 8 endepunkter — GET + PUT for wheel,
+// chest, mystery, colordraft. Admin-konfig av Game 1 mini-spillene;
+// runtime-integrasjonen i Game 1 bruker hardkodede prize-arrays i dag
+// (BingoEngine.MINIGAME_PRIZES) — wiring til denne tabellen er egen PR.
+// MINI_GAMES_WRITE er ADMIN-only (matches GAME_CATALOG_WRITE /
+// LEADERBOARD_TIER_WRITE). AuditLog-action:
+// admin.mini_games.<gameType>.update.
+app.use(createAdminMiniGamesRouter({
+  platformService,
+  auditLogService,
+  miniGamesConfigService,
+}));
 // BIN-624: SavedGame CRUD. 6 endepunkter — list/detail/create/patch/
 // delete/load-to-game. Templates for GameManagement-oppsett (kopieres ved
 // load-to-game). SAVED_GAME_WRITE er ADMIN + HALL_OPERATOR (matches
@@ -825,6 +867,21 @@ app.use(createAdminSavedGamesRouter({
   platformService,
   auditLogService,
   savedGameService,
+}));
+// BIN-677: System settings + maintenance. To routere — GET/PATCH /api/admin/
+// settings (key-value registry-backed) + GET/POST/PUT /api/admin/maintenance
+// (vindu-basert). Begge bruker ADMIN-only WRITE (HALL_OPERATOR styrer per-hall
+// via adminHalls.ts). AuditLog: admin.settings.update +
+// admin.maintenance.{create,activate,deactivate,update}.
+app.use(createAdminSettingsRouter({
+  platformService,
+  auditLogService,
+  settingsService,
+}));
+app.use(createAdminMaintenanceRouter({
+  platformService,
+  auditLogService,
+  maintenanceService,
 }));
 // BIN-628: admin track-spending aggregat (regulatorisk P2 — pengespill-
 // forskriften §11). Gjenbruker de samme env-var-drevne loss-limitene som

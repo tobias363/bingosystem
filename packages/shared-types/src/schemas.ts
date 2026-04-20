@@ -1359,3 +1359,217 @@ export const ScheduleListResponseSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 export type ScheduleListResponse = z.infer<typeof ScheduleListResponseSchema>;
+
+// ── BIN-677: System settings + maintenance wire schemas ─────────────────────
+// Mirror av migration `20260425000500_system_settings_maintenance.sql`.
+//
+// System settings er key-value (se SYSTEM_SETTING_REGISTRY i
+// apps/backend/src/admin/SettingsService.ts for kjente nøkler). Ukjente
+// nøkler avvises server-side.
+//
+// Maintenance-vinduer er separate rader; max ett samtidig aktivt vindu
+// (håndheves i MaintenanceService).
+
+export const SystemSettingType = z.enum(["string", "number", "boolean", "object"]);
+export type SystemSettingTypeT = z.infer<typeof SystemSettingType>;
+
+export const SystemSettingRowSchema = z.object({
+  key: z.string().min(1).max(200),
+  /** JSONB value — type avhenger av `type`-feltet; valideres av service-laget. */
+  value: z.unknown(),
+  category: z.string().min(1).max(100),
+  description: z.string(),
+  type: SystemSettingType,
+  /** true hvis verdien kommer fra registry-default (ingen DB-rad eksisterer). */
+  isDefault: z.boolean(),
+  updatedByUserId: z.string().nullable(),
+  updatedAt: IsoDateString.nullable(),
+});
+export type SystemSettingRow = z.infer<typeof SystemSettingRowSchema>;
+
+export const SystemSettingsListResponseSchema = z.object({
+  settings: z.array(SystemSettingRowSchema),
+  count: z.number().int().nonnegative(),
+});
+export type SystemSettingsListResponse = z.infer<
+  typeof SystemSettingsListResponseSchema
+>;
+
+export const SystemSettingPatchEntrySchema = z.object({
+  key: z.string().min(1).max(200),
+  value: z.unknown(),
+});
+export type SystemSettingPatchEntry = z.infer<typeof SystemSettingPatchEntrySchema>;
+
+export const PatchSystemSettingsSchema = z
+  .object({
+    patches: z.array(SystemSettingPatchEntrySchema).min(1),
+  })
+  .refine((v) => v.patches.length > 0, {
+    message: "Ingen endringer oppgitt.",
+  });
+export type PatchSystemSettingsInput = z.infer<typeof PatchSystemSettingsSchema>;
+
+export const MaintenanceStatus = z.enum(["active", "inactive"]);
+export type MaintenanceStatusT = z.infer<typeof MaintenanceStatus>;
+
+export const MaintenanceWindowRowSchema = z.object({
+  id: z.string().min(1),
+  maintenanceStart: IsoDateString,
+  maintenanceEnd: IsoDateString,
+  message: z.string(),
+  showBeforeMinutes: z.number().int().nonnegative(),
+  status: MaintenanceStatus,
+  createdByUserId: z.string().nullable(),
+  createdAt: IsoDateString,
+  updatedAt: IsoDateString,
+  activatedAt: IsoDateString.nullable(),
+  deactivatedAt: IsoDateString.nullable(),
+});
+export type MaintenanceWindowRow = z.infer<typeof MaintenanceWindowRowSchema>;
+
+export const MaintenanceListResponseSchema = z.object({
+  windows: z.array(MaintenanceWindowRowSchema),
+  count: z.number().int().nonnegative(),
+  /** Kort-referanse til aktivt vindu (om det finnes) for frontend-convenience. */
+  active: MaintenanceWindowRowSchema.nullable(),
+});
+export type MaintenanceListResponse = z.infer<typeof MaintenanceListResponseSchema>;
+
+export const CreateMaintenanceSchema = z.object({
+  maintenanceStart: IsoDateString,
+  maintenanceEnd: IsoDateString,
+  message: z.string().max(2000).optional(),
+  showBeforeMinutes: z.number().int().min(0).max(10_080).optional(),
+  status: MaintenanceStatus.optional(),
+});
+export type CreateMaintenanceInput = z.infer<typeof CreateMaintenanceSchema>;
+
+export const UpdateMaintenanceSchema = z
+  .object({
+    maintenanceStart: IsoDateString.optional(),
+    maintenanceEnd: IsoDateString.optional(),
+    message: z.string().max(2000).optional(),
+    showBeforeMinutes: z.number().int().min(0).max(10_080).optional(),
+    status: MaintenanceStatus.optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: "Ingen endringer oppgitt.",
+  });
+export type UpdateMaintenanceInput = z.infer<typeof UpdateMaintenanceSchema>;
+
+// ── BIN-679: MiniGames config wire schemas ──────────────────────────────────
+// Admin-CRUD for de fire Game 1 mini-spillene (wheel, chest, mystery,
+// colordraft). Én singleton-rad per spill-type. Mirror av migration
+// `20260425000600_mini_games_config.sql`. Ren KONFIGURASJON — runtime-
+// integrasjonen i Game 1 leser i dag hardkodede arrays (BingoEngine.
+// MINIGAME_PRIZES); wiring til denne tabellen er egen PR.
+//
+// Legacy-opphav: legacy/unity-backend/App/Models/otherGame.js (Mongo
+// `otherGame`-kolleksjonen med slug-diskriminator + per-spill prizeList-
+// felt). Fire separate felter flatet ut til én discriminated tabell fordi
+// hvert spill er singleton-konfig.
+
+/**
+ * Admin-side short-form game-type slugs brukt i `app_mini_games_config`.
+ * Skiller seg bevisst fra runtime-`MiniGameTypeSchema` (lengre event-navn
+ * "wheelOfFortune", etc. definert lenger oppe i filen) — dette er
+ * database-discriminatoren, ikke socket-event-typen.
+ */
+export const MiniGameConfigTypeSchema = z.enum([
+  "wheel",
+  "chest",
+  "mystery",
+  "colordraft",
+]);
+export type MiniGameConfigType = z.infer<typeof MiniGameConfigTypeSchema>;
+
+/**
+ * Wire-shape for en mini-game-config-rad. Dette er den generiske formen
+ * som alle 4 spill deler; spill-spesifikk validering av `config` gjøres
+ * i egne schemas (WheelConfig, ChestConfig, MysteryConfig, ColordraftConfig)
+ * som admin-UI kan parse før render. Service-laget lagrer `config` som
+ * fri-form JSONB og gjør ingen semantisk validering ut over objekt-sjekk —
+ * det holder payload-sjansen åpen for nye felter uten migrasjon.
+ */
+export const MiniGameConfigRowSchema = z.object({
+  id: z.string().min(1),
+  gameType: MiniGameConfigTypeSchema,
+  config: z.record(z.string(), z.unknown()),
+  active: z.boolean(),
+  updatedByUserId: z.string().nullable(),
+  createdAt: IsoDateString,
+  updatedAt: IsoDateString,
+});
+export type MiniGameConfigRow = z.infer<typeof MiniGameConfigRowSchema>;
+
+/**
+ * PUT-payload. Begge felter optional — admin-UI kan sende hele config hver
+ * gang uten diff-logikk. Minst ett felt må være oppgitt (ellers gir service
+ * samme rad tilbake uendret).
+ */
+export const UpdateMiniGameConfigSchema = z.object({
+  config: z.record(z.string(), z.unknown()).optional(),
+  active: z.boolean().optional(),
+});
+export type UpdateMiniGameConfigInput = z.infer<
+  typeof UpdateMiniGameConfigSchema
+>;
+
+// ── Spill-spesifikke hjelper-schemas (valgfrie — admin-UI kan bruke) ────────
+// Disse validerer ikke i backend (service tar generisk Record), men gir
+// admin-UI og shared-types-forbrukere en typed form å parse mot ved behov.
+
+/** Ett segment på 50-segment lykkehjulet. */
+export const WheelSegmentSchema = z.object({
+  label: z.string(),
+  prizeAmount: z.number().nonnegative(),
+  weight: z.number().nonnegative().optional(),
+  color: z.string().optional(),
+});
+export type WheelSegment = z.infer<typeof WheelSegmentSchema>;
+
+export const WheelConfigSchema = z.object({
+  segments: z.array(WheelSegmentSchema),
+});
+export type WheelConfig = z.infer<typeof WheelConfigSchema>;
+
+/** Én premie i kiste-listen. */
+export const ChestPrizeSchema = z.object({
+  label: z.string(),
+  prizeAmount: z.number().nonnegative(),
+  weight: z.number().nonnegative().optional(),
+});
+export type ChestPrize = z.infer<typeof ChestPrizeSchema>;
+
+export const ChestConfigSchema = z.object({
+  prizes: z.array(ChestPrizeSchema),
+  chestCount: z.number().int().positive().optional(),
+});
+export type ChestConfig = z.infer<typeof ChestConfigSchema>;
+
+/** Én belønning i mystery-tabellen. */
+export const MysteryRewardSchema = z.object({
+  label: z.string(),
+  prizeAmount: z.number().nonnegative(),
+  weight: z.number().nonnegative().optional(),
+});
+export type MysteryReward = z.infer<typeof MysteryRewardSchema>;
+
+export const MysteryConfigSchema = z.object({
+  rewards: z.array(MysteryRewardSchema),
+});
+export type MysteryConfig = z.infer<typeof MysteryConfigSchema>;
+
+/** Ett farge-oppsett i colordraft-hjulet. */
+export const ColordraftColorSchema = z.object({
+  color: z.string(),
+  prizeAmounts: z.array(z.number().nonnegative()),
+  weight: z.number().nonnegative().optional(),
+});
+export type ColordraftColor = z.infer<typeof ColordraftColorSchema>;
+
+export const ColordraftConfigSchema = z.object({
+  colors: z.array(ColordraftColorSchema),
+});
+export type ColordraftConfig = z.infer<typeof ColordraftConfigSchema>;
