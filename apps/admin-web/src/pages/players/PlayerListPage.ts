@@ -29,6 +29,7 @@ import {
   kycBadgeHtml,
   viewPlayerHash,
 } from "./shared.js";
+import { openCreatePlayerModal } from "./modals/CreatePlayerModal.js";
 
 export function renderPlayerListPage(container: HTMLElement): void {
   container.innerHTML = `
@@ -54,6 +55,9 @@ export function renderPlayerListPage(container: HTMLElement): void {
           <a id="player-export-csv" href="${buildExportCsvUrl()}" class="btn btn-default" style="margin-left:8px;">
             <i class="fa fa-download"></i> ${escapeHtml(t("export_csv"))}
           </a>
+          <button type="button" id="player-create-btn" class="btn btn-success" style="margin-left:8px;">
+            <i class="fa fa-plus"></i> ${escapeHtml(t("create_player"))}
+          </button>
         </form>
       ${boxClose()}
       ${boxOpen("players", "default")}
@@ -124,5 +128,18 @@ export function renderPlayerListPage(container: HTMLElement): void {
       return;
     }
     void runSearch(q, includeDeletedCb.checked);
+  });
+
+  const createBtn = container.querySelector<HTMLButtonElement>("#player-create-btn");
+  createBtn?.addEventListener("click", () => {
+    openCreatePlayerModal({
+      onCreated: (result) => {
+        // Etter vellykket create: kjør søk på det nye ID'et så den nye
+        // spilleren vises i lista. Vi bruker e-post som søk (støtter
+        // username/email/phone i backend-search).
+        input.value = result.player.email;
+        void runSearch(result.player.email, includeDeletedCb.checked);
+      },
+    });
   });
 }

@@ -23,6 +23,7 @@ import { openApprovePlayerModal } from "./modals/ApprovePlayerModal.js";
 import { openRejectPlayerModal } from "./modals/RejectPlayerModal.js";
 import { openResubmitPlayerModal } from "./modals/ResubmitPlayerModal.js";
 import { openBankIdReverifyModal } from "./modals/BankIdReverifyModal.js";
+import { openEditPlayerModal } from "./modals/EditPlayerModal.js";
 import {
   contentHeader,
   escapeHtml,
@@ -184,6 +185,9 @@ function renderActionRow(root: HTMLElement, player: PlayerSummary): void {
     );
   }
   buttons.push(
+    `<button class="btn btn-info btn-flat" data-action="edit">
+       <i class="fa fa-pencil"></i> ${escapeHtml(t("edit_player"))}
+     </button>`,
     `<button class="btn btn-default btn-flat" data-action="soft-delete">
        <i class="fa fa-trash"></i> ${escapeHtml(t("soft_delete_player"))}
      </button>`,
@@ -222,6 +226,12 @@ function renderActionRow(root: HTMLElement, player: PlayerSummary): void {
         openBankIdReverifyModal({
           player,
           onReverified: () => window.location.reload(),
+        });
+        break;
+      case "edit":
+        openEditPlayerModal({
+          player,
+          onUpdated: () => window.location.reload(),
         });
         break;
       case "soft-delete":

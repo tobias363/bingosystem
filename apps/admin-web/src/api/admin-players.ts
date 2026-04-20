@@ -193,6 +193,60 @@ export async function restorePlayer(id: string): Promise<{ restored: boolean }> 
   );
 }
 
+// ── Create / Update (BIN-633 + BIN-634) ─────────────────────────────────────
+
+export interface CreatePlayerInput {
+  email: string;
+  displayName: string;
+  surname: string;
+  /** `YYYY-MM-DD`. */
+  birthDate: string;
+  phone?: string;
+  hallId?: string;
+}
+
+export interface CreatePlayerResult {
+  player: PlayerSummary;
+  /** Vises én gang i admin-UI; distribueres out-of-band til spiller. */
+  temporaryPassword: string;
+}
+
+export async function createPlayer(input: CreatePlayerInput): Promise<CreatePlayerResult> {
+  return apiRequest<CreatePlayerResult>(`/api/admin/players`, {
+    method: "POST",
+    body: input,
+    auth: true,
+  });
+}
+
+/**
+ * BIN-634: Admin-redigering. E-post er IKKE et tillatt felt her —
+ * backend returnerer INVALID_INPUT hvis `email` er med. Vi sender bare
+ * de feltene admin faktisk endret.
+ */
+export interface UpdatePlayerInput {
+  displayName?: string;
+  surname?: string | null;
+  phone?: string | null;
+  hallId?: string | null;
+}
+
+export interface UpdatePlayerResult {
+  player: PlayerSummary;
+  changedFields: string[];
+}
+
+export async function updatePlayer(
+  id: string,
+  input: UpdatePlayerInput
+): Promise<UpdatePlayerResult> {
+  return apiRequest<UpdatePlayerResult>(`/api/admin/players/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: input,
+    auth: true,
+  });
+}
+
 // ── BankID ───────────────────────────────────────────────────────────────────
 
 export interface BankIdReverifyResult {
