@@ -236,7 +236,20 @@ const ADMIN_ACCESS_POLICY_DEFINITION = {
    *     PATTERN_WRITE / SCHEDULE_WRITE. SUPPORT er bevisst utelatt.
    */
   SUB_GAME_READ:   ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
-  SUB_GAME_WRITE:  ["ADMIN", "HALL_OPERATOR"]
+  SUB_GAME_WRITE:  ["ADMIN", "HALL_OPERATOR"],
+  /**
+   * BIN-668: LeaderboardTier CRUD (admin-konfig av plass→premie/poeng-
+   * mapping). Dette er ren ADMIN-konfigurasjon — ikke runtime-state.
+   *   - LEADERBOARD_TIER_READ : liste + detalj. Alle admin-roller. SUPPORT
+   *     trenger read-tilgang for compliance/kundestøtte ("hvilken premie
+   *     lå på plass 3 forrige uke?").
+   *   - LEADERBOARD_TIER_WRITE: opprett/oppdatér/slett. ADMIN-only fordi
+   *     premie-strukturen er sentralt definert (samme mønster som
+   *     GAME_TYPE_WRITE / GAME_CATALOG_WRITE). HALL_OPERATOR er bevisst
+   *     utelatt — leaderboard-tier er ikke hall-lokal konfig.
+   */
+  LEADERBOARD_TIER_READ:  ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
+  LEADERBOARD_TIER_WRITE: ["ADMIN"]
 } as const;
 
 export type AdminPermission = keyof typeof ADMIN_ACCESS_POLICY_DEFINITION;
