@@ -96,6 +96,8 @@ import { createAdminPhysicalTicketsRouter } from "./routes/adminPhysicalTickets.
 import { PhysicalTicketService } from "./compliance/PhysicalTicketService.js";
 import { createAdminGameManagementRouter } from "./routes/adminGameManagement.js";
 import { GameManagementService } from "./admin/GameManagementService.js";
+import { createAdminCloseDayRouter } from "./routes/adminCloseDay.js";
+import { CloseDayService } from "./admin/CloseDayService.js";
 import { createAdminDailySchedulesRouter } from "./routes/adminDailySchedules.js";
 import { DailyScheduleService } from "./admin/DailyScheduleService.js";
 import { createAdminPatternsRouter } from "./routes/adminPatterns.js";
@@ -347,6 +349,16 @@ const voucherService = new VoucherService({
 const gameManagementService = new GameManagementService({
   connectionString: platformConnectionString,
   schema: pgSchema,
+});
+
+// BIN-623: CloseDay (regulatorisk dagslukking per GameManagement). Avhenger
+// av gameManagementService for å hente aggregat-felter + validere at spillet
+// eksisterer. Unique (game_management_id, close_date) i `app_close_day_log`
+// håndhever idempotency; dobbel-lukking returnerer 409.
+const closeDayService = new CloseDayService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+  gameManagementService,
 });
 
 // BIN-626: DailySchedule (daglig spill-plan per hall, kobler GameManagement
@@ -698,6 +710,16 @@ app.use(createAdminGameManagementRouter({
   platformService,
   auditLogService,
   gameManagementService,
+}));
+// BIN-623: CloseDay — regulatorisk dagslukking per spill.
+//   GET  /api/admin/games/:id/close-day-summary
+//   POST /api/admin/games/:id/close-day
+// POST skriver audit-log (action = "admin.game.close-day") + `app_close_day_log`-
+// rad. Dobbel-lukking → 409 med kode CLOSE_DAY_ALREADY_CLOSED.
+app.use(createAdminCloseDayRouter({
+  platformService,
+  auditLogService,
+  closeDayService,
 }));
 // BIN-626: DailySchedule CRUD + special + subgame-details. Embedded
 // GameManagement-referansen i /:id/details bruker samme service som over,
