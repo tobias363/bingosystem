@@ -2093,5 +2093,28 @@
   "reset_password_success_heading": "Password updated",
   "reset_password_success_body": "You can now sign in with your new password.",
   "reset_password_success_cta": "Go to sign in",
-  "reset_password_error": "Could not update the password. Please try again."
+  "reset_password_error": "Could not update the password. Please try again.",
+
+  "login_success": "Success",
+  "balance_after": "Balance after",
+
+  "create_player": "Create player",
+  "create_player_title": "Create new player",
+  "player_created_success": "Player created.",
+  "temporary_password": "Temporary password",
+  "temporary_password_intro": "The player account was created. Copy the password below and distribute it securely — it is shown only once.",
+  "show_once_warning": "This password is shown only once. Make sure to distribute it before closing the dialog.",
+  "copied_to_clipboard": "Copied to clipboard.",
+  "copy_manual": "Could not copy automatically. Please select and copy manually.",
+  "copy": "Copy",
+  "hall_id_optional": "Hall ID (optional)",
+  "please_fill_required_fields": "Please fill out all required fields.",
+  "invalid_email_format": "Invalid email format.",
+  "invalid_birth_date_format": "Invalid birth date — use YYYY-MM-DD.",
+
+  "edit_player": "Edit player",
+  "edit_player_title": "Edit player",
+  "player_updated_success": "Player updated.",
+  "email_change_blocked_hint": "Email cannot be changed here. Contact admin to change email.",
+  "no_changes_to_save": "No changes to save."
 }

@@ -1,5 +1,6 @@
 // PR-B2: admin player-activity API.
-// Mirrors apps/backend/src/routes/adminPlayerActivity.ts (BIN-587 B5-rest).
+// Mirrors apps/backend/src/routes/adminPlayerActivity.ts
+// (BIN-587 B5-rest + BIN-629 login-history + BIN-630 chips-history).
 
 import { apiRequest } from "./client.js";
 
@@ -64,6 +65,106 @@ export async function listPlayerGameHistory(
   qs.set("limit", String(params.limit ?? 200));
   return apiRequest<GameHistoryResult>(
     `/api/admin/players/${encodeURIComponent(id)}/game-history?${qs}`,
+    { auth: true }
+  );
+}
+
+// ── BIN-629: Login-history ───────────────────────────────────────────────────
+
+export interface LoginHistoryEntry {
+  id: string;
+  /** ISO-8601 timestamp. */
+  timestamp: string;
+  ipAddress: string | null;
+  userAgent: string | null;
+  success: boolean;
+  /** Stable failure code (`INVALID_CREDENTIALS`, …) for failed attempts. */
+  failureReason: string | null;
+}
+
+export interface LoginHistoryResult {
+  userId: string;
+  from: string | null;
+  to: string | null;
+  items: LoginHistoryEntry[];
+  /** Opaque base64url cursor. `null` = no further pages. */
+  nextCursor: string | null;
+}
+
+export interface LoginHistoryParams {
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export async function listPlayerLoginHistory(
+  id: string,
+  params: LoginHistoryParams = {}
+): Promise<LoginHistoryResult> {
+  const qs = new URLSearchParams();
+  if (params.from) qs.set("from", params.from);
+  if (params.to) qs.set("to", params.to);
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.cursor) qs.set("cursor", params.cursor);
+  const query = qs.toString();
+  return apiRequest<LoginHistoryResult>(
+    `/api/admin/players/${encodeURIComponent(id)}/login-history${query ? `?${query}` : ""}`,
+    { auth: true }
+  );
+}
+
+// ── BIN-630: Chips-history ───────────────────────────────────────────────────
+
+export type ChipsHistoryType =
+  | "DEBIT"
+  | "CREDIT"
+  | "TOPUP"
+  | "WITHDRAWAL"
+  | "TRANSFER_OUT"
+  | "TRANSFER_IN";
+
+export interface ChipsHistoryEntry {
+  id: string;
+  timestamp: string;
+  type: ChipsHistoryType;
+  /** NOK (ikke øre), positiv uansett retning; `type` gir retningen. */
+  amount: number;
+  /** Balanse etter raden. */
+  balanceAfter: number;
+  description: string;
+  sourceGameId: string | null;
+  refundedAt: string | null;
+}
+
+export interface ChipsHistoryResult {
+  userId: string;
+  walletId: string;
+  from: string | null;
+  to: string | null;
+  items: ChipsHistoryEntry[];
+  nextCursor: string | null;
+}
+
+export interface ChipsHistoryParams {
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+export async function listPlayerChipsHistory(
+  id: string,
+  params: ChipsHistoryParams = {}
+): Promise<ChipsHistoryResult> {
+  const qs = new URLSearchParams();
+  if (params.from) qs.set("from", params.from);
+  if (params.to) qs.set("to", params.to);
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.cursor) qs.set("cursor", params.cursor);
+  const query = qs.toString();
+  return apiRequest<ChipsHistoryResult>(
+    `/api/admin/players/${encodeURIComponent(id)}/chips-history${query ? `?${query}` : ""}`,
     { auth: true }
   );
 }

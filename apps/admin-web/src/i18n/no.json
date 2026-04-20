@@ -2086,5 +2086,28 @@
   "reset_password_success_heading": "Passordet er oppdatert",
   "reset_password_success_body": "Du kan nå logge inn med det nye passordet ditt.",
   "reset_password_success_cta": "Gå til logg inn",
-  "reset_password_error": "Kunne ikke oppdatere passordet. Prøv igjen."
+  "reset_password_error": "Kunne ikke oppdatere passordet. Prøv igjen.",
+
+  "login_success": "Vellykket",
+  "balance_after": "Saldo etter",
+
+  "create_player": "Opprett spiller",
+  "create_player_title": "Opprett ny spiller",
+  "player_created_success": "Spiller opprettet.",
+  "temporary_password": "Midlertidig passord",
+  "temporary_password_intro": "Spilleren har fått en konto. Noter passordet under og distribuer det sikkert til spilleren — det vises kun én gang.",
+  "show_once_warning": "Dette passordet vises kun én gang. Sørg for å distribuere det før du lukker dialogen.",
+  "copied_to_clipboard": "Kopiert til utklippstavle.",
+  "copy_manual": "Kunne ikke kopiere automatisk. Marker og kopier manuelt.",
+  "copy": "Kopier",
+  "hall_id_optional": "Hall-ID (valgfritt)",
+  "please_fill_required_fields": "Fyll ut alle obligatoriske felter.",
+  "invalid_email_format": "Ugyldig e-postformat.",
+  "invalid_birth_date_format": "Ugyldig fødselsdato — bruk ÅÅÅÅ-MM-DD.",
+
+  "edit_player": "Rediger spiller",
+  "edit_player_title": "Rediger spiller",
+  "player_updated_success": "Spiller oppdatert.",
+  "email_change_blocked_hint": "E-post kan ikke endres her. Kontakt admin for e-post-bytte.",
+  "no_changes_to_save": "Ingen endringer å lagre."
 }
