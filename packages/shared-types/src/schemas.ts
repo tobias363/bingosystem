@@ -1349,3 +1349,101 @@ export const ScheduleListResponseSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 export type ScheduleListResponse = z.infer<typeof ScheduleListResponseSchema>;
+
+// ── BIN-677: System settings + maintenance wire schemas ─────────────────────
+// Mirror av migration `20260425000500_system_settings_maintenance.sql`.
+//
+// System settings er key-value (se SYSTEM_SETTING_REGISTRY i
+// apps/backend/src/admin/SettingsService.ts for kjente nøkler). Ukjente
+// nøkler avvises server-side.
+//
+// Maintenance-vinduer er separate rader; max ett samtidig aktivt vindu
+// (håndheves i MaintenanceService).
+
+export const SystemSettingType = z.enum(["string", "number", "boolean", "object"]);
+export type SystemSettingTypeT = z.infer<typeof SystemSettingType>;
+
+export const SystemSettingRowSchema = z.object({
+  key: z.string().min(1).max(200),
+  /** JSONB value — type avhenger av `type`-feltet; valideres av service-laget. */
+  value: z.unknown(),
+  category: z.string().min(1).max(100),
+  description: z.string(),
+  type: SystemSettingType,
+  /** true hvis verdien kommer fra registry-default (ingen DB-rad eksisterer). */
+  isDefault: z.boolean(),
+  updatedByUserId: z.string().nullable(),
+  updatedAt: IsoDateString.nullable(),
+});
+export type SystemSettingRow = z.infer<typeof SystemSettingRowSchema>;
+
+export const SystemSettingsListResponseSchema = z.object({
+  settings: z.array(SystemSettingRowSchema),
+  count: z.number().int().nonnegative(),
+});
+export type SystemSettingsListResponse = z.infer<
+  typeof SystemSettingsListResponseSchema
+>;
+
+export const SystemSettingPatchEntrySchema = z.object({
+  key: z.string().min(1).max(200),
+  value: z.unknown(),
+});
+export type SystemSettingPatchEntry = z.infer<typeof SystemSettingPatchEntrySchema>;
+
+export const PatchSystemSettingsSchema = z
+  .object({
+    patches: z.array(SystemSettingPatchEntrySchema).min(1),
+  })
+  .refine((v) => v.patches.length > 0, {
+    message: "Ingen endringer oppgitt.",
+  });
+export type PatchSystemSettingsInput = z.infer<typeof PatchSystemSettingsSchema>;
+
+export const MaintenanceStatus = z.enum(["active", "inactive"]);
+export type MaintenanceStatusT = z.infer<typeof MaintenanceStatus>;
+
+export const MaintenanceWindowRowSchema = z.object({
+  id: z.string().min(1),
+  maintenanceStart: IsoDateString,
+  maintenanceEnd: IsoDateString,
+  message: z.string(),
+  showBeforeMinutes: z.number().int().nonnegative(),
+  status: MaintenanceStatus,
+  createdByUserId: z.string().nullable(),
+  createdAt: IsoDateString,
+  updatedAt: IsoDateString,
+  activatedAt: IsoDateString.nullable(),
+  deactivatedAt: IsoDateString.nullable(),
+});
+export type MaintenanceWindowRow = z.infer<typeof MaintenanceWindowRowSchema>;
+
+export const MaintenanceListResponseSchema = z.object({
+  windows: z.array(MaintenanceWindowRowSchema),
+  count: z.number().int().nonnegative(),
+  /** Kort-referanse til aktivt vindu (om det finnes) for frontend-convenience. */
+  active: MaintenanceWindowRowSchema.nullable(),
+});
+export type MaintenanceListResponse = z.infer<typeof MaintenanceListResponseSchema>;
+
+export const CreateMaintenanceSchema = z.object({
+  maintenanceStart: IsoDateString,
+  maintenanceEnd: IsoDateString,
+  message: z.string().max(2000).optional(),
+  showBeforeMinutes: z.number().int().min(0).max(10_080).optional(),
+  status: MaintenanceStatus.optional(),
+});
+export type CreateMaintenanceInput = z.infer<typeof CreateMaintenanceSchema>;
+
+export const UpdateMaintenanceSchema = z
+  .object({
+    maintenanceStart: IsoDateString.optional(),
+    maintenanceEnd: IsoDateString.optional(),
+    message: z.string().max(2000).optional(),
+    showBeforeMinutes: z.number().int().min(0).max(10_080).optional(),
+    status: MaintenanceStatus.optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, {
+    message: "Ingen endringer oppgitt.",
+  });
+export type UpdateMaintenanceInput = z.infer<typeof UpdateMaintenanceSchema>;

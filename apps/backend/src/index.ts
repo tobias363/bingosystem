@@ -112,6 +112,10 @@ import { createAdminSubGamesRouter } from "./routes/adminSubGames.js";
 import { SubGameService } from "./admin/SubGameService.js";
 import { createAdminLeaderboardTiersRouter } from "./routes/adminLeaderboardTiers.js";
 import { LeaderboardTierService } from "./admin/LeaderboardTierService.js";
+import { createAdminSettingsRouter } from "./routes/adminSettings.js";
+import { SettingsService } from "./admin/SettingsService.js";
+import { createAdminMaintenanceRouter } from "./routes/adminMaintenance.js";
+import { MaintenanceService } from "./admin/MaintenanceService.js";
 import { createAdminSavedGamesRouter } from "./routes/adminSavedGames.js";
 import { SavedGameService } from "./admin/SavedGameService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
@@ -440,6 +444,20 @@ const leaderboardTierService = new LeaderboardTierService({
 // template-payloaden lever som config_json (ingen normalisering i v1 siden
 // malen kopieres i sin helhet).
 const savedGameService = new SavedGameService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+
+// BIN-677: System settings + maintenance-vinduer. SettingsService bruker
+// key-value-registry (SYSTEM_SETTING_REGISTRY) — ukjente nøkler avvises.
+// MaintenanceService håndhever aktiv-invariant (max ett aktivt vindu av
+// gangen). Begge er sentrale ADMIN-only endepunkter; HALL_OPERATOR styrer
+// per-hall-Spillvett via adminHalls.ts.
+const settingsService = new SettingsService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+const maintenanceService = new MaintenanceService({
   connectionString: platformConnectionString,
   schema: pgSchema,
 });
@@ -825,6 +843,21 @@ app.use(createAdminSavedGamesRouter({
   platformService,
   auditLogService,
   savedGameService,
+}));
+// BIN-677: System settings + maintenance. To routere — GET/PATCH /api/admin/
+// settings (key-value registry-backed) + GET/POST/PUT /api/admin/maintenance
+// (vindu-basert). Begge bruker ADMIN-only WRITE (HALL_OPERATOR styrer per-hall
+// via adminHalls.ts). AuditLog: admin.settings.update +
+// admin.maintenance.{create,activate,deactivate,update}.
+app.use(createAdminSettingsRouter({
+  platformService,
+  auditLogService,
+  settingsService,
+}));
+app.use(createAdminMaintenanceRouter({
+  platformService,
+  auditLogService,
+  maintenanceService,
 }));
 // BIN-628: admin track-spending aggregat (regulatorisk P2 — pengespill-
 // forskriften §11). Gjenbruker de samme env-var-drevne loss-limitene som
