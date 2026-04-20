@@ -50,12 +50,29 @@ export interface StakeInput {
  *   2. Ellers: beregn fra tickets (fallback under utrulling).
  */
 export function calculateStake(input: StakeInput): number {
-  // ── Server-autoritativ ──
-  if (input.myStake !== undefined && input.myStake !== null) {
-    return input.myStake;
+  const serverStake = input.myStake;
+  const hasServerStake = serverStake !== undefined && serverStake !== null;
+
+  // ── RUNNING: server-autoritativ uansett verdi ──
+  // Under en aktiv runde reflekterer backend faktisk debiterte brett,
+  // inkludert 0 (spectator). Vi stoler blindt.
+  if (input.gameStatus === "RUNNING" && hasServerStake) {
+    return serverStake;
   }
 
-  // ── Fallback: klient-beregning ──
+  // ── Ikke-RUNNING: server-autoritativ KUN når > 0 ──
+  //
+  // BIN-686 fix-up: backend sender `playerStakes` som 0 under WAITING
+  // selv når spilleren har armet pre-round-bonger. Pre-round-stake
+  // beregnes ikke server-side før runden starter. Hvis server stake > 0
+  // mellom runder stoler vi — det betyr backend har eksplisitt debitert.
+  // Hvis 0, må vi falle tilbake til ticket-beregning så Innsats
+  // oppdaterer seg straks bruker klikker Kjøp.
+  if (hasServerStake && serverStake > 0) {
+    return serverStake;
+  }
+
+  // ── Fallback: klient-beregning fra tickets ──
   const tickets = resolveTickets(input);
   if (tickets.length === 0) return 0;
   return tickets.reduce((sum, t) => sum + priceFor(t, input), 0);
