@@ -3,6 +3,7 @@ import type { PlatformService } from "../platform/PlatformService.js";
 import type { BankIdKycAdapter } from "../adapters/BankIdKycAdapter.js";
 import type { AuthTokenService } from "../auth/AuthTokenService.js";
 import type { EmailService } from "../integration/EmailService.js";
+import type { AuditLogService } from "../compliance/AuditLogService.js";
 import { DomainError } from "../game/BingoEngine.js";
 import {
   apiSuccess,
@@ -23,10 +24,28 @@ export interface AuthRouterDeps {
   bankIdAdapter: BankIdKycAdapter | null;
   authTokenService: AuthTokenService;
   emailService: EmailService;
+  /**
+   * BIN-629: when present, the login endpoint emits `auth.login` /
+   * `auth.login.failed` audit-rows so admin-player-detail can render
+   * login-history. Optional — callers without audit wiring (e.g. focused
+   * unit tests) still work; the events are just silently skipped.
+   */
+  auditLogService?: AuditLogService;
   /** Base-URL brukt til å bygge reset-lenker, e.g. "https://app.spillorama.no". */
   webBaseUrl: string;
   /** Support-e-post rendret i template-footer. */
   supportEmail: string;
+}
+
+function clientIp(req: express.Request): string | null {
+  const fwd = req.headers["x-forwarded-for"];
+  if (typeof fwd === "string" && fwd.trim()) return fwd.split(",")[0]!.trim();
+  return req.ip ?? null;
+}
+
+function requestUserAgent(req: express.Request): string | null {
+  const ua = req.headers["user-agent"];
+  return typeof ua === "string" && ua.trim() ? ua : null;
 }
 
 export function createAuthRouter(deps: AuthRouterDeps): express.Router {
@@ -36,10 +55,23 @@ export function createAuthRouter(deps: AuthRouterDeps): express.Router {
     bankIdAdapter,
     authTokenService,
     emailService,
+    auditLogService,
     webBaseUrl,
     supportEmail,
   } = deps;
   const router = express.Router();
+
+  /**
+   * BIN-629: fire-and-forget audit emit. Same policy as AuditLogService
+   * internals — never block the auth response on audit-DB outages; the
+   * structured logger below keeps an intent-trail in any case.
+   */
+  function fireLoginAudit(event: Parameters<AuditLogService["record"]>[0]): void {
+    if (!auditLogService) return;
+    auditLogService.record(event).catch((err) => {
+      logger.warn({ err, action: event.action }, "[BIN-629] login audit append failed");
+    });
+  }
 
   async function getAuthenticatedUser(req: express.Request) {
     const accessToken = getAccessTokenFromRequest(req);
@@ -136,15 +168,54 @@ export function createAuthRouter(deps: AuthRouterDeps): express.Router {
   });
 
   router.post("/api/auth/login", async (req, res) => {
+    const ipAddress = clientIp(req);
+    const userAgent = requestUserAgent(req);
+    let emailForAudit: string | null = null;
     try {
       const email = mustBeNonEmptyString(req.body?.email, "email");
+      emailForAudit = email;
       const password = mustBeNonEmptyString(req.body?.password, "password");
       const session = await platformService.login({
         email,
         password
       });
+      // BIN-629: per-spiller login-history. actorId = spiller-id så admin-
+      // detaljside kan filtrere direkte i /api/admin/players/:id/login-history.
+      fireLoginAudit({
+        actorId: session.user.id,
+        actorType: "USER",
+        action: "auth.login",
+        resource: "session",
+        resourceId: null,
+        ipAddress,
+        userAgent,
+      });
       apiSuccess(res, session);
     } catch (error) {
+      // BIN-629: log failed attempts too. Look up the account by email so
+      // admin can see "someone tried to log in to player X" — useful for
+      // credential-stuffing triage. If the email isn't ours, actorId stays
+      // null; the row still lands but won't surface in per-player filters.
+      let failedActorId: string | null = null;
+      if (emailForAudit) {
+        try {
+          const existing = await platformService.findUserByEmail(emailForAudit);
+          failedActorId = existing?.id ?? null;
+        } catch {
+          // Deliberately swallow — audit-trail is best-effort.
+        }
+      }
+      const failureReason = error instanceof DomainError ? error.code : "UNKNOWN";
+      fireLoginAudit({
+        actorId: failedActorId,
+        actorType: "USER",
+        action: "auth.login.failed",
+        resource: "session",
+        resourceId: null,
+        details: { failureReason },
+        ipAddress,
+        userAgent,
+      });
       apiFailure(res, error);
     }
   });
