@@ -89,6 +89,72 @@ describe("Server-autoritativ (myStake definert)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// A.2) BIN-686 regresjon: server stake=0 under WAITING faller tilbake
+//       til klient-beregning så Innsats oppdaterer straks etter Kjøp-klikk
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("BIN-686: server myStake=0 under WAITING faller tilbake", () => {
+  it("myStake=0 + WAITING + armed + 3 pre-round brett → 3 × 20 kr = 60", () => {
+    const result = calculateStake(input({
+      myStake: 0,
+      gameStatus: "WAITING",
+      isArmed: true,
+      preRoundTickets: [ticket(), ticket(), ticket()],
+    }));
+    expect(result).toBe(60);
+  });
+
+  it("myStake=0 + WAITING + armed + 3 small + 1 large (×3) → 60 + 60 = 120", () => {
+    const result = calculateStake(input({
+      myStake: 0,
+      gameStatus: "WAITING",
+      isArmed: true,
+      preRoundTickets: [
+        ticket("small-yellow"),
+        ticket("small-yellow"),
+        ticket("small-yellow"),
+        ticket("large-yellow"),
+      ],
+    }));
+    expect(result).toBe(60 + 60);
+  });
+
+  it("myStake=0 + WAITING + NOT armed → 0 (unarmed spectator)", () => {
+    const result = calculateStake(input({
+      myStake: 0,
+      gameStatus: "WAITING",
+      isArmed: false,
+      preRoundTickets: [ticket(), ticket()],
+    }));
+    expect(result).toBe(0);
+  });
+
+  it("myStake=0 + RUNNING honoreres direkte (spectator, ikke fallback)", () => {
+    // Kritisk — under RUNNING betyr server-0 legitimt spectator, IKKE
+    // signal om fallback. Vi må IKKE dobbelte-telle preRoundTickets fra
+    // neste runde mens denne runden spilles.
+    const result = calculateStake(input({
+      myStake: 0,
+      gameStatus: "RUNNING",
+      isArmed: true,
+      preRoundTickets: [ticket(), ticket(), ticket()],
+    }));
+    expect(result).toBe(0);
+  });
+
+  it("myStake=30 + WAITING stoler på server (backend har eksplisitt debitert)", () => {
+    // Skal ikke addere til fallback — server sier 30, server har rett.
+    const result = calculateStake(input({
+      myStake: 30,
+      gameStatus: "WAITING",
+      isArmed: true,
+      preRoundTickets: [ticket(), ticket(), ticket(), ticket(), ticket()],
+    }));
+    expect(result).toBe(30);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // B) Fallback — klient-beregning (myStake undefined)
 // ═══════════════════════════════════════════════════════════════════════════════
 
