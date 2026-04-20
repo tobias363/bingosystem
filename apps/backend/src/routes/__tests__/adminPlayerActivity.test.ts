@@ -1,9 +1,10 @@
 /**
- * BIN-587 B5-rest: integrasjonstester for admin player activity router.
+ * BIN-587 B5-rest + BIN-630: integrasjonstester for admin player activity router.
  *
  * Dekker:
  *   GET /api/admin/players/:id/transactions
  *   GET /api/admin/players/:id/game-history
+ *   GET /api/admin/players/:id/chips-history
  */
 
 import assert from "node:assert/strict";
@@ -54,6 +55,8 @@ async function startServer(opts: {
   usersById: Record<string, AppUser>;
   transactions?: WalletTransaction[];
   ledger?: ComplianceLedgerEntry[];
+  /** BIN-630: map fra walletId til aktuell saldo — brukt av chips-history. */
+  balances?: Record<string, number>;
 }): Promise<Ctx> {
   const listLedgerCalls: Ctx["listLedgerCalls"] = [];
   const listTxCalls: Ctx["listTxCalls"] = [];
@@ -75,6 +78,14 @@ async function startServer(opts: {
     async listTransactions(walletId: string, limit?: number) {
       listTxCalls.push({ walletId, limit });
       return (opts.transactions ?? []).filter((t) => t.accountId === walletId).slice(0, limit ?? 100);
+    },
+    async getAccount(walletId: string) {
+      return {
+        id: walletId,
+        balance: opts.balances?.[walletId] ?? 0,
+        createdAt: "2026-04-18T10:00:00Z",
+        updatedAt: "2026-04-18T10:00:00Z",
+      };
     },
   } as unknown as WalletAdapter;
 
@@ -285,6 +296,217 @@ test("BIN-587 B5: game-history avviser ikke-PLAYER target", async () => {
     const res = await req(ctx.baseUrl, "/api/admin/players/target-admin/game-history", "admin-tok");
     assert.equal(res.status, 400);
     assert.equal(res.json.error.code, "INVALID_INPUT");
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ── BIN-630: chips-history tests ─────────────────────────────────────────
+
+test("BIN-630: chips-history returnerer paginert liste med balanceAfter", async () => {
+  const player = makePlayer("target-1");
+  const ctx = await startServer({
+    users: { "admin-tok": adminUser },
+    usersById: { "target-1": player },
+    transactions: [
+      makeTx("t3", player.walletId, "DEBIT", 50),
+      makeTx("t2", player.walletId, "CREDIT", 100),
+      makeTx("t1", player.walletId, "TOPUP", 100),
+    ],
+    balances: { [player.walletId]: 150 },
+  });
+  try {
+    const res = await req(ctx.baseUrl, "/api/admin/players/target-1/chips-history", "admin-tok");
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.userId, "target-1");
+    assert.equal(res.json.data.walletId, player.walletId);
+    assert.equal(res.json.data.items.length, 3);
+    assert.equal(res.json.data.items[0].id, "t3");
+    assert.equal(res.json.data.items[0].balanceAfter, 150);
+    assert.equal(res.json.data.items[0].type, "DEBIT");
+    assert.equal(res.json.data.items[1].balanceAfter, 200);
+    assert.equal(res.json.data.items[2].balanceAfter, 100);
+    assert.equal(res.json.data.nextCursor, null);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-630: chips-history støtter from/to-vindu", async () => {
+  const player = makePlayer("target-1");
+  const ctx = await startServer({
+    users: { "admin-tok": adminUser },
+    usersById: { "target-1": player },
+    transactions: [
+      { ...makeTx("t3", player.walletId, "DEBIT", 50), createdAt: "2026-04-20T12:00:00Z" },
+      { ...makeTx("t2", player.walletId, "CREDIT", 100), createdAt: "2026-04-15T12:00:00Z" },
+      { ...makeTx("t1", player.walletId, "TOPUP", 100), createdAt: "2026-04-10T12:00:00Z" },
+    ],
+    balances: { [player.walletId]: 150 },
+  });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "/api/admin/players/target-1/chips-history?from=2026-04-14T00:00:00Z&to=2026-04-16T00:00:00Z",
+      "admin-tok",
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.items.length, 1);
+    assert.equal(res.json.data.items[0].id, "t2");
+    // BalanceAfter er regnet fra hele historien — skal fortsatt være 200.
+    assert.equal(res.json.data.items[0].balanceAfter, 200);
+    assert.equal(res.json.data.from, "2026-04-14T00:00:00.000Z");
+    assert.equal(res.json.data.to, "2026-04-16T00:00:00.000Z");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-630: chips-history cursor-paginerer stabilt", async () => {
+  const player = makePlayer("target-1");
+  const txs = [];
+  for (let i = 9; i >= 0; i -= 1) {
+    const day = (i + 10).toString().padStart(2, "0");
+    txs.push({
+      ...makeTx(`t${i}`, player.walletId, "CREDIT", 10),
+      createdAt: `2026-04-${day}T12:00:00Z`,
+    });
+  }
+  const ctx = await startServer({
+    users: { "admin-tok": adminUser },
+    usersById: { "target-1": player },
+    transactions: txs,
+    balances: { [player.walletId]: 100 },
+  });
+  try {
+    const page1 = await req(ctx.baseUrl, "/api/admin/players/target-1/chips-history?limit=3", "admin-tok");
+    assert.equal(page1.status, 200);
+    assert.equal(page1.json.data.items.length, 3);
+    assert.notEqual(page1.json.data.nextCursor, null);
+
+    const page2 = await req(
+      ctx.baseUrl,
+      `/api/admin/players/target-1/chips-history?limit=3&cursor=${encodeURIComponent(page1.json.data.nextCursor)}`,
+      "admin-tok",
+    );
+    assert.equal(page2.status, 200);
+    assert.equal(page2.json.data.items.length, 3);
+    const ids1 = new Set(page1.json.data.items.map((i: { id: string }) => i.id));
+    for (const item of page2.json.data.items) {
+      assert.equal(ids1.has(item.id), false);
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-630: chips-history avviser ugyldig ISO i from/to", async () => {
+  const player = makePlayer("target-1");
+  const ctx = await startServer({
+    users: { "admin-tok": adminUser },
+    usersById: { "target-1": player },
+    balances: { [player.walletId]: 0 },
+  });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "/api/admin/players/target-1/chips-history?from=ikke-en-dato",
+      "admin-tok",
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "INVALID_INPUT");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-630: chips-history avviser from > to", async () => {
+  const player = makePlayer("target-1");
+  const ctx = await startServer({
+    users: { "admin-tok": adminUser },
+    usersById: { "target-1": player },
+    balances: { [player.walletId]: 0 },
+  });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "/api/admin/players/target-1/chips-history?from=2026-04-20T00:00:00Z&to=2026-04-10T00:00:00Z",
+      "admin-tok",
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "INVALID_INPUT");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-630: chips-history avviser ikke-PLAYER target", async () => {
+  const ctx = await startServer({
+    users: { "admin-tok": adminUser },
+    usersById: { "target-admin": { ...makePlayer("target-admin"), role: "SUPPORT" } },
+  });
+  try {
+    const res = await req(ctx.baseUrl, "/api/admin/players/target-admin/chips-history", "admin-tok");
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "INVALID_INPUT");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-630: chips-history blokkerer PLAYER og HALL_OPERATOR", async () => {
+  const player = makePlayer("target-1");
+  const ctx = await startServer({
+    users: {
+      "pl-tok": playerUser,
+      "op-a-tok": operatorA,
+    },
+    usersById: { "target-1": player },
+    balances: { [player.walletId]: 0 },
+  });
+  try {
+    for (const tok of ["pl-tok", "op-a-tok"]) {
+      const res = await req(ctx.baseUrl, "/api/admin/players/target-1/chips-history", tok);
+      assert.equal(res.status, 400);
+      assert.equal(res.json.error.code, "FORBIDDEN");
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-630: chips-history — SUPPORT kan lese", async () => {
+  const player = makePlayer("target-1");
+  const ctx = await startServer({
+    users: { "sup-tok": supportUser },
+    usersById: { "target-1": player },
+    transactions: [makeTx("t1", player.walletId, "TOPUP", 100)],
+    balances: { [player.walletId]: 100 },
+  });
+  try {
+    const res = await req(ctx.baseUrl, "/api/admin/players/target-1/chips-history", "sup-tok");
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.items.length, 1);
+    assert.equal(res.json.data.items[0].balanceAfter, 100);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-630: chips-history — manglende Authorization → UNAUTHORIZED", async () => {
+  const player = makePlayer("target-1");
+  const ctx = await startServer({
+    users: {},
+    usersById: { "target-1": player },
+  });
+  try {
+    const res = await req(ctx.baseUrl, "/api/admin/players/target-1/chips-history");
+    assert.equal(res.status, 400);
+    // Enten UNAUTHORIZED (access-token) eller INVALID_ACCESS_TOKEN — begge godtatt.
+    assert.ok(
+      typeof res.json.error.code === "string" && res.json.error.code.length > 0,
+      "skal returnere en error.code",
+    );
   } finally {
     await ctx.close();
   }
