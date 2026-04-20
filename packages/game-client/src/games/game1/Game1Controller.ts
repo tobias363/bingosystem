@@ -577,17 +577,19 @@ class Game1Controller implements GameController {
     const winnerCount = result.winnerCount ?? winnerIds.length;
 
     if (isMe) {
-      // Først: hvilket fase vant du? Fullt Hus får en litt mer dramatisk tekst.
-      const winBase = isFullHouse
-        ? `Du vant Fullt Hus! Din andel: ${result.payoutAmount} kr`
-        : `Du vant ${result.patternName}! Din andel: ${result.payoutAmount} kr`;
+      // BIN-696 tekst-revisjon per Tobias 2026-04-20:
+      //   Solo-vinner:   "Du vant 1 Rad!\nGevinst: 15 kr"
+      //   Multi-winner:  "Du vant 1 Rad!\nDin gevinst: 15 kr (premien delt på 3 spillere som vant samtidig)"
+      // "Din gevinst" understreker at beløpet er denne spillerens andel
+      // etter split; solo trenger ikke distinksjonen.
+      const firstLine = isFullHouse
+        ? "Du vant Fullt Hus!"
+        : `Du vant ${result.patternName}!`;
+      const secondLine = winnerCount > 1
+        ? `Din gevinst: ${result.payoutAmount} kr (premien delt på ${winnerCount} spillere som vant samtidig)`
+        : `Gevinst: ${result.payoutAmount} kr`;
 
-      // Deretter: hvis split — forklar hvorfor gevinsten er delt.
-      const splitSuffix = winnerCount > 1
-        ? ` (premien delt på ${winnerCount} spillere som vant samtidig)`
-        : "";
-
-      this.toast?.win(`${winBase}${splitSuffix}`, 5000);
+      this.toast?.win(`${firstLine}\n${secondLine}`, 5000);
       this.deps.audio.playBingoSound();
     }
 

@@ -41,13 +41,13 @@ function harnessOnPatternWon(result: PatternWonPayload, ctx: {
   const winnerCount = result.winnerCount ?? winnerIds.length;
 
   if (isMe) {
-    const winBase = isFullHouse
-      ? `Du vant Fullt Hus! Din andel: ${result.payoutAmount} kr`
-      : `Du vant ${result.patternName}! Din andel: ${result.payoutAmount} kr`;
-    const splitSuffix = winnerCount > 1
-      ? ` (premien delt på ${winnerCount} spillere som vant samtidig)`
-      : "";
-    ctx.toast.win(`${winBase}${splitSuffix}`, 5000);
+    const firstLine = isFullHouse
+      ? "Du vant Fullt Hus!"
+      : `Du vant ${result.patternName}!`;
+    const secondLine = winnerCount > 1
+      ? `Din gevinst: ${result.payoutAmount} kr (premien delt på ${winnerCount} spillere som vant samtidig)`
+      : `Gevinst: ${result.payoutAmount} kr`;
+    ctx.toast.win(`${firstLine}\n${secondLine}`, 5000);
   }
 }
 
@@ -103,7 +103,7 @@ describe("BIN-696: fase-popup (info-toast) vises til alle", () => {
 });
 
 describe("BIN-696: vinner-toast med split-forklaring", () => {
-  it("solo vinner → 'Du vant Rad 1! Din andel: 15 kr' (ingen split-suffix)", () => {
+  it("solo vinner → 'Du vant 1 Rad!\\nGevinst: 15 kr' (ingen 'Din', ingen split-suffix)", () => {
     const toast = makeToast();
     harnessOnPatternWon(
       makePayload({
@@ -115,12 +115,12 @@ describe("BIN-696: vinner-toast med split-forklaring", () => {
       { myPlayerId: "player-1", toast },
     );
     expect(toast.win).toHaveBeenCalledWith(
-      "Du vant 1 Rad! Din andel: 15 kr",
+      "Du vant 1 Rad!\nGevinst: 15 kr",
       5000,
     );
   });
 
-  it("multi-winner split (3 spillere) → forklaring i parentes", () => {
+  it("multi-winner split (3 spillere) → 'Din gevinst' + forklaring i parentes", () => {
     const toast = makeToast();
     harnessOnPatternWon(
       makePayload({
@@ -132,7 +132,7 @@ describe("BIN-696: vinner-toast med split-forklaring", () => {
       { myPlayerId: "player-1", toast },
     );
     expect(toast.win).toHaveBeenCalledWith(
-      "Du vant 1 Rad! Din andel: 15 kr (premien delt på 3 spillere som vant samtidig)",
+      "Du vant 1 Rad!\nDin gevinst: 15 kr (premien delt på 3 spillere som vant samtidig)",
       5000,
     );
   });
@@ -147,7 +147,7 @@ describe("BIN-696: vinner-toast med split-forklaring", () => {
     expect(toast.win).not.toHaveBeenCalled();
   });
 
-  it("Fullt Hus vinner → 'Du vant Fullt Hus! Din andel: 40 kr'", () => {
+  it("Fullt Hus vinner → 'Du vant Fullt Hus!\\nGevinst: 40 kr'", () => {
     const toast = makeToast();
     harnessOnPatternWon(
       makePayload({
@@ -160,7 +160,7 @@ describe("BIN-696: vinner-toast med split-forklaring", () => {
       { myPlayerId: "player-1", toast },
     );
     expect(toast.win).toHaveBeenCalledWith(
-      "Du vant Fullt Hus! Din andel: 40 kr",
+      "Du vant Fullt Hus!\nGevinst: 40 kr",
       5000,
     );
   });
@@ -181,7 +181,7 @@ describe("BIN-696: vinner-toast med split-forklaring", () => {
       { myPlayerId: "player-1", toast },
     );
     expect(toast.win).toHaveBeenCalledWith(
-      "Du vant 1 Rad! Din andel: 30 kr",
+      "Du vant 1 Rad!\nGevinst: 30 kr",
       5000,
     );
   });
