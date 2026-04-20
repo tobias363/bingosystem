@@ -275,3 +275,85 @@ test("BIN-588 Postgres: list schema is sanitised (no injection via schema option
   assert.match(capturedSql, /FROM badDROPTABLEx\.app_audit_log/);
   assert.doesNotMatch(capturedSql, /;/);
 });
+
+// ── BIN-629: listLoginHistory ───────────────────────────────────────────────
+
+test("BIN-629 in-memory: listLoginHistory filters to auth.login* for actor + session resource", async () => {
+  const store = new InMemoryAuditLogStore();
+  await store.append({ actorId: "u-1", actorType: "USER", action: "auth.login", resource: "session", resourceId: null });
+  await store.append({ actorId: "u-1", actorType: "USER", action: "auth.login.failed", resource: "session", resourceId: null });
+  await store.append({ actorId: "u-1", actorType: "USER", action: "auth.logout", resource: "session", resourceId: null });
+  await store.append({ actorId: "u-1", actorType: "USER", action: "deposit.complete", resource: "deposit", resourceId: "d-1" });
+  await store.append({ actorId: "u-2", actorType: "USER", action: "auth.login", resource: "session", resourceId: null });
+
+  const rows = await store.listLoginHistory({ actorId: "u-1", limit: 10, offset: 0 });
+  assert.equal(rows.length, 2);
+  const actions = new Set(rows.map((r) => r.action));
+  assert.ok(actions.has("auth.login"));
+  assert.ok(actions.has("auth.login.failed"));
+  // No cross-actor leakage.
+  assert.ok(rows.every((r) => r.actorId === "u-1"));
+});
+
+test("BIN-629 in-memory: listLoginHistory honours offset + limit", async () => {
+  const store = new InMemoryAuditLogStore();
+  for (let i = 0; i < 5; i++) {
+    await store.append({ actorId: "u-1", actorType: "USER", action: "auth.login", resource: "session", resourceId: null });
+  }
+  const page1 = await store.listLoginHistory({ actorId: "u-1", limit: 2, offset: 0 });
+  assert.equal(page1.length, 2);
+  const page2 = await store.listLoginHistory({ actorId: "u-1", limit: 2, offset: 2 });
+  assert.equal(page2.length, 2);
+  // Different rows between pages.
+  const ids1 = new Set(page1.map((r) => r.id));
+  for (const row of page2) assert.ok(!ids1.has(row.id));
+});
+
+test("BIN-629 Postgres: listLoginHistory builds the expected WHERE + LIMIT/OFFSET", async () => {
+  let capturedSql = "";
+  let capturedParams: unknown[] = [];
+  const pool = fakePool(async (sql, params) => {
+    capturedSql = sql;
+    capturedParams = params;
+    return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] } as unknown as QueryResult;
+  });
+  const store = new PostgresAuditLogStore({ pool });
+  await store.listLoginHistory({
+    actorId: "user-1",
+    from: "2026-04-01T00:00:00.000Z",
+    to: "2026-04-20T00:00:00.000Z",
+    limit: 25,
+    offset: 10,
+  });
+  assert.match(capturedSql, /WHERE actor_id = \$1/);
+  assert.match(capturedSql, /resource = 'session'/);
+  assert.match(capturedSql, /action LIKE 'auth\.login%'/);
+  assert.match(capturedSql, /LIMIT \$\d+ OFFSET \$\d+/);
+  assert.equal(capturedParams[0], "user-1");
+  assert.equal(capturedParams[1], "2026-04-01T00:00:00.000Z");
+  assert.equal(capturedParams[2], "2026-04-20T00:00:00.000Z");
+  assert.equal(capturedParams[3], 25);
+  assert.equal(capturedParams[4], 10);
+});
+
+test("BIN-629 Postgres: listLoginHistory without from/to omits the window predicates", async () => {
+  let capturedSql = "";
+  let capturedParams: unknown[] = [];
+  const pool = fakePool(async (sql, params) => {
+    capturedSql = sql;
+    capturedParams = params;
+    return { rows: [], rowCount: 0, command: "SELECT", oid: 0, fields: [] } as unknown as QueryResult;
+  });
+  const store = new PostgresAuditLogStore({ pool });
+  await store.listLoginHistory({ actorId: "u", limit: 10, offset: 0 });
+  assert.doesNotMatch(capturedSql, /created_at >=/);
+  assert.doesNotMatch(capturedSql, /created_at <=/);
+  assert.equal(capturedParams.length, 3); // actorId, limit, offset
+});
+
+test("BIN-629 Postgres: listLoginHistory returns [] on query error instead of throwing", async () => {
+  const pool = fakePool(async () => { throw new Error("boom"); });
+  const store = new PostgresAuditLogStore({ pool });
+  const out = await store.listLoginHistory({ actorId: "u", limit: 10, offset: 0 });
+  assert.deepEqual(out, []);
+});
