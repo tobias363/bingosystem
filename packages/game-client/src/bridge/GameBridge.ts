@@ -219,6 +219,11 @@ export class GameBridge {
       // Also reset index — a null currentGame means we're between rounds.
       this.lastAppliedDrawIndex = -1;
     }
+    // BIN-686: seed previousGameStatus from the applied snapshot so the
+    // first incoming room:update doesn't mistake this for a WAITING→RUNNING
+    // transition (which would trigger an unwanted lastAppliedDrawIndex
+    // reset and drop the next draw:new as a duplicate).
+    this.previousGameStatus = this.state.gameStatus;
 
     // The server's room:create ack returns a full RoomUpdatePayload, not a bare
     // RoomSnapshot. Pull variant info from it so the buy popup gets ticket types
