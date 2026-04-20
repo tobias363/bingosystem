@@ -212,7 +212,31 @@ const ADMIN_ACCESS_POLICY_DEFINITION = {
    *     mønster som HALL_WRITE / PATTERN_WRITE.
    */
   HALL_GROUP_READ:  ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
-  HALL_GROUP_WRITE: ["ADMIN", "HALL_OPERATOR"]
+  HALL_GROUP_WRITE: ["ADMIN", "HALL_OPERATOR"],
+  /**
+   * BIN-620: GameType CRUD (topp-nivå katalog av spill-typer).
+   *   - GAME_TYPE_READ : liste + detalj. Alle admin-roller. GameType-
+   *     katalogen er global (ikke hall-bunden) og SUPPORT trenger
+   *     innsyn for kundestøtte-kontekst ("hva er dette spillet?").
+   *   - GAME_TYPE_WRITE: opprett/oppdatér/slett. ADMIN-only fordi
+   *     spill-typer er sentralt definert og påvirker hele systemet
+   *     (referenced by GameManagement, Pattern, SubGame, DailySchedule).
+   *     HALL_OPERATOR er bevisst utelatt — hall-operator endrer ikke
+   *     globalt spill-katalog. Samme mønster som GAME_CATALOG_WRITE.
+   */
+  GAME_TYPE_READ:  ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
+  GAME_TYPE_WRITE: ["ADMIN"],
+  /**
+   * BIN-621: SubGame CRUD (navngitte gjenbrukbare pattern-bundles).
+   *   - SUB_GAME_READ : liste + detalj. Alle admin-roller.
+   *   - SUB_GAME_WRITE: opprett/oppdatér/slett. ADMIN + HALL_OPERATOR.
+   *     SubGame-maler er mindre sentrale enn GameType (de refereres fra
+   *     DailySchedule men endrer ikke selve spill-typen), så hall-operator
+   *     kan administrere egen hall's bundles — samme mønster som
+   *     PATTERN_WRITE / SCHEDULE_WRITE. SUPPORT er bevisst utelatt.
+   */
+  SUB_GAME_READ:   ["ADMIN", "HALL_OPERATOR", "SUPPORT"],
+  SUB_GAME_WRITE:  ["ADMIN", "HALL_OPERATOR"]
 } as const;
 
 export type AdminPermission = keyof typeof ADMIN_ACCESS_POLICY_DEFINITION;
