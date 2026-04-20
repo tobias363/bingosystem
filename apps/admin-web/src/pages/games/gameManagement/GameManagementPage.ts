@@ -9,10 +9,11 @@
 //   - Type picker uses hash query string `#/gameManagement?typeId=X` — pattern
 //     matches cash-inout's `?gameId=X` (see PR-B1 §6.7 in PR-A3-PLAN.md).
 //   - Client-side render; DataTable component handles the grid.
-//   - Add/Repeat/CloseDay are BIN-622/BIN-623 placeholders (disabled buttons
-//     with tooltip). Row actions (view/edit/tickets/subgames/closeDay) are
-//     wired but only View+Tickets+SubGames land pages in PR-A3b; Edit and
-//     delete are disabled placeholders.
+//   - Add knapp linker til `/gameManagement/:typeId/add` (BIN-622 GameManagement
+//     CRUD) for game_1; game_3 linker til `/add-g3`. Repeat + CloseDay er
+//     fortsatt placeholder inntil BIN-622 repeat-flyt + BIN-623 lander.
+//   - Row actions (view/edit/tickets/subgames/closeDay) er wired men bare
+//     View+Tickets+SubGames lander sider i PR-A3b; delete er placeholder.
 
 import { t } from "../../../i18n/I18n.js";
 import { DataTable } from "../../../components/DataTable.js";
@@ -22,7 +23,7 @@ import { isDropdownVisible, type GameType } from "../common/types.js";
 import { fetchGameManagementList, isGame3Variant, type GameManagementRow } from "./GameManagementState.js";
 
 export async function renderGameManagementPage(container: HTMLElement, typeId?: string): Promise<void> {
-  container.innerHTML = renderShell();
+  container.innerHTML = renderShell(typeId);
 
   const selectEl = container.querySelector<HTMLSelectElement>("#gm-type-picker");
   const tableHost = container.querySelector<HTMLElement>("#gm-list-table");
@@ -63,7 +64,16 @@ export async function renderGameManagementPage(container: HTMLElement, typeId?: 
   });
 }
 
-function renderShell(): string {
+function renderShell(typeId: string | undefined): string {
+  // Add-button lenker til add-ruten hvis typeId er valgt. Uten typeId viser
+  // vi knappen disabled med en forklarende tooltip.
+  const hasType = !!typeId;
+  const addHref = hasType
+    ? `#/gameManagement/${encodeURIComponent(typeId)}/add`
+    : "#";
+  const addAttrs = hasType
+    ? `href="${addHref}" class="btn btn-primary btn-md"`
+    : `href="#" class="btn btn-primary btn-md disabled" aria-disabled="true" onclick="return false;" title="${escapeHtml(t("choose_a_game"))}"`;
   return `
     <div class="page-wrapper"><div class="container-fluid">
       <div class="content-header">
@@ -81,13 +91,9 @@ function renderShell(): string {
                 <h6 class="panel-title txt-dark">${escapeHtml(t("game_creation_management"))}</h6>
               </div>
               <div class="pull-right">
-                <button type="button"
-                  class="btn btn-primary btn-md"
-                  disabled
-                  title="Venter på backend-endpoint — BIN-622">
+                <a ${addAttrs} id="gm-add-btn">
                   <i class="fa fa-plus"></i> ${escapeHtml(t("add_game"))}
-                  <small style="opacity:0.75;margin-left:6px;">(BIN-622)</small>
-                </button>
+                </a>
               </div>
               <div class="clearfix"></div>
             </div>
@@ -126,16 +132,17 @@ async function renderList(
       <li class="active">${escapeHtml(gt.name)}</li>
     </ol>`;
 
-  bannerHost.innerHTML = `
-    <div class="alert alert-warning" style="margin:0 0 12px;">
-      <i class="fa fa-info-circle"></i>
-      Venter på backend-endpoint.
-      <strong>BIN-622</strong> GameManagement CRUD må leveres før listen viser data.
-    </div>`;
+  // Clear banner — BIN-622 CRUD er merget, så ingen placeholder-banner lenger.
+  bannerHost.innerHTML = "";
 
   tableHost.innerHTML = `<div class="text-center"><i class="fa fa-spinner fa-spin fa-2x"></i></div>`;
-  const rows = await fetchGameManagementList(typeId);
-  renderTable(tableHost, rows, gt);
+  try {
+    const rows = await fetchGameManagementList(typeId);
+    renderTable(tableHost, rows, gt);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    tableHost.innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`;
+  }
 }
 
 function renderTable(host: HTMLElement, rows: GameManagementRow[], gt: GameType): void {

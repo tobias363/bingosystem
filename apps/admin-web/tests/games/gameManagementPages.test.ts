@@ -1,13 +1,12 @@
-// Render + dispatcher tests for gameManagement pages (PR-A3b bolk 4).
+// Render + dispatcher tests for gameManagement pages.
 //
-// Focus: verify HTML scaffolding (breadcrumb, banner, disabled buttons) and
-// that the games-dispatcher knows about every new route.
+// BIN-622 CRUD er nå merget i backend og admin-UI-en bruker de ekte
+// endepunktene. Testene mocker fetch for å validere rendering + dispatcher.
 
-import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { initI18n } from "../../src/i18n/I18n.js";
 import { renderGameManagementPage } from "../../src/pages/games/gameManagement/GameManagementPage.js";
 import {
-  renderGameManagementAddPage,
   renderGameManagementAddG3Page,
   renderGameManagementViewPage,
   renderGameManagementViewG3Page,
@@ -24,11 +23,40 @@ vi.mock("../../src/pages/games/gameType/GameTypeState.js", async () => {
       { _id: "bingo", slug: "bingo", name: "Spill1", type: "game_1", row: 5, columns: 5, photo: "bingo.png", pattern: true },
       { _id: "monsterbingo", slug: "monsterbingo", name: "Spill3", type: "game_3", row: 5, columns: 5, photo: "mb.png", pattern: true },
     ],
+    fetchGameType: async (slug: string) => {
+      const all: Record<string, { _id: string; slug: string; name: string; type: string; row: number; columns: number; photo: string; pattern: boolean }> = {
+        bingo: { _id: "bingo", slug: "bingo", name: "Spill1", type: "game_1", row: 5, columns: 5, photo: "bingo.png", pattern: true },
+        monsterbingo: { _id: "monsterbingo", slug: "monsterbingo", name: "Spill3", type: "game_3", row: 5, columns: 5, photo: "mb.png", pattern: true },
+      };
+      return all[slug] ?? null;
+    },
   };
 });
 
+function installFetchMock(response: { ok?: boolean; status?: number; body?: unknown }) {
+  const resp = {
+    ok: response.ok ?? true,
+    status: response.status ?? 200,
+    body: response.body ?? { ok: true, data: { games: [], count: 0 } },
+  };
+  const fetchMock = vi.fn(async () => {
+    return {
+      ok: resp.ok,
+      status: resp.status,
+      async json() {
+        return resp.body;
+      },
+    } as unknown as Response;
+  });
+  (globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
+}
+
 describe("GameManagementPage (list/picker)", () => {
-  beforeEach(() => initI18n());
+  beforeEach(() => {
+    initI18n();
+    installFetchMock({});
+  });
   afterEach(() => {
     window.location.hash = "";
   });
@@ -43,29 +71,39 @@ describe("GameManagementPage (list/picker)", () => {
     expect(opts.length).toBe(3);
   });
 
-  it("renders the BIN-622 add-button disabled", async () => {
+  it("without typeId, Add-button is disabled (aria-disabled + onclick=return false)", async () => {
     const c = document.createElement("div");
     await renderGameManagementPage(c);
-    const btn = c.querySelector("button[disabled]");
-    expect(btn?.getAttribute("title")).toContain("BIN-622");
+    const addBtn = c.querySelector<HTMLAnchorElement>("#gm-add-btn");
+    expect(addBtn).not.toBeNull();
+    expect(addBtn?.getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("when typeId is provided, renders the header + banner + backend placeholder", async () => {
+  it("with typeId, Add-button links to /gameManagement/:typeId/add", async () => {
+    const c = document.createElement("div");
+    await renderGameManagementPage(c, "bingo");
+    const addBtn = c.querySelector<HTMLAnchorElement>("#gm-add-btn");
+    expect(addBtn).not.toBeNull();
+    expect(addBtn?.getAttribute("href")).toBe("#/gameManagement/bingo/add");
+    expect(addBtn?.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("when typeId is provided, renders the header with game name", async () => {
     const c = document.createElement("div");
     await renderGameManagementPage(c, "bingo");
     expect(c.querySelector("#gm-list-header h1")?.textContent).toContain("Spill1");
-    expect(c.querySelector("#gm-backend-banner .alert")?.textContent).toContain("BIN-622");
+    // Banner skal være tom nå som BIN-622 er merget.
+    const banner = c.querySelector("#gm-backend-banner");
+    expect(banner?.innerHTML.trim()).toBe("");
   });
 });
 
-describe("GameManagement detail pages (BIN-622 / BIN-623 placeholders)", () => {
-  beforeEach(() => initI18n());
-
-  it("add page renders banner with BIN-622", async () => {
-    const c = document.createElement("div");
-    await renderGameManagementAddPage(c, "bingo");
-    expect(c.querySelector(".alert")?.textContent).toContain("BIN-622");
+describe("GameManagement detail pages (BIN-623 placeholders)", () => {
+  beforeEach(() => {
+    initI18n();
+    installFetchMock({});
   });
+
   it("add-g3 page renders banner with BIN-622 and Game 3 wording", async () => {
     const c = document.createElement("div");
     await renderGameManagementAddG3Page(c, "monsterbingo");
