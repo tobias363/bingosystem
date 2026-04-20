@@ -557,19 +557,45 @@ class Game1Controller implements GameController {
   private onPatternWon(result: PatternWonPayload, _state: GameState): void {
     if (this.phase === "PLAYING" && this.playScreen) this.playScreen.onPatternWon(result);
 
-    // Toast notification (Unity: OnPatternWon_Spillorama shows winner info)
-    const isMe = result.winnerId === this.myPlayerId;
+    // BIN-696: Vis annonsering til alle spillere om at fasen er vunnet.
+    // Fullt Hus har spesiell tekst ("Spillet er over") — alle andre faser
+    // bruker pattern-navnet direkte ("Rad 1 er vunnet", "Rad 2 er vunnet",
+    // osv.). Standardisert 3s varighet per Tobias' ønske (2026-04-20).
+    const isFullHouse = result.claimType === "BINGO";
+    const phaseMsg = isFullHouse
+      ? "Fullt Hus er vunnet. Spillet er over."
+      : `${result.patternName} er vunnet!`;
+    this.toast?.info(phaseMsg, 3000);
+
+    // BIN-696: Vinner-spesifikk annonsering med split-forklaring.
+    // `winnerIds` er fullt array ved multi-winner split (flere spillere
+    // oppfylte fasen samtidig). `winnerId` peker til første vinner (back-
+    // compat). Hvis backend ikke har sendt winnerIds (eldre deploy), fall
+    // tilbake til `winnerId`-sjekk.
+    const winnerIds = result.winnerIds ?? (result.winnerId ? [result.winnerId] : []);
+    const isMe = this.myPlayerId !== null && winnerIds.includes(this.myPlayerId);
+    const winnerCount = result.winnerCount ?? winnerIds.length;
+
     if (isMe) {
-      this.toast?.win(`Du vant ${result.patternName}! ${result.payoutAmount} kr`);
+      // Først: hvilket fase vant du? Fullt Hus får en litt mer dramatisk tekst.
+      const winBase = isFullHouse
+        ? `Du vant Fullt Hus! Din andel: ${result.payoutAmount} kr`
+        : `Du vant ${result.patternName}! Din andel: ${result.payoutAmount} kr`;
+
+      // Deretter: hvis split — forklar hvorfor gevinsten er delt.
+      const splitSuffix = winnerCount > 1
+        ? ` (premien delt på ${winnerCount} spillere som vant samtidig)`
+        : "";
+
+      this.toast?.win(`${winBase}${splitSuffix}`, 5000);
       this.deps.audio.playBingoSound();
-    } else {
-      this.toast?.info(`${result.patternName} vunnet av en annen spiller`);
     }
 
     telemetry.trackEvent("pattern_won", {
       patternName: result.patternName,
       isMe,
       payoutAmount: result.payoutAmount,
+      winnerCount,
     });
   }
 
