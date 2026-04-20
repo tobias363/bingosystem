@@ -530,3 +530,40 @@ export interface TopPlayersResponse {
   count: number;
   players: TopPlayerEntry[];
 }
+
+// ── BIN-629: Player login-history ───────────────────────────────────────────
+//
+// Wire-shape for `GET /api/admin/players/:id/login-history`. Per-player
+// login audit view used by admin-player-detail-UI. Source of truth is the
+// shared `app_audit_log` table — rows are emitted by the auth-router for
+// every `/api/auth/login` success and failure. Legacy reference:
+// `legacy/unity-backend/App/Models/loginHistory.js` (fields: date, ip,
+// client; we add `success` + `failureReason` because the audit-log already
+// distinguishes them — the legacy UI only rendered the first three).
+
+/** Single login attempt for a player. */
+export interface PlayerLoginHistoryEntry {
+  /** Stable audit-log row id. */
+  id: string;
+  /** ISO-8601 timestamp of the login attempt. */
+  timestamp: string;
+  /** Remote IP, null if the request was loopback/proxy-stripped. */
+  ipAddress: string | null;
+  /** Client user-agent string, null if the browser omitted it. */
+  userAgent: string | null;
+  /** True when the login resulted in a session; false for failed attempts. */
+  success: boolean;
+  /** Stable code for why a failed login failed (`INVALID_CREDENTIALS`, …). */
+  failureReason: string | null;
+}
+
+/** Paginated wire-shape for GET /api/admin/players/:id/login-history. */
+export interface PlayerLoginHistoryResponse {
+  userId: string;
+  /** ISO window echoed back from the request, null when unbounded. */
+  from: string | null;
+  to: string | null;
+  items: PlayerLoginHistoryEntry[];
+  /** Opaque base64url offset cursor; null when no further pages. */
+  nextCursor: string | null;
+}
