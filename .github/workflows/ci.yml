@@ -59,3 +59,35 @@ jobs:
 
       - name: Run shared-types wire-contract tests
         run: npm --prefix packages/shared-types run test
+
+  admin-web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install workspace dependencies
+        # admin-web is part of the root npm workspace and depends on
+        # @spillorama/shared-types via the workspace link, so install from root.
+        run: npm ci --no-audit --no-fund
+
+      - name: Build packages/shared-types
+        # admin-web imports types from shared-types/src/schemas.js, which needs
+        # the built .js output available when tsc resolves the workspace link.
+        run: npm --prefix packages/shared-types run build
+
+      - name: Type check apps/admin-web
+        # Hard gate: any TS error in admin-web fails CI. Introduced after 101
+        # schema-mismatch errors slipped past CI because only vitest was run.
+        run: npm --prefix apps/admin-web run check
+
+      - name: Run apps/admin-web tests
+        run: npm --prefix apps/admin-web run test
