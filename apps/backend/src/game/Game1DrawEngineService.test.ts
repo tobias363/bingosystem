@@ -1180,6 +1180,11 @@ test("integration: startGame → 3×drawNext loop (2 purchases, maxDraws=3)", as
   let lastDrawnBall: number | null = null;
   let engineEndedAt: string | null = null;
   let started = false;
+  // Stateful mock: game_state-raden eksisterer ikke før INSERT. Uten dette
+  // short-circuiter startGame via idempotent-guard (eksisterende state finnes
+  // → hopper over INSERT + UPDATE status='running'), og drawNext ser da
+  // scheduled_game i 'ready_to_start' → GAME_NOT_RUNNING.
+  let stateInserted = false;
 
   const gameStateRow = () => ({
     scheduled_game_id: "g-integration",
@@ -1214,19 +1219,22 @@ test("integration: startGame → 3×drawNext loop (2 purchases, maxDraws=3)", as
       {
         match: (s) =>
           s.includes("app_game1_game_state") && s.includes("FOR UPDATE"),
-        rows: () => (drawsCompleted >= 0 && drawBag.length > 0 && engineEndedAt === null ? [gameStateRow()] : []),
+        rows: () => (stateInserted && engineEndedAt === null ? [gameStateRow()] : []),
         once: false,
       },
       {
         match: (s) =>
           s.includes("app_game1_game_state") && s.includes("SELECT"),
-        rows: () => (drawsCompleted >= 0 ? [gameStateRow()] : []),
+        rows: () => (stateInserted ? [gameStateRow()] : []),
         once: false,
       },
       {
         match: (s) =>
           s.includes("INSERT INTO") && s.includes("app_game1_game_state"),
-        rows: [],
+        rows: () => {
+          stateInserted = true;
+          return [];
+        },
         once: false,
       },
       {
