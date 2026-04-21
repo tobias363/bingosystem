@@ -81,7 +81,15 @@ function prioritiseDrawBag(engine: BingoEngine, roomCode: string, numbers: numbe
   bag.push(...preferred, ...rest);
 }
 
-/** Spying wallet som tar vare på alle transfer-kall og deres idempotency-keys. */
+/** Spying wallet som tar vare på alle transfer-kall og deres idempotency-keys.
+ *
+ * NB: `InMemoryWalletAdapter.transfer` (i BingoEngine.test.ts) implementerer
+ * KUN 4-arg-varianten (from, to, amount, reason) — den ignorerer
+ * `options`-parameteren fra WalletAdapter-interface. Vi tar imot det 5.
+ * argumentet her for å fange `idempotencyKey`, men kan ikke propagere det
+ * til super (som ville gitt TS2554). Dedup-sjekken i testen vår er helt
+ * basert på det vi selv har fanget — `super`-kallet trenger ikke å se det.
+ */
 class IdempotencyCapturingWallet extends InMemoryWalletAdapter {
   transferCalls: Array<{ from: string; to: string; amount: number; idempotencyKey?: string }> = [];
   override async transfer(
@@ -92,7 +100,7 @@ class IdempotencyCapturingWallet extends InMemoryWalletAdapter {
     options?: TransactionOptions,
   ): Promise<WalletTransferResult> {
     this.transferCalls.push({ from, to, amount, idempotencyKey: options?.idempotencyKey });
-    return super.transfer(from, to, amount, reason, options);
+    return super.transfer(from, to, amount, reason);
   }
 }
 
@@ -311,8 +319,10 @@ test("invariant 4: spying wallet bekrefter at hver individuell payout har per-wi
 
   // Hver vinner skal ha EN transfer-call med key phase-<phase1Id>-<gameId>-<playerId>
   for (const playerId of playerIds) {
-    const expected = `phase-${phase1Id}-${gameId}-${playerId}`;
-    const matching = wallet.transferCalls.filter((c) => c.idempotencyKey === expected);
+    const expected: string = `phase-${phase1Id}-${gameId}-${playerId}`;
+    const matching: typeof wallet.transferCalls = wallet.transferCalls.filter(
+      (c) => c.idempotencyKey === expected,
+    );
     assert.equal(
       matching.length, 1,
       `nøyaktig 1 transfer med key "${expected}" (fikk ${matching.length})`,
@@ -340,17 +350,20 @@ test("invariant 4b: wallet med dedup sikrer at replay ikke dobbelt-utbetaler", a
     }
     listAccounts(): Promise<WalletAccount[]> { return this.base.listAccounts(); }
     getBalance(accountId: string): Promise<number> { return this.base.getBalance(accountId); }
-    debit(accountId: string, amount: number, reason: string, options?: TransactionOptions) {
-      return this.base.debit(accountId, amount, reason, options);
+    // Delegat-metoder: InMemoryWalletAdapter (base) implementerer ikke
+    // options-parameteren, så vi dropper det ved delegering. Dedup-logikken
+    // lever helt i `transfer`-wrapperen.
+    debit(accountId: string, amount: number, reason: string, _options?: TransactionOptions) {
+      return this.base.debit(accountId, amount, reason);
     }
-    credit(accountId: string, amount: number, reason: string, options?: TransactionOptions) {
-      return this.base.credit(accountId, amount, reason, options);
+    credit(accountId: string, amount: number, reason: string, _options?: TransactionOptions) {
+      return this.base.credit(accountId, amount, reason);
     }
-    topUp(accountId: string, amount: number, reason?: string, options?: TransactionOptions) {
-      return this.base.topUp(accountId, amount, reason, options);
+    topUp(accountId: string, amount: number, reason?: string, _options?: TransactionOptions) {
+      return this.base.topUp(accountId, amount, reason);
     }
-    withdraw(accountId: string, amount: number, reason?: string, options?: TransactionOptions) {
-      return this.base.withdraw(accountId, amount, reason, options);
+    withdraw(accountId: string, amount: number, reason?: string, _options?: TransactionOptions) {
+      return this.base.withdraw(accountId, amount, reason);
     }
     listTransactions(accountId: string, limit?: number): Promise<WalletTransaction[]> {
       return this.base.listTransactions(accountId, limit);
@@ -364,7 +377,7 @@ test("invariant 4b: wallet med dedup sikrer at replay ikke dobbelt-utbetaler", a
         this.dedupedCount += 1;
         return this.seenKeys.get(key)!;
       }
-      const result = await this.base.transfer(from, to, amount, reason, options);
+      const result = await this.base.transfer(from, to, amount, reason);
       if (key) this.seenKeys.set(key, result);
       return result;
     }
