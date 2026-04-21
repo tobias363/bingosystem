@@ -1,5 +1,4 @@
 // PR-A5 (BIN-663) — /hall/add + /hall/edit/:id.
-// Port of legacy/unity-backend/App/Views/Hall/addHall.html.
 //
 // Data:
 //   POST /api/admin/halls                 create
@@ -23,7 +22,7 @@ import {
   escapeHtml,
 } from "../adminUsers/shared.js";
 
-const CLIENT_VARIANTS: readonly HallClientVariant[] = ["unity", "web", "unity-fallback"];
+const CLIENT_VARIANTS: readonly HallClientVariant[] = ["web"];
 
 export function renderHallFormPage(container: HTMLElement, editId: string | null): void {
   const isEdit = editId !== null;

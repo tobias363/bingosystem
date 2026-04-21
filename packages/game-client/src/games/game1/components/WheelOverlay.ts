@@ -7,7 +7,6 @@ import type { MiniGameActivatedPayload, MiniGamePlayResult } from "@spillorama/s
  * Shown after BINGO win. Player spins to win bonus prize.
  * Outcome is server-determined.
  *
- * Unity parity (100% 1:1):
  *   - `SpinWheelScript.cs:174,180,186` — **50 physical segments**, 7.2° per segment,
  *     `zRotation = -3.6f` initial offset. Prize labels repeat if prizeList is shorter
  *     than 50 (modulo), matching Unity's prefab-style duplicate labels.
@@ -192,8 +191,7 @@ export class WheelOverlay extends Container {
     this.visible = true;
 
     // Auto-spin countdown (10 seconds). Respects server-authoritative pause —
-    // while paused, the timer does not decrement (Unity parity:
-    // Game1GamePlayPanel.SocketFlow.cs:672-696 freezes the scheduler on pause).
+    // while paused, the timer does not decrement.
     this.autoSpinCountdown = AUTO_SPIN_SECONDS;
     this.timerText.text = `Auto-spinn om ${this.autoSpinCountdown}s`;
     this.autoSpinTimer = setInterval(() => {
@@ -215,7 +213,6 @@ export class WheelOverlay extends Container {
     this.clearAutoTimer();
     this.timerText.text = "";
 
-    // Unity: SpinWheelScript.SpinTheWheel sets the pointer at the target-prize
     // angle with ± 3.25° jitter, then Update() spins with decay until it
     // reaches target. We replicate by placing the wheel at a starting rotation
     // then stepping via raf with rotationSpeed *= R_MULTIPLIER.
@@ -290,7 +287,7 @@ export class WheelOverlay extends Container {
   }
 
   /**
-   * Draw the 50-segment wheel (Unity SpinWheelScript.cs:180 loops i=0..50).
+   * Draw the 50-segment wheel.
    * When prizeList < 50 we cycle through it modulo, matching Unity's behaviour
    * of duplicate prize tiers across the physical wheel.
    */
@@ -304,8 +301,7 @@ export class WheelOverlay extends Container {
       const endAngle = startAngle + segmentAngleRad;
 
       // Dynamic palette: HSL rotation around the colour wheel so neighbouring
-      // segments contrast and the full wheel reads as a rainbow (Unity reads
-      // colour from a prefab; we generate procedurally). Alternating slight
+      // segments contrast and the full wheel reads as a rainbow. Alternating slight
       // lightness/saturation gives a segmented look without requiring a 50-
       // colour hand-tuned palette.
       const hue = (i * 360) / NUM_SEGMENTS;

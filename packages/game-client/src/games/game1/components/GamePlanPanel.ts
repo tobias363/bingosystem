@@ -5,7 +5,6 @@
  * Fetches schedule from GET /api/halls/:hallId/schedule and displays
  * each slot with game name, time, variant type, and action buttons.
  *
- * Unity reference:
  * - PrefabGamePlan1Ticket.cs — game plan card with OnBuyButtonTap / OnPlayButtonTap
  * - Game1GamePlayPanel.UpcomingGames.cs — upcoming game ticket purchase UI
  */

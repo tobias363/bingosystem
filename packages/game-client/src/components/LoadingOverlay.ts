@@ -16,7 +16,6 @@
  * more than `stuckThresholdMs` (default 5s), a "Last siden på nytt" reload
  * button appears so the user can escape.
  *
- * Unity reference:
  *   - UtilityLoaderPanel.ShowLoader() / HideLoader()
  *   - Game1GamePlayPanel.DisplayLoader(true/false)
  */

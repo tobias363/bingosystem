@@ -4,11 +4,9 @@ import type { HtmlOverlayManager } from "./HtmlOverlayManager.js";
  * F3 (BIN-431): Jackpot header bar — lightweight HTML overlay matching Unity's
  * `PanelRowDetails` jackpot row.
  *
- * Unity references:
  *   - Game1GamePlayPanel.SocketFlow.cs:518-520 — populates
  *     `PanelRowDetails.txtJackpotDetails.text = $"{jackPotData.draw} Jackpot : {jackPotData.winningAmount} kr"`
  *     and toggles `PanelRowDetails.JackpotObject.SetActive(jackPotData.isDisplay)`.
- *   - Game1GamePlayPanel.cs:179 — `Panel_Game_Header` is the RectTransform that
  *     slides -80px left when the chat opens (ChatLayout.cs:51-70, :112-125).
  *     G17 animates the container's left/right CSS offsets to mirror that.
  *
@@ -50,7 +48,6 @@ export class HeaderBar {
   /**
    * Update the header bar from room:update.gameVariant.jackpot.
    * Hides the bar when the value is null or `isDisplay` is falsy — mirroring
-   * Unity's `JackpotObject.SetActive(jackPotData.isDisplay)`.
    */
   update(jackpot: { drawThreshold: number; prize: number; isDisplay: boolean } | null | undefined): void {
     if (!jackpot || !jackpot.isDisplay) {
@@ -63,8 +60,7 @@ export class HeaderBar {
 
   /**
    * G17 (BIN-431): Animate the header horizontally when the chat opens/closes.
-   * Unity: `Panel_Game_Header` slides -80px left on open, +80px (back to 0) on
-   * close, GSAP-style 0.25s linear (Unity uses LeanTween default linear).
+   * close, GSAP-style 0.25s linear.
    * Cancel-in-flight is handled by the CSS transition auto-restarting from the
    * current computed value.
    */

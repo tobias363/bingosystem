@@ -12,6 +12,7 @@ export default defineConfig({
       fileName: () => "main.js",
     },
     rollupOptions: {
+      external: ["@sentry/browser"],
       output: {
         chunkFileNames: "chunks/[name]-[hash].js",
         assetFileNames: "assets/[name]-[hash].[ext]",

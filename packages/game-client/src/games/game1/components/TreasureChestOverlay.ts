@@ -10,7 +10,7 @@ const CHEST_COLORS = {
   winner: 0xffe83d,
 };
 
-/** Auto-back delay after reveal, in seconds (Unity `TreasureChestPanel.cs:611`). */
+/** Auto-back delay after reveal, in seconds. */
 const AUTO_BACK_SECONDS = 12;
 const AUTO_SELECT_SECONDS = 10;
 
@@ -24,7 +24,6 @@ interface PauseAwareBridge {
  * Shows N chests — player picks one. Outcome is server-determined.
  * After reveal, all chests open showing prizes.
  *
- * Unity parity:
  *   - `TreasureChestPanel.cs:107` — auto-select after countdown.
  *   - `TreasureChestPanel.cs:541-542` — `OrderBy(Guid.NewGuid())` shuffle of prizes
  *     (client-side, cosmetic only — server still picks the winner).
@@ -127,7 +126,6 @@ export class TreasureChestOverlay extends Container {
   }
 
   show(data: MiniGameActivatedPayload): void {
-    // Unity parity: TreasureChestPanel.cs:541-542 shuffles the prize list
     // client-side before assigning each chest a label (`OrderBy(Guid.NewGuid())`).
     // The server still determines the winning index — this is cosmetic only so
     // players don't see the same chest order every round.
@@ -140,7 +138,6 @@ export class TreasureChestOverlay extends Container {
     this.visible = true;
 
     // Auto-select countdown (10 s). Respects server-authoritative pause —
-    // Unity: TreasureChestPanel.cs:633 freezes countdowns while room is paused.
     this.autoSelectCountdown = AUTO_SELECT_SECONDS;
     this.timerText.text = `Auto-valg om ${this.autoSelectCountdown}s`;
     this.autoSelectTimer = setInterval(() => {

@@ -1,6 +1,9 @@
 // BIN-264/265: Web Shell Lobby
-// Replaces Unity lobby. Shows game tiles, hall selector, wallet balance.
-// Unity only loads when a game tile is clicked.
+// Web-native lobby: shows game tiles, hall selector, wallet balance. All
+// bingo games (1-5) run in the Pixi/HTML game-client; Candy runs in its
+// own iframe overlay. Unity-loader code was removed 2026-04-21 — the Unity
+// build was never present in dev and its `web.loader.js` 404 spammed the
+// console with SyntaxError/createUnityInstance-not-defined on every load.
 (function () {
   'use strict';
 
@@ -17,14 +20,11 @@
     gameStatus: {}, // BIN-266: slug → { status, nextRoundAt }
     activeHallId: '',
     loading: true,
-    error: '',
-    unityLoaded: false,
-    unityLoading: false
+    error: ''
   };
 
-  // ── Spillorama Unity games ────────────────────────────────────────────
-  // These are the actual games inside the Spillorama Unity build (Game1-5 + Candy).
-  // Display names and game numbers match the Unity LobbyGameSelection.
+  // ── Spillorama games ──────────────────────────────────────────────────
+  // Display names and game numbers are stable identifiers used in routing.
   var SPILLORAMA_GAMES = [
     { gameNumber: 1, slug: 'game_1', title: 'Bingo',         description: '75-kulsbingo med flere spillvarianter' },
     { gameNumber: 2, slug: 'game_2', title: 'Rocket',        description: 'Tallspill med 3x3 brett og Lucky Number' },
@@ -117,9 +117,6 @@
 
       if (lobbyState.activeHallId) {
         sessionStorage.setItem(HALL_KEY, lobbyState.activeHallId);
-        // BIN-540: prefetch the hall's client-variant flag so shouldUseWebClient
-        // has a cached answer ready by the time the user clicks "Spill".
-        void fetchHallClientVariant(lobbyState.activeHallId);
         await loadCompliance();
       }
     } catch (err) {
@@ -150,57 +147,14 @@
 
   // ── Hall switch ──────────────────────────────────────────────────────────
 
-  // BIN-540: read the hall-level rollback flag once per session. Sticky per
-  // sessionStorage so flipping the flag in the DB never changes the engine
-  // a currently-loaded player is using mid-session. Re-fetched on each
-  // switchHall() so a hall-switch during a session does pick up the flag.
-  var CLIENT_VARIANT_KEY_PREFIX = 'spilloramaClientVariant:';
-
-  async function fetchHallClientVariant(hallId) {
-    if (!hallId) return 'unity';
-    var cacheKey = CLIENT_VARIANT_KEY_PREFIX + hallId;
-    var cached = sessionStorage.getItem(cacheKey);
-    if (cached === 'unity' || cached === 'web' || cached === 'unity-fallback') {
-      return cached;
-    }
-    try {
-      var res = await fetch('/api/halls/' + encodeURIComponent(hallId) + '/client-variant', { credentials: 'include' });
-      if (!res.ok) return 'unity';
-      var body = await res.json();
-      var variant = body && body.data && body.data.clientVariant;
-      if (variant === 'unity' || variant === 'web' || variant === 'unity-fallback') {
-        sessionStorage.setItem(cacheKey, variant);
-        return variant;
-      }
-    } catch (err) {
-      console.warn('[BIN-540] client-variant fetch failed — defaulting to unity', err);
-    }
-    return 'unity';
-  }
-
-  function readCachedHallClientVariant(hallId) {
-    if (!hallId) return 'unity';
-    var cached = sessionStorage.getItem(CLIENT_VARIANT_KEY_PREFIX + hallId);
-    return (cached === 'web' || cached === 'unity-fallback') ? cached : 'unity';
-  }
-
   async function switchHall(hallId) {
     lobbyState.activeHallId = hallId;
     sessionStorage.setItem(HALL_KEY, hallId);
-    // BIN-540: refresh the client-variant cache for the new hall in the
-    // background. Fire-and-forget — the value is only consulted at the next
-    // launchGame() call, by which time this request has usually returned.
-    void fetchHallClientVariant(hallId);
 
     // Sync to spillvett.js
     const hall = lobbyState.halls.find(h => h.id === hallId);
     if (typeof window.SetActiveHall === 'function') {
       window.SetActiveHall(hallId, hall ? hall.name : hallId);
-    }
-
-    // Notify Unity if it's running (game bar hall switch)
-    if (typeof window.SwitchActiveHallFromHost === 'function') {
-      window.SwitchActiveHallFromHost(hallId);
     }
 
     // Notify web game client of hall change
@@ -263,7 +217,7 @@
       }
     }
 
-    // Candy special case — iframe overlay instead of Unity
+    // Candy special case — iframe overlay (independent of Unity)
     if (game.slug === 'candy') {
       if (typeof window.launchCandyOverlay === 'function') {
         window.launchCandyOverlay();
@@ -271,44 +225,11 @@
       return;
     }
 
-    // BIN-330: Feature flag — web game client or Unity
-    if (shouldUseWebClient(game)) {
-      loadWebGame(game);
-      return;
-    }
-
-    // For bingo games — load Unity and navigate to the game
-    loadUnityAndStartGame(game);
+    // All bingo games (game_1..game_5) run in the Pixi/HTML web client.
+    loadWebGame(game);
   }
 
-  // ── Web game client (PixiJS) ────────────────────────────────────────────
-
-  /**
-   * Check if a game should use the new web client instead of Unity.
-   * Controlled via game.settings.clientEngine in the database (from GET /api/games).
-   * Default is Unity during pilot — web is opt-in per game via admin.
-   */
-  function shouldUseWebClient(game) {
-    // BIN-540: hall-level rollback flag has the highest priority and is the
-    // only way to force all halls back to Unity in < 2 min without a redeploy.
-    // `unity-fallback` is the emergency-rollback state; `unity` is the default.
-    // Only `web` unlocks the per-game / ?webClient override.
-    var hallVariant = readCachedHallClientVariant(lobbyState.activeHallId);
-    if (hallVariant === 'unity' || hallVariant === 'unity-fallback') return false;
-
-    // Check game-level setting from backend
-    if (game.settings && game.settings.clientEngine === 'web') return true;
-
-    // Override via URL param for testing: ?webClient=game_2
-    var params = new URLSearchParams(window.location.search);
-    var webClientParam = params.get('webClient');
-    if (webClientParam === game.slug || webClientParam === 'all') return true;
-
-    // Also match by game number for convenience (?webClient=game_2 matches slug "rocket" via gameNumber 2)
-    if (webClientParam && webClientParam.startsWith('game_') && game.gameNumber === parseInt(webClientParam.split('_')[1])) return true;
-
-    return false;
-  }
+  // ── Web game client (PixiJS/HTML) ───────────────────────────────────────
 
   var webGameLoading = false;
 
@@ -318,12 +239,10 @@
 
     var lobbyEl = document.getElementById('lobby-screen');
     var webContainer = document.getElementById('web-game-container');
-    var unityContainer = document.getElementById('unity-container');
     var backBar = document.getElementById('lobby-back-bar');
 
-    // Hide lobby and Unity, show web container
+    // Hide lobby, show web container
     if (lobbyEl) lobbyEl.style.display = 'none';
-    if (unityContainer) unityContainer.style.display = 'none';
     if (webContainer) webContainer.style.display = 'block';
     if (backBar) backBar.classList.add('is-visible');
     if (typeof window.syncGameBar === 'function') window.syncGameBar();
@@ -340,69 +259,26 @@
           hallId: lobbyState.activeHallId,
           serverUrl: window.location.origin,
         });
+      } else {
+        throw new Error('web game client loaded but mountGame export missing');
       }
     } catch (err) {
       console.error('[lobby] Failed to load web game client:', err);
-      // Fallback to Unity on load failure
+      // Web client is the only engine now — show a user-visible error and
+      // return to lobby so the player isn't stranded on a blank screen.
       if (webContainer) webContainer.style.display = 'none';
-      webGameLoading = false;
-      loadUnityAndStartGame(game);
-      return;
+      if (lobbyEl) lobbyEl.style.display = '';
+      if (backBar) backBar.classList.remove('is-visible');
+      if (typeof window.showLobbyToast === 'function') {
+        window.showLobbyToast('Kunne ikke starte spillet. Prøv igjen.', 'error');
+      }
     }
 
     webGameLoading = false;
   }
 
-  function loadUnityAndStartGame(game) {
-    const lobbyEl = document.getElementById('lobby-screen');
-    const unityContainer = document.getElementById('unity-container');
-    const backBar = document.getElementById('lobby-back-bar');
-
-    // Token and hall already synced in launchGame()
-
-    if (lobbyState.unityLoaded) {
-      // Unity already loaded, just navigate
-      if (lobbyEl) lobbyEl.style.display = 'none';
-      if (unityContainer) unityContainer.style.display = 'block';
-      if (backBar) backBar.classList.add('is-visible');
-      if (typeof window.syncGameBar === 'function') window.syncGameBar();
-      startGameBarBalancePoll();
-      navigateUnityToGame(game);
-      return;
-    }
-
-    if (lobbyState.unityLoading) return;
-    lobbyState.unityLoading = true;
-
-    // Show Unity container with loading bar
-    if (lobbyEl) lobbyEl.style.display = 'none';
-    if (unityContainer) unityContainer.style.display = 'block';
-    if (backBar) backBar.classList.add('is-visible');
-    if (typeof window.syncGameBar === 'function') window.syncGameBar();
-    startGameBarBalancePoll();
-
-    // Load Unity loader script
-    window._pendingGame = game;
-    window._initUnity();
-
-    // Mark as loaded once Unity instance is created (set by index.html)
-    var checkLoaded = setInterval(function () {
-      if (window._spilloramaUnityLoaded) {
-        lobbyState.unityLoaded = true;
-        lobbyState.unityLoading = false;
-        clearInterval(checkLoaded);
-      }
-    }, 500);
-  }
-
-  function navigateUnityToGame(game) {
-    if (typeof window.NavigateSpilloramaGame === 'function') {
-      window.NavigateSpilloramaGame(game.gameNumber);
-    }
-  }
-
   // ── Game-bar saldo polling ────────────────────────────────────────────────
-  // While Unity is running the lobby's 30s status refresh keeps #lobby-balance
+  // While a game is active the lobby's 30s status refresh keeps #lobby-balance
   // updated (and renderLobby copies it to #game-bar-balance). We also run a
   // dedicated wallet poll every 30 s so balance reflects recent round results.
   var _gameBarWalletInterval = null;
@@ -474,14 +350,12 @@
     }
   }
 
-  // Called from Unity/host when returning to lobby
+  // Called by the in-game back-button or shell when returning to lobby.
   window.returnToShellLobby = function returnToShellLobby() {
     const lobbyEl = document.getElementById('lobby-screen');
-    const unityContainer = document.getElementById('unity-container');
     const webContainer = document.getElementById('web-game-container');
     const backBar = document.getElementById('lobby-back-bar');
     if (lobbyEl) lobbyEl.style.display = '';
-    if (unityContainer) unityContainer.style.display = 'none';
     if (backBar) backBar.classList.remove('is-visible');
 
     // Unmount web game client if active

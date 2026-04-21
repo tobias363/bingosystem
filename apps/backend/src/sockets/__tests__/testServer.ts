@@ -22,7 +22,6 @@ import {
 import type { Ticket, RoomSnapshot } from "../../game/types.js";
 import type { PublicAppUser, HallDefinition } from "../../platform/PlatformService.js";
 import { createGameEventHandlers, type GameEventsDeps } from "../gameEvents.js";
-import { registerLegacyEventAliases } from "../legacyEventAliases.js";
 import { SocketRateLimiter } from "../../middleware/socketRateLimit.js";
 import { RoomStateManager } from "../../util/roomState.js";
 import {
@@ -152,7 +151,7 @@ function createMockPlatformService() {
     assertUserEligibleForGameplay: (_user: PublicAppUser): void => { /* noop in dev */ },
     requireActiveHall: async (hallId: string): Promise<HallDefinition> => ({
       id: hallId, slug: hallId, name: `Test Hall ${hallId}`, region: "test", address: "Test",
-      isActive: true, clientVariant: "unity" as const,
+      isActive: true, clientVariant: "web" as const,
       createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
     }),
     listHallGameConfigs: async () => [{
@@ -333,8 +332,6 @@ export async function createTestServer(opts: CreateTestServerOptions = {}): Prom
   const registerGameEvents = createGameEventHandlers(deps);
   io.on("connection", (socket: Socket) => {
     registerGameEvents(socket);
-    // BIN-585: må registreres sist slik at canonical-handlers finnes.
-    registerLegacyEventAliases(socket);
   });
 
   // Start on random port

@@ -55,7 +55,7 @@ export class AnimatedBallQueue extends Container {
     const targetY = (this.balls.length - 1) * (BALL_SIZE + GAP);
     entry.container.x = 0;
     entry.container.y = -BALL_SIZE - 20; // Start above tube
-    entry.container.scale.set(1.2); // Unity highlightScale
+    entry.container.scale.set(1.2);
 
     gsap.to(entry.container, {
       y: targetY,

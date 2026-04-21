@@ -17,7 +17,7 @@ export interface TicketColorTheme {
   headerText: number;     // Header text color
   toGoColor: number;      // "ToGo" counter text
   toGoCloseColor: number; // "ToGo" when close to winning
-  largeBg: number;        // Ytre container BG for Large/Elvis ticket-grupper (Unity: Large_BG_Color RGB)
+  largeBg: number;        // Ytre container BG for Large/Elvis ticket-grupper
   largeBgAlpha: number;   // Alpha for largeBg (0..1). 0 = transparent (ikke bruk container BG)
   cellColors: BingoCellColors;
 }
@@ -32,12 +32,10 @@ export const ONE_TO_GO_COLOR = 0xb0d4a1;
  * Ticket color themes — verified against Unity TicketColorManager inspector values.
  * Extracted 2026-04-15 via CoPlay execute_script on Managers/Ticket_Color_Manager.
  *
- * Unity stores: name, BG_Color (card bg), Block_Color (cell bg), Large_BG_Color.
  * headerBg/headerText/toGoColor are derived (dark shade of card color for header).
  */
 export const TICKET_THEMES: TicketColorTheme[] = [
   // 0. DEFAULT — Beige/Tan
-  // Unity: BG=fff2ce, Block=ffd6a7, Large_BG=000000 a=1 (svart, ikke brukt aktivt)
   {
     name: "default",
     cardBg: 0xfff2ce,
@@ -60,7 +58,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 1. SMALL YELLOW
-  // Unity: BG=f5c103, Block=f6f36e, Large_BG=000000 a=0 (transparent)
   {
     name: "yellow",
     cardBg: 0xf5c103,
@@ -83,7 +80,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 2. SMALL WHITE
-  // Unity: BG=ffffff, Block=d2d2d2, Large_BG=000000 a=0 (transparent)
   {
     name: "white",
     cardBg: 0xffffff,
@@ -106,7 +102,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 3. SMALL PURPLE
-  // Unity: BG=af91ff, Block=7864ff, Large_BG=d2d2d2 a=1
   {
     name: "purple",
     cardBg: 0xaf91ff,
@@ -129,7 +124,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 4. SMALL RED
-  // Unity: BG=d20000, Block=ffa55f, Large_BG=ffc8c8 a=1
   {
     name: "red",
     cardBg: 0xd20000,
@@ -152,7 +146,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 5. SMALL GREEN
-  // Unity: BG=199600, Block=28ff78, Large_BG=d2d2d2 a=1
   {
     name: "green",
     cardBg: 0x199600,
@@ -175,7 +168,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 6. SMALL ORANGE
-  // Unity: BG=ff6400, Block=ffaa69, Large_BG=ffffff a=0.7058824 (~0.706)
   {
     name: "orange",
     cardBg: 0xff6400,
@@ -198,7 +190,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 7. ELVIS (all Elvis 1-5 share the same colors)
-  // Unity: BG=d20000, Block=ffa55f, Large_BG=4b0000 a=0.7058824
   {
     name: "elvis",
     cardBg: 0xd20000,
@@ -221,7 +212,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 8. LARGE YELLOW
-  // Unity: BG=ffc800, Block=ffff6e, Large_BG=ffffaf a=1
   // Distinkt fra Small Yellow — brukes når Unity navn = "Large Yellow"
   {
     name: "large_yellow",
@@ -245,8 +235,7 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 9. LARGE PURPLE
-  // Unity: BG=694bff, Block=af91ff, Large_BG=d2d2d2 a=1
-  // Distinkt fra Small Purple — mørkere base (Unity-spesifikt)
+  // Distinkt fra Small Purple — mørkere base
   {
     name: "large_purple",
     cardBg: 0x694bff,
@@ -269,7 +258,6 @@ export const TICKET_THEMES: TicketColorTheme[] = [
   },
 
   // 10. LARGE WHITE
-  // Unity: BG=d2d2d2, Block=ffffff, Large_BG=000000 a=0 (transparent)
   // Distinkt fra Small White — grå base, hvite cells (invertert)
   {
     name: "large_white",

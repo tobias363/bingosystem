@@ -13,7 +13,7 @@ export type TicketDisplayItem = TicketCard | TicketGroup;
  * Vertical grid scroller for Game 1 tickets.
  *
  * Matches Unity's GridLayoutGroup layout:
- * - cellSize: 250×250 (Unity units → scaled to web pixels)
+ * - cellSize: 250×250
  * - spacing: 10×10
  * - startAxis: Horizontal (fills left→right, wraps down)
  * - ScrollRect: vertical only
@@ -52,7 +52,7 @@ export class TicketGridScroller extends Container {
     this.innerContainer = new Container();
     this.addChild(this.innerContainer);
 
-    // Clipping mask
+    // Clipping mask.
     this.maskGraphics = new Graphics();
     this.maskGraphics.rect(0, 0, viewportWidth, viewportHeight);
     this.maskGraphics.fill(0xffffff);

@@ -174,7 +174,6 @@ export class PatternMiniGrid {
 
   /**
    * CSS breathe animation on a cell.
-   * Unity: LeanTween scale 1.06x, 0.5s, easeInOutSine, pingPong (infinite).
    */
   private pulseCell(cell: HTMLDivElement): void {
     cell.style.animation = "pattern-pulse 0.5s ease-in-out infinite alternate";

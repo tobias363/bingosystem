@@ -164,20 +164,30 @@ export class CenterTopPanel {
   /**
    * Previous payout amount per patternId — used to detect payout changes
    * and trigger the flash animation on the `txtAmount` span. Mirrors
-   * Unity's `PrefabBingoGame1Pattern.Update_Pattern_Amount` (PrefabBingoGame1Pattern.cs:107-110)
    * which writes `txtAmount.text = $"{amount} kr"`. Unity only updates text,
    * but product-side wants an animated flash to signal the change to
    * players — we add that here (PR-5 C3).
    */
   private lastAmountByPatternId = new Map<string, number>();
+  /**
+   * Memo of the last-rendered inputs so we skip the expensive `innerHTML = ""`
+   * + rebuild when nothing actually changed. `PlayScreen.update()` calls this
+   * on every room:update — without the memo, the prize-rows area flashed
+   * (DOM-nuke + re-create) on every ball draw and every player-join event.
+   */
+  private lastPatternsSignature: string | null = null;
 
   updatePatterns(patterns: PatternDefinition[], patternResults: PatternResult[], prizePool = 0): void {
+    const signature = this.computePatternsSignature(patterns, patternResults, prizePool);
+    if (signature === this.lastPatternsSignature) return;
+    this.lastPatternsSignature = signature;
+
     // Destroy old pattern grids
     for (const g of this.patternGrids) g.destroy();
     this.patternGrids = [];
     this.prizeRowsEl.innerHTML = "";
 
-    // Find first unwon pattern (Unity: currentPatternRow)
+    // Find first unwon pattern
     let currentPatternIdx = 0;
     for (let i = 0; i < patternResults.length; i++) {
       if (patternResults[i]?.isWon) currentPatternIdx = i + 1;
@@ -207,7 +217,7 @@ export class CenterTopPanel {
       const prize = result?.payoutAmount ?? Math.round((pattern.prizePercent / 100) * prizePool);
       const won = result?.isWon;
 
-      // Display name mapping (Unity: FormatRowText)
+      // Display name mapping
       let displayName = pattern.name;
       if (pattern.name === "Full House") displayName = "Full Hus";
       else if (pattern.name === "Picture" || pattern.name === "picture") displayName = "Bilde";
@@ -217,7 +227,6 @@ export class CenterTopPanel {
       span.textContent = `${displayName} – ${prize} kr`;
       let activeColor = "#ddd";
       if (won) {
-        // Unity: ActiveColour (green highlight for won patterns)
         activeColor = "#4caf50";
         span.style.color = activeColor;
         span.style.fontWeight = "700";
@@ -228,7 +237,6 @@ export class CenterTopPanel {
         span.style.color = activeColor;
         span.style.fontWeight = "700";
       } else {
-        // Unity: DeActiveColour (muted gray for pending patterns)
         activeColor = "#888";
         span.style.color = activeColor;
       }
@@ -236,7 +244,6 @@ export class CenterTopPanel {
       this.prizeRowsEl.appendChild(row);
 
       // PR-5 C3: flash when the payout amount for this pattern changes.
-      // Unity PrefabBingoGame1Pattern.Update_Pattern_Amount only sets text —
       // we add a GSAP scale + colour pulse so players notice mid-round payout
       // updates (e.g. when a partial win re-distributes the pool).
       seenIds.add(pattern.id);
@@ -305,14 +312,12 @@ export class CenterTopPanel {
    * button once the server-authoritative `disableBuyAfterBalls` threshold is
    * reached mid-round.
    *
-   * Unity parity:
    *   - `Game1GamePlayPanel.cs:170` `BuyMoreDisableFlagVal` (flag satt
    *     én gang per runde når drawCount krysser threshold).
    *   - `Game1GamePlayPanel.SocketFlow.cs:174` — serveren styrer `disableBuyAfterBalls`.
    *   - `Game1GamePlayPanel.SocketFlow.cs:109-113, :457-461, :485-489` — per-ball sjekk.
    *   - `BingoTemplates.cs:350` `disableBuyAfterBalls` (default threshold).
    *
-   * Unity setter bare `interactable = false` (ingen tooltip). Vi legger til
    * native `title`-attributt som en a11y-forbedring (PM godkjent Q2 2026-04-18):
    * "Kjøp er stengt — trekning pågår". Dette er en funksjonelt nøytral
    * produkt-forbedring — vanlige screenreadere annonserer disablede knapper,
@@ -338,7 +343,7 @@ export class CenterTopPanel {
     }
   }
 
-  /** Hide cancel button during game (Unity: deleteBtn hidden after game start). */
+  /** Hide cancel button during game. */
   setGameRunning(running: boolean): void {
     if (this.cancelBtn) this.cancelBtn.style.display = running ? "none" : "";
     if (this.buyMoreBtn) this.buyMoreBtn.style.display = running ? "" : "none";
@@ -347,6 +352,18 @@ export class CenterTopPanel {
   /** A6: Show/hide the manual start button based on scheduler.canStartNow + game status. */
   setCanStartNow(canStart: boolean, gameRunning: boolean): void {
     this.startGameBtn.style.display = canStart && !gameRunning ? "block" : "none";
+  }
+
+  private computePatternsSignature(
+    patterns: PatternDefinition[],
+    patternResults: PatternResult[],
+    prizePool: number,
+  ): string {
+    const pats = patterns.map((p) => `${p.id}:${p.name}:${p.design}:${p.prizePercent}`).join(",");
+    const wins = patternResults
+      .map((r) => `${r.patternId}:${r.isWon ? 1 : 0}:${r.payoutAmount ?? 0}`)
+      .join(",");
+    return `${pats}|${wins}|prize=${prizePool}`;
   }
 
   setBadge(text: string): void {

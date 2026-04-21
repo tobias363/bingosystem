@@ -6,8 +6,7 @@
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>SPILLORAMA</title>
-  <link rel="shortcut icon" href="TemplateData/favicon.ico">
-  <link rel="stylesheet" href="TemplateData/style.css">
+  <link rel="shortcut icon" href="logo.png">
   <link rel="stylesheet" href="spillvett.css">
 
   <style>
@@ -611,23 +610,6 @@
     }
     .lobby-footer-link:hover { color: rgba(255,255,255,0.7); }
 
-    /* ── Unity Container override ──────────────────────────────────────── */
-    #unity-container { display: none; }
-    #unity-footer { display: none; }
-
-    /* ── Game Top Bar — Unity canvas sits below the bar ─────────────────── */
-    #unity-container.unity-desktop {
-      position: fixed !important;
-      top: 80px !important;
-      left: 0 !important;
-      right: 0 !important;
-      bottom: 0 !important;
-      width: 100% !important;
-      height: calc(100dvh - 80px) !important;
-      height: calc(var(--vh, 100vh) - 80px) !important;
-      transform: none !important;
-    }
-
     /* ── Game Top Bar (mirrors lobby topbar look) ─────────────────────── */
     .lobby-back-bar {
       position: fixed; top: 0; left: 0; right: 0;
@@ -1179,8 +1161,7 @@
       #candy-overlay { padding: 0; }
       #candy-close-btn { top: 8px; right: 8px; padding: 8px 12px; font-size: 12px; }
 
-      /* Unity container — account for shorter game bar */
-      .lobby-back-bar.is-visible ~ #unity-container { top: 52px !important; height: calc(100dvh - 52px) !important; }
+      /* Game container — account for shorter game bar */
       .lobby-back-bar.is-visible ~ #web-game-container { top: 52px; height: calc(100dvh - 52px); }
     }
 
@@ -1197,7 +1178,6 @@
       .game-bar-logo-img { height: 24px; }
       .game-bar-title { display: none; }
       .lobby-back-btn { height: 28px; font-size: 12px; }
-      .lobby-back-bar.is-visible ~ #unity-container { top: 44px !important; height: calc(100dvh - 44px) !important; }
       .lobby-back-bar.is-visible ~ #web-game-container { top: 44px; height: calc(100dvh - 44px); }
     }
 
@@ -1609,27 +1589,10 @@
     </footer>
   </div>
 
-  <!-- ═══ 3a. WEB GAME CONTAINER (PixiJS, hidden, loads on demand) ═══════ -->
+  <!-- ═══ 3. WEB GAME CONTAINER (PixiJS, hidden, loads on demand) ═══════ -->
   <div id="web-game-container" style="display:none; position:fixed; inset:0; z-index:900; background:#1a1a2e;"></div>
 
-  <!-- ═══ 3b. UNITY CONTAINER (hidden, loads on demand) ═══════════════════ -->
-  <div id="unity-container" class="unity-desktop" style="display:none">
-    <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
-    <div id="unity-loading-bar">
-      <div id="unity-logo"></div>
-      <div id="unity-progress-bar-empty">
-        <div id="unity-progress-bar-full"></div>
-      </div>
-    </div>
-    <div id="unity-warning"> </div>
-    <div id="unity-footer">
-      <div id="unity-webgl-logo"></div>
-      <div id="unity-fullscreen-button"></div>
-      <div id="unity-build-title">SPILLORAMA</div>
-    </div>
-  </div>
-
-  <!-- ═══ 4. GAME TOP BAR (shown when Unity game is active) ══════════════ -->
+  <!-- ═══ 4. GAME TOP BAR (shown when a game is active) ═══════════════════ -->
   <div id="lobby-back-bar" class="lobby-back-bar">
 
     <!-- Left: logo + tilbake-knapp -->
@@ -1644,7 +1607,7 @@
       </button>
     </div>
 
-    <!-- Center: game name (oppdateres av Unity) -->
+    <!-- Center: game name (set by game client) -->
     <div class="game-bar-title" id="game-bar-name"></div>
 
     <!-- Right: hall + saldo + lommebok -->
@@ -1683,7 +1646,7 @@
     var hallId = sessionStorage.getItem('lobby.activeHallId') || '';
     if (!jwt) { alert('No JWT'); return; }
 
-    // Use socket.io-client loaded by Unity to query backend directly
+    // Use fetch to query backend directly — no engine dependency.
     var existing = document.getElementById('debug-overlay');
     if (existing) existing.remove();
 
@@ -2344,112 +2307,12 @@
   <script src="spillvett.js"></script>
 
   <script>
-    /* ── Unity on-demand loader & bridge ─────────────────────────────── */
-    var unityInstanceRef = null;
-    var _spilloramaUnityLoaded = false;
-    window._spilloramaUnityLoaded = false;
-    var _unityReady = false;
-    var _pendingNavigate = null;
+    /* ── Firebase web-token stash ────────────────────────────────────── */
+    // Firebase is still used for push notifications; the token-received
+    // handler below caches it so any future game-client subscription can
+    // pick it up. The Unity bridge that used to consume this was removed
+    // 2026-04-21.
     var _firebaseWebToken = null;
-
-    var container = document.querySelector("#unity-container");
-    var canvas = document.querySelector("#unity-canvas");
-    var loadingBar = document.querySelector("#unity-loading-bar");
-    var progressBarFull = document.querySelector("#unity-progress-bar-full");
-    var fullscreenButton = document.querySelector("#unity-fullscreen-button");
-    var warningBanner = document.querySelector("#unity-warning");
-
-    function unityShowBanner(msg, type) {
-      function updateBannerVisibility() {
-        warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
-      }
-      var div = document.createElement('div');
-      div.innerHTML = msg;
-      warningBanner.appendChild(div);
-      if (type == 'error') div.style = 'background: red; padding: 10px;';
-      else {
-        if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-        setTimeout(function () {
-          warningBanner.removeChild(div);
-          updateBannerVisibility();
-        }, 5000);
-      }
-      updateBannerVisibility();
-    }
-
-    var buildUrl = "Build";
-    var unityConfig = {
-      dataUrl: buildUrl + "/web.data.unityweb",
-      frameworkUrl: buildUrl + "/web.framework.js.unityweb",
-      codeUrl: buildUrl + "/web.wasm.unityweb",
-      streamingAssetsUrl: "StreamingAssets",
-      companyName: "AIS Technolabs",
-      productName: "SPILLORAMA",
-      productVersion: "8.1",
-      showBanner: unityShowBanner,
-    };
-
-    /* Called by lobby.js when a game tile is clicked */
-    window._initUnity = function _initUnity() {
-      if (_spilloramaUnityLoaded || document.getElementById('unity-loader-script')) return;
-
-      // Mobile viewport
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-        container.className = "unity-mobile";
-        canvas.className = "unity-mobile";
-      } else {
-        canvas.style.width = "100%";
-        canvas.style.height = "100%";
-      }
-
-      canvas.style.background = "url('" + buildUrl + "/web.jpg') center / cover";
-      loadingBar.style.display = "block";
-
-      // Store pending game from lobby.js
-      if (window._pendingGame) {
-        _pendingNavigate = window._pendingGame.gameNumber;
-      }
-
-      var script = document.createElement("script");
-      script.id = 'unity-loader-script';
-      script.src = buildUrl + "/web.loader.js";
-      script.onload = function () {
-        createUnityInstance(canvas, unityConfig, function (progress) {
-          progressBarFull.style.width = 100 * progress + "%";
-        }).then(function (unityInstance) {
-          unityInstanceRef = unityInstance;
-          _spilloramaUnityLoaded = true;
-          window._spilloramaUnityLoaded = true;
-          loadingBar.style.display = "none";
-
-          // Send stored Firebase token if available
-          if (_firebaseWebToken) {
-            unityInstance.SendMessage('FirebaseManager', 'OnWebTokenReceived', _firebaseWebToken);
-          }
-
-          fullscreenButton.onclick = function () {
-            if (window.vuplex) window.vuplex.SetFullscreen(1);
-          };
-
-          // Fallback: Application.ExternalCall("OnUnityReady") may silently fail in
-          // newer Unity WebGL builds. If Unity hasn't signalled after splash (3s) + buffer
-          // (5s), trigger OnUnityReady from the shell side instead.
-          setTimeout(function () {
-            if (!_unityReady) {
-              console.log('[Shell] OnUnityReady fallback — Unity did not signal in time');
-              OnUnityReady();
-            }
-          }, 10000); // 10s > splash delay (3s) + profile fetch buffer
-        }).catch(function (message) {
-          console.error('Unity load error:', message);
-        });
-      };
-      document.body.appendChild(script);
-    };
 
     /* ── Orientation & resize handling ─────────────────────────────── */
     (function () {
@@ -2461,11 +2324,6 @@
         resizeTimer = setTimeout(function () {
           // Update CSS custom property for real viewport height (100dvh fallback)
           document.documentElement.style.setProperty('--vh', window.innerHeight + 'px');
-
-          // Resize Unity canvas if running
-          if (canvas && canvas.style.width === '100%') {
-            canvas.style.height = window.innerHeight + 'px';
-          }
 
           // Resize web game container if visible
           var webContainer = document.getElementById('web-game-container');
@@ -2483,64 +2341,10 @@
       handleViewportResize();
     })();
 
-    /* ── Unity → JS bridge callbacks ────────────────────────────────── */
-
-    /* Called by Unity (SplashScreenPanel) when socket is connected (or timed out) and ready */
-    window.OnUnityReady = function OnUnityReady() {
-      _unityReady = true;
-
-      // BIN-270: Send Spillorama JWT — Unity uses SpilloramaSocketManager, no AIS socket needed
-      var jwt = sessionStorage.getItem('spillorama.accessToken') || '';
-      if (jwt && unityInstanceRef) {
-        unityInstanceRef.SendMessage('UIManager', 'ReceiveShellToken', jwt);
-      }
-
-      // Send active hall ID so Unity can join the correct Spillorama room
-      var hallId = sessionStorage.getItem('lobby.activeHallId') || '';
-      if (hallId && unityInstanceRef) {
-        unityInstanceRef.SendMessage('UIManager', 'SwitchActiveHallFromHost', hallId);
-      }
-
-      if (_pendingNavigate && unityInstanceRef) {
-        unityInstanceRef.SendMessage('UIManager', 'NavigateToGame', String(_pendingNavigate));
-        _pendingNavigate = null;
-      }
-    };
-
-    /* Called by Unity (SplashScreenPanel) as fallback to re-send credentials */
-    window.ProvideShellCredentials = function ProvideShellCredentials() {
-      // BIN-270: Send JWT only — AIS credentials no longer used
-      var jwt = sessionStorage.getItem('spillorama.accessToken') || '';
-      if (jwt && unityInstanceRef) {
-        unityInstanceRef.SendMessage('UIManager', 'ReceiveShellToken', jwt);
-      }
-    };
-
-    /* Phase 1: Called by auth.js after login/token refresh to push new JWT to a running Unity instance */
-    window.ProvideShellToken = function ProvideShellToken() {
-      var jwt = sessionStorage.getItem('spillorama.accessToken') || '';
-      if (jwt && unityInstanceRef) {
-        unityInstanceRef.SendMessage('UIManager', 'ReceiveShellToken', jwt);
-      }
-    };
-
-    /* Called by lobby.js or shell to navigate Unity to a game */
-    window.NavigateSpilloramaGame = function NavigateSpilloramaGame(gameNumber) {
-      if (unityInstanceRef) {
-        unityInstanceRef.SendMessage('UIManager', 'NavigateToGame', String(gameNumber));
-      }
-    };
-
-    /* Called by shell to switch Unity's active hall */
-    window.SwitchActiveHallFromHost = function SwitchActiveHallFromHost(hallId) {
-      if (unityInstanceRef && hallId) {
-        unityInstanceRef.SendMessage('UIManager', 'SwitchActiveHallFromHost', hallId);
-      }
-    };
-
     /* ── Game Bar ────────────────────────────────────────────────────── */
 
-    // Syncs saldo + hall fra lobby til game-baren
+    // Syncs saldo + hall from lobby to the game-bar shown while a game
+    // is active.
     window.syncGameBar = function() {
       var lobbyBal = document.getElementById('lobby-balance');
       var gameBal  = document.getElementById('game-bar-balance');
@@ -2557,7 +2361,7 @@
     // no-op — back bar visibility is handled entirely by lobby.js
     window.SpilloramaShowHeader = function() {};
 
-    // Called by Unity with game data — we only use gameName to update the bar title
+    // Called by the game client with game metadata (gameName updates the bar title).
     window.SpilloramaUpdateHeader = function(jsonStr) {
       try {
         var d = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
@@ -2568,12 +2372,28 @@
       } catch(e) {}
     };
 
-    /* Called by Unity to send domain data */
-    function requestDomainData() {
-      var serverUrl = window.location.origin;
-      if (typeof unityInstanceRef !== 'undefined' && unityInstanceRef) {
-        unityInstanceRef.SendMessage('Socket And Event Manager', 'DomainDataCall', serverUrl);
+    // Show a transient banner at the top of the screen (error/warning/info).
+    // Replaces the old showGameBanner that the Candy overlay used; the
+    // banner DOM lives in the Candy overlay so errors float above it.
+    function showGameBanner(msg, type) {
+      var banner = document.getElementById('game-banner');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'game-banner';
+        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:11000;pointer-events:none;';
+        document.body.appendChild(banner);
       }
+      var div = document.createElement('div');
+      div.style.cssText = 'padding:10px 14px;margin:6px;border-radius:6px;color:#fff;font-weight:600;';
+      if (type === 'error') div.style.background = 'rgba(200,40,40,0.95)';
+      else if (type === 'warning') div.style.background = 'rgba(220,170,30,0.95)';
+      else div.style.background = 'rgba(40,110,200,0.95)';
+      div.textContent = msg;
+      banner.appendChild(div);
+      setTimeout(function () {
+        div.remove();
+        if (!banner.childNodes.length) banner.remove();
+      }, 5000);
     }
     const CANDY_ROUTE = "/candy/";
     let existingTab = null;
@@ -2684,7 +2504,7 @@
 
     async function launchCandyOverlay() {
       if (!candyPlayerToken) {
-        unityShowBanner("Candy krever en aktiv Spillorama-session. Logg inn på nytt.", "error");
+        showGameBanner("Candy krever en aktiv Spillorama-session. Logg inn på nytt.", "error");
         return;
       }
 
@@ -2715,7 +2535,7 @@
       } catch (error) {
         console.error("Candy launch failed", error);
         resetCandyOverlayState();
-        unityShowBanner(error && error.message ? error.message : "Kunne ikke starte Candy Mania.", "error");
+        showGameBanner(error && error.message ? error.message : "Kunne ikke starte Candy Mania.", "error");
       }
     }
 
@@ -2752,18 +2572,16 @@
         case "candy:balanceChanged":
           setCandyLoading(false);
           setCandyStatus("Saldo oppdatert i Spillorama.", false);
-          if (unityInstanceRef) {
-            unityInstanceRef.SendMessage("UIManager", "RefreshPlayerWalletFromHost", "");
-          }
+          // Refresh shell-wide balance — dispatches the same event the game
+          // client sends, so the game-bar + lobby balance chips update.
+          window.dispatchEvent(new CustomEvent('spillorama:balanceRefreshRequested'));
           break;
         case "candy:gameStarted":
           setCandyStatus("Candy Mania er i gang.", false);
           break;
         case "candy:gameEnded":
           setCandyStatus("Spillet er avsluttet.", false);
-          if (unityInstanceRef) {
-            unityInstanceRef.SendMessage("UIManager", "RefreshPlayerWalletFromHost", "");
-          }
+          window.dispatchEvent(new CustomEvent('spillorama:balanceRefreshRequested'));
           break;
         case "candy:error":
           setCandyLoading(false);
@@ -2789,13 +2607,14 @@
       closeGameOverlay({ notifyIframe: false });
     }
 
-    // Expose to lobby.js and Unity
+    // Exposed for lobby.js + Candy iframe handshake.
     window.launchCandyOverlay = launchCandyOverlay;
     window.SetPlayerToken = SetPlayerToken;
     window.ClearPlayerToken = ClearPlayerToken;
     window.OpenUrlInSameTab = OpenUrlInSameTab;
 
-    /* Called by Unity to open a URL */
+    /* Generic URL open helper — historically Unity used this to route
+       through the Candy overlay when the URL was a /candy path. */
     function OpenUrlInSameTab(url) {
       if (isCandyRoute(url)) {
         launchCandyOverlay();
@@ -2914,10 +2733,8 @@
                 serviceWorkerRegistration: registration
               }).then(function (token) {
                 _firebaseWebToken = token;
-                // If Unity already loaded, send now
-                if (unityInstanceRef) {
-                  unityInstanceRef.SendMessage('FirebaseManager', 'OnWebTokenReceived', token);
-                }
+                // Fan out the token to any listener (future game-client push subscription).
+                window.dispatchEvent(new CustomEvent('spillorama:fcmToken', { detail: { token: token } }));
               }).catch(function (err) {
                 console.error("FCM getToken error:", err);
               });
@@ -2927,12 +2744,11 @@
 
         messaging.onMessage(function (payload) {
           console.log('Push received:', payload);
-          if (unityInstanceRef) {
-            unityInstanceRef.SendMessage('FirebaseManager', 'OnWebMessageReceived', JSON.stringify(payload));
-          }
+          // Relay to any listener (game client / lobby) via a generic event.
+          window.dispatchEvent(new CustomEvent('spillorama:fcmMessage', { detail: payload }));
           var title = (payload.notification && payload.notification.title) || 'Notification';
           var body = (payload.notification && payload.notification.body) || '';
-          var icon = 'TemplateData/favicon.ico';
+          var icon = 'logo.png';
           var staticURL = new URL('./', window.location.href).toString();
 
           if (Notification.permission === 'granted') {
