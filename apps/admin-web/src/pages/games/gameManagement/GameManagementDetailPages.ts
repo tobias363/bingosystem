@@ -143,22 +143,16 @@ function renderGameView(row: GameManagementRow): string {
     </div>`;
 }
 
-// ── Add / Add-G3: skjema-UI er ute av BIN-684-scope ─────────────────────────
+// ── Add / Add-G3 ───────────────────────────────────────────────────────────
 
-/** /gameManagement/:typeId/add — skjema-UI kommer i egen PR. */
-export async function renderGameManagementAddPage(container: HTMLElement, typeId: string): Promise<void> {
-  const gt = await resolveGameType(typeId);
-  container.innerHTML = renderShell({
-    title: `${t("add_game")} — ${gt?.name ?? typeId}`,
-    breadcrumb: [...baseCrumb(gt, typeId), { label: t("add_game") }],
-    backHref: `#/gameManagement?typeId=${encodeURIComponent(typeId)}`,
-    backLabel: t("back"),
-    body: placeholderBody(
-      "BIN-622",
-      "Add Game-skjema (50+ felt: prize tiers, hall-group visibility, sub-game komposisjon) er under arbeid. CRUD-endpoint er klar."
-    ),
-  });
-}
+/**
+ * /gameManagement/:typeId/add — erstatning for legacy gameAdd.html (2 497 lines).
+ *
+ * Spill 1 (game_1) får full skjema-UI via GameManagementAddForm.
+ * Andre varianter (game_2, game_5) får en "ikke wired ennå"-placeholder
+ * fra samme modul inntil de også blir implementert.
+ */
+export { renderGameManagementAddPage } from "./GameManagementAddForm.js";
 
 /** /gameManagement/:typeId/add-g3 — skjema-UI kommer i egen PR. */
 export async function renderGameManagementAddG3Page(container: HTMLElement, typeId: string): Promise<void> {
