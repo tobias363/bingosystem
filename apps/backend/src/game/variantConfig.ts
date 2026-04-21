@@ -117,7 +117,33 @@ export interface GameVariantConfig {
    * setter denne — G2/G3 har egen auto-claim via onDrawCompleted-override.
    */
   autoClaimPhaseMode?: boolean;
+  /**
+   * PR B (variantConfig-admin-kobling): per-farge pattern-matrise.
+   *
+   * Når satt tar `patternsByColor` presedens over flat `patterns[]` i
+   * `BingoEngine.evaluateActivePhase` — hver vinners premie beregnes fra
+   * matrisen som matcher vinnerens egen `Ticket.color`. Per PM-vedtak
+   * 2026-04-21 "Option X": hver farge kjører uavhengig matrise, multi-
+   * winner-split skjer **innen** én farges vinnere.
+   *
+   * Nøkkel-konvensjon:
+   *   - Nøkkelen matcher `TicketTypeConfig.name` (f.eks. "Small Yellow",
+   *     "Elvis 1") — identisk med `Ticket.color` på engine-siden.
+   *   - Spesialnøkkel `"__default__"` = fallback-matrise for farger som
+   *     ikke har eksplisitt oppføring. Mapperen setter alltid denne til
+   *     en kopi av `DEFAULT_NORSK_BINGO_CONFIG.patterns` slik at engine
+   *     aldri krasjer på ukjent farge. Engine logger warning når
+   *     default brukes for en farge som finnes i `ticketTypes[]`.
+   *
+   * Når `patternsByColor` er undefined faller engine tilbake til dagens
+   * flat-liste-semantikk — bakoverkompat med alle eksisterende tester
+   * og default-konfig.
+   */
+  patternsByColor?: Record<string, PatternConfig[]>;
 }
+
+/** Spesialnøkkel i `patternsByColor` for fallback-matrise (ukjent farge). */
+export const PATTERNS_BY_COLOR_DEFAULT_KEY = "__default__";
 
 // ── Default configs ───────────────────────────────────────────────────────────
 
@@ -340,6 +366,13 @@ export function parseVariantConfig(json: unknown, gameType: string): GameVariant
     jackpotNumberTable: (obj.jackpotNumberTable && typeof obj.jackpotNumberTable === "object")
       ? (obj.jackpotNumberTable as GameVariantConfig["jackpotNumberTable"])
       : defaults.jackpotNumberTable,
+    // PR B: patternsByColor-map tas over uendret fra input — validering
+    // av nøkler/verdier er spill1VariantMapper sitt ansvar. Hvis en rå
+    // JSON-input har feil shape (f.eks. array i stedet for object),
+    // ignoreres feltet og flat `patterns[]` brukes.
+    patternsByColor: (obj.patternsByColor && typeof obj.patternsByColor === "object" && !Array.isArray(obj.patternsByColor))
+      ? (obj.patternsByColor as GameVariantConfig["patternsByColor"])
+      : defaults.patternsByColor,
   };
 }
 
