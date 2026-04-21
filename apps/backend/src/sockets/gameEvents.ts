@@ -268,6 +268,14 @@ export interface GameEventsDeps {
   buildLeaderboard: (roomCode?: string) => LeaderboardEntry[];
   /** BIN-445: Get active variant config for a room (from schedule or default). */
   getVariantConfig?: (roomCode: string) => { gameType: string; config: import("../game/variantConfig.js").GameVariantConfig } | null;
+  /**
+   * BIN-694: Bind the default variant config for a freshly created or
+   * restored room, keyed on `gameSlug`. Idempotent — no-op when a
+   * variant is already set. Callers invoke this right after
+   * `engine.createRoom(...)` so `BingoEngine.meetsPhaseRequirement`
+   * sees the correct Norsk-bingo pattern names (1 Rad / 2 Rader / …).
+   */
+  bindDefaultVariantConfig?: (roomCode: string, gameSlug: string) => void;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
@@ -486,6 +494,7 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
           }
         }
 
+        const requestedGameSlug = typeof payload?.gameSlug === "string" ? payload.gameSlug : undefined;
         const { roomCode, playerId } = await engine.createRoom({
           playerName: identity.playerName,
           hallId: identity.hallId,
@@ -493,8 +502,16 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
           socketId: socket.id,
           // BIN-134: Use "BINGO1" as actual room code so SPA alias = real code
           roomCode: enforceSingleRoomPerHall ? "BINGO1" : undefined,
-          gameSlug: typeof payload?.gameSlug === "string" ? payload.gameSlug : undefined
+          gameSlug: requestedGameSlug
         });
+        // BIN-694: wire DEFAULT variantConfig (5-fase Norsk bingo for Game 1)
+        // immediately after room-creation. Before this, `setVariantConfig`
+        // was only called in tests — production rooms had no variant bound,
+        // so `meetsPhaseRequirement` fell back to the legacy 1-line rule and
+        // triggered every LINE phase on the first completed row. Defaulting
+        // the gameSlug to "bingo" matches `BingoEngine.createRoom` which
+        // does the same fallback on RoomState.gameSlug.
+        deps.bindDefaultVariantConfig?.(roomCode, requestedGameSlug?.trim() || "bingo");
         socket.join(roomCode);
         const snapshot = await emitRoomUpdate(roomCode);
         logger.debug({ roomCode }, "BIN-134: room:create SUCCESS");
@@ -525,6 +542,10 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
                 socketId: socket.id,
               });
               roomCode = newRoom.roomCode;
+              // BIN-694: wire DEFAULT variantConfig for the auto-created room.
+              // Same reasoning as the `room:create` branch above — without this
+              // the 5-phase progression fell back to legacy 1-line fallback.
+              deps.bindDefaultVariantConfig?.(roomCode, "bingo");
             }
           }
           const canonicalRoom = getPrimaryRoomForHall(identity.hallId);
