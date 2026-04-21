@@ -21,7 +21,7 @@ function validConfig() {
     },
   ];
   c.jackpot = {
-    prizeByColor: { white: 10000, yellow: 0, purple: 0 },
+    prizeByColor: { small_white: 10000 },
     draw: 55,
   };
   return c;
@@ -139,13 +139,13 @@ describe("validateSpill1Config", () => {
   });
   it("rejects jackpot prize outside 5k-50k (when non-zero)", () => {
     const c = validConfig();
-    c.jackpot.prizeByColor.white = 1000;
+    c.jackpot.prizeByColor.small_white = 1000;
     const res = validateSpill1Config(c, "x");
     expect(res.ok).toBe(false);
   });
   it("accepts jackpot prize of exactly 0 (means no jackpot for that color)", () => {
     const c = validConfig();
-    c.jackpot.prizeByColor = { white: 0, yellow: 0, purple: 0 };
+    c.jackpot.prizeByColor = { small_white: 0, large_yellow: 0 };
     const res = validateSpill1Config(c, "x");
     expect(res.ok).toBe(true);
   });
