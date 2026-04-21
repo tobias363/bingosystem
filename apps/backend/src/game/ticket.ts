@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import type { Ticket } from "./types.js";
 import { DomainError } from "./BingoEngine.js";
+import { buildTicketMaskFromGrid5x5 } from "@spillorama/shared-types/spill1-patterns";
 
 const BOARD_ROWS = 3;
 const BOARD_COLS = 5;
@@ -398,4 +399,14 @@ export function hasFullBingo(ticket: Ticket, marks: Set<number>): boolean {
     }
   }
   return true;
+}
+
+/**
+ * Bygg 25-bit ticket-mask for et 5×5 brett (Spill 1 Norsk 75-ball).
+ * Delegeres til delt `buildTicketMaskFromGrid5x5` i shared-types så
+ * backend og klient produserer identisk mask fra samme (grid, marks).
+ * Returnerer `null` for ikke-5×5 grids.
+ */
+export function buildTicketMask5x5(ticket: Ticket, marks: Set<number>): number | null {
+  return buildTicketMaskFromGrid5x5(ticket.grid, marks);
 }
