@@ -14,8 +14,13 @@ import {
   countCompleteColumns,
   hasFullBingo,
   makeRoomCode,
-  ticketContainsNumber
+  ticketContainsNumber,
+  buildTicketMask5x5,
 } from "./ticket.js";
+import {
+  classifyPhaseFromPatternName,
+  ticketMaskMeetsPhase,
+} from "@spillorama/shared-types/spill1-patterns";
 import { buildDrawBag, resolveDrawBagConfig } from "./DrawBagStrategy.js";
 import type {
   ClaimRecord,
@@ -1143,12 +1148,13 @@ export class BingoEngine {
    *   - "4 Rader" (fase 4): ≥4 hele vertikale kolonner
    *   - "Fullt Hus" (fase 5): alle 25 felt merket
    *
-   * Ingen diagonaler teller. Pattern-navn er autoritativt — gjør
-   * backend-logikken forståelig ved inspeksjon av config.
+   * Klassifisering og kandidat-masker ligger i
+   * `@spillorama/shared-types/spill1-patterns` og deles med klient
+   * `PatternMasks.ts` (samme kilde = ingen drift-risiko).
    *
-   * Ukjente pattern-navn: faller tilbake til `claimType`-basert sjekk
-   * (LINE = 1 linje, BINGO = fullt hus) for backward-compat med eldre
-   * variant-config som ikke følger norsk fase-navngiving.
+   * Ukjente pattern-navn (jubilee "Stjerne", Spill 3 "Bilde"/"Ramme",
+   * Databingo60 line-pattern) faller tilbake til `claimType`-basert
+   * sjekk: LINE = ≥1 linje, BINGO = fullt hus.
    */
   private meetsPhaseRequirement(
     pattern: PatternDefinition,
@@ -1158,18 +1164,21 @@ export class BingoEngine {
     if (pattern.claimType === "BINGO") {
       return hasFullBingo(ticket, drawnSet);
     }
-    const nameLc = pattern.name.toLowerCase();
-    const rowCount = countCompleteRows(ticket, drawnSet);
-    const colCount = countCompleteColumns(ticket, drawnSet);
-    if (/^\s*1\s*rad\b/.test(nameLc)) {
-      // Fase 1: 1 hel rad ELLER 1 hel kolonne
-      return rowCount >= 1 || colCount >= 1;
+    const phase = classifyPhaseFromPatternName(pattern.name);
+    if (phase === null) {
+      return (
+        countCompleteRows(ticket, drawnSet) >= 1 ||
+        countCompleteColumns(ticket, drawnSet) >= 1
+      );
     }
-    if (/^\s*2\s*rad/.test(nameLc)) return colCount >= 2;
-    if (/^\s*3\s*rad/.test(nameLc)) return colCount >= 3;
-    if (/^\s*4\s*rad/.test(nameLc)) return colCount >= 4;
-    // Fallback for ukjente navn: 1 hvilken som helst linje (bakoverkompat).
-    return rowCount >= 1 || colCount >= 1;
+    const ticketMask = buildTicketMask5x5(ticket, drawnSet);
+    if (ticketMask === null) {
+      return (
+        countCompleteRows(ticket, drawnSet) >= 1 ||
+        countCompleteColumns(ticket, drawnSet) >= 1
+      );
+    }
+    return ticketMaskMeetsPhase(ticketMask, phase);
   }
 
   /**
