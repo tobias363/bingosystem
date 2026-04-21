@@ -121,7 +121,7 @@ export class SettingsPanel {
       this.save();
     }));
 
-    // Double announce — repeat drawn numbers (Unity: "Gjenta tall")
+    // Double announce — repeat drawn numbers
     panel.appendChild(this.createToggle("Gjenta tall", this.settings.doubleAnnounce, (on) => {
       this.settings.doubleAnnounce = on;
       this.save();

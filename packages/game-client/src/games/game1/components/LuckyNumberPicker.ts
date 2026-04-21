@@ -5,7 +5,6 @@
  * Player taps a number to select it as their lucky number.
  * Selected number is sent to backend via lucky:set socket event.
  *
- * Unity reference:
  * - SelectLuckyNumberPanel.cs — panel with number buttons
  * - Game1GamePlayPanel.Interactions.cs — OnLuckyNumberSelection()
  * - SpilloramaSocketManager.SetLuckyNumber()

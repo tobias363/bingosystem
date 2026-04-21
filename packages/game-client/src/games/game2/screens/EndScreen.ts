@@ -8,9 +8,20 @@ import type { GameState } from "../../../bridge/GameBridge.js";
  */
 export class EndScreen extends Container {
   private onDismiss: (() => void) | null = null;
+  private screenWidth: number;
+  private screenHeight: number;
+  /** Active fade-in tween; killed in destroy() so it can't tween a destroyed
+   *  Container (Pixi v8 set-y on null _position → render-loop crash). */
+  private fadeTween: gsap.core.Tween | null = null;
+  /** Active 8s auto-dismiss timer; killed in destroy() to avoid calling
+   *  onDismiss after the screen has been replaced. */
+  private autoDismissTimer: gsap.core.Tween | null = null;
+  private dismissed = false;
 
   constructor(screenWidth: number, screenHeight: number) {
     super();
+    this.screenWidth = screenWidth;
+    this.screenHeight = screenHeight;
 
     // Semi-transparent overlay
     const overlay = new Graphics();
@@ -20,10 +31,16 @@ export class EndScreen extends Container {
   }
 
   show(state: GameState): void {
-    const w = this.children[0] ? 400 : 400;
+    const w = 400;
     const h = 280;
-    const cx = (this.parent?.width ?? 800) / 2;
-    const cy = (this.parent?.height ?? 600) / 2;
+    // Use the dims passed to the constructor instead of `this.parent?.width`
+    // — parent.width walks the entire parent-container bounds, and when any
+    // sibling was destroyed mid-transition it has a null transform whose
+    // `.y` getter throws. That crash repeats on every Pixi render tick, so
+    // the console floods with thousands of "Cannot read properties of null
+    // (reading 'y')" errors (seen 2026-04-20 after switching to ENDED).
+    const cx = this.screenWidth / 2;
+    const cy = this.screenHeight / 2;
 
     // Results panel
     const panel = new Container();
@@ -97,12 +114,16 @@ export class EndScreen extends Container {
 
     this.addChild(panel);
 
-    // Fade in
+    // Fade in — stored so destroy() can kill it. Without the kill, GSAP keeps
+    // writing `this.alpha = x` for 300ms AFTER the container is destroyed,
+    // which Pixi v8 turns into a "Cannot set properties of null" crash loop
+    // (every animation frame) because `_position` and `_scale` are nulled at
+    // destroy.
     this.alpha = 0;
-    gsap.to(this, { alpha: 1, duration: 0.3 });
+    this.fadeTween = gsap.to(this, { alpha: 1, duration: 0.3 });
 
-    // Auto-dismiss after 8 seconds
-    gsap.delayedCall(8, () => this.dismiss());
+    // Auto-dismiss after 8 seconds — same lifecycle concern.
+    this.autoDismissTimer = gsap.delayedCall(8, () => this.dismiss());
   }
 
   setOnDismiss(callback: () => void): void {
@@ -110,6 +131,22 @@ export class EndScreen extends Container {
   }
 
   private dismiss(): void {
+    if (this.dismissed) return;
+    this.dismissed = true;
     if (this.onDismiss) this.onDismiss();
+  }
+
+  override destroy(options?: Parameters<Container["destroy"]>[0]): void {
+    // Kill any pending tween / timer before tearing down the Pixi container.
+    // Otherwise GSAP's next tick tries to write to `this.alpha` (or callback
+    // fires on `this.dismiss`) on an already-destroyed container, which
+    // surfaces as a repeating "Cannot set properties of null" in Pixi's
+    // render loop (seen 2026-04-21).
+    this.fadeTween?.kill();
+    this.fadeTween = null;
+    this.autoDismissTimer?.kill();
+    this.autoDismissTimer = null;
+    this.dismissed = true;
+    super.destroy(options);
   }
 }

@@ -7,11 +7,9 @@ import type { TicketColorTheme } from "../colors/TicketColorThemes.js";
  * Variant of a multi-ticket group. Mirrors Unity's per-prefab ticket groups:
  *
  *  - "elvis"        → 2 mini-tickets laid out HORIZONTALLY.
- *                     Unity: Game1ViewPurchaseElvisTicket.cs:14-17
  *                     (List<Game1ViewPurchaseTicket> Mini_Tickets, count=2).
  *
  *  - "large"        → 3 mini-tickets stacked VERTICALLY.
- *                     Unity: PrefabBingoGame1LargeTicket5x5.cs:8
  *                     (List<PrefabBingoGame1Ticket5x5> Mini_Tickets, count=3).
  *                     Critically, large is NOT a single scaled-up ticket — cells
  *                     keep their small cellSize (44×37 per Unity prefab
@@ -29,7 +27,7 @@ export interface TicketGroupOptions {
   tickets: Ticket[];
   /** Display name shown in the shared header (e.g. "Elvis 1", "Large Red"). */
   groupName: string;
-  /** Total price for the whole group (Unity shows one price per group). */
+  /** Total price for the whole group. */
   price: number;
   /** Theme for the shared BG / header / claim-bar.
    *  For traffic-light we still want one shared BG, so the caller picks one
@@ -38,7 +36,7 @@ export interface TicketGroupOptions {
   sharedTheme: TicketColorTheme;
   /** Per-mini-ticket themes. Same length as `tickets`. */
   miniThemes: TicketColorTheme[];
-  /** Cell size — MUST match small tickets (Unity: 44×37, we use 44 square). */
+  /** Cell size — MUST match small tickets. */
   cellSize?: number;
   /** Grid size forwarded to each mini-ticket. */
   gridSize?: "3x5" | "5x5";
@@ -118,7 +116,7 @@ export class TicketGroup extends Container {
     this.cardBg = new Graphics();
     this.addChild(this.cardBg);
 
-    // ── Shared header bar (Unity: Ticket_Name_Txt + Ticket_BG together) ──
+    // ── Shared header bar ──
     this.headerBg = new Graphics();
     this.addChild(this.headerBg);
 
@@ -175,7 +173,7 @@ export class TicketGroup extends Container {
       this.addChild(mini);
     }
 
-    // ── Shared claim / delete bar (Unity: deleteBtn + Replace_Amount_Txt). ──
+    // ── Shared claim / delete bar. ──
     // Placeholder graphics — actual button wiring is opt-in via setters below.
     this.claimBarBg = new Graphics();
     this.addChild(this.claimBarBg);
@@ -284,7 +282,7 @@ export class TicketGroup extends Container {
   }
 
   private paintChrome(headerBgColor: number): void {
-    // Shared outer BG (Unity: Ticket_BG / imageBG colored via Large_BG_Color).
+    // Shared outer BG.
     // BIN-608: Unity themes with largeBgAlpha === 0 (Small Yellow, Small
     // White, Large White) render NO outer container at all — the cells sit
     // directly on the scene background. Skipping the fill in that case gives
@@ -307,8 +305,7 @@ export class TicketGroup extends Container {
     this.headerBg.fill(headerBgColor);
 
     // Shared claim bar stripe at the bottom — a simple visual marker that
-    // all mini-tickets share a claim/delete affordance (Unity: deleteBtn +
-    // Replace_Amount_Txt live below the mini-tickets in one row).
+    // all mini-tickets share a claim/delete affordance.
     this.claimBarBg.clear();
     const claimY = this.cardH - TicketGroup.OUTER_PAD - TicketGroup.CLAIM_BAR_H + 4;
     this.claimBarBg.roundRect(
@@ -347,7 +344,7 @@ export class TicketGroup extends Container {
   }
 
   /** Lowest remaining count across mini-tickets — used by "best first" sort.
-   *  (Unity sorts groups by their nearest-to-win mini-ticket.) */
+   * */
   getRemainingCount(): number {
     let min = Number.POSITIVE_INFINITY;
     for (const mini of this.miniTickets) {

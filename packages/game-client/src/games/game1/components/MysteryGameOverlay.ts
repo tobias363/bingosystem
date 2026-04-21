@@ -81,7 +81,7 @@ export class MysteryGameOverlay extends Container {
     this.prizeList = data.prizeList;
     this.revealed = false;
 
-    // Auto-select after 10 seconds (Unity: autoTurnMoveTime)
+    // Auto-select after 10 seconds
     this.autoTimer = setTimeout(() => {
       if (!this.revealed) {
         const randomIdx = Math.floor(Math.random() * BALL_COUNT);

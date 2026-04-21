@@ -21,9 +21,9 @@ const MAX_WEIGHTED_TICKETS = 30;
  *
  * Implementerer også Unity-avledet 30-brett-grense:
  *   - Plus-knapp per rad disables når rad ville overskride remaining-kapasitet
- *     (Unity: `Game1PurchaseTicket.cs:67-93`, `PrefabGame1TicketPurchaseSubType.cs:48-58`).
+ *.
  *   - `alreadyPurchased` (antall brett allerede kjøpt denne runden) fratrekkes
- *     før remaining beregnes (Unity: `Game1PurchaseTicket.cs:69`).
+ *     før remaining beregnes.
  *   - X-knapp per rad nullstiller qty (klient-state, ingen popup).
  */
 export class Game1BuyPopup {

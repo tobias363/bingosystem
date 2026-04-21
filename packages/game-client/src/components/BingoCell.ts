@@ -124,7 +124,6 @@ export class BingoCell extends Container {
 
   /**
    * Start one-to-go blink animation.
-   * Matches Unity BingoTicketSingleCellData.Start_NumberBlink() (legacy/unity-client/
    * Assets/_Project/_Scripts/Prefabs/Bingo Tickets/BingoTicketSingleCellData.cs:212):
    *   LeanTween.scale(txtNumber, Vector3(1.5f,1.5f), 1.0f)
    *     .setEase(LeanTweenType.punch).setLoopCount(-1)
@@ -140,12 +139,12 @@ export class BingoCell extends Container {
   startBlink(oneToGoColor?: number): void {
     if (this.blinking || this.marked) return;
     this.blinking = true;
-    // Highlight cell background with one-to-go color (Unity: imgCellOneToGo)
+    // Highlight cell background with one-to-go color
     if (oneToGoColor !== undefined) {
       this.drawBg(oneToGoColor);
     }
     // Build a looping timeline: scale → 1.5 with elastic overshoot (punch-like),
-    // then snap back to 1.0 and repeat. 1.0s per iteration (Unity match).
+    // then snap back to 1.0 and repeat. 1.0s per iteration.
     this.blinkTimeline = gsap.timeline({ repeat: -1 });
     this.blinkTimeline.to(this.scale, {
       x: 1.5,
@@ -154,7 +153,7 @@ export class BingoCell extends Container {
       ease: "elastic.out(1, 0.3)",
     });
     this.blinkTimeline.call(() => {
-      // Reset to 1.0 at the end of each punch (Unity Stop_NumberBlink:201).
+      // Reset to 1.0 at the end of each punch.
       gsap.set(this.scale, { x: 1, y: 1 });
     });
   }
@@ -166,7 +165,6 @@ export class BingoCell extends Container {
       this.blinkTimeline.kill();
       this.blinkTimeline = null;
     }
-    // Unity Stop_NumberBlink: txtNumber.transform.localScale = Vector2.one
     // (BingoTicketSingleCellData.cs:201). Hard reset, no animation.
     gsap.set(this.scale, { x: 1, y: 1 });
   }
@@ -181,8 +179,6 @@ export class BingoCell extends Container {
    * otherwise continue animating after a PLAYING → ENDED / WAITING
    * transition.
    *
-   * Unity reference: BingoTicketSingleCellData.Stop_NumberBlink (legacy/
-   * unity-client/Assets/_Project/_Scripts/Prefabs/Bingo Tickets/
    * BingoTicketSingleCellData.cs:195-205) — the Unity coroutine cancels
    * LeanTween on both the number-text and the cell background and snaps
    * localScale back to Vector2.one with no tween.
@@ -199,9 +195,9 @@ export class BingoCell extends Container {
       this.blinkTimeline = null;
     }
     this.blinking = false;
-    // Hard reset — NOT via tween (Unity sets localScale = Vector2.one).
+    // Hard reset — NOT via tween.
     this.scale.set(1, 1);
-    // Reset bg to default color (Unity: imgCellOneToGo.Close() resets the
+    // Reset bg to default color resets the
     // one-to-go highlight). Only do this if the cell isn't currently marked —
     // a marked cell keeps its marker circle visible, not the bg highlight.
     if (!this.marked && !this.highlighted) {

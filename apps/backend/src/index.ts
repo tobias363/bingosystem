@@ -149,7 +149,6 @@ import { errorReporter } from "./middleware/errorReporter.js";
 import { PostgresChatMessageStore, type ChatMessageStore } from "./store/ChatMessageStore.js";
 import { createAdminDisplayHandlers } from "./sockets/adminDisplayEvents.js";
 import { createAdminHallHandlers } from "./sockets/adminHallEvents.js";
-import { registerLegacyEventAliases } from "./sockets/legacyEventAliases.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -592,8 +591,21 @@ function buildRoomUpdatePayload(snapshot: RoomSnapshot, nowMs = Date.now()): Roo
     getArmedPlayerTicketCounts: (code) => roomState.getArmedPlayerTicketCounts(code),
     getArmedPlayerSelections: (code) => roomState.getArmedPlayerSelections(code),
     getRoomConfiguredEntryFee,
-    getOrCreateDisplayTickets: (code, id, count, gameSlug) => roomState.getOrCreateDisplayTickets(code, id, count, gameSlug),
+    // The 5th parameter (`colorAssignments`) is what carries the player's
+    // armed selections into the ticket cache — dropping it means pre-round
+    // brett lose their colour, so "Small Purple" armed renders as a default
+    // beige/red placeholder and the next round's tickets get a fresh
+    // index-cycled colour ("Small Yellow" first). The older wrapper silently
+    // truncated this arg, making every buildRoomUpdatePayload call colour-
+    // blind in production while the unit tests (which wired all 5 args)
+    // stayed green.
+    getOrCreateDisplayTickets: (code, id, count, gameSlug, colorAssignments) =>
+      roomState.getOrCreateDisplayTickets(code, id, count, gameSlug, colorAssignments),
     getLuckyNumbers: (code) => roomState.getLuckyNumbers(code),
+    // BIN-694: roomState.variantByRoom is kept populated by
+    // bindDefaultVariantConfig at every room-creation entry point, so the
+    // pre-round handlers (ticket:cancel, ticket:replace, colour expansion)
+    // always see the correct 5-phase Norsk-bingo config for Game 1.
     getVariantConfig: (code) => roomState.getVariantConfig(code),
     // G15 (BIN-431): hall-name + supplier for ticket-detail flip.
     getHallName: getHallNameSync,
@@ -1478,9 +1490,6 @@ io.on("connection", (socket: Socket) => {
   registerGameEvents(socket);
   registerAdminDisplayEvents(socket);
   registerAdminHallEvents(socket);
-  // BIN-585: Unity fallback-klient bruker legacy event-navn. Må registreres
-  // SIST slik at canonical-handlers finnes når aliaset re-dispatcher.
-  registerLegacyEventAliases(socket);
 });
 
 // ── Debug/test endpoint — room gap detection (localhost-only) ─────────────────

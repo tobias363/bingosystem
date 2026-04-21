@@ -44,7 +44,7 @@ const LS_VOICE_LANG = "spillorama-voice-lang";
  *
  * Handles:
  * - Number announcements in multiple languages (Norwegian male/female, English)
- * - Double-announce mode (Unity callTwoTime — plays number twice)
+ * - Double-announce mode
  * - Sound effects (mark, click, notification, bingo)
  * - BINGO celebration sequencing (waits for voice → 1s pause → bingo SFX)
  * - Separate voice/SFX mute controls
@@ -241,7 +241,7 @@ export class AudioManager {
   // ── Double announce ───────────────────────────────────────────────────
 
   /**
-   * Enable/disable double-announce mode (Unity callTwoTime).
+   * Enable/disable double-announce mode.
    * When enabled, each number announcement plays twice —
    * second play at 0.6 volume after a 0.3s gap.
    */
@@ -347,7 +347,6 @@ export class AudioManager {
 
   /**
    * Stop all currently playing sounds and cancel pending timeouts.
-   * Unity: reset sound announcements on game end.
    */
   stopAll(): void {
     // Cancel pending double-announce and bingo timeouts

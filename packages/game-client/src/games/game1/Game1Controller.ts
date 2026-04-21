@@ -80,7 +80,7 @@ class Game1Controller implements GameController {
     const { app, socket, bridge } = this.deps;
     app.stage.addChild(this.root);
 
-    // UI overlays (Unity: DisplayLoader, UtilityMessagePanel)
+    // UI overlays
     const overlayContainer = app.app.canvas.parentElement ?? document.body;
     this.loader = new LoadingOverlay(overlayContainer);
     // BIN-673: typed state-machine drives all loader messages. 5-sec stuck
@@ -175,7 +175,7 @@ class Game1Controller implements GameController {
     this.root.on("pointerdown", () => this.deps.audio.unlock(), { once: true });
 
     // No auto-arm — player must explicitly buy tickets via the popup.
-    // (Unity also requires explicit purchase via Game1TicketPurchasePanel.)
+    //
 
     // BIN-500: Loader-barriere.
     // En late-joiner kan komme inn mens en runde kjører. Før loader fjernes må
@@ -187,7 +187,7 @@ class Game1Controller implements GameController {
     //       (beviser at socket faktisk leverer — ikke bare er connected)
     await this.waitForSyncReady();
 
-    // Hide loader — game is ready (Unity: DisplayLoader(false))
+    // Hide loader — game is ready)
     this.loader.setState("READY");
 
     // Transition based on state
@@ -313,98 +313,29 @@ class Game1Controller implements GameController {
     const h = this.deps.app.app.screen.height;
 
     switch (phase) {
-      case "WAITING": {
-        // Show PlayScreen in waiting mode — countdown + buy popup, no separate lobby
+      case "WAITING":
+      case "PLAYING":
+      case "SPECTATING": {
+        // All three "game-visible" phases share one PlayScreen setup. The new
+        // `update(state)` method picks what to show based on gameStatus /
+        // ticket arrays — no per-phase build/render juggling. Callbacks are
+        // wired once at construction (they used to be re-wired in every
+        // transition, three copies of the exact same 8-line block).
         this.lastMiniGamePrize = 0;
-        const container = this.deps.app.app.canvas.parentElement ?? document.body;
-        this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container, this.deps.bridge);
-        this.playScreen.setOnClaim((type) => this.handleClaim(type));
-        this.playScreen.setOnBuy((selections) => this.handleBuy(selections));
-        this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
-        this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
-        this.playScreen.setOnCancelTicket((id) => this.handleCancelTicket(id));
-        this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
-        this.playScreen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
-        this.playScreen.setOnStartGame(() => this.handleStartGame());
-        this.playScreen.subscribeChatToBridge((listener) =>
-          this.deps.bridge.on("chatMessage", listener),
-        );
-        this.playScreen.enterWaitingMode(state);
-        // BIN-410 (D3): Show upcoming-purchase side panel for preRound arming.
-        // Only in WAITING — SPECTATING/PLAYING hide it (Q4 2026-04-18).
-        this.playScreen.showUpcomingPurchase(state);
-        // BIN-409 (D2): Re-enable Kjøp-flere when entering a new WAITING cycle.
+        this.playScreen = this.buildPlayScreen(w, h);
+        this.playScreen.update(state);
         this.playScreen.enableBuyMore();
-        // BIN-419: Show Elvis replace option in waiting mode
-        if (state.gameType === "elvis" && state.myTickets.length > 0 && state.replaceAmount > 0) {
+
+        // BIN-419 Elvis replace — only shown in WAITING with existing tickets.
+        if (
+          phase === "WAITING"
+          && state.gameType === "elvis"
+          && state.myTickets.length > 0
+          && state.replaceAmount > 0
+        ) {
           this.playScreen.showElvisReplace(state.replaceAmount, () => this.handleElvisReplace());
         }
-        this.setScreen(this.playScreen);
-        break;
-      }
 
-      case "PLAYING": {
-        this.lastMiniGamePrize = 0;
-        const container = this.deps.app.app.canvas.parentElement ?? document.body;
-        this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container, this.deps.bridge);
-        this.playScreen.setOnClaim((type) => this.handleClaim(type));
-        this.playScreen.setOnBuy((selections) => this.handleBuy(selections));
-        this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
-        this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
-        this.playScreen.setOnCancelTicket((id) => this.handleCancelTicket(id));
-        this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
-        this.playScreen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
-        this.playScreen.setOnStartGame(() => this.handleStartGame());
-        this.playScreen.subscribeChatToBridge((listener) =>
-          this.deps.bridge.on("chatMessage", listener),
-        );
-        this.playScreen.buildTickets(state);
-        this.playScreen.updateInfo(state);
-        // BIN-410 (D3): Upcoming-panel skjules under PLAYING (buildTickets
-        // kaller allerede hide, men eksplisitt her for tydelig phase-rensk).
-        this.playScreen.hideUpcomingPurchase();
-        // BIN-409 (D2): Fresh PLAYING-transition — reset buy-more til enabled.
-        // Per-ball sjekk i onNumberDrawn setter den til disabled igjen når
-        // drawCount krysser threshold.
-        this.playScreen.enableBuyMore();
-        this.setScreen(this.playScreen);
-        break;
-      }
-
-      case "SPECTATING": {
-        // BIN-507: Late-joiner / ubemannet runde. Spilleren har 0 billetter
-        // men skal se live trekning, chat, patterns og jackpot. Buy-popup
-        // er tilgjengelig for å arme for NESTE runde (preRoundTickets).
-        // Mark/claim er server-guardet mot spillere uten billetter.
-        this.lastMiniGamePrize = 0;
-        const container = this.deps.app.app.canvas.parentElement ?? document.body;
-        this.playScreen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container, this.deps.bridge);
-        // Mark/claim-handlers beholdes for konsistens — server returnerer feil
-        // hvis spectator prøver. Klient-UI viser ikke mark-knapper når
-        // myTickets er tom (PlayScreen renderer tom ticket-list).
-        this.playScreen.setOnClaim((type) => this.handleClaim(type));
-        this.playScreen.setOnBuy((selections) => this.handleBuy(selections));
-        this.playScreen.setOnLuckyNumberTap(() => this.openLuckyPicker());
-        this.playScreen.setOnCancelTickets(() => this.handleCancelTickets());
-        this.playScreen.setOnCancelTicket((id) => this.handleCancelTicket(id));
-        this.playScreen.setOnOpenSettings(() => this.settingsPanel?.show());
-        this.playScreen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
-        this.playScreen.setOnStartGame(() => this.handleStartGame());
-        this.playScreen.subscribeChatToBridge((listener) =>
-          this.deps.bridge.on("chatMessage", listener),
-        );
-        // Samme render som PLAYING: live draws via CenterBall, chat, patterns.
-        // buildTickets(state) med myTickets=[] gir tom ticket-seksjon men
-        // CenterBall + DrawnBalls + PatternMiniGrid kjører som vanlig.
-        this.playScreen.buildTickets(state);
-        this.playScreen.updateInfo(state);
-        // BIN-410 (D3, Q4 2026-04-18): Upcoming-panel skal IKKE vises under
-        // SPECTATING — Unity viser det kun mellom runder.
-        this.playScreen.hideUpcomingPurchase();
-        // BIN-619 (2026-04-19): Spectator mid-round buy — tickets armed for
-        // NEXT round render immediately in the scroller, but without marks
-        // (owner: "selvfølgelig ikke disse bongene aktive i den trekningen").
-        this.playScreen.renderPreRoundTickets(state);
         this.setScreen(this.playScreen);
         break;
       }
@@ -426,23 +357,11 @@ class Game1Controller implements GameController {
   // ── Bridge event handlers ─────────────────────────────────────────────
 
   private onStateChanged(state: GameState): void {
-    console.log("[Game1] stateChanged — phase:", this.phase, "gameStatus:", state.gameStatus, "myTickets:", state.myTickets.length, "myStake:", state.myStake, "isArmed:", state.isArmed);
-    if (this.phase === "WAITING" && this.playScreen) {
-      this.playScreen.updateWaitingState(state);
-    }
-    if (this.phase === "PLAYING" && this.playScreen) {
-      this.playScreen.updateInfo(state);
-    }
-    // BIN-507: SPECTATING får samme live-oppdateringer som PLAYING (draws,
-    // patterns, playerStakes). Hvis spilleren armer preRoundTickets mens de
-    // er SPECTATING, forblir fasen — overgang til PLAYING skjer først ved
-    // onGameStarted for neste runde.
-    // BIN-619: Spectator-mid-round buy → re-render pre-round tickets when
-    // count changes. PlayScreen caches the count so unchanged states are
-    // a no-op (SPECTATING sees one stateChanged per drawn number).
-    if (this.phase === "SPECTATING" && this.playScreen) {
-      this.playScreen.updateInfo(state);
-      this.playScreen.renderPreRoundTickets(state);
+    // Single update() entry point. Replaces the old three-way split
+    // (updateWaitingState / updateInfo / renderPreRoundTickets + UpcomingPurchase).
+    // PlayScreen picks what to show from state.gameStatus + ticket arrays.
+    if (this.playScreen && (this.phase === "WAITING" || this.phase === "PLAYING" || this.phase === "SPECTATING")) {
+      this.playScreen.update(state);
     }
 
     // BIN-460: Show/hide pause overlay based on game state
@@ -461,27 +380,22 @@ class Game1Controller implements GameController {
     this.gameRoundCount++;
     this.buyMoreDisabled = false;
     // BIN-409 (D2): Ny runde — reset buy-more button til enabled state.
-    // Unity parity: `Game1GamePlayPanel.SocketFlow.cs` setter `BuyMoreDisableFlagVal`
-    // false ved OnGameStart. Upcoming-panel skjules også (runde pågår).
+    // false ved OnGameStart. Buy popup (Game1BuyPopup) closes itself at the
+    // PLAYING transition via PlayScreen.update() → gameStatus === RUNNING.
     this.playScreen?.enableBuyMore();
-    this.playScreen?.hideUpcomingPurchase();
+    this.playScreen?.hideBuyPopup();
 
     // Reset announced numbers for the new round
     this.deps.audio.resetAnnouncedNumbers();
 
-    // Unity OnGameStart: close lucky number panel, hide delete buttons
     this.luckyPicker?.hide();
 
-    console.log("[Game1] onGameStarted — myTickets:", state.myTickets.length, "gameStatus:", state.gameStatus, "isArmed:", state.isArmed, "myPlayerId:", state.myPlayerId, "preRoundTickets:", state.preRoundTickets.length);
-
     if (state.myTickets.length > 0) {
-      console.log("[Game1] → PLAYING (has tickets)");
       this.transitionTo("PLAYING", state);
     } else {
       // BIN-507: runde starter uten at spilleren armet billetter → SPECTATING.
       // Tidligere falt de til WAITING som viste countdown mot neste runde —
       // forvirrende fordi trekning allerede er i gang.
-      console.log("[Game1] → SPECTATING (no tickets, round is running)");
       this.transitionTo("SPECTATING", state);
     }
   }
@@ -490,28 +404,16 @@ class Game1Controller implements GameController {
     // Dismiss any active mini-game overlay so it doesn't block the EndScreen
     this.dismissMiniGame();
 
-    // Unity OnGameFinish: stop blink animations, reset sounds
     // (Game1GamePlayPanel.SocketFlow.cs:595-616 iterates Active_BingoTickets
     //  and calls Stop_Blink on each ticket.)
     this.deps.audio.resetAnnouncedNumbers();
     this.deps.audio.stopAll();
 
-    // Hard-reset every inline ticket's animations (cell blinks, mark bounces,
-    // card BINGO pulse, bg blink, in-flight flip) so nothing keeps animating
-    // after we transition to EndScreen/WAITING. Without this, a 1-to-go cell
-    // that was mid-blink or a card mid-BINGO-pulse at game-end would continue
-    // animating on the EndScreen background.
-    //
-    // Unity refs:
-    //   - Stop_Blink on ticket:  BingoTicket.cs:1011-1016
-    //   - Stop_NumberBlink cell: BingoTicketSingleCellData.cs:195-205
-    if (this.playScreen) {
-      for (const card of this.playScreen.getInlineCards()) {
-        card.stopAllAnimations();
-      }
-    }
+    // (Previously: Hard-reset every inline Pixi ticket's animations here.
+    // HTML tickets use CSS transitions — they complete on their own and
+    // don't leak onto EndScreen. Nothing to clean up.)
 
-    // Refresh player balance (Unity: dispatch balance event for game-bar sync)
+    // Refresh player balance
     if (this.myPlayerId) {
       const me = state.players.find((p) => p.id === this.myPlayerId);
       if (me && typeof me.balance === "number" && typeof window !== "undefined") {
@@ -542,7 +444,7 @@ class Game1Controller implements GameController {
     if (this.phase === "PLAYING" && this.playScreen) {
       this.playScreen.onNumberDrawn(number, drawIndex, state);
 
-      // BIN-451: Disable buy-more using server-authoritative threshold (Unity: BuyMoreDisableFlagVal)
+      // BIN-451: Disable buy-more using server-authoritative threshold
       if (!this.buyMoreDisabled && state.disableBuyAfterBalls > 0 && state.drawCount >= state.disableBuyAfterBalls) {
         this.buyMoreDisabled = true;
         this.playScreen.disableBuyMore();
@@ -622,7 +524,13 @@ class Game1Controller implements GameController {
     this.playScreen?.showBuyPopupResult(result.ok, result.error?.message);
     if (!result.ok) {
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");
+      return;
     }
+    // Product decision 2026-04-20: every successful Kjøp closes the buy popup.
+    // Player re-opens via "Kjøp flere brett" (always at qty=0) to add more
+    // brett; the additive bet:arm merges with what's already armed so the
+    // previously-purchased brett stay visible in the ticket grid.
+    this.playScreen?.hideBuyPopup();
   }
 
   /** A6: Host/admin manual game start — calls game:start on the socket. */
@@ -646,7 +554,7 @@ class Game1Controller implements GameController {
     if (!result.ok) {
       // Gap #1: promote server error to a visible toast instead of silent console log.
       // Gap #2: revert the claim button from "Sendt..." back to "ready" so the
-      //         user can retry (Unity: claim-denied → button re-enabled).
+      //         user can retry.
       this.toast?.error(result.error?.message ?? `Ugyldig ${type === "LINE" ? "rekke" : "bingo"}-claim`);
       this.playScreen?.resetClaimButton(type);
       console.error("[Game1] Claim failed:", result.error);
@@ -658,11 +566,12 @@ class Game1Controller implements GameController {
     const result = await this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: false });
     if (result.ok) {
       this.toast?.info("Bonger avbestilt");
-      // Clear tickets from display and show buy popup
+      // Clear the live view and re-sync from the latest bridge state —
+      // update() is the single entry point that handles both the cleared
+      // ticket list and the re-shown buy affordance.
       if (this.playScreen) {
         this.playScreen.reset();
-        const state = this.deps.bridge.getState();
-        this.playScreen.enterWaitingMode(state);
+        this.playScreen.update(this.deps.bridge.getState());
       }
     } else {
       this.toast?.error(result.error?.message || "Kunne ikke avbestille");
@@ -708,12 +617,9 @@ class Game1Controller implements GameController {
       luckyNumber: n,
     });
     if (result.ok) {
-      // Highlight on all tickets in current PlayScreen
-      if (this.playScreen && n > 0) {
-        for (const card of this.playScreen.getInlineCards()) {
-          card.highlightLuckyNumber(n);
-        }
-      }
+      // The HTML ticket grid reads `state.myLuckyNumber` every `update()`
+      // call, so the next room:update will repaint cells automatically —
+      // no per-ticket loop needed.
     } else {
       console.error("[Game1] setLuckyNumber failed:", result.error);
     }
@@ -726,11 +632,10 @@ class Game1Controller implements GameController {
     const result = await this.deps.socket.armBet({ roomCode: this.actualRoomCode, armed: true });
     if (result.ok) {
       this.toast?.info("Bonger byttet!");
-      // Rebuild from fresh snapshot
-      const state = this.deps.bridge.getState();
+      // Rebuild from fresh snapshot via the single update() entry point.
       if (this.playScreen) {
         this.playScreen.reset();
-        this.playScreen.enterWaitingMode(state);
+        this.playScreen.update(this.deps.bridge.getState());
       }
     } else {
       this.toast?.error("Kunne ikke bytte bonger");
@@ -748,37 +653,29 @@ class Game1Controller implements GameController {
     const w = this.deps.app.app.screen.width;
     const h = this.deps.app.app.screen.height;
 
-    if (data.type === "wheelOfFortune") {
-      // BIN-420 G21: pass bridge so auto-spin and rotation freeze on pause.
-      const overlay = new WheelOverlay(w, h, this.deps.bridge);
-      overlay.setOnPlay(() => this.handleMiniGamePlay());
-      overlay.setOnDismiss(() => this.dismissMiniGame());
-      this.miniGameOverlay = overlay;
-      this.root.addChild(overlay);
-      overlay.show(data);
-    } else if (data.type === "mysteryGame") {
-      const overlay = new MysteryGameOverlay(w, h);
-      overlay.setOnPlay((idx) => this.handleMiniGamePlay(idx));
-      overlay.setOnDismiss(() => this.dismissMiniGame());
-      this.miniGameOverlay = overlay;
-      this.root.addChild(overlay);
-      overlay.show(data);
-    } else if (data.type === "colorDraft") {
-      const overlay = new ColorDraftOverlay(w, h);
-      overlay.setOnPlay((idx) => this.handleMiniGamePlay(idx));
-      overlay.setOnDismiss(() => this.dismissMiniGame());
-      this.miniGameOverlay = overlay;
-      this.root.addChild(overlay);
-      overlay.show(data);
-    } else {
-      // Default: TreasureChest — bridge for pause-aware auto-select timer.
-      const overlay = new TreasureChestOverlay(w, h, this.deps.bridge);
-      overlay.setOnPlay((idx) => this.handleMiniGamePlay(idx));
-      overlay.setOnDismiss(() => this.dismissMiniGame());
-      this.miniGameOverlay = overlay;
-      this.root.addChild(overlay);
-      overlay.show(data);
-    }
+    // Pick the right overlay class. The two pause-aware variants (Wheel +
+    // TreasureChest) take the bridge so their auto-timers freeze under
+    // `state.isPaused` — Unity parity with TreasureChestPanel.cs:633 +
+    // Game1GamePlayPanel.SocketFlow.cs BIN-420 G21.
+    const overlay = (() => {
+      switch (data.type) {
+        case "wheelOfFortune":
+          return new WheelOverlay(w, h, this.deps.bridge);
+        case "mysteryGame":
+          return new MysteryGameOverlay(w, h);
+        case "colorDraft":
+          return new ColorDraftOverlay(w, h);
+        default:
+          return new TreasureChestOverlay(w, h, this.deps.bridge);
+      }
+    })();
+
+    // Wheel has no selection index — `handleMiniGamePlay` default is undefined.
+    overlay.setOnPlay((idx?: number) => this.handleMiniGamePlay(idx));
+    overlay.setOnDismiss(() => this.dismissMiniGame());
+    this.miniGameOverlay = overlay;
+    this.root.addChild(overlay);
+    overlay.show(data);
 
     telemetry.trackEvent("minigame_activated", { type: data.type });
   }
@@ -861,7 +758,6 @@ class Game1Controller implements GameController {
 
         // State fully rebuilt — dismiss overlay.
         this.loader?.setState("READY");
-        console.log("[Game1] Reconnected — state restored, phase:", this.phase);
       } else {
         // Both paths failed — leave overlay in RESYNCING state. The
         // stuck-timer (5s) will surface the "Last siden på nytt" button
@@ -880,6 +776,27 @@ class Game1Controller implements GameController {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────
+
+  /**
+   * Build a fresh PlayScreen and wire every callback. Centralised because
+   * the three game-visible phases (WAITING / PLAYING / SPECTATING) used to
+   * copy-paste this block, which meant any callback change had to land in
+   * three places and occasionally fell out of sync.
+   */
+  private buildPlayScreen(w: number, h: number): PlayScreen {
+    const container = this.deps.app.app.canvas.parentElement ?? document.body;
+    const screen = new PlayScreen(w, h, this.deps.audio, this.deps.socket, this.actualRoomCode, container, this.deps.bridge);
+    screen.setOnClaim((type) => this.handleClaim(type));
+    screen.setOnBuy((selections) => this.handleBuy(selections));
+    screen.setOnLuckyNumberTap(() => this.openLuckyPicker());
+    screen.setOnCancelTickets(() => this.handleCancelTickets());
+    screen.setOnCancelTicket((id) => this.handleCancelTicket(id));
+    screen.setOnOpenSettings(() => this.settingsPanel?.show());
+    screen.setOnOpenMarkerBg(() => this.markerBgPanel?.show());
+    screen.setOnStartGame(() => this.handleStartGame());
+    screen.subscribeChatToBridge((listener) => this.deps.bridge.on("chatMessage", listener));
+    return screen;
+  }
 
   private setScreen(screen: Container): void {
     this.currentScreen = screen;

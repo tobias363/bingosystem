@@ -7,7 +7,6 @@
  *
  * Selections persist in localStorage.
  *
- * Unity reference:
  * - ChangeMarkerBackgroundPanel.cs — OnMarkerButtonTap, OnBackgroundButtonTap
  * - UIManager.GamePresentation.cs — GetMarkerData(id), GetBackgroundSprite(id)
  */

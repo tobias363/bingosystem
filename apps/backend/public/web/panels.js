@@ -144,7 +144,7 @@
     contentEl.innerHTML = html;
   }
 
-  // Add notification from game events (called from Unity bridge or socket)
+  // Add notification from game events (called by socket handlers or game client)
   window.AddShellNotification = function (title, message) {
     notifications.unshift({
       title: title,
