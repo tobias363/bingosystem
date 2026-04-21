@@ -50,6 +50,7 @@ import { createBankIdExpiryReminderJob } from "./jobs/bankIdExpiryReminder.js";
 import { createSelfExclusionCleanupJob } from "./jobs/selfExclusionCleanup.js";
 import { createLoyaltyMonthlyResetJob } from "./jobs/loyaltyMonthlyReset.js";
 import { createGame1ScheduleTickJob } from "./jobs/game1ScheduleTick.js";
+import { Game1RecoveryService } from "./game/Game1RecoveryService.js";
 import { Game1ScheduleTickService } from "./game/Game1ScheduleTickService.js";
 import { Game1HallReadyService } from "./game/Game1HallReadyService.js";
 import { Game1MasterControlService } from "./game/Game1MasterControlService.js";
@@ -809,6 +810,15 @@ const game1HallReadyService = new Game1HallReadyService({
 // GAME1_SCHEDULE PR 3: master-control service. Håndterer master-start/pause/
 // resume/stop + hall-exclude/include med regulatorisk audit (app_game1_master_audit).
 const game1MasterControlService = new Game1MasterControlService({
+  pool: platformService.getPool(),
+  schema: pgSchema,
+});
+
+// GAME1_SCHEDULE PR 5 (§3.8): schedule-level crash recovery. Kjører én gang
+// ved boot og cancel-er app_game1_scheduled_games-rader som er `running` eller
+// `paused` MER enn 2 timer etter scheduled_end_time (overdue). Engine-level
+// state håndteres fortsatt av BIN-245-flyten nedenfor.
+const game1RecoveryService = new Game1RecoveryService({
   pool: platformService.getPool(),
   schema: pgSchema,
 });
@@ -1688,6 +1698,23 @@ const PORT = Number(process.env.PORT ?? 4000);
       }
       if (restored + ended > 0) console.warn(`[BIN-245] Recovery complete: ${restored} game(s) restored, ${ended} game(s) ended`);
     } catch (err) { console.error("[BIN-245] Crash recovery failed:", err); }
+  }
+
+  // GAME1_SCHEDULE PR 5 (§3.8): Schedule-level crash recovery. Scanner
+  // app_game1_scheduled_games for rader i running/paused som har overskredet
+  // 2h-vinduet etter scheduled_end_time og auto-kansellerer dem med audit.
+  // Kjøres ETTER BIN-245 engine-recovery så runtime-state er restaurert først.
+  try {
+    const recoveryResult = await game1RecoveryService.runRecoveryPass();
+    if (recoveryResult.inspected > 0) {
+      console.warn(
+        `[game1-recovery] Inspected ${recoveryResult.inspected} scheduled games — ` +
+        `cancelled ${recoveryResult.cancelled} overdue, preserved ${recoveryResult.preserved} in-window, ` +
+        `${recoveryResult.failures.length} failures.`,
+      );
+    }
+  } catch (err) {
+    console.error("[game1-recovery] Schedule-level recovery pass failed:", err);
   }
 
   server.listen(PORT, () => {
