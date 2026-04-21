@@ -22,12 +22,15 @@ import {
 import { isGamesRoute } from "../../src/pages/games/index.js";
 
 // Mock the GameType fetch so detail pages have a name to render.
+const mockGameTypes = [
+  { _id: "bingo", slug: "bingo", name: "Spill1", type: "game_1", row: 5, columns: 5, photo: "bingo.png", pattern: true },
+  { _id: "monsterbingo", slug: "monsterbingo", name: "Spill3", type: "game_3", row: 5, columns: 5, photo: "mb.png", pattern: true },
+];
 vi.mock("../../src/pages/games/gameType/GameTypeState.js", async () => {
   return {
-    fetchGameTypeList: async () => [
-      { _id: "bingo", slug: "bingo", name: "Spill1", type: "game_1", row: 5, columns: 5, photo: "bingo.png", pattern: true },
-      { _id: "monsterbingo", slug: "monsterbingo", name: "Spill3", type: "game_3", row: 5, columns: 5, photo: "mb.png", pattern: true },
-    ],
+    fetchGameTypeList: async () => mockGameTypes,
+    fetchGameType: async (slug: string) =>
+      mockGameTypes.find((gt) => gt._id === slug) ?? null,
   };
 });
 
@@ -140,10 +143,20 @@ describe("GameManagement detail pages — BIN-684 wired", () => {
     vi.restoreAllMocks();
   });
 
-  it("add page viser placeholder-banner (BIN-622 skjema-UI kommer)", async () => {
+  it("add page (Spill 1) renderer full form, ikke lenger placeholder", async () => {
     const c = document.createElement("div");
     await renderGameManagementAddPage(c, "bingo");
-    expect(c.querySelector("[data-testid='gm-placeholder']")?.textContent).toContain("BIN-622");
+    // Ingen BIN-622-placeholder lenger; full form skal rendres.
+    expect(c.querySelector("[data-testid='gm-placeholder']")).toBeNull();
+    expect(c.querySelector("[data-testid='gm-add-form-root']")).not.toBeNull();
+    expect(c.querySelector("#gm-add-form")).not.toBeNull();
+    expect(c.querySelector("[data-testid='gm-submit']")).not.toBeNull();
+  });
+
+  it("add page (ukjent type) viser not-yet-supported banner", async () => {
+    const c = document.createElement("div");
+    await renderGameManagementAddPage(c, "monsterbingo");
+    expect(c.querySelector("[data-testid='gm-add-unsupported']")).not.toBeNull();
   });
 
   it("add-g3 page viser placeholder + Game 3 wording", async () => {
