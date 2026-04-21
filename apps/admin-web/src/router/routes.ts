@@ -41,6 +41,7 @@ export const routes: RouteDef[] = [
   { path: "/addPhysicalTickets", titleKey: "add_physical_tickets", module: "Physical Tickets" },
   { path: "/physicalTicketManagement", titleKey: "physical_ticket_management", module: "Physical Tickets" },
   { path: "/physical/cash-out", titleKey: "physical_cash_out", module: "Physical Tickets" },
+  { path: "/physical/check-bingo", titleKey: "check_bingo_stamp", module: "Physical Tickets" },
   { path: "/sold-tickets", titleKey: "sold_tickets" },
 
   { path: "/uniqueId", titleKey: "generate_unique_id", module: "Unique ID Modules" },

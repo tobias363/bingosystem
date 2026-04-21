@@ -1,16 +1,18 @@
-// PR-B3 (BIN-613) — tests for physical-tickets admin pages.
+// BIN-587/638/640/641/639 — tests for physical-tickets admin pages.
 // Covers:
 //   - AddPage: admin hall filter, list render, create POST, delete modal, generate.
-//   - CashOutPlaceholderPage: renders Linear-issue refs.
-//   - GameTicketListPlaceholderPage: renders Linear-issue refs.
+//   - CashOutPage: BIN-640 scan + cashout flow.
+//   - GameTicketListPage: BIN-638 games-in-hall + BIN-639 reward-all.
+//   - CheckBingoPage: BIN-641 stamp flow.
 //   - Dispatcher: isPhysicalTicketsRoute + mountPhysicalTicketsRoute.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { initI18n } from "../src/i18n/I18n.js";
 import { setSession, type Session } from "../src/auth/Session.js";
 import { renderAddPage } from "../src/pages/physical-tickets/AddPage.js";
-import { renderCashOutPlaceholderPage } from "../src/pages/physical-tickets/CashOutPlaceholderPage.js";
-import { renderGameTicketListPlaceholderPage } from "../src/pages/physical-tickets/GameTicketListPlaceholderPage.js";
+import { renderCashOutPage } from "../src/pages/physical-tickets/CashOutPage.js";
+import { renderGameTicketListPage } from "../src/pages/physical-tickets/GameTicketListPage.js";
+import { renderCheckBingoPage } from "../src/pages/physical-tickets/CheckBingoPage.js";
 import { isPhysicalTicketsRoute, mountPhysicalTicketsRoute } from "../src/pages/physical-tickets/index.js";
 
 function adminSession(overrides: Partial<Session> = {}): Session {
@@ -80,6 +82,30 @@ const SAMPLE_BATCH = {
   updatedAt: "2026-04-19T00:00:00Z",
 };
 
+const SAMPLE_TICKET = {
+  id: "tix-1",
+  batchId: "batch-1",
+  uniqueId: "100042",
+  hallId: "hall-1",
+  status: "SOLD" as const,
+  priceCents: 2000,
+  assignedGameId: "game-7",
+  soldAt: "2026-04-20T10:00:00Z",
+  soldBy: "agent-1",
+  buyerUserId: null,
+  voidedAt: null,
+  voidedBy: null,
+  voidedReason: null,
+  createdAt: "2026-04-19T00:00:00Z",
+  updatedAt: "2026-04-20T10:00:00Z",
+  numbersJson: null as number[] | null,
+  patternWon: null as "row_1" | "row_2" | "row_3" | "row_4" | "full_house" | null,
+  wonAmountCents: null as number | null,
+  evaluatedAt: null as string | null,
+  isWinningDistributed: false,
+  winningDistributedAt: null as string | null,
+};
+
 describe("physical-tickets AddPage (admin)", () => {
   beforeEach(() => {
     initI18n();
@@ -97,10 +123,8 @@ describe("physical-tickets AddPage (admin)", () => {
     document.body.appendChild(root);
     renderAddPage(root);
     await tick();
-    // The halls request fires; batches request is gated on hall selection for admin.
     const calls = api.mock.calls.map((c) => c[0] as string);
     expect(calls.some((u) => u.includes("/api/admin/halls"))).toBe(true);
-    // Without hall selected, the empty-scope hint is rendered.
     expect(root.textContent).toContain("Velg hall");
   });
 
@@ -120,14 +144,13 @@ describe("physical-tickets AddPage (admin)", () => {
     document.body.appendChild(root);
     renderAddPage(root);
     await tick();
-    // Populate hall select option (admin fetches halls).
     const select = root.querySelector<HTMLSelectElement>("#hallId")!;
     select.value = "hall-1";
     select.dispatchEvent(new Event("change"));
     await tick();
     expect(api.mock.calls.some(([u]) => String(u).includes("hallId=hall-1"))).toBe(true);
     expect(root.textContent).toContain("Rød billett mai");
-    expect(root.textContent).toContain("Utkast"); // DRAFT status label
+    expect(root.textContent).toContain("Utkast");
   });
 });
 
@@ -154,10 +177,8 @@ describe("physical-tickets AddPage (operator)", () => {
     document.body.appendChild(root);
     renderAddPage(root);
     await tick();
-    // Operator does NOT see the hall select (rendered with display:none).
     const hallRow = root.querySelector<HTMLElement>("#hall-row");
     expect(hallRow?.style.display).toBe("none");
-    // Batches fetched with operator's hallId.
     expect(api.mock.calls.some(([u]) => String(u).includes("hallId=hall-1"))).toBe(true);
     expect(root.textContent).toContain("Rød billett mai");
   });
@@ -207,39 +228,220 @@ describe("physical-tickets AddPage (operator)", () => {
   });
 });
 
-describe("CashOutPlaceholderPage", () => {
+describe("CashOutPage (BIN-640)", () => {
   beforeEach(() => {
     initI18n();
     document.body.innerHTML = "";
+    window.localStorage.setItem("bingo_admin_access_token", "tok");
+    setSession(adminSession());
   });
 
-  it("renders scope-drop message and links to BIN-638/640/641", () => {
+  it("renders a scan form", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
-    renderCashOutPlaceholderPage(root);
-    expect(root.textContent).toContain("Utenfor scope");
-    const links = Array.from(root.querySelectorAll("a")).map((a) => a.textContent || "");
-    expect(links.join(" ")).toContain("BIN-638");
-    expect(links.join(" ")).toContain("BIN-640");
-    expect(links.join(" ")).toContain("BIN-641");
+    renderCashOutPage(root);
+    expect(root.querySelector("#scan-form")).toBeTruthy();
+    expect(root.querySelector<HTMLInputElement>("#scan-uniqueId")).toBeTruthy();
+  });
+
+  it("scans uniqueId and shows cashout form when SOLD and not cashed-out", async () => {
+    mockApiRouter([
+      {
+        match: /\/api\/admin\/unique-ids\/check/,
+        handler: () => ({ exists: true, sellable: false, ticket: SAMPLE_TICKET }),
+      },
+      {
+        match: /\/api\/admin\/physical-tickets\/100042\/cashout$/,
+        handler: () => ({
+          uniqueId: "100042",
+          status: "SOLD",
+          cashedOut: false,
+          cashout: null,
+        }),
+      },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderCashOutPage(root);
+    root.querySelector<HTMLInputElement>("#scan-uniqueId")!.value = "100042";
+    const form = root.querySelector<HTMLFormElement>("#scan-form")!;
+    form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    await tick();
+    expect(root.textContent).toContain("100042");
+    expect(root.querySelector("#cashout-form")).toBeTruthy();
+  });
+
+  it("submits cashout POST with cents", async () => {
+    let postBody: unknown = null;
+    mockApiRouter([
+      {
+        match: /\/api\/admin\/unique-ids\/check/,
+        handler: () => ({ exists: true, sellable: false, ticket: SAMPLE_TICKET }),
+      },
+      {
+        match: /\/api\/admin\/physical-tickets\/100042\/cashout$/,
+        handler: (_url, init) => {
+          if (init?.method === "POST") {
+            postBody = JSON.parse(String(init.body));
+            return { cashout: { id: "co-1", ticketUniqueId: "100042", hallId: "hall-1", gameId: "game-7", payoutCents: 15000, paidBy: "u1", paidAt: "2026-04-20T10:05:00Z", notes: null, otherData: {} }, ticket: { ...SAMPLE_TICKET } };
+          }
+          return { uniqueId: "100042", status: "SOLD", cashedOut: false, cashout: null };
+        },
+      },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderCashOutPage(root);
+    root.querySelector<HTMLInputElement>("#scan-uniqueId")!.value = "100042";
+    root.querySelector<HTMLFormElement>("#scan-form")!.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    await tick();
+    const amount = root.querySelector<HTMLInputElement>("#cashout-amount")!;
+    amount.value = "150";
+    const cashoutForm = root.querySelector<HTMLFormElement>("#cashout-form")!;
+    cashoutForm.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    await tick();
+    expect(postBody).toMatchObject({ payoutCents: 15000 });
+  });
+
+  it("shows ticket-not-found alert if check says missing", async () => {
+    mockApiRouter([
+      {
+        match: /\/api\/admin\/unique-ids\/check/,
+        handler: () => ({ exists: false, sellable: false, ticket: null }),
+      },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderCashOutPage(root);
+    root.querySelector<HTMLInputElement>("#scan-uniqueId")!.value = "999";
+    root.querySelector<HTMLFormElement>("#scan-form")!.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+    await tick();
+    expect(root.textContent).toContain("ikke funnet");
   });
 });
 
-describe("GameTicketListPlaceholderPage", () => {
+describe("GameTicketListPage (BIN-638/639)", () => {
   beforeEach(() => {
     initI18n();
     document.body.innerHTML = "";
+    window.localStorage.setItem("bingo_admin_access_token", "tok");
+    setSession(operatorSession());
   });
 
-  it("renders scope-drop message and links to BIN-638/639/642", () => {
+  it("loads games-in-hall for operator's hall immediately", async () => {
+    const api = mockApiRouter([
+      {
+        match: /\/api\/admin\/physical-tickets\/games\/in-hall/,
+        handler: () => ({
+          generatedAt: "2026-04-20T00:00:00Z",
+          hallId: "hall-1",
+          from: null,
+          to: null,
+          rows: [
+            {
+              gameId: "game-7",
+              name: "Kveld 1",
+              status: "ACTIVE",
+              sold: 10,
+              pendingCashoutCount: 2,
+              ticketsInPlay: 2,
+              cashedOut: 1,
+              totalRevenueCents: 20000,
+            },
+          ],
+          totals: {
+            sold: 10,
+            pendingCashoutCount: 2,
+            ticketsInPlay: 2,
+            cashedOut: 1,
+            totalRevenueCents: 20000,
+            rowCount: 1,
+          },
+        }),
+      },
+    ]);
     const root = document.createElement("div");
     document.body.appendChild(root);
-    renderGameTicketListPlaceholderPage(root);
-    expect(root.textContent).toContain("Utenfor scope");
-    const links = Array.from(root.querySelectorAll("a")).map((a) => a.textContent || "");
-    expect(links.join(" ")).toContain("BIN-638");
-    expect(links.join(" ")).toContain("BIN-639");
-    expect(links.join(" ")).toContain("BIN-642");
+    renderGameTicketListPage(root);
+    await tick();
+    expect(api.mock.calls.some(([u]) => String(u).includes("hallId=hall-1"))).toBe(true);
+    expect(root.textContent).toContain("Kveld 1");
+  });
+
+  it("shows empty-hall callout when admin has no hall selected", async () => {
+    setSession(adminSession());
+    mockApiRouter([
+      { match: /\/api\/admin\/halls/, handler: () => ({ halls: [] }) },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderGameTicketListPage(root);
+    await tick();
+    expect(root.textContent).toContain("Velg hall");
+  });
+});
+
+describe("CheckBingoPage (BIN-641)", () => {
+  beforeEach(() => {
+    initI18n();
+    document.body.innerHTML = "";
+    window.localStorage.setItem("bingo_admin_access_token", "tok");
+    setSession(adminSession());
+  });
+
+  it("renders form with 25-cell grid", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderCheckBingoPage(root);
+    expect(root.querySelector("#check-bingo-form")).toBeTruthy();
+    const cells = root.querySelectorAll<HTMLInputElement>("#cb-grid input[data-idx]");
+    expect(cells.length).toBe(25);
+    // Centre cell is readOnly = 0.
+    expect(cells[12]?.value).toBe("0");
+    expect(cells[12]?.readOnly).toBe(true);
+  });
+
+  it("posts numbers[] + gameId and shows result", async () => {
+    let postBody: unknown = null;
+    mockApiRouter([
+      {
+        match: /\/api\/admin\/physical-tickets\/100042\/check-bingo/,
+        handler: (_url, init) => {
+          postBody = JSON.parse(String(init?.body ?? "{}"));
+          return {
+            uniqueId: "100042",
+            gameId: "game-7",
+            gameStatus: "ENDED",
+            hasWon: true,
+            winningPattern: "row_1",
+            matchedNumbers: [1, 2, 3, 4, 5],
+            drawnNumbersCount: 10,
+            payoutEligible: true,
+            alreadyEvaluated: false,
+            evaluatedAt: "2026-04-20T11:00:00Z",
+            wonAmountCents: null,
+            isWinningDistributed: false,
+          };
+        },
+      },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    renderCheckBingoPage(root);
+    root.querySelector<HTMLInputElement>("#cb-uniqueId")!.value = "100042";
+    root.querySelector<HTMLInputElement>("#cb-gameId")!.value = "game-7";
+    const cells = root.querySelectorAll<HTMLInputElement>("#cb-grid input[data-idx]");
+    cells.forEach((cell, i) => {
+      if (i !== 12) cell.value = String(i + 1);
+    });
+    root.querySelector<HTMLFormElement>("#check-bingo-form")!.dispatchEvent(
+      new Event("submit", { cancelable: true, bubbles: true })
+    );
+    await tick();
+    expect(postBody).toMatchObject({ gameId: "game-7" });
+    expect((postBody as { numbers: number[] }).numbers.length).toBe(25);
+    expect((postBody as { numbers: number[] }).numbers[12]).toBe(0);
+    expect(root.textContent).toContain("Bingo");
   });
 });
 
@@ -250,14 +452,15 @@ describe("physical-tickets route dispatcher", () => {
     setSession(operatorSession());
     window.localStorage.setItem("bingo_admin_access_token", "tok");
     mockApiRouter([
-      { match: /./, handler: () => ({ batches: [], count: 0, halls: [] }) },
+      { match: /./, handler: () => ({ batches: [], count: 0, halls: [], rows: [], totals: { sold: 0, pendingCashoutCount: 0, ticketsInPlay: 0, cashedOut: 0, totalRevenueCents: 0, rowCount: 0 } }) },
     ]);
   });
 
-  it("matches the 3 declared routes", () => {
+  it("matches the 4 declared routes", () => {
     expect(isPhysicalTicketsRoute("/addPhysicalTickets")).toBe(true);
     expect(isPhysicalTicketsRoute("/physicalTicketManagement")).toBe(true);
     expect(isPhysicalTicketsRoute("/physical/cash-out")).toBe(true);
+    expect(isPhysicalTicketsRoute("/physical/check-bingo")).toBe(true);
     expect(isPhysicalTicketsRoute("/something-else")).toBe(false);
   });
 
@@ -269,17 +472,24 @@ describe("physical-tickets route dispatcher", () => {
     expect(root.querySelector("#batch-form")).toBeTruthy();
   });
 
-  it("dispatches to CashOut placeholder", () => {
+  it("dispatches to CashOutPage", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
     mountPhysicalTicketsRoute(root, "/physical/cash-out");
-    expect(root.textContent).toContain("BIN-638");
+    expect(root.querySelector("#scan-form")).toBeTruthy();
   });
 
-  it("dispatches to GameTicketList placeholder", () => {
+  it("dispatches to GameTicketListPage", () => {
     const root = document.createElement("div");
     document.body.appendChild(root);
     mountPhysicalTicketsRoute(root, "/physicalTicketManagement");
-    expect(root.textContent).toContain("BIN-639");
+    expect(root.querySelector("#games-table")).toBeTruthy();
+  });
+
+  it("dispatches to CheckBingoPage", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mountPhysicalTicketsRoute(root, "/physical/check-bingo");
+    expect(root.querySelector("#check-bingo-form")).toBeTruthy();
   });
 });

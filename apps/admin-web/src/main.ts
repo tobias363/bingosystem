@@ -16,6 +16,7 @@ import { isBankIdRoute, mountBankIdRoute } from "./pages/bankid/index.js";
 import { isTrackSpendingRoute, mountTrackSpendingRoute } from "./pages/track-spending/index.js";
 import { isGamesRoute, mountGamesRoute } from "./pages/games/index.js";
 import { isPhysicalTicketsRoute, mountPhysicalTicketsRoute } from "./pages/physical-tickets/index.js";
+import { isUniqueIdRoute, mountUniqueIdRoute } from "./pages/unique-ids/index.js";
 import { isReportRoute, mountReportRoute } from "./pages/reports/index.js";
 import { isHallAccountRoute, mountHallAccountRoute } from "./pages/hallAccountReport/index.js";
 import { isPayoutRoute, mountPayoutRoute } from "./pages/payout/index.js";
@@ -131,6 +132,10 @@ function mountShell(_root: HTMLElement, session: Session): void {
       }
       if (isPhysicalTicketsRoute(bare)) {
         mountPhysicalTicketsRoute(container, bare);
+        return;
+      }
+      if (isUniqueIdRoute(bare)) {
+        mountUniqueIdRoute(container, bare);
         return;
       }
       if (isReportRoute(bare)) {
@@ -289,6 +294,12 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (isPhysicalTicketsRoute(route.path)) {
     mountPhysicalTicketsRoute(container, route.path);
+    container.setAttribute("data-route", route.path);
+    container.setAttribute("data-title", t(route.titleKey));
+    return;
+  }
+  if (isUniqueIdRoute(route.path)) {
+    mountUniqueIdRoute(container, route.path);
     container.setAttribute("data-route", route.path);
     container.setAttribute("data-title", t(route.titleKey));
     return;

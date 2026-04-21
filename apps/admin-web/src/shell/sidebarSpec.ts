@@ -93,6 +93,8 @@ export const adminSidebar: SidebarNode[] = [
 
   { kind: "leaf", id: "addPhysicalTickets", path: "/addPhysicalTickets", icon: "fa fa-ticket", labelKey: "add_physical_tickets", module: "Physical Tickets" },
   { kind: "leaf", id: "physicalTicketManagement", path: "/physicalTicketManagement", icon: "fa fa-gears mr-20", labelKey: "physical_ticket_management", module: "Physical Tickets" },
+  { kind: "leaf", id: "physicalCashOut", path: "/physical/cash-out", icon: "fa fa-money", labelKey: "physical_cash_out", module: "Physical Tickets" },
+  { kind: "leaf", id: "physicalCheckBingo", path: "/physical/check-bingo", icon: "fa fa-check-circle-o", labelKey: "check_bingo_stamp", module: "Physical Tickets" },
   { kind: "leaf", id: "sold-tickets", path: "/sold-tickets", icon: "fa fa-ticket mr-20", labelKey: "sold_tickets" },
 
   {
