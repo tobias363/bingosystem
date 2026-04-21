@@ -4,6 +4,7 @@ import type { GameState } from "../../../bridge/GameBridge.js";
 import type { PatternWonPayload, ChatMessage } from "@spillorama/shared-types/socket-events";
 import type { AudioManager } from "../../../audio/AudioManager.js";
 import type { SpilloramaSocket } from "../../../net/SpilloramaSocket.js";
+import { installBlinkDiagnostic, shouldInstallBlinkDiagnostic } from "../diagnostics/BlinkDiagnostic.js";
 import { BallTube } from "../components/BallTube.js";
 import { HeaderBar } from "../components/HeaderBar.js";
 import { HtmlOverlayManager } from "../components/HtmlOverlayManager.js";
@@ -76,6 +77,7 @@ export class PlayScreen extends Container {
   private headerShiftTween: gsap.core.Tween | null = null;
 
   private bgSprite: Sprite | null = null;
+  private blinkDiagnosticDispose: (() => void) | null = null;
   private screenW: number;
   private screenH: number;
 
@@ -179,59 +181,11 @@ export class PlayScreen extends Container {
     this.headerBar = new HeaderBar(this.overlayManager);
 
     this.setupChatLayoutSync();
-    this.installBlinkDiagnostic(overlayRoot);
-  }
 
-  /**
-   * TEMP diagnostic (2026-04-21): groups DOM mutations per animation frame
-   * and logs which sub-tree + what kind (textContent / innerHTML / attribute)
-   * changed. Helps identify residual "blinking" sources after the
-   * CenterTopPanel + TicketGridHtml memo fixes. Remove when blinking is
-   * fully resolved.
-   */
-  private installBlinkDiagnostic(overlayRoot: HTMLElement): void {
-    const bucket: Record<string, number> = {};
-    let rafScheduled = false;
-    const flush = () => {
-      rafScheduled = false;
-      const entries = Object.entries(bucket).filter(([, n]) => n > 0);
-      if (entries.length > 0) {
-        console.log("[DIAG blink]", entries.map(([k, n]) => `${k}=${n}`).join(", "));
-      }
-      for (const key of Object.keys(bucket)) bucket[key] = 0;
-    };
-    const labelFor = (node: Node): string => {
-      let el: HTMLElement | null = node.nodeType === 1 ? (node as HTMLElement) : node.parentElement;
-      // Walk up until we find a class/id we recognise (g1-*, ticket-*, etc.).
-      while (el) {
-        if (el.classList && el.classList.length > 0) {
-          const c = Array.from(el.classList).find((x) => x.startsWith("g1-") || x.startsWith("ticket-"));
-          if (c) return c;
-        }
-        if (el.id) return `#${el.id}`;
-        el = el.parentElement;
-      }
-      return "(unknown)";
-    };
-    const obs = new MutationObserver((mutations) => {
-      for (const m of mutations) {
-        const label = labelFor(m.target);
-        const kind = m.type === "childList" ? "childList" : m.type === "characterData" ? "text" : `attr:${m.attributeName}`;
-        const key = `${label}[${kind}]`;
-        bucket[key] = (bucket[key] ?? 0) + 1;
-      }
-      if (!rafScheduled) {
-        rafScheduled = true;
-        requestAnimationFrame(flush);
-      }
-    });
-    obs.observe(overlayRoot, {
-      subtree: true,
-      childList: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: ["style", "class", "disabled", "hidden"],
-    });
+    // Opt-in blink-diagnostic (kun aktivert med ?diag=blink i URL-en).
+    if (shouldInstallBlinkDiagnostic()) {
+      this.blinkDiagnosticDispose = installBlinkDiagnostic(overlayRoot);
+    }
   }
 
   // ── Callback setters (called once by Controller, not per-transition) ────
@@ -506,6 +460,8 @@ export class PlayScreen extends Container {
   }
 
   destroy(): void {
+    this.blinkDiagnosticDispose?.();
+    this.blinkDiagnosticDispose = null;
     this.leftInfo.stopCountdown();
     this.buyPopup.destroy();
     this.ticketGrid.destroy();
