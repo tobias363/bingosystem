@@ -20,6 +20,7 @@ import {
   PHASE_4_MASKS,
   PHASE_MASKS,
   classifyPhaseFromPatternName,
+  buildTicketMaskFromGrid5x5,
   remainingBitsForPhase,
 } from "@spillorama/shared-types/spill1-patterns";
 
@@ -44,29 +45,14 @@ export function getBuiltInPatternMasks(name: string): readonly number[] | null {
 
 /**
  * Bygg en 25-bit ticket-state-maske fra klientens grid-representasjon.
- * Bits settes for free center (cell === 0) og alle markerte tall.
- * Grid antas 5×5; celler utenfor ignoreres (guard mot exotic variants).
+ * Delegeres til delt `buildTicketMaskFromGrid5x5` i shared-types.
+ * Returnerer 0 for ikke-5×5 grids (tidligere klient-oppførsel).
  */
 export function buildTicketMaskFromGrid(
   grid: ReadonlyArray<ReadonlyArray<number>>,
   marks: ReadonlySet<number>,
 ): number {
-  let mask = 0;
-  const rows = Math.min(grid.length, 5);
-  for (let r = 0; r < rows; r++) {
-    const row = grid[r];
-    const cols = Math.min(row.length, 5);
-    for (let c = 0; c < cols; c++) {
-      const n = row[c];
-      const bit = 1 << (r * 5 + c);
-      if (n === 0) {
-        mask |= bit;
-      } else if (marks.has(n)) {
-        mask |= bit;
-      }
-    }
-  }
-  return mask;
+  return buildTicketMaskFromGrid5x5(grid, marks) ?? 0;
 }
 
 /**

@@ -124,6 +124,33 @@ export function ticketMaskMeetsPhase(ticketMask: number, phase: Spill1Phase): bo
 }
 
 /**
+ * Bygg 25-bit ticket-mask for et 5×5 grid. Bit `r*5+c` settes hvis
+ * `cell === 0` (free center) ELLER `marks.has(cell)`.
+ *
+ * Returnerer `null` for ikke-5×5 grids — kaller bruker alternative
+ * strategier. Backend og klient bruker begge denne felles-helperen så
+ * en ticket-mask er identisk på begge sider av wiren.
+ */
+export function buildTicketMaskFromGrid5x5(
+  grid: ReadonlyArray<ReadonlyArray<number>>,
+  marks: ReadonlySet<number>,
+): number | null {
+  if (grid.length !== 5) return null;
+  let mask = 0;
+  for (let r = 0; r < 5; r++) {
+    const row = grid[r];
+    if (!row || row.length !== 5) return null;
+    for (let c = 0; c < 5; c++) {
+      const n = row[c];
+      if (n === 0 || marks.has(n)) {
+        mask |= 1 << (r * 5 + c);
+      }
+    }
+  }
+  return mask;
+}
+
+/**
  * Minimum antall celler som mangler for å fullføre fasen, over alle
  * kandidat-masker. 0 betyr fasen er nådd.
  */
