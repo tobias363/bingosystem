@@ -1,24 +1,25 @@
-// PR-B3 (BIN-613) — Physical tickets route dispatcher.
+// Physical tickets route dispatcher.
 //
 // Scope:
 //   - /addPhysicalTickets             → AddPage (batch CRUD + generate)
-//   - /agent/physicalCashOut          → (owned by PR-B1 cash-inout dispatcher, shift-scoped)
-//   - /physicalTicketManagement       → GameTicketListPlaceholderPage (placeholder)
-//   - /physical/cash-out              → CashOutPlaceholderPage (placeholder)
+//   - /physicalTicketManagement       → GameTicketListPage (BIN-638 aggregate +
+//                                        BIN-639 reward-all)
+//   - /physical/cash-out              → CashOutPage (BIN-640 single-ticket payout)
+//   - /physical/check-bingo           → CheckBingoPage (BIN-641 stamp winners)
 //
-// `/agent/physicalCashOut` is intentionally NOT handled here — it's the agent
-// shift-scoped view rendered by cash-inout/PhysicalCashoutPage.ts. The admin
-// cross-shift aggregate view lives at `/physical/cash-out` and is a
-// placeholder until BIN-638/640/641 land.
+// `/agent/physicalCashOut` er bevisst IKKE håndtert her — det er agent-shift-
+// scoped view rendret av cash-inout/PhysicalCashoutPage.ts.
 
 import { renderAddPage } from "./AddPage.js";
-import { renderCashOutPlaceholderPage } from "./CashOutPlaceholderPage.js";
-import { renderGameTicketListPlaceholderPage } from "./GameTicketListPlaceholderPage.js";
+import { renderCashOutPage } from "./CashOutPage.js";
+import { renderGameTicketListPage } from "./GameTicketListPage.js";
+import { renderCheckBingoPage } from "./CheckBingoPage.js";
 
 const PHYSICAL_TICKETS_ROUTES = new Set<string>([
   "/addPhysicalTickets",
   "/physicalTicketManagement",
   "/physical/cash-out",
+  "/physical/check-bingo",
 ]);
 
 export function isPhysicalTicketsRoute(path: string): boolean {
@@ -32,10 +33,13 @@ export function mountPhysicalTicketsRoute(container: HTMLElement, path: string):
       renderAddPage(container);
       return;
     case "/physicalTicketManagement":
-      renderGameTicketListPlaceholderPage(container);
+      renderGameTicketListPage(container);
       return;
     case "/physical/cash-out":
-      renderCashOutPlaceholderPage(container);
+      renderCashOutPage(container);
+      return;
+    case "/physical/check-bingo":
+      renderCheckBingoPage(container);
       return;
     default:
       container.innerHTML = `<div class="box box-danger"><div class="box-body">Unknown physical-tickets route: ${path}</div></div>`;

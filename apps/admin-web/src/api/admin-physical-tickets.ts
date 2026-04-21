@@ -149,3 +149,292 @@ export function listTransfers(id: string): Promise<ListTransfersResponse> {
     { auth: true }
   );
 }
+
+export interface AssignGameRequest {
+  gameId: string;
+}
+
+export function assignBatchToGame(id: string, body: AssignGameRequest): Promise<PhysicalTicketBatch> {
+  return apiRequest<PhysicalTicketBatch>(
+    `/api/admin/physical-tickets/batches/${encodeURIComponent(id)}/assign-game`,
+    { method: "POST", body, auth: true }
+  );
+}
+
+// ── BIN-587 B4b: unique-id lookup + list ────────────────────────────────────
+
+export type PhysicalTicketStatus = "UNSOLD" | "SOLD" | "VOIDED";
+
+export type PhysicalTicketPattern =
+  | "row_1"
+  | "row_2"
+  | "row_3"
+  | "row_4"
+  | "full_house";
+
+export interface PhysicalTicket {
+  id: string;
+  batchId: string;
+  uniqueId: string;
+  hallId: string;
+  status: PhysicalTicketStatus;
+  priceCents: number | null;
+  assignedGameId: string | null;
+  soldAt: string | null;
+  soldBy: string | null;
+  buyerUserId: string | null;
+  voidedAt: string | null;
+  voidedBy: string | null;
+  voidedReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  numbersJson: number[] | null;
+  patternWon: PhysicalTicketPattern | null;
+  wonAmountCents: number | null;
+  evaluatedAt: string | null;
+  isWinningDistributed: boolean;
+  winningDistributedAt: string | null;
+}
+
+export interface CheckUniqueIdResponse {
+  exists: boolean;
+  sellable: boolean;
+  ticket: PhysicalTicket | null;
+}
+
+export function checkUniqueId(uniqueId: string): Promise<CheckUniqueIdResponse> {
+  return apiRequest<CheckUniqueIdResponse>("/api/admin/unique-ids/check", {
+    method: "POST",
+    body: { uniqueId },
+    auth: true,
+  });
+}
+
+export function getUniqueId(uniqueId: string): Promise<PhysicalTicket> {
+  return apiRequest<PhysicalTicket>(
+    `/api/admin/unique-ids/${encodeURIComponent(uniqueId)}`,
+    { auth: true }
+  );
+}
+
+export interface ListUniqueIdsResponse {
+  tickets: PhysicalTicket[];
+  count: number;
+}
+
+export function listUniqueIds(
+  params: { hallId?: string; status?: PhysicalTicketStatus; limit?: number } = {}
+): Promise<ListUniqueIdsResponse> {
+  const q = new URLSearchParams();
+  if (params.hallId) q.set("hallId", params.hallId);
+  if (params.status) q.set("status", params.status);
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return apiRequest<ListUniqueIdsResponse>(
+    `/api/admin/unique-ids${qs ? `?${qs}` : ""}`,
+    { auth: true }
+  );
+}
+
+export interface UniqueIdTransactionEvent {
+  at: string;
+  event: string;
+  actor: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface UniqueIdTransactionsResponse {
+  uniqueId: string;
+  currentStatus: PhysicalTicketStatus;
+  events: UniqueIdTransactionEvent[];
+}
+
+export function getUniqueIdTransactions(uniqueId: string): Promise<UniqueIdTransactionsResponse> {
+  return apiRequest<UniqueIdTransactionsResponse>(
+    `/api/admin/unique-ids/${encodeURIComponent(uniqueId)}/transactions`,
+    { auth: true }
+  );
+}
+
+// ── BIN-640: single-ticket cashout ──────────────────────────────────────────
+
+export interface CashoutRequest {
+  payoutCents: number;
+  notes?: string | null;
+}
+
+export interface PhysicalTicketCashout {
+  id: string;
+  ticketUniqueId: string;
+  hallId: string;
+  gameId: string | null;
+  payoutCents: number;
+  paidBy: string;
+  paidAt: string;
+  notes: string | null;
+  otherData: Record<string, unknown>;
+}
+
+export interface CashoutResult {
+  cashout: PhysicalTicketCashout;
+  ticket: PhysicalTicket;
+}
+
+export function cashoutTicket(uniqueId: string, body: CashoutRequest): Promise<CashoutResult> {
+  return apiRequest<CashoutResult>(
+    `/api/admin/physical-tickets/${encodeURIComponent(uniqueId)}/cashout`,
+    { method: "POST", body, auth: true }
+  );
+}
+
+export interface GetCashoutResponse {
+  uniqueId: string;
+  status: PhysicalTicketStatus;
+  cashedOut: boolean;
+  cashout: PhysicalTicketCashout | null;
+}
+
+export function getCashout(uniqueId: string): Promise<GetCashoutResponse> {
+  return apiRequest<GetCashoutResponse>(
+    `/api/admin/physical-tickets/${encodeURIComponent(uniqueId)}/cashout`,
+    { auth: true }
+  );
+}
+
+// ── BIN-641: check-bingo ────────────────────────────────────────────────────
+
+export interface CheckBingoRequest {
+  gameId: string;
+  numbers: number[];
+}
+
+export interface CheckBingoResponse {
+  uniqueId: string;
+  gameId: string;
+  gameStatus: string;
+  hasWon: boolean;
+  winningPattern: PhysicalTicketPattern | null;
+  matchedNumbers: number[];
+  drawnNumbersCount: number;
+  payoutEligible: boolean;
+  alreadyEvaluated: boolean;
+  evaluatedAt: string | null;
+  wonAmountCents: number | null;
+  isWinningDistributed: boolean;
+}
+
+export function checkBingo(uniqueId: string, body: CheckBingoRequest): Promise<CheckBingoResponse> {
+  return apiRequest<CheckBingoResponse>(
+    `/api/admin/physical-tickets/${encodeURIComponent(uniqueId)}/check-bingo`,
+    { method: "POST", body, auth: true }
+  );
+}
+
+// ── BIN-639: reward-all (bulk payout) ───────────────────────────────────────
+
+export interface RewardAllRewardEntry {
+  uniqueId: string;
+  amountCents: number;
+}
+
+export interface RewardAllRequest {
+  gameId: string;
+  rewards: RewardAllRewardEntry[];
+}
+
+export type RewardAllDetailStatus =
+  | "rewarded"
+  | "skipped_already_distributed"
+  | "skipped_not_stamped"
+  | "skipped_not_won"
+  | "skipped_wrong_game"
+  | "ticket_not_found"
+  | "invalid_amount";
+
+export interface RewardAllDetail {
+  uniqueId: string;
+  status: RewardAllDetailStatus;
+  amountCents?: number;
+  cashoutId?: string;
+  hallId?: string;
+  message?: string;
+}
+
+export interface RewardAllResponse {
+  rewardedCount: number;
+  totalPayoutCents: number;
+  skippedCount: number;
+  details: RewardAllDetail[];
+}
+
+export function rewardAll(body: RewardAllRequest): Promise<RewardAllResponse> {
+  return apiRequest<RewardAllResponse>(
+    "/api/admin/physical-tickets/reward-all",
+    { method: "POST", body, auth: true }
+  );
+}
+
+// ── BIN-638: games in hall aggregate ────────────────────────────────────────
+
+export interface PhysicalTicketGameInHallRow {
+  gameId: string | null;
+  name: string | null;
+  status: "ACTIVE" | "INACTIVE" | null;
+  sold: number;
+  pendingCashoutCount: number;
+  ticketsInPlay: number;
+  cashedOut: number;
+  totalRevenueCents: number;
+}
+
+export interface PhysicalTicketsGamesInHallTotals {
+  sold: number;
+  pendingCashoutCount: number;
+  ticketsInPlay: number;
+  cashedOut: number;
+  totalRevenueCents: number;
+  rowCount: number;
+}
+
+export interface PhysicalTicketsGamesInHallResponse {
+  generatedAt: string;
+  hallId: string;
+  from: string | null;
+  to: string | null;
+  rows: PhysicalTicketGameInHallRow[];
+  totals: PhysicalTicketsGamesInHallTotals;
+}
+
+export function listGamesInHall(
+  params: { hallId: string; from?: string; to?: string; limit?: number }
+): Promise<PhysicalTicketsGamesInHallResponse> {
+  const q = new URLSearchParams();
+  q.set("hallId", params.hallId);
+  if (params.from) q.set("from", params.from);
+  if (params.to) q.set("to", params.to);
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  return apiRequest<PhysicalTicketsGamesInHallResponse>(
+    `/api/admin/physical-tickets/games/in-hall?${q.toString()}`,
+    { auth: true }
+  );
+}
+
+// ── Helper: list sold tickets for a game (existing route, used by PayoutTicketsPage) ──
+export interface ListSoldForGameResponse {
+  tickets: PhysicalTicket[];
+  count: number;
+}
+
+export function listSoldTicketsForGame(
+  gameId: string,
+  params: { hallId?: string; limit?: number } = {}
+): Promise<ListSoldForGameResponse> {
+  const q = new URLSearchParams();
+  if (params.hallId) q.set("hallId", params.hallId);
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  const qs = q.toString();
+  return apiRequest<ListSoldForGameResponse>(
+    `/api/admin/physical-tickets/games/${encodeURIComponent(gameId)}/sold${qs ? `?${qs}` : ""}`,
+    { auth: true }
+  );
+}
