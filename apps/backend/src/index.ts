@@ -52,6 +52,7 @@ import { createLoyaltyMonthlyResetJob } from "./jobs/loyaltyMonthlyReset.js";
 import { createGame1ScheduleTickJob } from "./jobs/game1ScheduleTick.js";
 import { Game1RecoveryService } from "./game/Game1RecoveryService.js";
 import { Game1ScheduleTickService } from "./game/Game1ScheduleTickService.js";
+import { LoyaltyPointsHookAdapter } from "./adapters/LoyaltyPointsHookAdapter.js";
 import { Game1HallReadyService } from "./game/Game1HallReadyService.js";
 import { Game1MasterControlService } from "./game/Game1MasterControlService.js";
 import { createAdminGame1ReadyRouter } from "./routes/adminGame1Ready.js";
@@ -288,6 +289,16 @@ const responsibleGamingStore = platformConnectionString.length > 0
   ? new PostgresResponsibleGamingStore({ connectionString: platformConnectionString, schema: pgSchema, ssl: pgSsl })
   : undefined;
 
+// GAME1_SCHEDULE PR 5 (BIN-700 follow-up): LoyaltyService må konstrueres
+// FØR engine så LoyaltyPointsHookAdapter kan injiseres via engine-options.
+// Hovedregistreringen + singleton-bruken nedenfor refererer til samme
+// `loyaltyService`-instans — ikke to forskjellige.
+const loyaltyService = new LoyaltyService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+const loyaltyHookAdapter = new LoyaltyPointsHookAdapter({ service: loyaltyService });
+
 // BIN-615 / PR-C3b: Instantiate Game3Engine (subclass of Game2Engine ⊂
 // BingoEngine). One engine instance serves G1 / G2 / G3 rooms concurrently:
 //   - Game3Engine.onDrawCompleted guards on isGame3Round (slug + patternEvalMode
@@ -303,7 +314,10 @@ const engine = new Game3Engine(localBingoAdapter, walletAdapter, {
   dailyLossLimit: bingoDailyLossLimit, monthlyLossLimit: bingoMonthlyLossLimit,
   playSessionLimitMs: bingoPlaySessionLimitMs, pauseDurationMs: bingoPauseDurationMs,
   selfExclusionMinMs: bingoSelfExclusionMinMs, maxDrawsPerRound: bingoMaxDrawsPerRound,
-  persistence: responsibleGamingStore, roomStateStore
+  persistence: responsibleGamingStore, roomStateStore,
+  // GAME1_SCHEDULE PR 5: wire loyalty-hook (fire-and-forget points-award
+  // ved ticket.purchase + game.win). Default split-rounding-audit er no-op.
+  loyaltyHook: loyaltyHookAdapter,
 });
 
 // BIN-274: Configurable KYC provider
@@ -488,15 +502,9 @@ const leaderboardTierService = new LeaderboardTierService({
   schema: pgSchema,
 });
 
-// BIN-700: Loyalty-system (tier-CRUD + player-state + points-award).
-// Persistent per-spiller lojalitets-nivå basert på akkumulert aktivitet.
-// Uavhengig av BIN-668 leaderboard-tier (plass-basert premie-mapping).
-// Manuell points-award + tier-override i denne PR; automatic assignment
-// fra spill-aktivitet krever BingoEngine-integrasjon (egen follow-up).
-const loyaltyService = new LoyaltyService({
-  connectionString: platformConnectionString,
-  schema: pgSchema,
-});
+// BIN-700 / GAME1_SCHEDULE PR 5: loyaltyService er konstruert over engine
+// (linje ~290) så LoyaltyPointsHookAdapter kan injiseres i engine-options.
+// Referansen brukes videre her for admin-CRUD-routes + JobScheduler.
 
 // BIN-679: MiniGames-konfig CRUD (Wheel + Chest + Mystery + Colordraft).
 // Fire singleton-rader i app_mini_games_config. Ren ADMIN-konfig — runtime
