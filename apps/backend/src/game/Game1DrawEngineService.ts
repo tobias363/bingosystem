@@ -58,6 +58,9 @@ import {
 } from "./DrawBagStrategy.js";
 import type { Game1TicketPurchaseService, Game1TicketPurchaseRow } from "./Game1TicketPurchaseService.js";
 import type { AuditLogService } from "../compliance/AuditLogService.js";
+import type { Game1PayoutService, Game1WinningAssignment } from "./Game1PayoutService.js";
+import type { Game1JackpotService, Game1JackpotConfig } from "./Game1JackpotService.js";
+import { evaluatePhase, TOTAL_PHASES } from "./Game1PatternEvaluator.js";
 import { logger as rootLogger } from "../util/logger.js";
 
 const log = rootLogger.child({ module: "game1-draw-engine-service" });
@@ -97,6 +100,16 @@ export interface Game1DrawEngineServiceOptions {
   ticketPurchaseService: Game1TicketPurchaseService;
   auditLogService: AuditLogService;
   config?: Partial<Game1DrawEngineConfig>;
+  /**
+   * GAME1_SCHEDULE PR 4c: pattern-evaluering + payout. Hvis ikke satt,
+   * kjører drawNext() i PR 4b-modus (kun draws + markings, ingen payout).
+   */
+  payoutService?: Game1PayoutService;
+  /**
+   * GAME1_SCHEDULE PR 4c Bolk 3: Jackpot-evaluering for Fullt Hus.
+   * Hvis ikke satt eller ticket_config ikke har jackpot-config → 0 jackpot.
+   */
+  jackpotService?: Game1JackpotService;
 }
 
 // ── Internal row shapes ─────────────────────────────────────────────────────
@@ -264,6 +277,8 @@ export class Game1DrawEngineService {
   private readonly ticketPurchase: Game1TicketPurchaseService;
   private readonly audit: AuditLogService;
   private readonly config: Game1DrawEngineConfig;
+  private readonly payoutService: Game1PayoutService | null;
+  private readonly jackpotService: Game1JackpotService | null;
 
   constructor(options: Game1DrawEngineServiceOptions) {
     this.pool = options.pool;
@@ -278,6 +293,8 @@ export class Game1DrawEngineService {
       defaultMaxDraws:
         options.config?.defaultMaxDraws ?? DEFAULT_GAME1_MAX_DRAWS,
     };
+    this.payoutService = options.payoutService ?? null;
+    this.jackpotService = options.jackpotService ?? null;
   }
 
   // ── Table helpers ─────────────────────────────────────────────────────────
@@ -482,19 +499,37 @@ export class Game1DrawEngineService {
       // grid_numbers_json, og marker riktig indeks.
       await this.markBallOnAssignments(client, scheduledGameId, ball);
 
-      // UPDATE state.
-      const isFinished = nextSequence >= maxDraws;
+      // GAME1_SCHEDULE PR 4c Bolk 5: Evaluér aktiv fase mot alle assignments.
+      // Hvis vinnere finnes → kall payoutService, øk current_phase, eller
+      // ender spillet hvis Fullt Hus.
+      const phaseResult = await this.evaluateAndPayoutPhase(
+        client,
+        scheduledGameId,
+        state.current_phase,
+        nextSequence,
+        game.ticket_config_json
+      );
+
+      // UPDATE state: draws_completed + phase + eventuelt engine_ended_at.
+      const bingoWon = phaseResult.phaseWon && state.current_phase === TOTAL_PHASES;
+      const maxDrawsReached = nextSequence >= maxDraws;
+      const isFinished = bingoWon || maxDrawsReached;
+      const newPhase = phaseResult.phaseWon && !bingoWon
+        ? state.current_phase + 1
+        : state.current_phase;
+
       await client.query(
         `UPDATE ${this.gameStateTable()}
             SET draws_completed   = $2,
                 last_drawn_ball   = $3,
                 last_drawn_at     = now(),
-                engine_ended_at   = CASE WHEN $4::boolean THEN now() ELSE engine_ended_at END
+                current_phase     = $4,
+                engine_ended_at   = CASE WHEN $5::boolean THEN now() ELSE engine_ended_at END
           WHERE scheduled_game_id = $1`,
-        [scheduledGameId, nextSequence, ball, isFinished]
+        [scheduledGameId, nextSequence, ball, newPhase, isFinished]
       );
 
-      // Hvis maxDraws nådd → marker scheduled_game som completed.
+      // Hvis Fullt Hus vunnet eller maxDraws nådd → marker scheduled_game som completed.
       if (isFinished) {
         await client.query(
           `UPDATE ${this.scheduledGamesTable()}
@@ -515,6 +550,11 @@ export class Game1DrawEngineService {
           drawSequence: nextSequence,
           ballValue: ball,
           isFinished,
+          phaseWon: phaseResult.phaseWon,
+          phaseThatWasEvaluated: state.current_phase,
+          phaseAfterDraw: newPhase,
+          winnerCount: phaseResult.winnerCount,
+          bingoWon,
         },
       });
 
@@ -780,6 +820,158 @@ export class Game1DrawEngineService {
   }
 
   /**
+   * GAME1_SCHEDULE PR 4c Bolk 5: Evaluér aktiv fase mot alle assignments
+   * og utløs payout hvis vinnere finnes. Returnerer state om hvorvidt
+   * fasen ble vunnet (→ caller øker current_phase eller ender spillet).
+   *
+   * Kalles INNE i drawNext-transaksjonen slik at en payout-feil fører til
+   * rollback av hele draw-en (inkludert draws-INSERT og markings).
+   *
+   * Rollback-semantikk: Hvis payoutService.payoutPhase kaster (f.eks.
+   * PAYOUT_WALLET_CREDIT_FAILED) → throw propagerer ut av drawNext-
+   * transaksjonen og runInTransaction utfører ROLLBACK. Dette er
+   * regulatorisk krav (§11 fail-closed).
+   */
+  private async evaluateAndPayoutPhase(
+    client: PoolClient,
+    scheduledGameId: string,
+    currentPhase: number,
+    drawSequenceAtWin: number,
+    ticketConfigJson: unknown
+  ): Promise<{ phaseWon: boolean; winnerCount: number }> {
+    // PR 4b-modus: payoutService ikke wired opp → skip pattern-evaluering.
+    if (!this.payoutService) {
+      return { phaseWon: false, winnerCount: 0 };
+    }
+
+    // Les alle assignments etter markings-oppdatering.
+    // Bruker samme client → samme transaksjon.
+    const { rows } = await client.query<{
+      id: string;
+      grid_numbers_json: unknown;
+      markings_json: unknown;
+      buyer_user_id: string;
+      hall_id: string;
+      ticket_color: string;
+    }>(
+      `SELECT id, grid_numbers_json, markings_json, buyer_user_id, hall_id, ticket_color
+         FROM ${this.assignmentsTable()}
+        WHERE scheduled_game_id = $1`,
+      [scheduledGameId]
+    );
+
+    if (rows.length === 0) {
+      return { phaseWon: false, winnerCount: 0 };
+    }
+
+    // Find alle assignments som oppfyller current_phase.
+    const winners: Array<Game1WinningAssignment & { userId: string }> = [];
+    for (const row of rows) {
+      const grid = parseGridArray(row.grid_numbers_json);
+      const markings = parseMarkings(row.markings_json, grid.length);
+      const eval_ = evaluatePhase(grid, markings, currentPhase);
+      if (eval_.isWinner) {
+        // Slå opp wallet-id for buyer via separat query (én rad).
+        const walletId = await this.resolveWalletIdForUser(client, row.buyer_user_id);
+        winners.push({
+          assignmentId: row.id,
+          walletId,
+          userId: row.buyer_user_id,
+          hallId: row.hall_id,
+          ticketColor: row.ticket_color,
+        });
+      }
+    }
+
+    if (winners.length === 0) {
+      return { phaseWon: false, winnerCount: 0 };
+    }
+
+    // Resolve totalPhasePrizeCents og jackpot fra ticket_config.
+    const resolved = resolvePhaseConfig(ticketConfigJson, currentPhase);
+
+    // Pot = sum av ikke-refunded purchases. Hent fra DB.
+    const potCents = await this.computePotCents(client, scheduledGameId);
+    const totalPhasePrizeCents =
+      resolved.kind === "percent"
+        ? Math.floor(potCents * resolved.percent / 100)
+        : resolved.amountCents;
+
+    // Jackpot (kun fase 5): velg første vinner's farge for lookup.
+    let jackpotAmountCentsPerWinner = 0;
+    if (currentPhase === TOTAL_PHASES && this.jackpotService) {
+      const firstWinner = winners[0]!;
+      const jackpotCfg = resolveJackpotConfig(ticketConfigJson);
+      if (jackpotCfg) {
+        const j = this.jackpotService.evaluate({
+          phase: currentPhase,
+          drawSequenceAtWin,
+          ticketColor: firstWinner.ticketColor,
+          jackpotConfig: jackpotCfg,
+        });
+        if (j.triggered) {
+          jackpotAmountCentsPerWinner = j.amountCents;
+        }
+      }
+    }
+
+    // Kall payoutService. En feil her propagerer ut og rollbacker drawNext.
+    await this.payoutService.payoutPhase(client, {
+      scheduledGameId,
+      phase: currentPhase,
+      drawSequenceAtWin,
+      roomCode: "",
+      totalPhasePrizeCents,
+      winners,
+      jackpotAmountCentsPerWinner,
+      phaseName: phaseDisplayName(currentPhase),
+    });
+
+    return { phaseWon: true, winnerCount: winners.length };
+  }
+
+  /**
+   * Slå opp wallet-id for bruker. For scheduled-games antas én wallet per
+   * user → primary wallet_id i app_users.
+   */
+  private async resolveWalletIdForUser(
+    client: PoolClient,
+    userId: string
+  ): Promise<string> {
+    const { rows } = await client.query<{ wallet_id: string }>(
+      `SELECT wallet_id FROM "${this.schema}"."app_users" WHERE id = $1`,
+      [userId]
+    );
+    const walletId = rows[0]?.wallet_id;
+    if (!walletId) {
+      throw new DomainError(
+        "WALLET_NOT_FOUND",
+        `Wallet-id mangler for bruker ${userId}.`
+      );
+    }
+    return walletId;
+  }
+
+  /**
+   * Sum (non-refunded) purchases.total_amount_cents for scheduled_game.
+   * Pot-kalkulasjon for prize% pattern.
+   */
+  private async computePotCents(
+    client: PoolClient,
+    scheduledGameId: string
+  ): Promise<number> {
+    const { rows } = await client.query<{ pot_cents: string | number | null }>(
+      `SELECT COALESCE(SUM(total_amount_cents), 0) AS pot_cents
+         FROM "${this.schema}"."app_game1_ticket_purchases"
+        WHERE scheduled_game_id = $1
+          AND refunded_at IS NULL`,
+      [scheduledGameId]
+    );
+    const raw = rows[0]?.pot_cents ?? 0;
+    return typeof raw === "number" ? raw : Number.parseInt(String(raw), 10) || 0;
+  }
+
+  /**
    * For en gitt ball, last alle assignments som har ball i grid_numbers_json
    * og oppdater markings_json.marked[idx]=true. Bruker jsonb_set for presise
    * atomiske oppdateringer.
@@ -930,6 +1122,141 @@ function parseGridArray(raw: unknown): Array<number | null> {
     if (typeof v === "number" && Number.isInteger(v)) return v;
     return null;
   });
+}
+
+// ── Phase + config helpers (PR 4c) ──────────────────────────────────────────
+
+/**
+ * Map fase-nummer til admin-form-pattern-key.
+ *   1 → "row_1", 2 → "row_2", 3 → "row_3", 4 → "row_4", 5 → "full_house".
+ */
+function phaseToConfigKey(phase: number): string {
+  if (phase === 5) return "full_house";
+  return `row_${phase}`;
+}
+
+/** Norsk fase-navn for audit og logging. */
+function phaseDisplayName(phase: number): string {
+  switch (phase) {
+    case 1:
+      return "1 Rad";
+    case 2:
+      return "2 Rader";
+    case 3:
+      return "3 Rader";
+    case 4:
+      return "4 Rader";
+    case 5:
+      return "Fullt Hus";
+    default:
+      return `Fase ${phase}`;
+  }
+}
+
+type ResolvedPhaseConfig =
+  | { kind: "percent"; percent: number }
+  | { kind: "fixed"; amountCents: number };
+
+/**
+ * Resolve phase-config fra ticket_config_json.
+ *
+ * Admin-form-shape (Spill1Config.ts): ticket_config.spill1.ticketColors[0]
+ * .prizePerPattern[row_1..full_house] er prosent av pot.
+ *
+ * For PR 4c: bruk FØRSTE ticketColor's prizePerPattern[phase_key] som
+ * prosent. I praksis skal alle farger ha samme prosent-fordeling. Hvis
+ * ikke finnes eller er 0 → returnerer percent=0 (ingen utbetaling for
+ * fasen, men fasen regnes fortsatt som "vunnet" slik at neste fase kan
+ * starte).
+ */
+function resolvePhaseConfig(
+  rawTicketConfig: unknown,
+  phase: number
+): ResolvedPhaseConfig {
+  let parsed: unknown = rawTicketConfig;
+  if (typeof rawTicketConfig === "string") {
+    try {
+      parsed = JSON.parse(rawTicketConfig);
+    } catch {
+      return { kind: "percent", percent: 0 };
+    }
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return { kind: "percent", percent: 0 };
+  }
+  const obj = parsed as Record<string, unknown>;
+  const spill1 = obj.spill1 as Record<string, unknown> | undefined;
+  const ticketColors = Array.isArray(spill1?.ticketColors)
+    ? (spill1!.ticketColors as Array<Record<string, unknown>>)
+    : Array.isArray(obj.ticketColors)
+    ? (obj.ticketColors as Array<Record<string, unknown>>)
+    : null;
+  if (!ticketColors || ticketColors.length === 0) {
+    return { kind: "percent", percent: 0 };
+  }
+  const key = phaseToConfigKey(phase);
+  const first = ticketColors[0]!;
+  const ppp = first.prizePerPattern as Record<string, unknown> | undefined;
+  if (ppp) {
+    const raw = ppp[key];
+    if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) {
+      return { kind: "percent", percent: raw };
+    }
+    if (typeof raw === "string") {
+      const n = Number.parseFloat(raw);
+      if (Number.isFinite(n) && n >= 0) {
+        return { kind: "percent", percent: n };
+      }
+    }
+  }
+  return { kind: "percent", percent: 0 };
+}
+
+/**
+ * Resolve jackpot-config fra ticket_config_json. Returnerer null hvis
+ * jackpot ikke er konfigurert.
+ *
+ * #316: prizeByColor er Record<string, number> med eksakte ticket-farger
+ * (f.eks. "small_yellow") eller farge-familier ("yellow", "elvis"). Alle
+ * verdier konverteres til numbers; ikke-numeriske filtreres bort.
+ */
+function resolveJackpotConfig(
+  rawTicketConfig: unknown
+): Game1JackpotConfig | null {
+  let parsed: unknown = rawTicketConfig;
+  if (typeof rawTicketConfig === "string") {
+    try {
+      parsed = JSON.parse(rawTicketConfig);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+  const spill1 = obj.spill1 as Record<string, unknown> | undefined;
+  const jp =
+    (spill1?.jackpot as Record<string, unknown> | undefined) ??
+    (obj.jackpot as Record<string, unknown> | undefined);
+  if (!jp || typeof jp !== "object") return null;
+  const pbcRaw = jp.prizeByColor as Record<string, unknown> | undefined;
+  if (!pbcRaw || typeof pbcRaw !== "object") return null;
+  const draw = typeof jp.draw === "number" ? jp.draw : Number.parseInt(String(jp.draw), 10);
+  if (!Number.isFinite(draw) || draw <= 0) return null;
+  const prizeByColor: Record<string, number> = {};
+  for (const [key, val] of Object.entries(pbcRaw)) {
+    const n = numberOrZero(val);
+    if (n > 0) prizeByColor[key.toLowerCase()] = n;
+  }
+  return { prizeByColor, draw };
+}
+
+function numberOrZero(v: unknown): number {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number.parseFloat(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
 }
 
 function parseMarkings(raw: unknown, expectedLength: number): boolean[] {
