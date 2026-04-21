@@ -123,88 +123,119 @@ interface GameStateRow {
 // ── Grid generators (Game 1 scheduled-game format) ──────────────────────────
 
 /**
- * Generate grid-tall for en ticket i scheduled_game-formatet.
+ * Generate grid-tall for en ticket i Spill 1 (5x5 bingo).
  *
- * Dette er IKKE legacy BingoEngine-formatet (5x5 75-ball) — for
- * scheduled-games (Alt 3) bruker vi det norske 3x3/3x9-formatet:
+ * Tobias' spec (PM-avklaring 2026-04-21): Spill 1 bruker kun 5x5-grid.
+ * `size` ('small'/'large') er en LEGACY PRISKATEGORI (påvirker farge-pris og
+ * UI-rendering) — IKKE grid-format. Alle Spill 1-bretter har 25 celler.
  *
- *   - small (3x3): 9 unike tall fra 1..maxBallValue, random.
- *   - large (3x9): 27 celler, British-style column-ranges.
- *     col 0 = 1..9, col 1 = 10..19, col 2 = 20..29, …, col 8 = 80..90.
- *     Cap'et til maxBallValue — kolonner som overstiger får null i alle celler.
- *     3 rader, per kolonne plukker vi 3 unike tall fra kolonnens range (eller
- *     alle i range hvis range < 3).
+ * Format:
+ *   - 25 celler, flat row-major (idx = row*5 + col).
+ *   - Index 12 (row 2, col 2) = 0 — free centre (alltid "markert").
+ *   - Kolonne-ranges proporsjonalt til maxBallValue:
+ *       col c = [c*step+1 .. (c+1)*step] der step=floor(maxBallValue/5),
+ *       siste kolonne inkluderer rest-en opp til maxBallValue.
+ *     Eksempler:
+ *       maxBallValue=75 → col 0=1..15, col 1=16..30, col 2=31..45,
+ *         col 3=46..60, col 4=61..75 (amerikansk 75-ball).
+ *       maxBallValue=90 → col 0=1..18, col 1=19..36, col 2=37..54,
+ *         col 3=55..72, col 4=73..90 (legacy Helper/bingo.js:970-994).
+ *   - Per kolonne plukker vi 5 unike tall (eller færre hvis range < 5),
+ *     null for padding. NB: col 2 inkluderer kun 4 plukk (row 2 = free centre).
  *
- * Returnerer en flat row-major array (small=9, large=27). null for tomme
- * celler.
+ * Referanse: `.claude/legacy-ref/bingo.js:970-994` (Game 1 ticket-gen) +
+ * `.claude/legacy-ref/Game1/Controllers/GameProcess.js:5519-5597` (Row1-5
+ * pattern-matching antar 5x5) + `PatternMasks.ts` (klient-mirror).
+ *
+ * @param size LEGACY priskategori ("small"/"large"). Påvirker IKKE grid-format.
+ * @param maxBallValue Maks ball-verdi (typisk 75 for moderne Spill 1, 90 for
+ *   legacy). Kolonner distribueres proporsjonalt.
+ * @returns Flat row-major array av 25 celler. Index 12 = 0 (free centre).
+ *   Andre celler: number | null (null for tomme celler hvis range < 5).
  */
 export function generateGridForTicket(
-  size: "small" | "large",
+  _size: "small" | "large",
   maxBallValue: number
 ): Array<number | null> {
-  if (size === "small") {
-    return generateSmallGrid(maxBallValue);
-  }
-  return generateLargeGrid(maxBallValue);
+  return generate5x5Grid(maxBallValue);
 }
 
-function generateSmallGrid(maxBallValue: number): Array<number | null> {
-  const nums = pickUniqueInRange(1, maxBallValue, 9);
-  // Flat row-major 3x3.
-  return nums as Array<number | null>;
-}
+const GRID_FREE_CENTRE_INDEX = 12; // row 2, col 2 i row-major 5x5.
 
 /**
- * Large-grid: 3x9 = 27 celler, row-major.
- *   Row 0: col 0..8 → col 0 = col-range[0], col 1 = col-range[1], etc.
- *
- * Col-range: col c = [c*10+1 .. (c+1)*10] cap'et til maxBallValue.
- *   col 0: 1..10 (men vi skiller første kolonne på 1..9 per British-style,
- *   se under).
- *
- * British-style bingo: col 0 = 1..9, col 1 = 10..19, …, col 8 = 80..90 (90
- * i siste kolonne). Vi følger denne semantikken.
- *
- * Hvis kolonnens range overstiger maxBallValue, blir den kolonnen null
- * i alle tre rader.
+ * Genererer en 5x5 bingo-ticket med free centre og proporsjonal column-range.
+ * Returnerer flat row-major array (25 celler).
  */
-function generateLargeGrid(maxBallValue: number): Array<number | null> {
-  const numCols = 9;
-  const numRows = 3;
-  // Per-kolonne 3 unike tall (eller færre hvis range < 3).
-  const perCol: Array<number | null>[] = [];
+function generate5x5Grid(maxBallValue: number): Array<number | null> {
+  const numCols = 5;
+  const numRows = 5;
+  const ranges = computeColumnRanges(maxBallValue, numCols);
+
+  // Per-kolonne: plukk antall unike tall = rows (5), unntatt col 2 der row 2
+  // er free centre (kun 4 plukk nødvendig).
+  const perCol: Array<Array<number | null>> = [];
   for (let c = 0; c < numCols; c++) {
-    const { start, end } = largeColumnRange(c);
-    // Cap til maxBallValue.
-    const clippedEnd = Math.min(end, maxBallValue);
-    if (clippedEnd < start) {
-      perCol.push([null, null, null]);
+    const { start, end } = ranges[c]!;
+    const needed = c === 2 ? numRows - 1 : numRows;
+    if (end < start) {
+      perCol.push(new Array(numRows).fill(null));
       continue;
     }
-    const rangeSize = clippedEnd - start + 1;
-    const pickCount = Math.min(numRows, rangeSize);
-    const picks = pickUniqueInRange(start, clippedEnd, pickCount).sort(
+    const rangeSize = end - start + 1;
+    const pickCount = Math.min(needed, rangeSize);
+    const picks = pickUniqueInRange(start, end, pickCount).sort(
       (a, b) => a - b
     );
-    // Pad med null hvis range < 3.
-    while (picks.length < numRows) picks.push(null as unknown as number);
-    perCol.push(picks as Array<number | null>);
+    // Fyll kolonnen: 5 slots, med null for padding.
+    const colArr: Array<number | null> = new Array(numRows).fill(null);
+    if (c === 2) {
+      // Row 2 = free centre. Fyll row 0, 1, 3, 4 med picks.
+      let pi = 0;
+      for (let r = 0; r < numRows; r++) {
+        if (r === 2) continue;
+        colArr[r] = pi < picks.length ? picks[pi]! : null;
+        pi++;
+      }
+    } else {
+      for (let r = 0; r < numRows; r++) {
+        colArr[r] = r < picks.length ? picks[r]! : null;
+      }
+    }
+    perCol.push(colArr);
   }
-  // Flat row-major: row 0 på alle kolonner, så row 1, så row 2.
-  const flat: Array<number | null> = [];
+
+  // Flat row-major.
+  const flat: Array<number | null> = new Array(numRows * numCols).fill(null);
   for (let r = 0; r < numRows; r++) {
     for (let c = 0; c < numCols; c++) {
-      flat.push(perCol[c]![r] ?? null);
+      flat[r * numCols + c] = perCol[c]![r]!;
     }
   }
+  // Free centre: idx 12 = 0 (ikke null — eksplisitt 0-sentinel).
+  flat[GRID_FREE_CENTRE_INDEX] = 0;
   return flat;
 }
 
-/** British-style large-bingo column-range: col 0 = 1..9, col N = N*10..N*10+9, col 8 = 80..90. */
-function largeColumnRange(col: number): { start: number; end: number } {
-  if (col === 0) return { start: 1, end: 9 };
-  if (col === 8) return { start: 80, end: 90 };
-  return { start: col * 10, end: col * 10 + 9 };
+/**
+ * Proporsjonal column-range for 5-kolonne 5x5 bingo.
+ *   col 0..3: step = floor(maxBallValue/5), range [c*step+1 .. (c+1)*step].
+ *   col 4:    [4*step+1 .. maxBallValue] (inkluderer rest-en).
+ *
+ * Hvis maxBallValue < 5, får senere kolonner tom range (end<start) og dermed
+ * null-padding.
+ */
+function computeColumnRanges(
+  maxBallValue: number,
+  numCols: number
+): Array<{ start: number; end: number }> {
+  const step = Math.max(1, Math.floor(maxBallValue / numCols));
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let c = 0; c < numCols; c++) {
+    const start = c * step + 1;
+    const end = c === numCols - 1 ? maxBallValue : (c + 1) * step;
+    ranges.push({ start, end });
+  }
+  return ranges;
 }
 
 function shuffle<T>(values: T[]): T[] {
@@ -714,8 +745,10 @@ export class Game1DrawEngineService {
       for (const specEntry of purchase.ticketSpec) {
         for (let i = 0; i < specEntry.count; i++) {
           const grid = generateGridForTicket(specEntry.size, maxBallValue);
+          // Free centre (idx 12, cell=0) starter som "markert". Alle andre
+          // celler starter umarkert.
           const markings = {
-            marked: grid.map(() => false),
+            marked: grid.map((cell) => cell === 0),
           };
           const assignmentId = `g1a-${randomUUID()}`;
           await client.query(
