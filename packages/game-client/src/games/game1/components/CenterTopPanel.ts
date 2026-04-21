@@ -170,8 +170,19 @@ export class CenterTopPanel {
    * players — we add that here (PR-5 C3).
    */
   private lastAmountByPatternId = new Map<string, number>();
+  /**
+   * Memo of the last-rendered inputs so we skip the expensive `innerHTML = ""`
+   * + rebuild when nothing actually changed. `PlayScreen.update()` calls this
+   * on every room:update — without the memo, the prize-rows area flashed
+   * (DOM-nuke + re-create) on every ball draw and every player-join event.
+   */
+  private lastPatternsSignature: string | null = null;
 
   updatePatterns(patterns: PatternDefinition[], patternResults: PatternResult[], prizePool = 0): void {
+    const signature = this.computePatternsSignature(patterns, patternResults, prizePool);
+    if (signature === this.lastPatternsSignature) return;
+    this.lastPatternsSignature = signature;
+
     // Destroy old pattern grids
     for (const g of this.patternGrids) g.destroy();
     this.patternGrids = [];
@@ -347,6 +358,18 @@ export class CenterTopPanel {
   /** A6: Show/hide the manual start button based on scheduler.canStartNow + game status. */
   setCanStartNow(canStart: boolean, gameRunning: boolean): void {
     this.startGameBtn.style.display = canStart && !gameRunning ? "block" : "none";
+  }
+
+  private computePatternsSignature(
+    patterns: PatternDefinition[],
+    patternResults: PatternResult[],
+    prizePool: number,
+  ): string {
+    const pats = patterns.map((p) => `${p.id}:${p.name}:${p.design}:${p.prizePercent}`).join(",");
+    const wins = patternResults
+      .map((r) => `${r.patternId}:${r.isWon ? 1 : 0}:${r.payoutAmount ?? 0}`)
+      .join(",");
+    return `${pats}|${wins}|prize=${prizePool}`;
   }
 
   setBadge(text: string): void {

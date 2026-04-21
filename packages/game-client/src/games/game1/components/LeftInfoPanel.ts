@@ -103,7 +103,7 @@ export class LeftInfoPanel {
   update(
     playerCount: number,
     totalStake: number,
-    prizePool: number,
+    myWinnings: number,
     lastDrawnNumber: number | null,
     drawCount: number,
     totalDrawCapacity: number,
@@ -129,7 +129,12 @@ export class LeftInfoPanel {
     // 0-case is legitimate UX (bruker har ingen innsats enda) and the
     // dash was a leftover from a placeholder phase.
     this.entryFeeEl.textContent = `Innsats: ${totalStake} kr`;
-    this.prizeEl.textContent = `Gevinst: ${prizePool} kr`;
+    // "Gevinst" = user's actual accumulated winnings this round (sum of
+    // patternResults.payoutAmount where winnerId === myPlayerId). NOT the
+    // total prize pool — that would shadow Innsats for a sole-buyer scenario
+    // and is misleading: players see "Gevinst" and expect their own winnings
+    // (2026-04-21 Tobias-report).
+    this.prizeEl.textContent = `Gevinst: ${myWinnings} kr`;
     // Unity: last drawn number is zero-padded 2 digits ("07", "42")
     this.numberRingEl.textContent = lastDrawnNumber !== null
       ? String(lastDrawnNumber).padStart(2, "0")

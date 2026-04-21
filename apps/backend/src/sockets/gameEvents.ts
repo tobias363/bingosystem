@@ -716,8 +716,6 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
             if (totalWeighted < 1) {
               throw new DomainError("INVALID_INPUT", "Du må velge minst 1 brett.");
             }
-            // TEMP diagnostic — remove once bug #3 is verified closed.
-            console.log(`[DIAG bet:arm] room=${roomCode} player=${playerId} existing=${JSON.stringify(existing)} incoming=${JSON.stringify(selections)} merged=${JSON.stringify(merged)} totalWeighted=${totalWeighted}`);
             armPlayer(roomCode, playerId, totalWeighted, merged);
           } else {
             // Backward compat: flat ticketCount
@@ -1016,6 +1014,10 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
           throw new DomainError("NOT_SUPPORTED", "ticket:cancel ikke konfigurert på serveren.");
         }
 
+        // In production `deps.getVariantConfig` is backed by the engine and
+        // always returns a config (default-standard fallback before startGame).
+        // The null-branch only fires when a test harness leaves the dep
+        // unwired, or from a future regression that drops the fallback.
         // In production `deps.getVariantConfig` is backed by the engine and
         // always returns a config (default-standard fallback before startGame).
         // The null-branch only fires when a test harness leaves the dep

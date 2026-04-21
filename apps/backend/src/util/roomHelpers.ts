@@ -193,7 +193,12 @@ export function buildRoomUpdatePayload(
   const armedSelections = opts.getArmedPlayerSelections?.(snapshot.code) ?? {};
   const variantInfoForColor = opts.getVariantConfig?.(snapshot.code);
   for (const player of snapshot.players) {
-    if (gameTickets[player.id] && gameTickets[player.id].length > 0) continue;
+    // Mid-round additive-arm (2026-04-21): A player who is currently playing
+    // can also arm brett for the NEXT round. The client shows both — live
+    // myTickets (markable) and preRoundTickets (preview for next round). So
+    // we generate preRoundTickets for EVERY armed player, not just those
+    // without live tickets. Previously the `continue` here meant mid-round
+    // buys vanished from the wire until the next round started.
     const armedCount = armedTicketCounts[player.id];
     if (armedCount === undefined || armedCount <= 0) {
       // Not armed — no preview tickets. Scroll area stays empty.
@@ -227,8 +232,6 @@ export function buildRoomUpdatePayload(
         }
       }
     }
-    // TEMP diagnostic — remove once bug #3 is verified closed.
-    console.log(`[DIAG preRound] room=${snapshot.code} player=${player.id} armedCount=${armedCount} selections=${JSON.stringify(selections)} assignments=${JSON.stringify(colorAssignments)}`);
     preRoundTickets[player.id] = getOrCreateDisplayTickets(
       snapshot.code,
       player.id,
@@ -236,7 +239,6 @@ export function buildRoomUpdatePayload(
       snapshot.gameSlug,
       colorAssignments,
     );
-    console.log(`[DIAG preRound] room=${snapshot.code} returnedTickets=${JSON.stringify(preRoundTickets[player.id]?.map((t) => ({ id: t.id, color: t.color, type: t.type })))}`);
   }
 
   // BIN-443: Include variant info so client can show correct purchase UI.

@@ -266,6 +266,20 @@ export class BingoEngine {
   protected readonly variantGameTypeByRoom = new Map<string, string>();
 
   /**
+   * Per-room variant gameType (e.g. "standard" | "elvis" | "traffic-light").
+   * Populated alongside {@link variantConfigByRoom} in startGame. Needed so
+   * {@link getVariantConfigForRoom} can return a `{ gameType, config }` pair
+   * that socket handlers (`ticket:cancel`, `ticket:replace`, pre-round colour
+   * expansion in roomHelpers) can use without re-resolving gameType.
+   *
+   * Previous code stored gameType implicitly via {@link RoomStateManager.variantByRoom},
+   * but `setVariantConfig` was never called in production — only in tests —
+   * causing "Ingen variant-config for rommet" errors on ticket:cancel and
+   * broken pre-round colour propagation. Engine is the single source of truth.
+   */
+  protected readonly variantGameTypeByRoom = new Map<string, string>();
+
+  /**
    * BIN-615 / PR-C3: Per-room per-player lucky-number registry. Lifted from
    * Game2Engine (PR-C2) so any variant with `variantConfig.luckyNumberPrize > 0`
    * can participate.
@@ -672,8 +686,6 @@ export class BingoEngine {
         const playerSelections = input.armedPlayerSelections?.[player.id];
 
         if (playerSelections && playerSelections.length > 0) {
-          // TEMP diagnostic — remove once bug #3 is verified closed.
-          console.log(`[DIAG startGame] room=${room.code} player=${player.id} playerSelections=${JSON.stringify(playerSelections)} playerTicketCount=${playerTicketCount}`);
           // ── Per-type ticket generation ──
           // Each selection specifies a type and qty. For each selection,
           // generate qty * ticketCount actual tickets (e.g. 1 "large" = 3 tickets).
@@ -697,8 +709,6 @@ export class BingoEngine {
                 ? variantConfig.ticketTypes.find((t) => t.name === sel.name)
                 : undefined) ??
               variantConfig.ticketTypes.find((t) => t.type === sel.type);
-            // TEMP diagnostic — remove once bug #3 is verified closed.
-            console.log(`[DIAG startGame/sel] player=${player.id} sel=${JSON.stringify(sel)} resolvedTT=${JSON.stringify(tt ? { name: tt.name, type: tt.type, ticketCount: tt.ticketCount } : null)} variantConfigTypes=${JSON.stringify(variantConfig.ticketTypes.map((x) => ({ name: x.name, type: x.type })))}`);
             const ticketsPerUnit = tt?.ticketCount ?? 1;
             const colors = tt?.colors; // For traffic-light: [Red, Yellow, Green]
 
@@ -813,6 +823,7 @@ export class BingoEngine {
     this.roomLastRoundStartMs.set(room.code, Date.parse(game.startedAt));
     // BIN-615 / PR-C1: cache variantConfig for per-draw hook access (onDrawCompleted).
     this.variantConfigByRoom.set(room.code, variantConfig);
+    this.variantGameTypeByRoom.set(room.code, variantGameType);
     this.variantGameTypeByRoom.set(room.code, variantGameType);
 
     // BIN-161/BIN-241: Log SHA-256 hash of drawBag only — full sequence is preserved in PostgreSQL checkpoint (BIN-243).
@@ -2064,6 +2075,34 @@ export class BingoEngine {
   getRoomSnapshot(roomCode: string): RoomSnapshot {
     const room = this.requireRoom(roomCode.trim().toUpperCase());
     return this.serializeRoom(room);
+  }
+
+  /**
+   * Return the active variant config + gameType for a room.
+   *
+   * Never returns null — before the first `startGame` call, no hall-specific
+   * variant has been resolved yet, so we hand back the default "standard"
+   * config. This matches what `startGame` itself would do when its caller
+   * omits `input.gameType` / `input.variantConfig`, keeping pre-round socket
+   * handlers (`ticket:cancel`, `ticket:replace`, pre-round colour expansion
+   * in roomHelpers) aligned with what will actually run once the round starts.
+   *
+   * The engine is the canonical source for variant config; the parallel
+   * {@link RoomStateManager.variantByRoom} cache exists only to support older
+   * tests that wire things up manually.
+   */
+  getVariantConfigForRoom(
+    roomCode: string,
+  ): { gameType: string; config: import("./variantConfig.js").GameVariantConfig } {
+    const code = roomCode.trim().toUpperCase();
+    const cfg = this.variantConfigByRoom.get(code);
+    const gt = this.variantGameTypeByRoom.get(code);
+    if (cfg && gt) return { gameType: gt, config: cfg };
+    const fallbackType = "standard";
+    return {
+      gameType: fallbackType,
+      config: variantConfigModule.getDefaultVariantConfig(fallbackType),
+    };
   }
 
   /**

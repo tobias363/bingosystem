@@ -216,11 +216,9 @@
       error.textContent = errorMsg || '';
       error.hidden = !errorMsg;
     }
-    // Hide lobby and Unity
+    // Hide lobby and any active game surface
     const lobbyScreen = document.getElementById('lobby-screen');
     if (lobbyScreen) lobbyScreen.classList.remove('is-visible');
-    const unityContainer = document.getElementById('unity-container');
-    if (unityContainer) unityContainer.style.display = 'none';
     const fab = document.getElementById('spillvett-fab');
     if (fab) fab.hidden = true;
   }
@@ -228,7 +226,7 @@
   function showLobby(user) {
     const overlay = document.getElementById('login-overlay');
     if (overlay) overlay.classList.remove('is-visible');
-    // Show lobby screen (not Unity — Unity loads on game click)
+    // Show lobby screen — games are loaded on demand when tile is clicked.
     const lobbyScreen = document.getElementById('lobby-screen');
     if (lobbyScreen) lobbyScreen.classList.add('is-visible');
     const fab = document.getElementById('spillvett-fab');
@@ -260,10 +258,6 @@
   function notifySpillvett(token) {
     if (typeof window.SetShellToken === 'function') {
       window.SetShellToken(token);
-    }
-    // Phase 1: push new JWT to Unity if it is already running (e.g. after token refresh)
-    if (typeof window.ProvideShellToken === 'function') {
-      window.ProvideShellToken();
     }
   }
 

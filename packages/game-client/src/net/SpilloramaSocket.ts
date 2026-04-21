@@ -136,7 +136,15 @@ export class SpilloramaSocket {
     const buffer = this.bufferedEvents[channel] as Array<typeof payload>;
     buffer.push(payload);
     if (buffer.length > SpilloramaSocket.BUFFER_LIMIT) {
-      buffer.splice(0, buffer.length - SpilloramaSocket.BUFFER_LIMIT);
+      // FIFO eviction. Logging here is worth the noise — hitting the limit
+      // means a listener subscribed very late (or never) and we're dropping
+      // real server events, which is a bug-smell we want to notice.
+      const dropped = buffer.length - SpilloramaSocket.BUFFER_LIMIT;
+      buffer.splice(0, dropped);
+      console.warn(
+        `[SpilloramaSocket] buffer overflow on "${channel}" — dropped ${dropped} oldest event(s). ` +
+        `First listener should subscribe immediately after connect().`,
+      );
     }
   }
 
@@ -280,24 +288,38 @@ export class SpilloramaSocket {
 
   // ── Client → Server emits (with ack) ─────────────────────────────────
 
-  /** Every emit includes accessToken in payload per backend requirement. */
+  /** Every emit includes accessToken in payload per backend requirement.
+   *
+   *  Never rejects — callers only need to check `result.ok`. Previously the
+   *  15s timeout called `reject(...)` even when the ack had already arrived,
+   *  so the Promise resolved first and the rejection became an unhandled
+   *  "zombie" error. Now the timeout and the ack race cooperatively and
+   *  whichever wins clears the other. */
   private emit<T>(event: string, payload: Record<string, unknown>): Promise<AckResponse<T>> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       if (!this.socket?.connected) {
         resolve({ ok: false, error: { code: "NOT_CONNECTED", message: "Ikke tilkoblet." } });
         return;
       }
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve({
+          ok: false,
+          error: { code: "TIMEOUT", message: `Server svarte ikke innen 15s (${event}).` },
+        });
+      }, 15000);
       this.socket.emit(
         event,
         { ...payload, accessToken: getToken() },
         (response: AckResponse<T>) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           resolve(response);
         },
       );
-      // Timeout safety
-      setTimeout(() => {
-        reject(new Error(`Socket emit timeout: ${event}`));
-      }, 15000);
     });
   }
 
