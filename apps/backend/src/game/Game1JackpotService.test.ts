@@ -135,10 +135,18 @@ test("evaluate: farge-familier → riktig prize", () => {
   assert.equal(purple.amountCents, 20000 * 100);
 });
 
-test("evaluate: elvis/red/green/orange → ikke trigget (ikke jackpot-farge)", () => {
+test("evaluate: elvis/red/green/orange → ikke trigget hvis ikke i config (#316)", () => {
+  // cfg har bare yellow/white/purple. elvis/red/green/orange → triggered=false.
   const svc = new Game1JackpotService();
   const cfg = defaultConfig();
-  for (const color of ["elvis1", "elvis5", "small_red", "small_green", "small_orange"]) {
+  const colorFamilyByColor: Record<string, string> = {
+    elvis1: "elvis",
+    elvis5: "elvis",
+    small_red: "red",
+    small_green: "green",
+    small_orange: "orange",
+  };
+  for (const color of Object.keys(colorFamilyByColor)) {
     const r = svc.evaluate({
       phase: 5,
       drawSequenceAtWin: 30,
@@ -146,7 +154,77 @@ test("evaluate: elvis/red/green/orange → ikke trigget (ikke jackpot-farge)", (
       jackpotConfig: cfg,
     });
     assert.equal(r.triggered, false, `farge ${color} skal ikke trigge jackpot`);
-    assert.equal(r.colorFamily, "other");
+    assert.equal(r.colorFamily, colorFamilyByColor[color]);
+  }
+});
+
+test("evaluate (#316): exact ticket-color match vinner over familie-fallback", () => {
+  const svc = new Game1JackpotService();
+  // Config har BÅDE eksakt 'small_yellow' OG farge-familie 'yellow'.
+  // Exact match skal vinne.
+  const r = svc.evaluate({
+    phase: 5,
+    drawSequenceAtWin: 30,
+    ticketColor: "small_yellow",
+    jackpotConfig: {
+      prizeByColor: { small_yellow: 30000, yellow: 10000 },
+      draw: 50,
+    },
+  });
+  assert.equal(r.triggered, true);
+  assert.equal(r.lookupMatch, "exact");
+  assert.equal(r.amountCents, 30000 * 100);
+});
+
+test("evaluate (#316): fallback til farge-familie hvis ingen exact match", () => {
+  const svc = new Game1JackpotService();
+  const r = svc.evaluate({
+    phase: 5,
+    drawSequenceAtWin: 30,
+    ticketColor: "small_yellow",
+    jackpotConfig: {
+      prizeByColor: { yellow: 10000 }, // ingen small_yellow
+      draw: 50,
+    },
+  });
+  assert.equal(r.triggered, true);
+  assert.equal(r.lookupMatch, "family");
+  assert.equal(r.amountCents, 10000 * 100);
+});
+
+test("evaluate (#316): elvis-farge får jackpot hvis konfigurert", () => {
+  const svc = new Game1JackpotService();
+  // #316 utvider til 14 farger. Elvis3 med eksakt konfig skal trigge.
+  const r = svc.evaluate({
+    phase: 5,
+    drawSequenceAtWin: 30,
+    ticketColor: "elvis3",
+    jackpotConfig: {
+      prizeByColor: { elvis3: 25000 },
+      draw: 50,
+    },
+  });
+  assert.equal(r.triggered, true);
+  assert.equal(r.lookupMatch, "exact");
+  assert.equal(r.amountCents, 25000 * 100);
+});
+
+test("evaluate (#316): elvis-familie-fallback for alle elvis-tickets", () => {
+  const svc = new Game1JackpotService();
+  // Konfig har bare 'elvis' som familie-nøkkel, ikke elvis1/2/3/4/5 individuelt.
+  for (const color of ["elvis1", "elvis2", "elvis3", "elvis4", "elvis5"]) {
+    const r = svc.evaluate({
+      phase: 5,
+      drawSequenceAtWin: 30,
+      ticketColor: color,
+      jackpotConfig: {
+        prizeByColor: { elvis: 15000 },
+        draw: 50,
+      },
+    });
+    assert.equal(r.triggered, true, `farge ${color} skal trigge via elvis-familie`);
+    assert.equal(r.lookupMatch, "family");
+    assert.equal(r.amountCents, 15000 * 100);
   }
 });
 
@@ -186,16 +264,24 @@ test("resolveColorFamily: whitespace tolerant", () => {
   assert.equal(resolveColorFamily("  yellow  "), "yellow");
 });
 
-test("resolveColorFamily: ikke-jackpot-farger → 'other'", () => {
-  for (const color of [
-    "elvis1",
-    "elvis5",
-    "small_red",
-    "small_green",
-    "small_orange",
-    "rainbow",
-    "",
-  ]) {
+test("resolveColorFamily: ukjente farger og tom → 'other'", () => {
+  for (const color of ["rainbow", "", "unknown", "foo_bar"]) {
     assert.equal(resolveColorFamily(color), "other");
   }
+});
+
+test("resolveColorFamily (#316): elvis1..5 → 'elvis' familien", () => {
+  for (const color of ["elvis1", "elvis2", "elvis3", "elvis4", "elvis5", "ELVIS1"]) {
+    assert.equal(resolveColorFamily(color), "elvis");
+  }
+});
+
+test("resolveColorFamily (#316): red/green/orange utvidet til egne familier", () => {
+  assert.equal(resolveColorFamily("small_red"), "red");
+  assert.equal(resolveColorFamily("large_red"), "red");
+  assert.equal(resolveColorFamily("red"), "red");
+  assert.equal(resolveColorFamily("small_green"), "green");
+  assert.equal(resolveColorFamily("green"), "green");
+  assert.equal(resolveColorFamily("small_orange"), "orange");
+  assert.equal(resolveColorFamily("orange"), "orange");
 });

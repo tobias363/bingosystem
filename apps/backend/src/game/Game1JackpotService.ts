@@ -30,17 +30,21 @@
  *     direkte lookup her).
  */
 
-export interface JackpotPrizeByColor {
-  /** Jackpot-premie for gul-familie (Small/Large Yellow) i kroner. */
-  yellow: number;
-  /** Jackpot-premie for hvit-familie (Small/Large White) i kroner. */
-  white: number;
-  /** Jackpot-premie for lilla-familie (Small/Large Purple) i kroner. */
-  purple: number;
-}
+/**
+ * Per-farge jackpot-konfig. Kan bruke:
+ *   - Farge-familie-navn: "yellow" | "white" | "purple" | "red" | "green" |
+ *     "orange" (matcher resolveColorFamily-output for legacy-kompatibilitet).
+ *   - Exact ticket-farger fra SPILL1_TICKET_COLORS: "small_yellow",
+ *     "large_white", "elvis1", "elvis2", etc. (#316: admin lar konfigurere
+ *     per farge).
+ *
+ * evaluate() slår opp FØRST på exact ticket-farge, så på farge-familie, så
+ * returnerer 0 hvis hverken finnes.
+ */
+export type JackpotPrizeByColor = Record<string, number>;
 
 export interface Game1JackpotConfig {
-  /** Per-farge jackpot-beløp i kroner. 0 = jackpot av for den fargen. */
+  /** Per-farge jackpot-beløp i kroner. 0/mangler = jackpot av for den fargen. */
   prizeByColor: JackpotPrizeByColor;
   /**
    * Maks draw-sekvens (inklusiv) for jackpot-trigger. Hvis Fullt Hus
@@ -60,18 +64,36 @@ export interface Game1JackpotEvaluationInput {
   jackpotConfig: Game1JackpotConfig;
 }
 
+/**
+ * Farge-familier brukt for suffiks-basert oppslag. Utvidet fra originale
+ * 3 (yellow/white/purple) til 7 etter #316 slik at alle 14 ticket-farger i
+ * SPILL1_TICKET_COLORS kan ha jackpot.
+ */
+export type JackpotColorFamily =
+  | "yellow"
+  | "white"
+  | "purple"
+  | "red"
+  | "green"
+  | "orange"
+  | "elvis"
+  | "other";
+
 export interface Game1JackpotEvaluationResult {
   /** true hvis jackpot utløses. */
   triggered: boolean;
-  /**
-   * Jackpot-beløp i øre (0 hvis ikke utløst). Konvertert fra kroner-config.
-   */
+  /** Jackpot-beløp i øre (0 hvis ikke utløst). Konvertert fra kroner-config. */
   amountCents: number;
   /**
-   * Farge-familie brukt for lookup ("yellow" | "white" | "purple" |
-   * "other"). "other" = utløses ikke (ikke en jackpot-farge).
+   * Farge-familie brukt for fallback-lookup. Kun satt hvis eksakt
+   * farge-match ikke ble funnet først. "other" = ikke en jackpot-farge.
    */
-  colorFamily: "yellow" | "white" | "purple" | "other";
+  colorFamily: JackpotColorFamily;
+  /**
+   * Hvordan lookup ble gjort: 'exact' = config.prizeByColor[ticketColor],
+   * 'family' = config.prizeByColor[colorFamily], 'none' = ikke funnet.
+   */
+  lookupMatch: "exact" | "family" | "none";
 }
 
 /**
@@ -85,10 +107,17 @@ export class Game1JackpotService {
    */
   evaluate(input: Game1JackpotEvaluationInput): Game1JackpotEvaluationResult {
     const colorFamily = resolveColorFamily(input.ticketColor);
+    const pbc = input.jackpotConfig.prizeByColor ?? {};
+    const ticketLc = (input.ticketColor ?? "").toLowerCase().trim();
 
     // Regel 1: kun Fullt Hus (fase 5).
     if (input.phase !== 5) {
-      return { triggered: false, amountCents: 0, colorFamily };
+      return {
+        triggered: false,
+        amountCents: 0,
+        colorFamily,
+        lookupMatch: "none",
+      };
     }
 
     // Regel 2: kun hvis vunnet PÅ eller FØR jackpot.draw.
@@ -98,41 +127,61 @@ export class Game1JackpotService {
       input.drawSequenceAtWin <= 0 ||
       input.drawSequenceAtWin > maxDraw
     ) {
-      return { triggered: false, amountCents: 0, colorFamily };
+      return {
+        triggered: false,
+        amountCents: 0,
+        colorFamily,
+        lookupMatch: "none",
+      };
     }
 
-    // Regel 3 + 4: farge-basert beløp.
-    if (colorFamily === "other") {
-      return { triggered: false, amountCents: 0, colorFamily };
+    // Regel 3: oppslag. Først eksakt ticket-farge (#316), så farge-familie.
+    let nok = 0;
+    let lookupMatch: "exact" | "family" | "none" = "none";
+    const exact = ticketLc ? pbc[ticketLc] : undefined;
+    if (typeof exact === "number" && Number.isFinite(exact) && exact > 0) {
+      nok = exact;
+      lookupMatch = "exact";
+    } else if (colorFamily !== "other") {
+      const family = pbc[colorFamily];
+      if (typeof family === "number" && Number.isFinite(family) && family > 0) {
+        nok = family;
+        lookupMatch = "family";
+      }
     }
-    const nok = input.jackpotConfig.prizeByColor[colorFamily] ?? 0;
-    if (!Number.isFinite(nok) || nok <= 0) {
-      // Regel 5: 0 = av.
-      return { triggered: false, amountCents: 0, colorFamily };
+
+    if (nok <= 0) {
+      // Regel 5: 0 eller mangler = av.
+      return {
+        triggered: false,
+        amountCents: 0,
+        colorFamily,
+        lookupMatch: "none",
+      };
     }
 
     const amountCents = Math.round(nok * 100);
-    return { triggered: true, amountCents, colorFamily };
+    return { triggered: true, amountCents, colorFamily, lookupMatch };
   }
 }
 
 // ── Pure helpers ────────────────────────────────────────────────────────────
 
 /**
- * Map ticket-farge (f.eks. "small_yellow", "large_white", "purple", "elvis1")
- * til en jackpot-farge-familie.
+ * Map ticket-farge (f.eks. "small_yellow", "large_white", "elvis1") til en
+ * jackpot-farge-familie. Etter #316 er det 7 familier + "other".
  *
- * Match-semantikk: case-insensitiv, matcher `_yellow`/`_white`/`_purple`
- * suffiks og også bare "yellow"/"white"/"purple" alene (legacy-form).
- * Elvis/red/green/orange → "other" (ingen jackpot).
+ * Match-semantikk: case-insensitiv, matcher suffix (`_yellow`) og exact
+ * name ("yellow"). `elvis1..elvis5` → "elvis" familien.
  */
-export function resolveColorFamily(
-  ticketColor: string
-): "yellow" | "white" | "purple" | "other" {
+export function resolveColorFamily(ticketColor: string): JackpotColorFamily {
   const lc = (ticketColor ?? "").toLowerCase().trim();
-  // Eksakte match eller suffix-match.
   if (lc === "yellow" || lc.endsWith("_yellow")) return "yellow";
   if (lc === "white" || lc.endsWith("_white")) return "white";
   if (lc === "purple" || lc.endsWith("_purple")) return "purple";
+  if (lc === "red" || lc.endsWith("_red")) return "red";
+  if (lc === "green" || lc.endsWith("_green")) return "green";
+  if (lc === "orange" || lc.endsWith("_orange")) return "orange";
+  if (/^elvis\d*$/.test(lc)) return "elvis";
   return "other";
 }
