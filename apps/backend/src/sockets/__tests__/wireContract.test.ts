@@ -127,6 +127,20 @@ describe("BIN-527 outgoing payloads conform to shared-types schemas", () => {
     const r1 = await alice.emit<AckResponse<{ roomCode: string }>>("room:create", { hallId: "hall-test" });
     const roomCode = r1.data!.roomCode;
     await bob.emit("room:create", { hallId: "hall-test" });
+    // BIN-694: override to legacy "standard" manual-claim variant — new default
+    // (Norsk 5-phase auto-claim) would consume the LINE phase before
+    // claim:submit lands, so the pattern:won broadcast this test verifies
+    // would never fire from the explicit claim path.
+    server.roomState.setVariantConfig(roomCode, {
+      gameType: "standard",
+      config: {
+        ticketTypes: [{ name: "Small Yellow", type: "small", priceMultiplier: 1, ticketCount: 1 }],
+        patterns: [
+          { name: "Row 1", claimType: "LINE" as const, prizePercent: 10, design: 1 },
+          { name: "Full House", claimType: "BINGO" as const, prizePercent: 90, design: 0 },
+        ],
+      },
+    });
     await alice.emit("bet:arm", { roomCode, armed: true });
     await bob.emit("bet:arm", { roomCode, armed: true });
     await alice.emit("game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 });

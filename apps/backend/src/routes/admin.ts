@@ -143,6 +143,14 @@ export interface AdminRouterDeps {
   roomConfiguredEntryFeeByRoom: Map<string, number>;
   getPrimaryRoomForHall: (hallId: string) => { code: string; hallId: string; gameStatus: string; playerCount: number } | null;
   resolveBingoHallGameConfigForRoom: (roomCode: string) => Promise<{ hallId: string; maxTicketsPerPlayer: number }>;
+  /**
+   * BIN-694: Bind the default variant config for a freshly created room
+   * so `BingoEngine.meetsPhaseRequirement` gets the 5-phase Norsk-bingo
+   * pattern names (1 Rad / 2 Rader / … / Fullt Hus) instead of falling
+   * back to the legacy 1-line rule that triggered every phase at once.
+   * Idempotent — no-op when a variant is already set for the room.
+   */
+  bindDefaultVariantConfig?: (roomCode: string, gameSlug: string) => void;
   // BIN-588 wire-up: compliance audit + transactional mail. Both are
   // injected so tests can pass fakes and prod can pass the real store.
   auditLogService: AuditLogService;
@@ -1000,6 +1008,10 @@ export function createAdminRouter(deps: AdminRouterDeps): express.Router {
         walletId: requestedHostWalletId,
         roomCode: enforceSingleRoomPerHall ? "BINGO1" : undefined
       });
+      // BIN-694: wire DEFAULT variantConfig for admin-created rooms. Admin
+      // route defaults to "bingo" gameSlug (same fallback as `engine.createRoom`
+      // when none specified) so the room gets the 5-phase Norsk-bingo config.
+      deps.bindDefaultVariantConfig?.(roomCode, "bingo");
       const snapshot = await emitRoomUpdate(roomCode);
       auditAdmin(req, adminUser, "room.create", "room", roomCode, { hallId });
       apiSuccess(res, {

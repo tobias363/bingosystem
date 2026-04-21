@@ -6,6 +6,7 @@
 import { generateTicketForGame } from "../game/ticket.js";
 import type { Ticket } from "../game/types.js";
 import type { GameVariantConfig } from "../game/variantConfig.js";
+import { getDefaultVariantConfig } from "../game/variantConfig.js";
 
 /** Per-type ticket selection stored for an armed player. */
 export interface TicketSelection {
@@ -232,6 +233,32 @@ export class RoomStateManager {
 
   getVariantConfig(roomCode: string): RoomVariantInfo | null {
     return this.variantByRoom.get(roomCode) ?? null;
+  }
+
+  /**
+   * BIN-694: Bind the default variant config for a room based on its
+   * `gameSlug`. Called at every room-creation entry point in production
+   * so `BingoEngine.meetsPhaseRequirement` gets the correct 5-phase
+   * Norsk-bingo patterns (1 Rad / 2 Rader / … / Fullt Hus) for Game 1,
+   * Game 2 Rocket/Tallspill for rocket, and Game 3 Mønsterbingo patterns
+   * for monsterbingo.
+   *
+   * Idempotent: does nothing when a variant is already set for the room
+   * (lets explicit admin-configured variants win over defaults). Safe to
+   * call unconditionally after `engine.createRoom` / room restore.
+   *
+   * Root cause: before this helper, `setVariantConfig` was only called
+   * from tests — so prod rooms had `variantByRoom[code] === undefined`
+   * and `startGame` fell back to the legacy "standard" config with
+   * "Row 1".."Row 4" pattern names that don't match the Norsk-bingo
+   * regex in `meetsPhaseRequirement`, triggering all LINE phases on the
+   * first completed line.
+   */
+  bindDefaultVariantConfig(roomCode: string, gameSlug: string): void {
+    if (this.variantByRoom.has(roomCode)) return;
+    const gameType = gameSlug?.trim() || "bingo";
+    const config = getDefaultVariantConfig(gameType);
+    this.variantByRoom.set(roomCode, { gameType, config });
   }
 
   /**
