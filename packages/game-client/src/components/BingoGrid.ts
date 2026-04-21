@@ -156,7 +156,6 @@ export class BingoGrid extends Container {
    * Delegates to {@link BingoCell.stopAllAnimations} which kills every
    * tween targeting cell scale (mark bounce, blink) and snaps scale back
    * to 1:1 without any animation. See BingoCell.stopAllAnimations for the
-   * Unity reference (Stop_NumberBlink in BingoTicketSingleCellData.cs).
    */
   stopAllAnimations(): void {
     for (const cell of this.cells) {

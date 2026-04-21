@@ -1,13 +1,11 @@
 /**
  * BIN-544: Typed localStorage wrapper with Unity PlayerPrefs key migration.
  *
- * Unity WebGL stores PlayerPrefs in localStorage with keys like
  * "unity.player_prefs.MarkerDesign" or plain "Game_Marker". This class reads
  * existing Unity keys on first access and copies them to our namespaced
  * "spillorama.prefs.*" keys — so users who migrate from Unity to web keep
  * their audio, language, marker and notification settings.
  *
- * Unity key-inventory extracted from
  * `legacy/unity-client/Assets/_Project/_Scripts/**` via grep for
  * `PlayerPrefs\.(GetString|GetInt|GetFloat|SetString|...)` calls.
  */
@@ -16,28 +14,27 @@ const PREFIX = "spillorama.prefs.";
 
 /** Known preference keys with their types. */
 export interface PrefsSchema {
-  /** Marker-design index (Unity: `Game_Marker` / `MarkerDesign`). */
+  /** Marker-design index. */
   markerDesign: number;
-  /** Game background style (Unity: `Game_Background`). */
+  /** Game background style. */
   background: number;
-  /** Language code, e.g. "no", "en" (Unity: `CurrentGameLanguage`). */
+  /** Language code, e.g. "no", "en". */
   language: string;
   /** Master volume 0.0–1.0. */
   volume: number;
-  /** Voice-pack code, e.g. "no-male", "no-female", "en" (Unity: `VoiceStatus`). */
+  /** Voice-pack code, e.g. "no-male", "no-female", "en". */
   voiceGender: string;
-  /** Sound effects on/off (Unity: `SoundStatus`). */
+  /** Sound effects on/off. */
   soundEnabled: boolean;
   /** Voice announcements on/off. */
   voiceEnabled: boolean;
-  /** Notifications toggle (Unity: `NotificationsEnabled`). */
+  /** Notifications toggle. */
   notificationsEnabled: boolean;
   /** Double-announce toggle (web-native only, no Unity equivalent). */
   doubleAnnounce: boolean;
 }
 
 /**
- * Unity PlayerPrefs key candidates per web key.
  *
  * Each entry lists all Unity key-name variants observed in the legacy
  * codebase. The migrator tries them in order and copies the first hit to
@@ -54,7 +51,6 @@ const UNITY_KEY_MAP: Partial<Record<keyof PrefsSchema, string[]>> = {
 };
 
 /**
- * Unity localStorage-prefix variants. Unity WebGL builds store keys with
  * at least these prefixes depending on version + configuration.
  */
 const UNITY_PREFIXES = ["", "unity.player_prefs.", "PlayerPrefs."];
@@ -67,8 +63,7 @@ const UNITY_PREFIXES = ["", "unity.player_prefs.", "PlayerPrefs."];
  * without needing to be refactored.
  *
  * Value-mapping handles boolean normalization ("0"/"1" → "true"/"false")
- * and voice-gender normalization (Unity's "Male"/"Female" → web's
- * "no-male"/"no-female").
+ * and voice-gender normalization.
  */
 const LEGACY_AUDIOMANAGER_TARGETS: Partial<
   Record<keyof PrefsSchema, { key: string; transform?: (raw: string) => string }>
@@ -154,7 +149,6 @@ export class PlayerPrefs {
     const raw = this.storage.getItem(PREFIX + key);
     if (raw === null) return defaultValue;
 
-    // Unity stores booleans as "0"/"1" or "true"/"false" — normalize both.
     if (typeof defaultValue === "boolean") {
       return (raw === "1" || raw === "true") as PrefsSchema[K];
     }

@@ -70,7 +70,6 @@ export interface GameState {
   /**
    * F3 (BIN-431): Jackpot header info (from room:update.gameVariant.jackpot).
    * Null when the variant has no jackpot configured; falsy isDisplay = hide.
-   * Unity reference: Game1GamePlayPanel.SocketFlow.cs:518-520.
    */
   jackpot: { drawThreshold: number; prize: number; isDisplay: boolean } | null;
 

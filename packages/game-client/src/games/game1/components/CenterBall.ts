@@ -18,7 +18,6 @@ interface PauseAwareBridge {
  * Also supports countdown mode: displays seconds remaining before
  * the next game starts, ticking down each second.
  *
- * Unity parity for pause-hook:
  *   - `Game1GamePlayPanel.SocketFlow.cs:672-696` — when server emits pause,
  *     the scheduler countdown freezes. Client mirrors by not ticking down
  *     the local display. When the server resumes, it sends a fresh

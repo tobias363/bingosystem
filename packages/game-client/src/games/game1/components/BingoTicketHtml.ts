@@ -10,8 +10,7 @@ import { getTicketThemeByName, type TicketColorTheme } from "../colors/TicketCol
  *   - Native scrolling in parent TicketGridHtml (no custom drag handler)
  *   - DOM destroy is synchronous — no Pixi render-loop crashes from stale refs
  *
- * Color theme still comes from {@link getTicketThemeByName} (Unity-verified
- * palette), just converted from 0xRRGGBB integers to CSS hex strings.
+ * Color theme still comes from {@link getTicketThemeByName}, just converted from 0xRRGGBB integers to CSS hex strings.
  */
 export interface BingoTicketHtmlOptions {
   ticket: Ticket;

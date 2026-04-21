@@ -6,7 +6,7 @@ import gsap from "gsap";
  * `BingoBallPanelManager` (the 1, not the 2 — Game 1 uses the simpler
  * vertical layout, not Game 2/3's horizontal big-ball variant).
  *
- * Layout (Unity-faithful):
+ * Layout:
  *   - Newest ball at the TOP of the tube. Oldest at the BOTTOM.
  *   - Bottom of stack drops off-screen below when the tube is full.
  *   - The most recently drawn ball is rendered HIGHLIGHT_SCALE (1.15);
@@ -23,13 +23,13 @@ import gsap from "gsap";
  */
 
 const TUBE_WIDTH = 96;
-const BALL_SIZE = 90;          // Unity bingoBallSize
-const BALL_DISTANCE = 100;     // Unity bingoBallDistance (centre-to-centre)
+const BALL_SIZE = 90;
+const BALL_DISTANCE = 100;
 const PAD_TOP = 8;
-const HIGHLIGHT_SCALE = 1.15;  // Unity bingoBallHighlightScale
-const NORMAL_SCALE = 0.85;     // Unity SetNormalSizeOfBingoBalls target
-const MOVE_TIME = 0.5;         // Unity bingoBallMovementAnimationTime (seconds)
-const SCALE_TIME = 0.25;       // Unity bingoBallScaleAnimationTime
+const HIGHLIGHT_SCALE = 1.15;
+const NORMAL_SCALE = 0.85;
+const MOVE_TIME = 0.5;
+const SCALE_TIME = 0.25;
 
 type Ball = Container & { ballNumber: number };
 
@@ -41,7 +41,6 @@ type Ball = Container & { ballNumber: number };
  * new ball slides in over 0.5s, but once the tube is full the shift is
  * only ~0.17s so rapid draws don't feel sluggish.
  *
- * Unity formula (verbatim):
  *   if (activeBingoBalls == bingoBallShowcaseCount)
  *       return ((bingoBallLimit - activeBingoBalls + 1) * 0.5) / bingoBallLimit;
  *   else
@@ -50,8 +49,7 @@ type Ball = Container & { ballNumber: number };
  * Where `bingoBallLimit = bingoBallShowcaseCount + 1` (one transit slot).
  *
  * `activeBefore` is the count BEFORE the new ball was added — matches
- * Unity's `activeBingoBalls` at the time `GetAnimationTime()` is called
- * (Unity increments the counter only after the move animation kicks off).
+ *.
  *
  * Exported so it can be unit-tested without touching Pixi.
  */
@@ -95,7 +93,7 @@ export class BallTube extends Container {
     this.tubeHeight = tubeHeight;
     // Mirror Unity: showcase = floor(rect.height / distance). The tube can
     // host one extra ball during the transition before the oldest scrolls
-    // off the bottom (Unity's bingoBallLimit = showcaseCount + 1).
+    // off the bottom.
     this.showcaseCount = Math.max(1, Math.floor((tubeHeight - PAD_TOP) / BALL_DISTANCE));
 
     // ── Tube background — glass effect ──────────────────────────────────────
@@ -139,7 +137,6 @@ export class BallTube extends Container {
    *   5. If the tube was full, the oldest ball animates off the bottom
    *
    * BIN-619 Bug 6: `moveTime` is now DYNAMIC (was fixed 0.5s) — matches
-   * Unity `GetAnimationTime`: accelerates from 0.5s (empty tube) down to
    * ~0.17s (full tube) so rapid draws don't feel sluggish.
    */
   addBall(number: number): void {
@@ -170,7 +167,6 @@ export class BallTube extends Container {
     this.balls.unshift(ball);
 
     // 3 + 4 + 5. Animate everyone to their new slot. Linear move to mimic
-    // Unity's Vector3.Lerp-based MoveObject. The oldest ball animates one
     // slot below the visible region — the mask clips it, then we drop it.
     const overflow = this.balls.length > this.showcaseCount;
     for (let i = 0; i < this.balls.length; i++) {
@@ -200,8 +196,7 @@ export class BallTube extends Container {
     this.clear();
     if (numbers.length === 0) return;
 
-    // Show only the most recent `showcaseCount` balls (Unity does the same
-    // in WithdrawList — older balls are silently dropped on snapshot load).
+    // Show only the most recent `showcaseCount` balls.
     const visible = numbers.slice(-this.showcaseCount);
     // Newest first: reverse so the last drawn number ends up at index 0.
     const reversed = [...visible].reverse();
@@ -271,7 +266,6 @@ export class BallTube extends Container {
     // breathing punch in place rather than a slide.
     //
     // BIN-619 Bug 6 A — INTENTIONAL UNITY DEVIATION:
-    // Unity's `BingoBallPanelManager.cs` uses RectTransform pivot (0.5, 0)
     // (bottom-centre) in vertical mode, which makes the 1.15 scale grow
     // the ball UPWARD from its slot bottom. PM-beslutning 2026-04-19
     // (Tobias): Unity 1:1 gjelder KUN funksjonell logikk (tickets, scoring,

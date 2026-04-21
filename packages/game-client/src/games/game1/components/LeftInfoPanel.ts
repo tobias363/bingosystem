@@ -135,7 +135,6 @@ export class LeftInfoPanel {
     // and is misleading: players see "Gevinst" and expect their own winnings
     // (2026-04-21 Tobias-report).
     this.prizeEl.textContent = `Gevinst: ${myWinnings} kr`;
-    // Unity: last drawn number is zero-padded 2 digits ("07", "42")
     this.numberRingEl.textContent = lastDrawnNumber !== null
       ? String(lastDrawnNumber).padStart(2, "0")
       : "--";

@@ -80,7 +80,7 @@ class Game1Controller implements GameController {
     const { app, socket, bridge } = this.deps;
     app.stage.addChild(this.root);
 
-    // UI overlays (Unity: DisplayLoader, UtilityMessagePanel)
+    // UI overlays
     const overlayContainer = app.app.canvas.parentElement ?? document.body;
     this.loader = new LoadingOverlay(overlayContainer);
     // BIN-673: typed state-machine drives all loader messages. 5-sec stuck
@@ -175,7 +175,7 @@ class Game1Controller implements GameController {
     this.root.on("pointerdown", () => this.deps.audio.unlock(), { once: true });
 
     // No auto-arm — player must explicitly buy tickets via the popup.
-    // (Unity also requires explicit purchase via Game1TicketPurchasePanel.)
+    //
 
     // BIN-500: Loader-barriere.
     // En late-joiner kan komme inn mens en runde kjører. Før loader fjernes må
@@ -187,7 +187,7 @@ class Game1Controller implements GameController {
     //       (beviser at socket faktisk leverer — ikke bare er connected)
     await this.waitForSyncReady();
 
-    // Hide loader — game is ready (Unity: DisplayLoader(false))
+    // Hide loader — game is ready)
     this.loader.setState("READY");
 
     // Transition based on state
@@ -380,7 +380,6 @@ class Game1Controller implements GameController {
     this.gameRoundCount++;
     this.buyMoreDisabled = false;
     // BIN-409 (D2): Ny runde — reset buy-more button til enabled state.
-    // Unity parity: `Game1GamePlayPanel.SocketFlow.cs` setter `BuyMoreDisableFlagVal`
     // false ved OnGameStart. Buy popup (Game1BuyPopup) closes itself at the
     // PLAYING transition via PlayScreen.update() → gameStatus === RUNNING.
     this.playScreen?.enableBuyMore();
@@ -389,7 +388,6 @@ class Game1Controller implements GameController {
     // Reset announced numbers for the new round
     this.deps.audio.resetAnnouncedNumbers();
 
-    // Unity OnGameStart: close lucky number panel, hide delete buttons
     this.luckyPicker?.hide();
 
     if (state.myTickets.length > 0) {
@@ -406,7 +404,6 @@ class Game1Controller implements GameController {
     // Dismiss any active mini-game overlay so it doesn't block the EndScreen
     this.dismissMiniGame();
 
-    // Unity OnGameFinish: stop blink animations, reset sounds
     // (Game1GamePlayPanel.SocketFlow.cs:595-616 iterates Active_BingoTickets
     //  and calls Stop_Blink on each ticket.)
     this.deps.audio.resetAnnouncedNumbers();
@@ -416,7 +413,7 @@ class Game1Controller implements GameController {
     // HTML tickets use CSS transitions — they complete on their own and
     // don't leak onto EndScreen. Nothing to clean up.)
 
-    // Refresh player balance (Unity: dispatch balance event for game-bar sync)
+    // Refresh player balance
     if (this.myPlayerId) {
       const me = state.players.find((p) => p.id === this.myPlayerId);
       if (me && typeof me.balance === "number" && typeof window !== "undefined") {
@@ -447,7 +444,7 @@ class Game1Controller implements GameController {
     if (this.phase === "PLAYING" && this.playScreen) {
       this.playScreen.onNumberDrawn(number, drawIndex, state);
 
-      // BIN-451: Disable buy-more using server-authoritative threshold (Unity: BuyMoreDisableFlagVal)
+      // BIN-451: Disable buy-more using server-authoritative threshold
       if (!this.buyMoreDisabled && state.disableBuyAfterBalls > 0 && state.drawCount >= state.disableBuyAfterBalls) {
         this.buyMoreDisabled = true;
         this.playScreen.disableBuyMore();
@@ -557,7 +554,7 @@ class Game1Controller implements GameController {
     if (!result.ok) {
       // Gap #1: promote server error to a visible toast instead of silent console log.
       // Gap #2: revert the claim button from "Sendt..." back to "ready" so the
-      //         user can retry (Unity: claim-denied → button re-enabled).
+      //         user can retry.
       this.toast?.error(result.error?.message ?? `Ugyldig ${type === "LINE" ? "rekke" : "bingo"}-claim`);
       this.playScreen?.resetClaimButton(type);
       console.error("[Game1] Claim failed:", result.error);

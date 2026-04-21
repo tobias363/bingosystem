@@ -534,7 +534,7 @@ export class PlayScreen extends Container {
   }
 
   /** Resize ticket grid when the chat panel collapses / expands, and slide the
-   *  jackpot header bar -80px when chat opens (Unity G17 BIN-431). */
+   *  jackpot header bar -80px when chat opens. */
   private setupChatLayoutSync(): void {
     this.chatPanel.setOnToggle((collapsed) => {
       this.positionTicketGrid();

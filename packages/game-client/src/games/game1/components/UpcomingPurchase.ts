@@ -3,7 +3,6 @@ import type { HtmlOverlayManager } from "./HtmlOverlayManager.js";
 /**
  * BIN-410 (D3): Inline side-panel for preRound-kjøp under WAITING-fasen.
  *
- * Unity-referanser:
  *   - `Game1GamePlayPanel.UpcomingGames.cs:9-19`  — hovedmetode (UpdateUpcomingGames)
  *   - `Game1GamePlayPanel.UpcomingGames.cs:26-95` — layout-builder
  *   - `Game1UpcomingGameTicketData.cs:29-60`      — data-holder per ticket-type
@@ -16,7 +15,6 @@ import type { HtmlOverlayManager } from "./HtmlOverlayManager.js";
  *     trigger `disableBuyMore` (Q3 avgjørelse — kjøp er stengt, ingen preRound
  *     heller).
  *   - Vises KUN i WAITING-state — ikke under SPECTATING (Q4 avgjørelse —
- *     Unity viser upcoming-panelet kun mellom runder, ikke mens trekning går).
  *
  * Internt håndhever vi samme 30-vektet-cap som `Game1BuyPopup`: plus-knapp
  * disables når rad-vekten ikke får plass i remaining. Gjenbruker pattern fra

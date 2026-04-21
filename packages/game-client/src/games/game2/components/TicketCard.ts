@@ -8,13 +8,13 @@ import { ONE_TO_GO_COLOR } from "../../game1/colors/TicketColorThemes.js";
 export interface TicketCardOptions {
   gridSize?: GridSize;
   cellSize?: number;
-  /** Card-level color overrides (Unity TicketColorTheme) */
+  /** Card-level color overrides */
   cardBg?: number;
   headerBg?: number;
   headerText?: number;
   toGoColor?: number;
   toGoCloseColor?: number;
-  /** Cell-level color overrides (Unity TicketColorData) */
+  /** Cell-level color overrides */
   cellColors?: BingoCellColors;
   /**
    * BIN-692: show a × "cancel" button at the top-left of the header so
@@ -182,7 +182,6 @@ export class TicketCard extends Container {
    * own flip gesture, then fires `onCancel(ticketId)` if loadTicket was
    * already called.
    *
-   * Unity parity: `Game1ViewPurchaseElvisTicket.cs:17,49-76` deleteBtn —
    * a per-ticket × that drops the armed ticket and (for Large/Elvis
    * bundles) the whole bundle it belongs to.
    */
@@ -202,7 +201,7 @@ export class TicketCard extends Container {
     btn.addChild(bg);
 
     const cross = new Text({
-      text: "\u00d7", // multiplication sign (Unity uses same)
+      text: "\u00d7", // multiplication sign
       style: {
         fontFamily: "Arial, Helvetica, sans-serif",
         fontSize: 16,
@@ -296,9 +295,7 @@ export class TicketCard extends Container {
    * cards mid-BINGO-pulse, or cards mid-flip do not keep animating after the
    * round ends and the UI transitions to the EndScreen / waiting mode.
    *
-   * Unity reference: BingoTicket.Stop_Blink (legacy/unity-client/Assets/
    * _Project/_Scripts/Prefabs/Bingo Tickets/BingoTicket.cs:1011-1016) — the
-   * Unity method cancels LeanTween tweens on both `imgTicket` (card bg) and
    * each cell's `txtNumber`/`imgCellOneToGo`, then calls `Set_Color_Callback`
    * to restore the original color. No scale animation on reset.
    *
@@ -318,7 +315,7 @@ export class TicketCard extends Container {
     this.grid.stopAllAnimations();
 
     // 3. Cancel any in-flight flip tween and snap to grid-view without
-    //    animation (Unity has no flip at game-end — we fully reset).
+    //    animation.
     gsap.killTweensOf(this.scale);
     this.scale.set(1, 1);
     if (this.isFlipping || this.isFlipped) {
@@ -345,7 +342,6 @@ export class TicketCard extends Container {
    * per-mini background remain visible. Used when this card lives inside a
    * TicketGroup (Elvis/Large/Traffic) where the group owns the outer chrome.
    *
-   * Unity equivalent: PrefabBingoGame1LargeTicket5x5.Set_Ticket_Color
    * (legacy/unity-client/Assets/_Project/_Scripts/Prefabs/Bingo Tickets/
    * PrefabBingoGame1LargeTicket5x5.cs:18) sets
    *   Mini_Tickets[i].imgTicket.color = color.BG_Color
@@ -356,8 +352,7 @@ export class TicketCard extends Container {
    * when tickets were grouped (G5 bug).
    */
   setMiniMode(): void {
-    // Keep cardBg visible so per-mini bg-blink is rendered (Unity: imgTicket
-    // is always visible inside a Large/Elvis/Traffic group).
+    // Keep cardBg visible so per-mini bg-blink is rendered.
     this.cardBg.visible = true;
     this.headerBg.visible = false;
     this.headerText.visible = false;
@@ -377,7 +372,7 @@ export class TicketCard extends Container {
     this.cardBg.fill(this.cardBgColor);
   }
 
-  // ── Flip animation (Unity: Y-rotation 0→90→0 mapped to scaleX) ─────
+  // ── Flip animation ─────
 
   /**
    * Flip the card to show details (ticket number, hall, supplier, price,
@@ -413,8 +408,7 @@ export class TicketCard extends Container {
 
       const centerX = this.cardW / 2;
       // Row layout: 5 rows stacked centrally. Dynamic row-height so the text
-      // always fits inside `cardH` no matter the grid size (Unity anchors
-      // rows proportionally; we approximate with even vertical spacing).
+      // always fits inside `cardH` no matter the grid size.
       const rowCount = 5;
       const rowGap = Math.max(14, Math.floor((this.cardH - 20) / (rowCount + 1)));
       const startY = Math.max(12, (this.cardH - rowGap * (rowCount - 1)) / 2);
@@ -604,17 +598,17 @@ export class TicketCard extends Container {
     if (remaining === 0) {
       this.toGoText.text = "Ferdig!";
       this.toGoText.style.fill = 0x2a9d8f;
-      // Stop any one-to-go blink animations (Unity: Stop_Blink)
+      // Stop any one-to-go blink animations
       this.grid.stopAllBlinks();
       this.stopBgBlink();
-      // Play BINGO celebration animation (Unity: pattern complete pulse)
+      // Play BINGO celebration animation
       this.playBingoAnimation();
     } else if (remaining === 1) {
       this.toGoText.text = "1 ToGo!";
       this.toGoText.style.fill = this.toGoCloseColor;
-      // Blink the remaining unmarked cell with one-to-go color (Unity: Start_NumberBlink + imgCellOneToGo)
+      // Blink the remaining unmarked cell with one-to-go color
       this.grid.blinkCells(this.grid.getUnmarkedNumbers(), ONE_TO_GO_COLOR);
-      // Blink the entire card background (Unity: Blink_On_1_Color, 0.5s ping-pong)
+      // Blink the entire card background
       this.startBgBlink();
     } else {
       this.toGoText.text = `${remaining} ToGo`;
@@ -624,7 +618,7 @@ export class TicketCard extends Container {
     }
   }
 
-  // ── Card background blink (Unity: Blink_On_1_Color) ──────────────────
+  // ── Card background blink ──────────────────
 
   /** Highlight color for 1-to-go background blink (bright gold / yellow). */
   private static readonly BLINK_ON_1_COLOR = 0xffe83d;
@@ -633,7 +627,6 @@ export class TicketCard extends Container {
    * Start blinking the card background between its normal color and
    * the highlight color.
    *
-   * Unity reference: BingoTicket.cs:1020-1033 (Blink_On_1_Color path).
    *   LT.value(imgTicket, Set_Color_Callback, Current_Color, Blink_On_1_Color, 0.5f)
    *     .setOnComplete(() => LT.value(..., Blink_On_1_Color, Current_Color, 0.5f))
    *     .setLoopCount(-1)
@@ -654,7 +647,7 @@ export class TicketCard extends Container {
       duration: 0.5,
       yoyo: true,
       repeat: -1,
-      ease: "none", // Unity LeanTween.value default = linear
+      ease: "none",
       onUpdate: () => {
         const blended = this.lerpColor(this.cardBgColor, TicketCard.BLINK_ON_1_COLOR, proxy.t);
         this.cardBg.clear();
@@ -674,16 +667,14 @@ export class TicketCard extends Container {
     this.cardBg.fill(this.cardBgColor);
   }
 
-  // ── BINGO pulse animation (Unity: scale 0.85→1.05, 0.25s, 6 reps) ───
+  // ── BINGO pulse animation ───
 
   /**
    * Play the BINGO celebration animation when a pattern is completed.
    *
-   * Unity reference: BingoTicket.Bingo_Highlight_Anim() at
    * legacy/unity-client/Assets/_Project/_Scripts/Prefabs/Bingo Tickets/
    * BingoTicket.cs:1035-1056.
    *
-   * Unity flow (coroutine):
    *   Bingo.SetActive(true)                             // overlay visible immediately
    *   there:
    *     LT.scale(0.85, 0.25).onComplete(LT.scale(1.05, 0.25))
@@ -694,14 +685,14 @@ export class TicketCard extends Container {
    * 0.25s) via gsap timeline — the 0.5s wait in Unity runs in parallel with
    * the scale sequence, so there is no gap between iterations.
    *
-   * Trigger (Unity BingoTicket.cs:766-775): Set_Togo_Txt() checks if local
+   * Trigger: Set_Togo_Txt() checks if local
    * `count === 0` and only then launches this coroutine. Web equivalent is
    * `remaining === 0` in updateToGo() above. Text is hardcoded "BINGO!".
    */
   playBingoAnimation(): void {
     this.stopBingoAnimation();
 
-    // Show "BINGO!" overlay text on the card (Unity: Bingo.SetActive(true)
+    // Show "BINGO!" overlay text on the card
     // fires at the very start of the coroutine, before any scale tween).
     if (!this.bingoOverlay) {
       this.bingoOverlay = new Text({
