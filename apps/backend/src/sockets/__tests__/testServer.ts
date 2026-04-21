@@ -326,6 +326,8 @@ export async function createTestServer(opts: CreateTestServerOptions = {}): Prom
     requireActiveHallIdFromInput: async (input) => (typeof input === "string" ? input : "hall-test"),
     buildLeaderboard: () => [],
     getVariantConfig: (code) => roomState.getVariantConfig(code),
+    // BIN-694: mirror production wiring so tests exercise the same flow.
+    bindDefaultVariantConfig: (code, slug) => roomState.bindDefaultVariantConfig(code, slug),
   };
 
   const registerGameEvents = createGameEventHandlers(deps);

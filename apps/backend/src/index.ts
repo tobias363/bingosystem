@@ -1246,6 +1246,10 @@ app.use(createAdminRouter({
   roomConfiguredEntryFeeByRoom: roomState.roomConfiguredEntryFeeByRoom,
   getPrimaryRoomForHall: (hallId) => getPrimaryRoomForHall(hallId, engine.listRoomSummaries()),
   resolveBingoHallGameConfigForRoom,
+  // BIN-694: wire default variant-config (5-phase Norsk bingo for Game 1)
+  // at admin room-create so `meetsPhaseRequirement` gets the correct
+  // pattern names instead of falling back to the legacy 1-line rule.
+  bindDefaultVariantConfig: (code, slug) => roomState.bindDefaultVariantConfig(code, slug),
   auditLogService,
   emailService,
   supportEmail,
@@ -1388,6 +1392,9 @@ const registerGameEvents = createGameEventHandlers({
   cancelPreRoundTicket: (code, id, ticketId, cfg) => roomState.cancelPreRoundTicket(code, id, ticketId, cfg),
   resolveBingoHallGameConfigForRoom, requireActiveHallIdFromInput, buildLeaderboard,
   getVariantConfig: (code) => roomState.getVariantConfig(code),
+  // BIN-694: wire default variant-config on room-create + room-join auto-create
+  // so Game 1 rooms get DEFAULT_NORSK_BINGO_CONFIG (5-phase progression).
+  bindDefaultVariantConfig: (code, slug) => roomState.bindDefaultVariantConfig(code, slug),
   chatMessageStore,
 });
 
@@ -1502,6 +1509,17 @@ const PORT = Number(process.env.PORT ?? 4000);
     try {
       const loaded = await roomStateStore.loadAll();
       if (loaded > 0) console.log(`[BIN-170] Loaded ${loaded} room(s) from Redis`);
+      // BIN-694: variant-config is in-memory only (variantByRoom) and isn't
+      // persisted in Redis, so Redis-restored rooms need to be re-bound to
+      // their default variant. Uses the restored RoomState.gameSlug.
+      for (const code of engine.getAllRoomCodes()) {
+        try {
+          const snap = engine.getRoomSnapshot(code);
+          roomState.bindDefaultVariantConfig(code, snap.gameSlug);
+        } catch (err) {
+          console.warn(`[BIN-694] Failed to bind variant for restored room ${code}:`, err);
+        }
+      }
     } catch (err) { console.error("[BIN-170] Failed to load rooms from Redis:", err); }
   }
 
@@ -1528,6 +1546,9 @@ const PORT = Number(process.env.PORT ?? 4000);
               snapshot,
               game.gameSlug,
             );
+            // BIN-694: rebind default variant for crash-recovered rooms so the
+            // phase-progression runs correctly on the next draw.
+            roomState.bindDefaultVariantConfig(game.roomCode, game.gameSlug);
             restored++;
           } else {
             console.warn(`[BIN-245] No snapshot for game ${game.gameId} in room ${game.roomCode} — marking ENDED`);

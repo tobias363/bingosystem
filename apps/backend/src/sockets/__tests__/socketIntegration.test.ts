@@ -748,6 +748,22 @@ describe("Socket.IO integration", () => {
     const roomCode = r1.data!.roomCode;
     await bob.emit("room:create", { hallId: "hall-test" });
 
+    // BIN-694: this test exercises MANUAL claim:submit LINE flow. The new
+    // default variant (DEFAULT_NORSK_BINGO_CONFIG) runs auto-claim-on-draw
+    // which would pre-consume the LINE phase before the player submits.
+    // Override to the legacy "standard" variant (manual-claim) so the
+    // claim:submit path is still reachable.
+    server.roomState.setVariantConfig(roomCode, {
+      gameType: "standard",
+      config: {
+        ticketTypes: [{ name: "Small Yellow", type: "small", priceMultiplier: 1, ticketCount: 1 }],
+        patterns: [
+          { name: "Row 1", claimType: "LINE" as const, prizePercent: 10, design: 1 },
+          { name: "Full House", claimType: "BINGO" as const, prizePercent: 90, design: 0 },
+        ],
+      },
+    });
+
     const armA = await alice.emit<AckResponse>("bet:arm", { roomCode, armed: true });
     assert.ok(armA.ok, `arm alice: ${armA.error?.message}`);
     const armB = await bob.emit<AckResponse>("bet:arm", { roomCode, armed: true });
@@ -803,6 +819,17 @@ describe("Socket.IO integration", () => {
     );
     const roomCode = r1.data!.roomCode;
     await bob.emit("room:create", { hallId: "hall-test" });
+    // BIN-694: override to legacy "standard" variant so the manual
+    // claim:submit BINGO path stays reachable. Without this the default
+    // Norsk 5-phase config auto-ends the game on Fullt Hus before the
+    // player's explicit claim lands.
+    server.roomState.setVariantConfig(roomCode, {
+      gameType: "standard",
+      config: {
+        ticketTypes: [{ name: "Small Yellow", type: "small", priceMultiplier: 1, ticketCount: 1 }],
+        patterns: [{ name: "Full House", claimType: "BINGO" as const, prizePercent: 100, design: 0 }],
+      },
+    });
     await alice.emit("bet:arm", { roomCode, armed: true });
     await bob.emit("bet:arm", { roomCode, armed: true });
     await alice.emit("game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 });
