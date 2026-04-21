@@ -7,6 +7,11 @@ import { generateTicketForGame } from "../game/ticket.js";
 import type { Ticket } from "../game/types.js";
 import type { GameVariantConfig } from "../game/variantConfig.js";
 import { getDefaultVariantConfig } from "../game/variantConfig.js";
+import { buildVariantConfigFromSpill1Config } from "../game/spill1VariantMapper.js";
+import type { Spill1ConfigInput } from "../game/spill1VariantMapper.js";
+import { logger as rootLogger } from "./logger.js";
+
+const roomStateLog = rootLogger.child({ module: "roomState" });
 
 /** Per-type ticket selection stored for an armed player. */
 export interface TicketSelection {
@@ -262,6 +267,70 @@ export class RoomStateManager {
   }
 
   /**
+   * PR B (variantConfig-admin-kobling): Bind variantConfig for et rom med
+   * DB-oppslag som primærkilde + default-fallback.
+   *
+   * Flow:
+   *   1. Hvis rommet allerede har variantConfig → no-op (idempotent).
+   *   2. Hvis `gameManagementId` er satt + `fetchGameManagementConfig`-
+   *      hook gitt: hent `GameManagement.config_json`, kjør mapperen,
+   *      bind resultatet. DB-/network-feil logges og faller til (3).
+   *   3. Fallback: `bindDefaultVariantConfig(roomCode, gameSlug)`.
+   *
+   * Designrasjonal: RoomStateManager holdes fri for service-avhengigheter
+   * (GameManagementService) ved å motta en fetch-hook fra caller. I prod
+   * injiserer index.ts `async (id) => gameManagementService.get(id).config`.
+   * Tester kan utelate hooken og får automatisk fallback-path.
+   *
+   * Kun Spill 1 (`gameSlug ∈ {"bingo", "game_1", "norsk-bingo"}`) støtter
+   * admin-konfig via `config.spill1` i dag. Andre gameType-er bruker
+   * alltid default — per-game-type config-eksponering er egen scope.
+   */
+  async bindVariantConfigForRoom(
+    roomCode: string,
+    opts: {
+      gameSlug: string;
+      gameManagementId?: string | null;
+      /**
+       * Optional DB-fetcher for GameManagement.config_json. Returnerer
+       * `{spill1: ...}` eller `null` hvis ikke funnet. Kaster gjerne på
+       * DB-/network-feil — bindVariantConfigForRoom fanger og fallbacker.
+       */
+      fetchGameManagementConfig?: (id: string) => Promise<Record<string, unknown> | null | undefined>;
+    },
+  ): Promise<void> {
+    if (this.variantByRoom.has(roomCode)) return;
+
+    const gameSlug = opts.gameSlug?.trim() || "bingo";
+    const isSpill1 = gameSlug === "bingo" || gameSlug === "game_1" || gameSlug === "norsk-bingo";
+
+    if (opts.gameManagementId && opts.fetchGameManagementConfig && isSpill1) {
+      try {
+        const config = await opts.fetchGameManagementConfig(opts.gameManagementId);
+        const spill1 = extractSpill1Config(config);
+        if (spill1) {
+          const mapped = buildVariantConfigFromSpill1Config(spill1);
+          this.variantByRoom.set(roomCode, { gameType: gameSlug, config: mapped });
+          return;
+        }
+        // GameManagement-raden finnes men har ingen spill1-config → fallback.
+        roomStateLog.info(
+          { roomCode, gameManagementId: opts.gameManagementId },
+          "GameManagement har ingen config.spill1 — bruker default-variantConfig",
+        );
+      } catch (err) {
+        roomStateLog.warn(
+          { err, roomCode, gameManagementId: opts.gameManagementId },
+          "GameManagement-lookup failed — fallback til default-variantConfig",
+        );
+      }
+    }
+
+    // Fallback-path: default per gameSlug (samme atferd som bindDefaultVariantConfig).
+    this.bindDefaultVariantConfig(roomCode, gameSlug);
+  }
+
+  /**
    * BIN-692: Cancel a single pre-round ticket — or its whole bundle —
    * atomically. Returns a diff describing what changed so the caller
    * (socket handler) can log + emit room:update.
@@ -363,4 +432,25 @@ export class RoomStateManager {
     // as no-op rather than throw; caller logs it.
     return null;
   }
+}
+
+/**
+ * PR B: Trekk ut `config.spill1`-sub-objekt fra en rå `GameManagement.config_json`-
+ * payload. Godtar både shallow `{spill1: {...}}` og direkte spill1-shape
+ * (backward-compat med evt. eldre lagring). Returnerer null hvis ingen
+ * gjenkjennelig spill1-struktur finnes.
+ */
+function extractSpill1Config(
+  config: Record<string, unknown> | null | undefined,
+): Spill1ConfigInput | null {
+  if (!config || typeof config !== "object") return null;
+  const nested = (config as { spill1?: unknown }).spill1;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return nested as Spill1ConfigInput;
+  }
+  // Direkte-shape: har `ticketColors`-array → behandle hele config som spill1.
+  if (Array.isArray((config as { ticketColors?: unknown }).ticketColors)) {
+    return config as Spill1ConfigInput;
+  }
+  return null;
 }
