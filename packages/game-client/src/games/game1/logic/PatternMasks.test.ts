@@ -23,9 +23,9 @@ describe("PatternMasks — mask counts", () => {
   it("Row 1 has 10 masks (5 rows + 5 cols)", () => {
     expect(ROW_1_MASKS.length).toBe(10);
   });
-  it("Row 2 has 10 masks", () => expect(ROW_2_MASKS.length).toBe(10));
-  it("Row 3 has 9 masks (legacy omits 235)", () => expect(ROW_3_MASKS.length).toBe(9));
-  it("Row 4 has 5 masks", () => expect(ROW_4_MASKS.length).toBe(5));
+  it("Row 2 has 10 masks (C(5,2) vertical columns)", () => expect(ROW_2_MASKS.length).toBe(10));
+  it("Row 3 has 10 masks (C(5,3) vertical columns)", () => expect(ROW_3_MASKS.length).toBe(10));
+  it("Row 4 has 5 masks (C(5,4) vertical columns)", () => expect(ROW_4_MASKS.length).toBe(5));
   it("Full House mask covers all 25 bits", () => expect(FULL_HOUSE_MASK).toBe(0x1ffffff));
 });
 
@@ -94,12 +94,13 @@ describe("PatternMasks — remainingForPattern", () => {
     expect(remainingForPattern(grid, new Set(), "Picture")).toBeNull();
   });
 
-  it("picks the best mask across Row 2 candidates", () => {
-    // Mark row 0 fully (5 cells) and nothing else.
-    // Best Row 2 mask then = rows 0+2 → row 2 has free centre so only 4 more cells.
-    // Actually row 2 has 4 non-free cells needed → remaining = 4.
+  it("picks the best mask across Row 2 candidates (vertical columns)", () => {
+    // Mark row 0 fully (5 cells). Row 2 requires 2 complete vertical columns.
+    // Col 2 has (0,2) marked + free centre (2,2) → needs 3 more cells (rows 1,3,4).
+    // Any other col has only (0,c) marked → needs 4 more cells.
+    // Best 2-column pair = col 2 + any other = 3 + 4 = 7.
     const marks = new Set([1, 16, 31, 46, 61]);
-    expect(remainingForPattern(grid, marks, "Row 2")).toBe(4);
+    expect(remainingForPattern(grid, marks, "Row 2")).toBe(7);
   });
 });
 
