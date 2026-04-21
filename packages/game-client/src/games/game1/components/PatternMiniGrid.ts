@@ -1,21 +1,31 @@
 /**
- * 5x5 mini-grid showing a pattern visualization with cycling animations.
+ * 5×5 mini-grid som visualiserer aktiv fase i top-panelet.
  *
- * Design types (from Unity):
- *   0 = custom mask (static highlight from patternDataList)
- *   1 = single row cycle (rows then columns, 1s delay)
- *   2 = two-row combinations cycle
- *   3 = three-row combinations cycle
- *   4 = four-row combinations (all minus 1 row)
+ * Speiler backend-reglen i `BingoEngine.meetsPhaseRequirement` (apps/backend/
+ * src/game/BingoEngine.ts) — slik at spillere ser samme geometri som backend
+ * faktisk belønner:
+ *   - design 0 = custom mask (static highlight fra patternDataList)
+ *   - design 1 ("1 Rad") = én hel rad ELLER én hel kolonne — cycler alle 10
+ *   - design 2 ("2 Rader") = 2 vertikale KOLONNER — C(5,2) = 10 kombinasjoner
+ *   - design 3 ("3 Rader") = 3 vertikale KOLONNER — C(5,3) = 10 kombinasjoner
+ *   - design 4 ("4 Rader") = 4 vertikale KOLONNER — C(5,4) = 5 kombinasjoner
+ *   - design ≥ 5 = clear (ingen highlight)
+ *
+ * Merk: Pattern-navnene er "N Rader" fra legacy, men backend krever VERTIKALE
+ * kolonner fra fase 2. Mini-gridet reflekterer backend, ikke navnet.
  */
 
 const GRID_SIZE = 5;
+const CELL_COUNT = GRID_SIZE * GRID_SIZE;
 const CELL_SIZE = 10;
 const CELL_GAP = 2;
 const TOTAL_SIZE = GRID_SIZE * CELL_SIZE + (GRID_SIZE - 1) * CELL_GAP;
 const FILL_COLOR = "#ffe83d";
 const NORMAL_COLOR = "rgba(255,255,255,0.15)";
-const CENTER_INDEX = 12; // row 2, col 2 (free space)
+const CENTER_INDEX = 12; // row 2, col 2 — free space
+
+/** Axis-tag for en linje i combinasjonen. */
+type Line = { axis: "row" | "col"; index: number };
 
 export class PatternMiniGrid {
   readonly root: HTMLDivElement;
@@ -32,7 +42,7 @@ export class PatternMiniGrid {
       flexShrink: "0",
     });
 
-    for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+    for (let i = 0; i < CELL_COUNT; i++) {
       const cell = document.createElement("div");
       Object.assign(cell.style, {
         width: `${CELL_SIZE}px`,
@@ -47,133 +57,86 @@ export class PatternMiniGrid {
   }
 
   /**
-   * Set pattern visualization based on design type.
-   * @param design  0=custom, 1=single row, 2=two rows, 3=three rows, 4=four rows
-   * @param patternDataList  For design 0: array of 25 ints (1=fill, 0=empty)
+   * Sett hvilken fase/design som skal vises.
+   * @param design  0=custom mask, 1=fase 1 (rad/kolonne), 2/3/4=fase 2-4 (N kolonner)
+   * @param patternDataList  kun for design 0 — 25-cellers bitmaske (1=fill)
    */
   setDesign(design: number, patternDataList?: number[]): void {
     this.stopAnimation();
 
-    switch (design) {
-      case 0:
-        this.showCustomMask(patternDataList ?? []);
-        break;
-      case 1:
-        this.startRowCycleAnimation(1);
-        break;
-      case 2:
-        this.startRowCycleAnimation(2);
-        break;
-      case 3:
-        this.startRowCycleAnimation(3);
-        break;
-      case 4:
-        this.startRowCycleAnimation(4);
-        break;
-      default:
-        this.clearAll();
-        break;
+    if (design === 0) {
+      this.showCustomMask(patternDataList ?? []);
+      return;
     }
+    if (design >= 1 && design <= 4) {
+      this.startPhaseCycleAnimation(design);
+      return;
+    }
+    this.clearAll();
   }
 
-  /** Design 0: Static highlight from patternDataList bitmask. */
+  /** Design 0: statisk highlight fra 25-cellers patternDataList. */
   private showCustomMask(mask: number[]): void {
     for (let i = 0; i < this.cells.length; i++) {
       const filled = i < mask.length && mask[i] === 1 && i !== CENTER_INDEX;
       this.cells[i].style.background = filled ? FILL_COLOR : NORMAL_COLOR;
-      if (filled) {
-        this.cells[i].style.transform = "scale(1)";
-        this.pulseCell(this.cells[i]);
-      }
+      if (filled) this.pulseCell(this.cells[i]);
     }
   }
 
-  /**
-   * Design 1-4: Cycling row combinations.
-   * Design 1: each single row, then each column
-   * Design 2: each pair of rows
-   * Design 3: each triple of rows
-   * Design 4: all rows minus one (4 highlighted)
-   */
-  private startRowCycleAnimation(rowCount: number): void {
-    const combinations = this.getRowCombinations(rowCount);
+  /** Cycler alle kombinasjoner for gitt fase (1-4), 1 sek per frame. */
+  private startPhaseCycleAnimation(phase: number): void {
+    const combinations = this.getPhaseCombinations(phase);
+    if (combinations.length === 0) return;
     let stepIndex = 0;
 
     const step = () => {
-      if (combinations.length === 0) return;
-      const combo = combinations[stepIndex % combinations.length];
-      this.highlightRows(combo);
+      this.highlightLines(combinations[stepIndex % combinations.length]);
       stepIndex++;
     };
 
-    step(); // Show first immediately
+    step();
     this.animationTimer = setInterval(step, 1000);
   }
 
-  /** Generate all row combinations of given size, plus columns for design 1. */
-  private getRowCombinations(count: number): number[][] {
-    const combos: number[][] = [];
-
-    if (count === 1) {
-      // Design 1: cycle rows 0-4 then columns 0-4
-      for (let r = 0; r < GRID_SIZE; r++) combos.push([r]);
-      // Add column indices as negative numbers (convention: -1 = col 0, -5 = col 4)
-      for (let c = 0; c < GRID_SIZE; c++) combos.push([-(c + 1)]);
+  /**
+   * Generér alle kandidat-kombinasjoner for fasen:
+   *   - fase 1: 5 rader + 5 kolonner (10 enkeltlinjer — rad ELLER kolonne)
+   *   - fase 2-4: C(5, phase) kombinasjoner av VERTIKALE kolonner
+   *
+   * Eksponert for testing. Private i praksis.
+   */
+  getPhaseCombinations(phase: number): Line[][] {
+    if (phase === 1) {
+      const combos: Line[][] = [];
+      for (let r = 0; r < GRID_SIZE; r++) combos.push([{ axis: "row", index: r }]);
+      for (let c = 0; c < GRID_SIZE; c++) combos.push([{ axis: "col", index: c }]);
       return combos;
     }
-
-    // Generate all C(5, count) combinations of rows
-    const rows = [0, 1, 2, 3, 4];
-    const generate = (start: number, current: number[]): void => {
-      if (current.length === count) {
-        combos.push([...current]);
-        return;
-      }
-      for (let i = start; i < rows.length; i++) {
-        current.push(rows[i]);
-        generate(i + 1, current);
-        current.pop();
-      }
-    };
-    generate(0, []);
-    return combos;
+    if (phase < 2 || phase > 4) return [];
+    return choose(GRID_SIZE, phase).map((cols) =>
+      cols.map((c) => ({ axis: "col" as const, index: c })),
+    );
   }
 
-  /** Highlight specific rows (or columns if negative indices). */
-  private highlightRows(indices: number[]): void {
-    // Reset all
+  /** Farg alle celler i de gitte linjene (rader eller kolonner), minus center. */
+  private highlightLines(lines: Line[]): void {
     for (const cell of this.cells) {
       cell.style.background = NORMAL_COLOR;
       cell.style.transform = "scale(1)";
     }
-
-    for (const idx of indices) {
-      if (idx >= 0) {
-        // Row index
-        for (let col = 0; col < GRID_SIZE; col++) {
-          const cellIdx = idx * GRID_SIZE + col;
-          if (cellIdx !== CENTER_INDEX) {
-            this.cells[cellIdx].style.background = FILL_COLOR;
-            this.pulseCell(this.cells[cellIdx]);
-          }
-        }
-      } else {
-        // Column index (negative, -1 = col 0)
-        const col = -(idx + 1);
-        for (let row = 0; row < GRID_SIZE; row++) {
-          const cellIdx = row * GRID_SIZE + col;
-          if (cellIdx !== CENTER_INDEX) {
-            this.cells[cellIdx].style.background = FILL_COLOR;
-            this.pulseCell(this.cells[cellIdx]);
-          }
-        }
+    for (const line of lines) {
+      const cellsInLine = line.axis === "row"
+        ? rowCellIndices(line.index)
+        : colCellIndices(line.index);
+      for (const idx of cellsInLine) {
+        if (idx === CENTER_INDEX) continue;
+        this.cells[idx].style.background = FILL_COLOR;
+        this.pulseCell(this.cells[idx]);
       }
     }
   }
 
-  /**
-   * CSS breathe animation on a cell.
-   */
   private pulseCell(cell: HTMLDivElement): void {
     cell.style.animation = "pattern-pulse 0.5s ease-in-out infinite alternate";
   }
@@ -200,7 +163,35 @@ export class PatternMiniGrid {
   }
 }
 
-// Inject CSS animation keyframe (once)
+/** Celle-indekser (row-major) for en gitt rad. */
+function rowCellIndices(row: number): number[] {
+  return [0, 1, 2, 3, 4].map((c) => row * GRID_SIZE + c);
+}
+
+/** Celle-indekser (row-major) for en gitt kolonne. */
+function colCellIndices(col: number): number[] {
+  return [0, 1, 2, 3, 4].map((r) => r * GRID_SIZE + col);
+}
+
+/** Alle k-kombinasjoner av indeksene 0..n-1, i leksikografisk orden. */
+function choose(n: number, k: number): number[][] {
+  const result: number[][] = [];
+  const recurse = (start: number, picked: number[]): void => {
+    if (picked.length === k) {
+      result.push([...picked]);
+      return;
+    }
+    for (let i = start; i < n; i++) {
+      picked.push(i);
+      recurse(i + 1, picked);
+      picked.pop();
+    }
+  };
+  recurse(0, []);
+  return result;
+}
+
+// Inject CSS keyframe én gang per dokument.
 if (typeof document !== "undefined" && !document.getElementById("pattern-pulse-style")) {
   const style = document.createElement("style");
   style.id = "pattern-pulse-style";
