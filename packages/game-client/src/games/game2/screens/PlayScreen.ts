@@ -9,7 +9,7 @@ import { DrawnBallsPanel } from "../components/DrawnBallsPanel.js";
 import { ClaimButton } from "../components/ClaimButton.js";
 import { PlayerInfoBar } from "../components/PlayerInfoBar.js";
 import { RocketStack } from "../components/RocketStack.js";
-import { ChatPanel } from "../../game1/components/ChatPanel.js";
+import { ChatPanel } from "../../../components/ChatPanel.js";
 import { getTicketThemeByName } from "../../game1/colors/TicketColorThemes.js";
 import { checkClaims } from "../logic/ClaimDetector.js";
 

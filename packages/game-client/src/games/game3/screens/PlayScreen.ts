@@ -8,7 +8,7 @@ import { TicketCard } from "../../game2/components/TicketCard.js";
 import { DrawnBallsPanel } from "../../game2/components/DrawnBallsPanel.js";
 import { ClaimButton } from "../../game2/components/ClaimButton.js";
 import { PlayerInfoBar } from "../../game2/components/PlayerInfoBar.js";
-import { ChatPanel } from "../../game1/components/ChatPanel.js";
+import { ChatPanel } from "../../../components/ChatPanel.js";
 import { AnimatedBallQueue } from "../components/AnimatedBallQueue.js";
 import { PatternBanner } from "../components/PatternBanner.js";
 import { checkClaims } from "../../game2/logic/ClaimDetector.js";
