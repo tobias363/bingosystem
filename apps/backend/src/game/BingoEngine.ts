@@ -22,6 +22,13 @@ import {
   ticketMaskMeetsPhase,
 } from "@spillorama/shared-types/spill1-patterns";
 import { buildDrawBag, resolveDrawBagConfig } from "./DrawBagStrategy.js";
+import { resolvePatternsForColor } from "./spill1VariantMapper.js";
+import type { PatternConfig } from "./variantConfig.js";
+
+/** PR B: Sentinel-nøkkel for flat-path vinner-gruppen (én gruppe, ingen farge-skille). */
+const FLAT_GROUP_KEY = "__flat__";
+/** PR B: Sentinel-nøkkel for brett uten ticket.color satt — bruker __default__-matrise. */
+const UNCOLORED_KEY = "__uncolored__";
 import type {
   ClaimRecord,
   ClaimType,
@@ -1020,90 +1027,126 @@ export class BingoEngine {
     // som ikke aktivt trykker "merk" fortsatt kan vinne.
     const drawnSet = new Set(game.drawnNumbers);
 
-    // Collect unique winners — a player wins the phase regardless of how
-    // many tickets they have; multi-winner split is per-player.
-    const winnerPlayerIds: string[] = [];
-    for (const [playerId, tickets] of game.tickets) {
-      let anyWins = false;
-      for (let i = 0; i < tickets.length; i += 1) {
-        if (this.meetsPhaseRequirement(activePattern, tickets[i], drawnSet)) {
-          anyWins = true;
-          break;
-        }
-      }
-      if (anyWins) winnerPlayerIds.push(playerId);
-    }
+    // PR B (variantConfig-admin-kobling): per-farge-matrise.
+    // Hvis `variantConfig.patternsByColor` er satt, kjøres per-farge-pathen
+    // der hver farge har egen premie-matrise og multi-winner-split skjer
+    // innen én farges vinnere (PM-vedtak "Option X"). Ellers faller vi
+    // tilbake til dagens flat-path.
+    const variantConfig = this.variantConfigByRoom.get(room.code);
+    const hasPerColorMatrix = Boolean(variantConfig?.patternsByColor);
 
-    if (winnerPlayerIds.length === 0) return;
+    // Fase-index = posisjon i canonical pattern-array (mapperen garanterer
+    // samme rekkefølge på tvers av farger, så index identifiserer fasen).
+    const phaseIndex = game.patterns ? game.patterns.indexOf(activePattern) : 0;
 
-    // Compute total prize for this phase + per-winner split. Two modes:
-    //   - winningType "fixed" → flat kr amount from `prize1` (e.g. 100 kr for
-    //     1 Rad), independent of pool. Existing RTP / single-prize / remaining-
-    //     pool guards in payoutPhaseWinner cap against house risk when pool is
-    //     short, so this path doesn't need a separate safety net.
-    //   - default / "percent" → prizePercent of current prizePool (legacy).
-    const isFixed = activePattern.winningType === "fixed";
-    const totalPhasePrize = isFixed
-      ? Math.max(0, activePattern.prize1 ?? 0)
-      : Math.floor(game.prizePool * (activePattern.prizePercent ?? 0) / 100);
-    // Floor division — any remainder stays with the house (house-rounding).
-    const prizePerWinner = Math.floor(totalPhasePrize / winnerPlayerIds.length);
+    // Detect winners. For flat-path: uniqueset per player. For per-color:
+    // Map<color, Set<playerId>> — en spiller kan vinne i flere farger hvis
+    // de har brett i flere farger som alle oppfyller fasen.
+    const winnerGroups = this.detectPhaseWinners(
+      game, drawnSet, activePattern, variantConfig, hasPerColorMatrix, phaseIndex, room.code,
+    );
 
-    // GAME1_SCHEDULE PR 5 (§3.7): audit rest-øre som huset beholder.
-    // Formel: totalPhasePrize - winnerCount × prizePerWinner. Positiv
-    // når splittingen ikke går opp. Fire-and-forget-audit så engine-
-    // flyten fortsetter uansett om loggen feiler.
-    const houseRetainedRest = totalPhasePrize - (winnerPlayerIds.length * prizePerWinner);
-    if (houseRetainedRest > 0) {
-      try {
-        await this.splitRoundingAudit.onSplitRoundingHouseRetained({
-          amount: houseRetainedRest,
-          winnerCount: winnerPlayerIds.length,
-          totalPhasePrize,
-          prizePerWinner,
-          patternName: activePattern.name,
-          roomCode: room.code,
-          gameId: game.id,
-          hallId: room.hallId,
-        });
-      } catch (err) {
-        logger.warn(
-          { err, gameId: game.id, roomCode: room.code, amount: houseRetainedRest },
-          "split-rounding audit hook failed — engine fortsetter uansett"
-        );
-      }
-    }
+    if (winnerGroups.totalUniqueWinners === 0) return;
 
-    // Pay out each winner before marking the phase won — so a wallet
-    // failure for one winner doesn't leave the phase half-committed.
-    for (const playerId of winnerPlayerIds) {
-      await this.payoutPhaseWinner(
-        room, game, playerId, activePattern, activeResult, prizePerWinner,
-      );
-    }
+    // Pay out per color-group. For flat-path, the groups map has a single
+    // entry under `FLAT_GROUP_KEY`. For per-color, multiple entries.
+    let firstPayoutAmount = 0;
+    let firstWinnerId = "";
+    const allWinnerIds: string[] = [];
 
-    // GAME1_SCHEDULE PR 5: Loyalty game.win hook per vinner (fire-and-forget).
-    // Engine fortsetter uavhengig av loyalty-feil. Merk: amount er
-    // prizePerWinner før evt. RTP-cap i payoutPhaseWinner (cap er
-    // unntakstilstand — loyalty awardes på den faktiske vinner-pris-andelen).
-    if (prizePerWinner > 0) {
-      for (const playerId of winnerPlayerIds) {
+    for (const [groupKey, group] of winnerGroups.byColor) {
+      const winnerIds = [...group.playerIds];
+      if (winnerIds.length === 0) continue;
+
+      // Resolve prize for this color. flat-path bruker activePattern direkte.
+      const prizeSource: { winningType?: "percent" | "fixed"; prize1?: number; prizePercent: number; name: string } =
+        hasPerColorMatrix && group.patternForColor
+          ? group.patternForColor
+          : activePattern;
+
+      const isFixed = prizeSource.winningType === "fixed";
+      const totalPhasePrize = isFixed
+        ? Math.max(0, prizeSource.prize1 ?? 0)
+        : Math.floor(game.prizePool * (prizeSource.prizePercent ?? 0) / 100);
+      // Floor division — any remainder stays with the house (house-rounding).
+      const prizePerWinner = Math.floor(totalPhasePrize / winnerIds.length);
+
+      // GAME1_SCHEDULE PR 5 (§3.7): audit rest-øre som huset beholder
+      // per farge-gruppe. Formel: totalPhasePrize - winnerCount × prizePerWinner.
+      const houseRetainedRest = totalPhasePrize - (winnerIds.length * prizePerWinner);
+      if (houseRetainedRest > 0) {
         try {
-          await this.loyaltyHook.onLoyaltyEvent({
-            kind: "game.win",
-            userId: playerId,
-            amount: prizePerWinner,
-            patternName: activePattern.name,
+          await this.splitRoundingAudit.onSplitRoundingHouseRetained({
+            amount: houseRetainedRest,
+            winnerCount: winnerIds.length,
+            totalPhasePrize,
+            prizePerWinner,
+            patternName: prizeSource.name,
             roomCode: room.code,
             gameId: game.id,
             hallId: room.hallId,
           });
         } catch (err) {
           logger.warn(
-            { err, gameId: game.id, playerId },
-            "loyalty game.win hook failed — engine fortsetter uansett"
+            { err, gameId: game.id, roomCode: room.code, amount: houseRetainedRest, color: groupKey },
+            "split-rounding audit hook failed — engine fortsetter uansett"
           );
         }
+      }
+
+      // Build a per-color PatternDefinition so payoutPhaseWinner can
+      // reference the correct pattern.name + winningType + prize1 for
+      // audit/ledger purposes. Uses activePattern.id so patternResults
+      // stays addressable by its original patternId.
+      const colorPattern: PatternDefinition = hasPerColorMatrix && group.patternForColor
+        ? {
+            ...activePattern,
+            name: group.patternForColor.name,
+            claimType: group.patternForColor.claimType,
+            prizePercent: group.patternForColor.prizePercent,
+            ...(typeof group.patternForColor.prize1 === "number" ? { prize1: group.patternForColor.prize1 } : {}),
+            ...(group.patternForColor.winningType ? { winningType: group.patternForColor.winningType } : {}),
+          }
+        : activePattern;
+
+      // Pay out each winner before marking the phase won — so a wallet
+      // failure for one winner doesn't leave the phase half-committed.
+      for (const playerId of winnerIds) {
+        await this.payoutPhaseWinner(
+          room, game, playerId, colorPattern, activeResult, prizePerWinner,
+        );
+      }
+
+      // GAME1_SCHEDULE PR 5: Loyalty game.win hook per vinner (fire-and-forget).
+      if (prizePerWinner > 0) {
+        for (const playerId of winnerIds) {
+          try {
+            await this.loyaltyHook.onLoyaltyEvent({
+              kind: "game.win",
+              userId: playerId,
+              amount: prizePerWinner,
+              patternName: colorPattern.name,
+              roomCode: room.code,
+              gameId: game.id,
+              hallId: room.hallId,
+            });
+          } catch (err) {
+            logger.warn(
+              { err, gameId: game.id, playerId },
+              "loyalty game.win hook failed — engine fortsetter uansett"
+            );
+          }
+        }
+      }
+
+      // Track first payout for backward-compat patternResult fields.
+      if (firstWinnerId === "" && winnerIds.length > 0) {
+        firstWinnerId = winnerIds[0]!;
+        firstPayoutAmount = prizePerWinner;
+      }
+      // Aggregate winners — deduplicate hvis samme spiller vant i flere farger.
+      for (const pid of winnerIds) {
+        if (!allWinnerIds.includes(pid)) allWinnerIds.push(pid);
       }
     }
 
@@ -1113,15 +1156,15 @@ export class BingoEngine {
     // ClaimRecords on game.claims.
     activeResult.isWon = true;
     activeResult.wonAtDraw = game.drawnNumbers.length;
-    activeResult.winnerId = winnerPlayerIds[0];
-    activeResult.winnerIds = [...winnerPlayerIds];
-    activeResult.payoutAmount = prizePerWinner;
+    activeResult.winnerId = firstWinnerId;
+    activeResult.winnerIds = [...allWinnerIds];
+    activeResult.payoutAmount = firstPayoutAmount;
 
     // End round when Fullt Hus is won.
     if (activePattern.claimType === "BINGO") {
       const endedAtMs = Date.now();
       game.status = "ENDED";
-      game.bingoWinnerId = winnerPlayerIds[0];
+      game.bingoWinnerId = firstWinnerId;
       game.endedAt = new Date(endedAtMs).toISOString();
       game.endedReason = "BINGO_CLAIMED";
       await this.finishPlaySessionsForGame(room, game, endedAtMs);
@@ -1131,11 +1174,85 @@ export class BingoEngine {
 
     // Phase 1 → mark lineWinnerId for backward-compat with existing readers.
     if (activePattern.claimType === "LINE" && !game.lineWinnerId) {
-      game.lineWinnerId = winnerPlayerIds[0];
+      game.lineWinnerId = firstWinnerId;
     }
 
     // Rare: same ball won two phases simultaneously — recurse.
     await this.evaluateActivePhase(room, game);
+  }
+
+  /**
+   * PR B: Detekter fase-vinnere, gruppert per farge når
+   * `patternsByColor` er satt. Flat-path returnerer én gruppe under
+   * nøkkelen `FLAT_GROUP_KEY`.
+   *
+   * Per-farge-semantikk (PM-vedtak "Option X"):
+   *   - En (spiller, farge)-kombinasjon er en unik winner-slot.
+   *   - En spiller med brett i flere farger, der flere farger oppfyller
+   *     fasen, vinner i hver farge — får betalt én gang per farge.
+   *   - Multi-winner-split skjer innen én farges vinnere.
+   *
+   * Flat-path-semantikk (uendret fra før):
+   *   - En spiller vinner fasen én gang uansett antall brett.
+   *   - Alle vinnere deler én pott likt.
+   */
+  private detectPhaseWinners(
+    game: GameState,
+    drawnSet: Set<number>,
+    activePattern: PatternDefinition,
+    variantConfig: import("./variantConfig.js").GameVariantConfig | undefined,
+    hasPerColorMatrix: boolean,
+    phaseIndex: number,
+    roomCode: string,
+  ): {
+    totalUniqueWinners: number;
+    byColor: Map<string, { playerIds: Set<string>; patternForColor: PatternConfig | null }>;
+  } {
+    const byColor = new Map<string, { playerIds: Set<string>; patternForColor: PatternConfig | null }>();
+    const uniquePlayers = new Set<string>();
+
+    if (!hasPerColorMatrix || !variantConfig) {
+      // Flat-path: én gruppe, uniqueset per player (ignorér farge).
+      const flatIds = new Set<string>();
+      for (const [playerId, tickets] of game.tickets) {
+        for (let i = 0; i < tickets.length; i += 1) {
+          if (this.meetsPhaseRequirement(activePattern, tickets[i], drawnSet)) {
+            flatIds.add(playerId);
+            break;
+          }
+        }
+      }
+      if (flatIds.size > 0) {
+        byColor.set(FLAT_GROUP_KEY, { playerIds: flatIds, patternForColor: null });
+      }
+      return { totalUniqueWinners: flatIds.size, byColor };
+    }
+
+    // Per-color path: iterate alle brett, grupper per (farge, spiller).
+    for (const [playerId, tickets] of game.tickets) {
+      for (const ticket of tickets) {
+        if (!this.meetsPhaseRequirement(activePattern, ticket, drawnSet)) continue;
+        const colorKey = ticket.color ?? UNCOLORED_KEY;
+        let group = byColor.get(colorKey);
+        if (!group) {
+          // Resolve matrise for denne fargen. Warning når __default__ slår
+          // inn for en farge som finnes i ticketTypes (konfig-gap).
+          const patterns = resolvePatternsForColor(variantConfig, ticket.color, (missingColor) => {
+            logger.warn(
+              { color: missingColor, roomCode, gameId: game.id },
+              "patternsByColor missing entry for ticket color — using __default__ matrix"
+            );
+          });
+          const patternForColor = patterns[phaseIndex] ?? null;
+          group = { playerIds: new Set(), patternForColor };
+          byColor.set(colorKey, group);
+        }
+        group.playerIds.add(playerId);
+        uniquePlayers.add(playerId);
+      }
+    }
+
+    return { totalUniqueWinners: uniquePlayers.size, byColor };
   }
 
   /**
