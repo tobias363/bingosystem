@@ -52,13 +52,17 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { DomainError } from "./BingoEngine.js";
 import { logger as rootLogger } from "../util/logger.js";
-import type { WalletAdapter } from "../adapters/WalletAdapter.js";
+import type { WalletAdapter, WalletTransaction } from "../adapters/WalletAdapter.js";
 import type {
   AuditActorType,
   AuditLogService,
 } from "../compliance/AuditLogService.js";
 import type { Game1HallReadyService } from "./Game1HallReadyService.js";
 import type { PlatformService } from "../platform/PlatformService.js";
+import {
+  NoopComplianceLossPort,
+  type ComplianceLossPort,
+} from "../adapters/ComplianceLossPort.js";
 
 const log = rootLogger.child({ module: "game1-ticket-purchase-service" });
 
@@ -152,6 +156,15 @@ export interface Game1TicketPurchaseServiceOptions {
   platformService: PlatformService;
   hallReadyService: Game1HallReadyService;
   auditLogService: AuditLogService;
+  /**
+   * PR-W5 wallet-split: port for å logge BUYIN-entries mot Spillvett-tapsgrense.
+   * Hentes fra BingoEngine.getComplianceLossPort() i index.ts-wiringen. Default
+   * er no-op så eksisterende tester som ikke bryr seg om compliance-logging
+   * fortsatt kjører uendret.
+   *
+   * Se docs/architecture/WALLET_SPLIT_DESIGN_2026-04-22.md §3.4.
+   */
+  complianceLossPort?: ComplianceLossPort;
 }
 
 // ── Internal row shapes ───────────────────────────────────────────────────────
@@ -190,6 +203,11 @@ export class Game1TicketPurchaseService {
   private readonly platform: PlatformService;
   private readonly hallReady: Game1HallReadyService;
   private readonly audit: AuditLogService;
+  /**
+   * PR-W5 wallet-split: port for å logge BUYIN mot Spillvett-tapsgrense.
+   * Default no-op — wiringen i index.ts setter den til engine.getComplianceLossPort().
+   */
+  private readonly complianceLoss: ComplianceLossPort;
 
   constructor(options: Game1TicketPurchaseServiceOptions) {
     this.pool = options.pool;
@@ -202,6 +220,7 @@ export class Game1TicketPurchaseService {
     this.platform = options.platformService;
     this.hallReady = options.hallReadyService;
     this.audit = options.auditLogService;
+    this.complianceLoss = options.complianceLossPort ?? new NoopComplianceLossPort();
   }
 
   // ── Table helpers ──────────────────────────────────────────────────────────
@@ -275,6 +294,13 @@ export class Game1TicketPurchaseService {
 
     const purchaseId = `g1p-${randomUUID()}`;
 
+    // PR-W5 wallet-split: hold rede på wallet-debit-transaksjonen slik at vi
+    // kan logge `type:"BUYIN"` mot compliance-laget med kun deposit-delen (ikke
+    // winnings-delen). Winnings-bruk teller IKKE mot daglig/månedlig tapsgrense
+    // per §11 pengespillforskriften. Se WALLET_SPLIT_DESIGN_2026-04-22.md §3.4.
+    let walletDebitTx: WalletTransaction | null = null;
+    let buyerWalletId: string | null = null;
+
     // Wallet-debit FØR INSERT for digital_wallet. Hvis wallet-debit feiler
     // (f.eks. INSUFFICIENT_BALANCE), blir det aldri en rad i purchases.
     // Idempotency-key på wallet speiler purchase-key så dobbel-innlevering
@@ -282,6 +308,7 @@ export class Game1TicketPurchaseService {
     if (input.paymentMethod === "digital_wallet") {
       try {
         const buyer = await this.platform.getUserById(input.buyerUserId);
+        buyerWalletId = buyer.walletId;
         const balance = await this.wallet.getBalance(buyer.walletId);
         const amountNok = centsToAmount(totalAmountCents);
         if (balance < amountNok) {
@@ -290,7 +317,7 @@ export class Game1TicketPurchaseService {
             "Ikke nok penger i wallet til å kjøpe billetter."
           );
         }
-        await this.wallet.debit(
+        walletDebitTx = await this.wallet.debit(
           buyer.walletId,
           amountNok,
           `game1_purchase:${purchaseId}`,
@@ -335,6 +362,43 @@ export class Game1TicketPurchaseService {
         }
       }
       throw err;
+    }
+
+    // PR-W5 wallet-split: logg BUYIN mot Spillvett-tapsgrense (kun deposit-delen).
+    // Fire-and-forget med pino-warning ved feil — matcher BingoEngine.buyIn-patternet
+    // hvor en compliance-feil ALDRI ruller tilbake purchase-flyt. For ikke-wallet-
+    // betalinger (cash_agent/card_agent) har ingen wallet-flyt skjedd, så hopp over.
+    // 100%-winnings-kjøp → amount = 0 → hopp over for å unngå støy i loss-ledger.
+    if (
+      input.paymentMethod === "digital_wallet" &&
+      walletDebitTx !== null &&
+      buyerWalletId !== null
+    ) {
+      const buyInLossAmount = lossLimitAmountFromDebit(walletDebitTx, centsToAmount(totalAmountCents));
+      if (buyInLossAmount > 0) {
+        try {
+          await this.complianceLoss.recordLossEntry(buyerWalletId, input.hallId, {
+            type: "BUYIN",
+            amount: buyInLossAmount,
+            createdAtMs: Date.now(),
+          });
+        } catch (err) {
+          // Soft-fail — compliance-feil skal aldri rulle tilbake en fullført
+          // purchase. Wallet-debit + INSERT er allerede committed; BUYIN-entry
+          // er audit-logging som kan re-kjøres manuelt ved behov.
+          log.warn(
+            { err, purchaseId, buyerUserId: input.buyerUserId, hallId: input.hallId },
+            "[PR-W5] compliance.recordLossEntry BUYIN feilet — purchase fortsetter uansett"
+          );
+        }
+      } else {
+        // Debug-spor for 100%-winnings-kjøp (forventet path når spilleren kjøper
+        // med kun gevinst-saldo).
+        log.debug(
+          { purchaseId, buyerUserId: input.buyerUserId, totalAmountCents },
+          "[PR-W5] purchase dekket 100% av winnings — ingen BUYIN-entry logget"
+        );
+      }
     }
 
     // Fire-and-forget audit.
@@ -934,6 +998,51 @@ function sumTicketCount(spec: Game1TicketSpecEntry[]): number {
  */
 function centsToAmount(cents: number): number {
   return cents / 100;
+}
+
+/**
+ * PR-W5 wallet-split: trekk ut deposit-delen av en DEBIT-transaksjon for
+ * `recordLossEntry({type:"BUYIN"})`. Parallelt til `lossLimitAmountFromTransfer`
+ * i `BingoEngine.ts` — forskjellen er at BingoEngine bruker `wallet.transfer()`
+ * og får TRANSFER_OUT, mens Game1TicketPurchaseService bruker `wallet.debit()`
+ * og får DEBIT. Begge har samme `split`-felt-kontrakt.
+ *
+ * Hvorfor ikke gjenbruke helper fra BingoEngine.ts?
+ *   - Service-laget skal ikke importere fra engine-laget.
+ *   - Den gjenbrukte logikken er 4 linjer — duplisering er billigere enn en
+ *     ny utils-modul.
+ *
+ * Regulatorisk:
+ *   - `split.fromDeposit` (kroner) → teller mot Spillvett-tapsgrense.
+ *   - `split.fromWinnings` → teller IKKE (gevinst-bruk er ikke tap).
+ *   - Fallback ved manglende split (legacy-path): returnér full `total` så
+ *     compliance bevares bakoverkompatibelt.
+ *   - NaN/negativ → 0 (fail-safe).
+ *
+ * Se docs/architecture/WALLET_SPLIT_DESIGN_2026-04-22.md §3.4.
+ *
+ * @param tx `wallet.debit()`-transaksjonen — kan være DEBIT eller TRANSFER_OUT.
+ * @param total Full beløpet som ble trukket (kroner), brukt som fallback når
+ *   `split` mangler.
+ * @returns Beløpet som skal telle mot loss-limit. Alltid ≥ 0.
+ */
+function lossLimitAmountFromDebit(
+  tx: WalletTransaction,
+  total: number
+): number {
+  const split = tx.split;
+  if (!split) {
+    // Legacy-path — adapteren returnerte ikke split. Konservativ: tell full.
+    log.debug(
+      { txId: tx.id, total },
+      "[PR-W5] wallet-tx mangler split — bruker full beløp som loss-amount (fallback)"
+    );
+    return total;
+  }
+  const fromDeposit = Number.isFinite(split.fromDeposit) ? split.fromDeposit : 0;
+  // Rund til 2 desimaler (kroner/øre-presisjon) for å matche domeneverdier.
+  const rounded = Math.round(fromDeposit * 100) / 100;
+  return Math.max(0, rounded);
 }
 
 function mapRowToPurchase(row: PurchaseDbRow): Game1TicketPurchaseRow {

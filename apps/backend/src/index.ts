@@ -921,6 +921,11 @@ const game1TicketPurchaseService = new Game1TicketPurchaseService({
   platformService,
   hallReadyService: game1HallReadyService,
   auditLogService,
+  // PR-W5 wallet-split: logg BUYIN mot Spillvett-tapsgrense etter purchase.
+  // Kun deposit-delen teller per §11 pengespillforskriften. Engine eier
+  // ComplianceManager — vi bruker narrow-port (recordLossEntry) så servicen
+  // ikke tar direkte avhengighet til engine-klassen.
+  complianceLossPort: engine.getComplianceLossPort(),
 });
 // GAME1_SCHEDULE PR 4a: bind forward-ref slik at `ticketPurchasePort` (opprettet
 // tidligere pga. agent-service dependency) kan delegere til den nye servicen.

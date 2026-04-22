@@ -499,6 +499,27 @@ export class BingoEngine {
     }
   }
 
+  /**
+   * PR-W5 wallet-split: eksponer ComplianceManager via narrow port (recordLossEntry-only)
+   * slik at Game1TicketPurchaseService kan logge BUYIN-entries uten å ta direkte
+   * avhengighet til ComplianceManager-klassen. Port-adapter-patternet matcher
+   * LoyaltyPointsHookPort (se `../adapters/LoyaltyPointsHookPort.ts`).
+   *
+   * Wiring: `index.ts` kaller `engine.getComplianceLossPort()` og sender resultatet
+   * inn i `Game1TicketPurchaseService`-konstruktøren. I tester kan man bruke en
+   * mock eller `NoopComplianceLossPort`.
+   *
+   * Se `docs/architecture/WALLET_SPLIT_DESIGN_2026-04-22.md` §3.4.
+   */
+  getComplianceLossPort(): import("../adapters/ComplianceLossPort.js").ComplianceLossPort {
+    const compliance = this.compliance;
+    return {
+      async recordLossEntry(walletId, hallId, entry): Promise<void> {
+        await compliance.recordLossEntry(walletId, hallId, entry);
+      },
+    };
+  }
+
   async createRoom(input: CreateRoomInput): Promise<{ roomCode: string; playerId: string }> {
     const hallId = this.assertHallId(input.hallId);
     const playerId = randomUUID();

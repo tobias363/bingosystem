@@ -10,9 +10,14 @@
 // PR-W4 wallet-split: saldo-rendering utvidet med separate linjer for
 // innskudd og gevinst. Transaksjonstabellen viser split-fordeling for
 // DEBIT/TRANSFER_OUT (winnings-first-split) og TRANSFER_IN/CREDIT (target-side).
+//
+// PR-W5 wallet-split: "Ny wallet-correction"-knapp + modal-form for manuell
+// kredit (default deposit-siden; winnings er disabled + tooltip med
+// regulatorisk forbud per §11 pengespillforskriften).
 
 import { t } from "../../i18n/I18n.js";
 import { Toast } from "../../components/Toast.js";
+import { Modal } from "../../components/Modal.js";
 import { DataTable } from "../../components/DataTable.js";
 import { ApiError } from "../../api/client.js";
 import {
@@ -20,6 +25,7 @@ import {
   type WalletDetail,
   type WalletTransaction,
 } from "../../api/admin-wallets.js";
+import { submitWalletCorrection } from "../../api/admin-wallet-corrections.js";
 import {
   boxClose,
   boxOpen,
@@ -47,25 +53,37 @@ export function renderWalletViewPage(container: HTMLElement): void {
       ${boxOpen("wallet_transactions", "info")}
         <div id="tx-table">${escapeHtml(t("loading_ellipsis"))}</div>
       ${boxClose()}
-      <div style="margin-top:12px;">
+      <div class="wallet-actions" style="margin-top:12px;display:flex;gap:8px;">
         <a href="#/wallet" class="btn btn-default">
           <i class="fa fa-arrow-left"></i> ${escapeHtml(t("back_to_wallets"))}
         </a>
+        <button
+          type="button"
+          class="btn btn-primary"
+          data-testid="wallet-correction-open"
+          id="wallet-correction-btn">
+          <i class="fa fa-plus"></i> ${escapeHtml(t("wallet_correction_new"))}
+        </button>
       </div>
     </section>`;
 
   const detailHost = container.querySelector<HTMLElement>("#wallet-detail")!;
   const txHost = container.querySelector<HTMLElement>("#tx-table")!;
+  const correctionBtn = container.querySelector<HTMLButtonElement>(
+    "#wallet-correction-btn"
+  )!;
 
   if (!walletId) {
     detailHost.innerHTML = `<div class="callout callout-danger">${escapeHtml(t("something_went_wrong"))}</div>`;
     txHost.innerHTML = "";
+    correctionBtn.disabled = true;
     return;
   }
 
-  void (async () => {
+  // PR-W5: load-funksjon gjenbrukes etter vellykket correction for refresh.
+  async function refresh(): Promise<void> {
     try {
-      const detail: WalletDetail = await getWallet(walletId);
+      const detail: WalletDetail = await getWallet(walletId!);
       detailHost.innerHTML = renderDetail(detail);
       DataTable.mount<WalletTransaction>(txHost, {
         columns: [
@@ -99,7 +117,16 @@ export function renderWalletViewPage(container: HTMLElement): void {
       detailHost.innerHTML = `<div class="callout callout-danger">${escapeHtml(msg)}</div>`;
       txHost.innerHTML = "";
     }
-  })();
+  }
+
+  // PR-W5: åpne modal-form for manuell kredit-korreksjon.
+  correctionBtn.addEventListener("click", () => {
+    openCorrectionModal(walletId, () => {
+      void refresh();
+    });
+  });
+
+  void refresh();
 }
 
 function renderDetail(detail: WalletDetail): string {
@@ -157,4 +184,149 @@ function renderSplitCell(tx: WalletTransaction): string {
     parts.push(`${escapeHtml(formatAmountCents(fromWinnings))} ${escapeHtml(t("wallet_winnings_short"))}`);
   }
   return parts.length === 0 ? "—" : parts.join(" / ");
+}
+
+/**
+ * PR-W5 wallet-split: åpne modal-form for manuell wallet-correction.
+ *
+ * Regulatorisk design:
+ *   - Side-dropdown har `deposit` som default + `winnings`-option disabled.
+ *   - Disabled-option viser tooltip med forklaring ("§11 pengespillforskriften").
+ *   - Hvis en angriper fjerner `disabled` i DOM og submitter winnings, får
+ *     de 403 `ADMIN_WINNINGS_CREDIT_FORBIDDEN` fra server (se adminWallet.ts).
+ *   - Begrunnelse er påkrevd (lagres i audit-log via server).
+ *
+ * @param walletId Wallet-ID som skal krediteres.
+ * @param onDone Callback etter vellykket submit — brukes for å refreshe view.
+ */
+function openCorrectionModal(walletId: string, onDone: () => void): void {
+  const form = document.createElement("form");
+  form.className = "form-horizontal";
+  form.setAttribute("data-testid", "wallet-correction-form");
+  form.innerHTML = `
+    <div class="form-group" data-field="amount">
+      <label class="col-sm-4 control-label" for="wc-amount">${escapeHtml(t("wallet_correction_amount_label"))}</label>
+      <div class="col-sm-8">
+        <input
+          type="number"
+          id="wc-amount"
+          name="amount"
+          class="form-control"
+          min="0"
+          step="0.01"
+          required
+          data-testid="wallet-correction-amount"
+          placeholder="${escapeHtml(t("wallet_correction_amount_placeholder"))}">
+      </div>
+    </div>
+    <div class="form-group" data-field="side">
+      <label class="col-sm-4 control-label" for="wc-side">${escapeHtml(t("wallet_correction_side_label"))}</label>
+      <div class="col-sm-8">
+        <select
+          id="wc-side"
+          name="to"
+          class="form-control"
+          data-testid="wallet-correction-side">
+          <option value="deposit" selected>${escapeHtml(t("wallet_correction_side_deposit"))}</option>
+          <option
+            value="winnings"
+            disabled
+            data-testid="wallet-correction-side-winnings-disabled"
+            title="${escapeHtml(t("wallet_correction_side_winnings_tooltip"))}">
+            ${escapeHtml(t("wallet_correction_side_winnings"))}
+          </option>
+        </select>
+        <p class="help-block small text-muted" data-testid="wallet-correction-side-help">
+          ${escapeHtml(t("wallet_correction_side_winnings_tooltip"))}
+        </p>
+      </div>
+    </div>
+    <div class="form-group" data-field="reason">
+      <label class="col-sm-4 control-label" for="wc-reason">${escapeHtml(t("wallet_correction_reason_label"))}</label>
+      <div class="col-sm-8">
+        <textarea
+          id="wc-reason"
+          name="reason"
+          class="form-control"
+          rows="3"
+          required
+          data-testid="wallet-correction-reason"
+          placeholder="${escapeHtml(t("wallet_correction_reason_placeholder"))}"></textarea>
+      </div>
+    </div>
+  `;
+
+  const instance = Modal.open({
+    title: t("wallet_correction_title"),
+    content: form,
+    size: "lg",
+    buttons: [
+      {
+        label: t("wallet_correction_cancel"),
+        variant: "default",
+        action: "cancel",
+      },
+      {
+        label: t("wallet_correction_submit"),
+        variant: "primary",
+        action: "submit",
+        dismiss: false,
+        onClick: async () => {
+          const amountEl = form.querySelector<HTMLInputElement>("#wc-amount")!;
+          const sideEl = form.querySelector<HTMLSelectElement>("#wc-side")!;
+          const reasonEl = form.querySelector<HTMLTextAreaElement>("#wc-reason")!;
+
+          // Validering — klient-side (server har identisk gate for defense-in-depth).
+          const amountNum = Number.parseFloat(amountEl.value);
+          if (!Number.isFinite(amountNum) || amountNum <= 0) {
+            Toast.error(t("wallet_correction_amount_invalid"));
+            amountEl.focus();
+            return;
+          }
+          const reason = reasonEl.value.trim();
+          if (!reason) {
+            Toast.error(t("wallet_correction_reason_required"));
+            reasonEl.focus();
+            return;
+          }
+          // Beskyttelse mot DOM-manipulasjon: selv om klient-UI disabler
+          // winnings-option, validér en gang til før submit.
+          const sideValue = sideEl.value;
+          if (sideValue !== "deposit" && sideValue !== "winnings") {
+            Toast.error(t("something_went_wrong"));
+            return;
+          }
+
+          try {
+            await submitWalletCorrection(walletId, {
+              amount: amountNum,
+              reason,
+              to: sideValue as "deposit" | "winnings",
+              // Idempotency-key: wallet-id + tidsstempel + beløp —
+              // retry innen samme sekund blir dedupert av server.
+              idempotencyKey: `admin-correction:${walletId}:${Date.now()}:${amountNum}`,
+            });
+            Toast.success(t("wallet_correction_success"));
+            instance.close("button");
+            onDone();
+          } catch (err) {
+            if (err instanceof ApiError) {
+              // PR-W5: 403 `ADMIN_WINNINGS_CREDIT_FORBIDDEN` → vis eksplisitt
+              // regulatorisk advarsel med tydelig formulering.
+              if (
+                err.status === 403 &&
+                err.code === "ADMIN_WINNINGS_CREDIT_FORBIDDEN"
+              ) {
+                Toast.error(t("wallet_correction_winnings_forbidden"));
+                return;
+              }
+              Toast.error(err.message);
+              return;
+            }
+            Toast.error(t("something_went_wrong"));
+          }
+        },
+      },
+    ],
+  });
 }

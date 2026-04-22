@@ -314,3 +314,464 @@ describe("WalletListPage — PR-W4 split-kolonner", () => {
     expect(text).toContain("750.00");
   });
 });
+
+// PR-W5: Admin wallet-correction modal (manual credit).
+describe("WalletViewPage — PR-W5 correction modal", () => {
+  async function setupViewPage(walletId = "w-correct"): Promise<{
+    root: HTMLElement;
+    api: ReturnType<typeof vi.fn>;
+  }> {
+    window.location.hash = `#/wallet/view?id=${walletId}`;
+    const api = mockApiRouter([
+      {
+        match: new RegExp(`/api/wallets/${walletId}$`),
+        handler: () => ({
+          account: {
+            id: walletId,
+            balance: 50000,
+            depositBalance: 50000,
+            winningsBalance: 0,
+            createdAt: "2026-04-22T00:00:00Z",
+            updatedAt: "2026-04-22T00:00:00Z",
+          },
+          transactions: [],
+        }),
+      },
+      {
+        match: new RegExp(
+          `/api/admin/wallets/${walletId}/credit$`
+        ),
+        handler: () => ({
+          transaction: {
+            id: "tx-correction-1",
+            accountId: walletId,
+            type: "CREDIT",
+            amount: 10000,
+            reason: "Admin correction: test",
+            createdAt: "2026-04-22T10:00:00Z",
+            split: { fromDeposit: 10000, fromWinnings: 0 },
+          },
+        }),
+      },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mountWalletRoute(root, "/wallet/view");
+    await tick();
+    return { root, api };
+  }
+
+  it('viser "Ny wallet-correction"-knapp på wallet-detalj', async () => {
+    const { root } = await setupViewPage();
+    const btn = root.querySelector<HTMLButtonElement>(
+      '[data-testid="wallet-correction-open"]'
+    );
+    expect(btn).toBeTruthy();
+    expect(btn!.textContent).toMatch(/ny.*wallet.*correction/i);
+    expect(btn!.disabled).toBe(false);
+  });
+
+  it("modal åpnes ved klikk med side=deposit som default", async () => {
+    const { root } = await setupViewPage();
+    const btn = root.querySelector<HTMLButtonElement>(
+      '[data-testid="wallet-correction-open"]'
+    )!;
+    btn.click();
+    await tick();
+
+    const modal = document.querySelector(".modal");
+    expect(modal).toBeTruthy();
+
+    const form = document.querySelector<HTMLFormElement>(
+      '[data-testid="wallet-correction-form"]'
+    );
+    expect(form).toBeTruthy();
+
+    const sideEl = document.querySelector<HTMLSelectElement>(
+      '[data-testid="wallet-correction-side"]'
+    )!;
+    expect(sideEl.value).toBe("deposit");
+  });
+
+  it("winnings-option er disabled med tooltip + regulatorisk forklaring", async () => {
+    const { root } = await setupViewPage();
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+
+    const winningsOpt = document.querySelector<HTMLOptionElement>(
+      '[data-testid="wallet-correction-side-winnings-disabled"]'
+    );
+    expect(winningsOpt).toBeTruthy();
+    expect(winningsOpt!.disabled).toBe(true);
+    // Tooltip (native title) skal henvise til regulatorisk forbud.
+    expect(winningsOpt!.title).toMatch(/ADMIN_WINNINGS_CREDIT_FORBIDDEN/);
+    expect(winningsOpt!.title).toMatch(/§11|pengespillforskriften/i);
+
+    // Help-text under select forklarer også for brukere (skjermlesere).
+    const helpText = document.querySelector<HTMLElement>(
+      '[data-testid="wallet-correction-side-help"]'
+    );
+    expect(helpText).toBeTruthy();
+    expect(helpText!.textContent).toMatch(/pengespillforskriften/i);
+  });
+
+  it("submit happy-path kaller POST /api/admin/wallets/:id/credit", async () => {
+    const { root, api } = await setupViewPage("w-happy");
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+
+    const amountEl = document.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-correction-amount"]'
+    )!;
+    const reasonEl = document.querySelector<HTMLTextAreaElement>(
+      '[data-testid="wallet-correction-reason"]'
+    )!;
+    amountEl.value = "100";
+    reasonEl.value = "Compensate lost buy-in for support ticket #42";
+
+    const submitBtn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.modal-footer [data-action="submit"]')
+    )[0]!;
+    submitBtn.click();
+    await tick(20);
+
+    const creditCall = api.mock.calls.find(([u]) =>
+      String(u).includes("/api/admin/wallets/w-happy/credit")
+    );
+    expect(creditCall).toBeTruthy();
+    const [, init] = creditCall!;
+    expect(init.method).toBe("POST");
+    const body = JSON.parse(init.body as string);
+    expect(body.amount).toBe(100);
+    expect(body.reason).toBe(
+      "Compensate lost buy-in for support ticket #42"
+    );
+    expect(body.to).toBe("deposit");
+    expect(typeof body.idempotencyKey).toBe("string");
+    expect(body.idempotencyKey).toContain("admin-correction");
+  });
+
+  it("submit viser success-toast og lukker modal", async () => {
+    const { root } = await setupViewPage("w-ok");
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+
+    const amountEl = document.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-correction-amount"]'
+    )!;
+    const reasonEl = document.querySelector<HTMLTextAreaElement>(
+      '[data-testid="wallet-correction-reason"]'
+    )!;
+    amountEl.value = "50";
+    reasonEl.value = "Manual top-up after failed deposit";
+
+    const submitBtn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.modal-footer [data-action="submit"]')
+    )[0]!;
+    submitBtn.click();
+    await tick(20);
+
+    // Toast med success-melding
+    const toastContainer = document.getElementById("toast-container");
+    expect(toastContainer?.textContent ?? "").toMatch(/korreksjon|correction/i);
+    // Modal lukket
+    expect(document.querySelector(".modal")).toBeNull();
+  });
+
+  it("tom begrunnelse → valideringsfeil og ingen API-kall", async () => {
+    const { root, api } = await setupViewPage("w-noreason");
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+
+    const amountEl = document.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-correction-amount"]'
+    )!;
+    amountEl.value = "50";
+    // Begrunnelse bevisst tom.
+
+    const callsBeforeSubmit = api.mock.calls.length;
+    const submitBtn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.modal-footer [data-action="submit"]')
+    )[0]!;
+    submitBtn.click();
+    await tick(20);
+
+    // Ingen POST /credit-kall utløst
+    const creditCalls = api.mock.calls.filter(([u]) =>
+      String(u).includes("/credit")
+    );
+    expect(creditCalls.length).toBe(0);
+    // Modal fortsatt åpen
+    expect(document.querySelector(".modal")).toBeTruthy();
+    // Toast viser valideringsfeil
+    const toast = document.getElementById("toast-container");
+    expect(toast?.textContent ?? "").toMatch(/begrunnelse|reason/i);
+    // API kun truffet for den opprinnelige wallet-henting
+    expect(api.mock.calls.length).toBe(callsBeforeSubmit);
+  });
+
+  it("ugyldig beløp (0 eller negativ) → valideringsfeil og ingen API-kall", async () => {
+    const { root, api } = await setupViewPage("w-zero");
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+
+    const amountEl = document.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-correction-amount"]'
+    )!;
+    const reasonEl = document.querySelector<HTMLTextAreaElement>(
+      '[data-testid="wallet-correction-reason"]'
+    )!;
+    amountEl.value = "0";
+    reasonEl.value = "test";
+
+    const submitBtn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.modal-footer [data-action="submit"]')
+    )[0]!;
+    submitBtn.click();
+    await tick(20);
+
+    const creditCalls = api.mock.calls.filter(([u]) =>
+      String(u).includes("/credit")
+    );
+    expect(creditCalls.length).toBe(0);
+    expect(document.querySelector(".modal")).toBeTruthy();
+    const toast = document.getElementById("toast-container");
+    expect(toast?.textContent ?? "").toMatch(/beløp|amount/i);
+  });
+
+  it("403 ADMIN_WINNINGS_CREDIT_FORBIDDEN fra server → regulatorisk advarsel", async () => {
+    window.location.hash = "#/wallet/view?id=w-403";
+    mockApiRouter([
+      {
+        match: /\/api\/wallets\/w-403$/,
+        handler: () => ({
+          account: {
+            id: "w-403",
+            balance: 10000,
+            depositBalance: 10000,
+            winningsBalance: 0,
+            createdAt: "2026-04-22T00:00:00Z",
+            updatedAt: "2026-04-22T00:00:00Z",
+          },
+          transactions: [],
+        }),
+      },
+      {
+        match: /\/api\/admin\/wallets\/w-403\/credit$/,
+        handler: () => ({
+          ok: false,
+          error: {
+            code: "ADMIN_WINNINGS_CREDIT_FORBIDDEN",
+            message:
+              "Admin kan ikke kreditere direkte til winnings-siden (pengespillforskriften §11).",
+          },
+        }),
+        status: 403,
+      },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mountWalletRoute(root, "/wallet/view");
+    await tick();
+
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+
+    // Simulér at brukeren tvinger gjennom winnings ved å fjerne disabled
+    // (DOM-manipulasjon — server er siste forsvarslinje).
+    const winningsOpt = document.querySelector<HTMLOptionElement>(
+      '[data-testid="wallet-correction-side-winnings-disabled"]'
+    )!;
+    winningsOpt.disabled = false;
+    const sideEl = document.querySelector<HTMLSelectElement>(
+      '[data-testid="wallet-correction-side"]'
+    )!;
+    sideEl.value = "winnings";
+
+    const amountEl = document.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-correction-amount"]'
+    )!;
+    const reasonEl = document.querySelector<HTMLTextAreaElement>(
+      '[data-testid="wallet-correction-reason"]'
+    )!;
+    amountEl.value = "100";
+    reasonEl.value = "Prøver å tvinge gjennom winnings-credit";
+
+    const submitBtn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.modal-footer [data-action="submit"]')
+    )[0]!;
+    submitBtn.click();
+    await tick(30);
+
+    // Modal skal fortsatt være åpen (server-feil → bruker kan korrigere).
+    expect(document.querySelector(".modal")).toBeTruthy();
+    // Advarsels-toast med regulatorisk tekst.
+    const toast = document.getElementById("toast-container");
+    const toastText = toast?.textContent ?? "";
+    expect(toastText).toMatch(/regulatorisk|regulatory|gevinst|winnings/i);
+  });
+
+  it("generic 500-feil → viser error-toast men forblir åpen", async () => {
+    window.location.hash = "#/wallet/view?id=w-500";
+    mockApiRouter([
+      {
+        match: /\/api\/wallets\/w-500$/,
+        handler: () => ({
+          account: {
+            id: "w-500",
+            balance: 10000,
+            depositBalance: 10000,
+            winningsBalance: 0,
+            createdAt: "2026-04-22T00:00:00Z",
+            updatedAt: "2026-04-22T00:00:00Z",
+          },
+          transactions: [],
+        }),
+      },
+      {
+        match: /\/api\/admin\/wallets\/w-500\/credit$/,
+        handler: () => ({
+          ok: false,
+          error: { code: "INTERNAL", message: "database down" },
+        }),
+        status: 500,
+      },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mountWalletRoute(root, "/wallet/view");
+    await tick();
+
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+
+    const amountEl = document.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-correction-amount"]'
+    )!;
+    const reasonEl = document.querySelector<HTMLTextAreaElement>(
+      '[data-testid="wallet-correction-reason"]'
+    )!;
+    amountEl.value = "25";
+    reasonEl.value = "Test 500-feil-håndtering";
+
+    const submitBtn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.modal-footer [data-action="submit"]')
+    )[0]!;
+    submitBtn.click();
+    await tick(30);
+
+    expect(document.querySelector(".modal")).toBeTruthy();
+    const toast = document.getElementById("toast-container");
+    expect(toast?.textContent ?? "").toMatch(/database down|internal/i);
+  });
+
+  it("cancel-knapp lukker modal uten API-kall", async () => {
+    const { root, api } = await setupViewPage("w-cancel");
+    const callsBefore = api.mock.calls.length;
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+    expect(document.querySelector(".modal")).toBeTruthy();
+
+    const cancelBtn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.modal-footer [data-action="cancel"]')
+    )[0]!;
+    cancelBtn.click();
+
+    expect(document.querySelector(".modal")).toBeNull();
+    expect(api.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("etter vellykket correction reloader wallet-detalj-data", async () => {
+    window.location.hash = "#/wallet/view?id=w-reload";
+    let callCount = 0;
+    const api = mockApiRouter([
+      {
+        match: /\/api\/wallets\/w-reload$/,
+        handler: () => {
+          callCount += 1;
+          // Første GET returnerer 500 kr, andre GET returnerer 600 kr
+          // (100 kr kreditert).
+          const deposit = callCount === 1 ? 50000 : 60000;
+          return {
+            account: {
+              id: "w-reload",
+              balance: deposit,
+              depositBalance: deposit,
+              winningsBalance: 0,
+              createdAt: "2026-04-22T00:00:00Z",
+              updatedAt: "2026-04-22T00:00:00Z",
+            },
+            transactions: [],
+          };
+        },
+      },
+      {
+        match: /\/api\/admin\/wallets\/w-reload\/credit$/,
+        handler: () => ({
+          transaction: {
+            id: "tx-reload",
+            accountId: "w-reload",
+            type: "CREDIT",
+            amount: 10000,
+            reason: "Manual credit",
+            createdAt: "2026-04-22T10:00:00Z",
+            split: { fromDeposit: 10000, fromWinnings: 0 },
+          },
+        }),
+      },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mountWalletRoute(root, "/wallet/view");
+    await tick();
+
+    // Første render: 500.00 kr
+    expect(root.textContent).toContain("500.00");
+
+    root
+      .querySelector<HTMLButtonElement>('[data-testid="wallet-correction-open"]')!
+      .click();
+    await tick();
+
+    const amountEl = document.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-correction-amount"]'
+    )!;
+    const reasonEl = document.querySelector<HTMLTextAreaElement>(
+      '[data-testid="wallet-correction-reason"]'
+    )!;
+    amountEl.value = "100";
+    reasonEl.value = "Test reload etter correction";
+
+    const submitBtn = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('.modal-footer [data-action="submit"]')
+    )[0]!;
+    submitBtn.click();
+    await tick(30);
+
+    // Wallet-GET skal være kalt minst 2 ganger (initial + refresh).
+    const walletGetCalls = api.mock.calls.filter(
+      ([u, init]) =>
+        String(u).endsWith("/api/wallets/w-reload") &&
+        (init?.method === "GET" || init?.method === undefined)
+    );
+    expect(walletGetCalls.length).toBeGreaterThanOrEqual(2);
+    // Nytt saldo-tall synlig.
+    expect(root.textContent).toContain("600.00");
+  });
+});

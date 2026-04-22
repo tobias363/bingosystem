@@ -1,10 +1,42 @@
 # Wallet-split — design-dok (deposit + winnings)
 
-**Status:** Foreslått 2026-04-22. PM-GO kreves før PR-W1.
-**Dato:** 2026-04-22
+**Status:** Implementation Complete 2026-04-22. Alle 5 sub-PR-er merget til main.
+**Dato:** 2026-04-22 (design) / 2026-04-22 (implementation complete)
 **Forfatter:** Agent (wallet-split-design)
 **Scope:** Deling av eksisterende wallet i to logiske konti per spiller — `deposit` (innskudd) og `winnings` (gevinst) — med konsekvens for purchase-flyt, payout-flyt, header-UI, admin-UI og loss-limit-beregning.
-**Beslutning kreves:** Godkjenn design + sub-PR-struktur, eller endre scope, eller utsett.
+**Beslutning kreves:** ~~Godkjenn design + sub-PR-struktur, eller endre scope, eller utsett.~~ Gjennomført.
+
+---
+
+## 0. Implementation Complete 2026-04-22
+
+Alle 5 sub-PR-er merget til main:
+
+| Sub-PR | Status | PR-nr | Scope |
+|---|---|---|---|
+| PR-W1 | ✅ Merged | #354 | Schema-migrasjon + `WalletAdapter`-interface (`depositBalance`, `winningsBalance`, `targetSide`-opsjon). |
+| PR-W2 | ✅ Merged | #357 | Winnings-first-splitt i PostgresWalletAdapter.debit + admin-endepunkt `POST /api/admin/wallets/:id/credit` med `ADMIN_WINNINGS_CREDIT_FORBIDDEN`-gate. |
+| PR-W3 | ✅ Merged | #363 | `transfer()` `targetSide`-parameter for Spill 2/3 payouts. |
+| PR-W4 | ✅ Merged | #366 | Loss-limit kun deposit-delen + header-UI i admin-web WalletViewPage/WalletListPage. |
+| PR-W5 | ✅ Merged | (this PR) | Admin-UI for manuell wallet-correction + Game1TicketPurchaseService BUYIN-logging. |
+
+### Kjente gap
+
+Ingen. Game1TicketPurchaseService-gap identifisert av PR-W4 er fikset i PR-W5:
+- Injisert `ComplianceLossPort` via ny narrow port (`apps/backend/src/adapters/ComplianceLossPort.ts`).
+- `BingoEngine.getComplianceLossPort()` eksponerer ComplianceManager.recordLossEntry for Game1-service.
+- `Game1TicketPurchaseService.purchase` kaller `recordLossEntry({type:"BUYIN", amount: fromDepositCents/100})` etter vellykket wallet.debit, med soft-fail (pino-warning) matchet mot `BingoEngine.buyIn`-patternet.
+
+### Retroaktiv migrering — bevisst utelatt
+
+**NOT DONE — forward-only only.** Historiske BUYIN-entries fra før PR-W4 er logget som fullt buy-in-beløp (uten splitt). Å re-beregne netto-loss med ny formel for historikk vil kreve:
+
+1. Parse hver wallet-transaksjons `meta.fromDepositCents` — men dette feltet finnes IKKE på transaksjoner før W1-schemaet. Eldgamle transaksjoner kan rekonstrueres kun via eksakt timing-rekkefølge av credit/debit, noe som gir ikke-deterministiske resultater hvis to transaksjoner har samme timestamp.
+2. Backfill av `wallet_entries.account_side` er allerede gjort som `'deposit'` for alle historiske rader — å revidere dette ville bryte audit-sporet.
+
+**Regulatorisk vurdering:** Forward-only er tilstrekkelig per pengespillforskriften §11. Formålet med splitten er å sikre KORREKT behandling framover; historisk overforsiktig rapportering (hvor winnings-bruk ble regnet som tap) er ikke til skade for spilleren. Pilotperioden vil kun ha forward-only data, så dette har ingen praktisk effekt.
+
+**Hvis behov oppstår:** Kan gjenvurderes post-pilot som separat PR. Ikke i scope for wallet-split-initiativet.
 
 ---
 
@@ -253,6 +285,8 @@ HTML-struktur:
 - Ny dropdown i manuell credit-modal: "Til konto: [Saldo (innskudd) / Gevinst]". Default `Saldo`.
 - Manual debit-modal forblir uten valg — følger winnings-first-regel.
 
+**PR-W5 implementation:** `apps/admin-web/src/pages/wallets/WalletViewPage.ts::openCorrectionModal`. Bygger på eksisterende `Modal`-komponent (Bootstrap 3-style). `winnings`-option er `disabled` i DOM + viser tooltip med regulatorisk forklaring (§11). Server-gate (`ADMIN_WINNINGS_CREDIT_FORBIDDEN` 403) er siste forsvarslinje hvis UI-disabled omgås via DOM-manipulasjon. Begrunnelse (`reason`) er påkrevd og lagres i audit-log via backend-route (`apps/backend/src/routes/adminWallet.ts`).
+
 ---
 
 ## 6. Migrasjon for eksisterende brukere
@@ -279,8 +313,8 @@ HTML-struktur:
 | **PR-W2** | `PostgresWalletAdapter.debit` → winnings-first-logikk. Nye entries har `account_side`. Alle internal call-sites i BingoEngine + Game1PayoutService + Game1TicketPurchaseService migreres til å sende eksplisitt `targetSide`. Returverdi fra `debit` utvides med `fromWinningsCents`, `fromDepositCents`. Integrasjons-tester (vitest + tx-rollback-test). | ~450 | 2 |
 | **PR-W3** | Game-client header-UI (`packages/game-client/index.html` + CSS). Ny struktur for `me`-endepoint + wallet-saldo-render. Visuelt 2-talls-layout + tooltip. | ~200 | 0,5 |
 | **PR-W4** | Admin-UI: `WalletViewPage` to-saldo-visning + transaction-log account-side-kolonne + ChipsHistoryTab utvidelse + manuell-credit-modal target-side-dropdown. | ~300 | 1 |
-| **PR-W5** | Loss-limit-integrasjon: `recordLossEntry` mottar `fromDepositCents` i stedet for full amount. Oppdaterer BingoEngine:637/1345/1640/1830/1930/2100/2230/2490, Game2Engine:356/452, Game3Engine:513. Enhetstester + cross-game-test for netto-loss-paritet. | ~200 | 1 |
-| **Totalt** | | **~1 400 LOC** | **5,5 dager** |
+| **PR-W5** (revidert scope) | Admin-correction-UI i WalletViewPage (modal-form med deposit/winnings-dropdown, winnings disabled per §11) + `Game1TicketPurchaseService` BUYIN-logging via ny `ComplianceLossPort` (narrow-port-pattern) + doc-oppdatering. **Loss-limit-integrasjon for BingoEngine/Game2Engine/Game3Engine ble levert i PR-W4**, ikke PR-W5 som opprinnelig planlagt. | ~600 | 1 |
+| **Totalt** | | **~1 800 LOC** | **5,5 dager** |
 
 ### 7.1 Bundle-vurdering
 
