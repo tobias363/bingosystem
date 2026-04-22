@@ -25,6 +25,7 @@
 import type { GameVariantConfig, PatternConfig, TicketTypeConfig } from "./variantConfig.js";
 import {
   DEFAULT_NORSK_BINGO_CONFIG,
+  DEFAULT_QUICKBINGO_CONFIG,
   PATTERNS_BY_COLOR_DEFAULT_KEY,
 } from "./variantConfig.js";
 
@@ -37,6 +38,12 @@ import {
  * utelatt — de konsumeres av andre systemer.
  */
 export interface Spill1ConfigInput {
+  /**
+   * BIN-689: Sub-variant-valg fra admin-UI. "norsk-bingo" (default/undefined)
+   * = standard 5-fase; "kvikkis" = hurtig-bingo med kun Fullt Hus-fase.
+   * Tolket av mapperen for å velge riktig default-patterns-liste.
+   */
+  subVariant?: "norsk-bingo" | "kvikkis";
   ticketColors?: ReadonlyArray<Spill1TicketColorInput>;
   jackpot?: {
     prizeByColor?: Record<string, number>;
@@ -105,8 +112,11 @@ const PATTERN_SLUG_TO_NAME: Readonly<Record<string, string>> = {
   full_house: "Fullt Hus",
 };
 
-/** Fase-rekkefølge = index i default-patterns-arrayen. */
+/** Fase-rekkefølge for norsk 5-fase = index i default-patterns-arrayen. */
 const PATTERN_ORDER: readonly string[] = ["row_1", "row_2", "row_3", "row_4", "full_house"];
+
+/** BIN-689: Fase-rekkefølge for Kvikkis = kun Fullt Hus. */
+const PATTERN_ORDER_KVIKKIS: readonly string[] = ["full_house"];
 
 // ── Helper: slug → TicketTypeConfig ─────────────────────────────────────────
 
@@ -187,12 +197,13 @@ function patternConfigForPhase(
   return { ...fallback, name, claimType, design };
 }
 
-/** Build en hel 5-fase-matrise for én farge fra admin-UI `prizePerPattern`. */
+/** Build en hel fase-matrise for én farge fra admin-UI `prizePerPattern`. */
 function buildPatternsForColor(
   prizePerPattern: Spill1TicketColorInput["prizePerPattern"] | undefined,
   fallbackPatterns: ReadonlyArray<PatternConfig>,
+  patternOrder: readonly string[],
 ): PatternConfig[] {
-  return PATTERN_ORDER.map((slug, i) =>
+  return patternOrder.map((slug, i) =>
     patternConfigForPhase(slug, i, prizePerPattern?.[slug], fallbackPatterns[i] ?? fallbackPatterns[fallbackPatterns.length - 1]),
   );
 }
@@ -217,15 +228,24 @@ function buildPatternsForColor(
  */
 export function buildVariantConfigFromSpill1Config(
   spill1: Spill1ConfigInput | null | undefined,
-  fallback: GameVariantConfig = DEFAULT_NORSK_BINGO_CONFIG,
+  fallback?: GameVariantConfig,
 ): GameVariantConfig {
-  const fallbackPatterns = fallback.patterns;
+  // BIN-689: Kvikkis-routing. Hvis `subVariant === "kvikkis"` og ingen
+  // eksplisitt fallback er angitt, bruk DEFAULT_QUICKBINGO_CONFIG så
+  // patterns-listen blir 1-entry (Fullt Hus) i stedet for 5-fase.
+  // Eksplisitt fallback (brukt i tester) respekteres alltid.
+  const resolvedFallback: GameVariantConfig =
+    fallback ??
+    (spill1?.subVariant === "kvikkis" ? DEFAULT_QUICKBINGO_CONFIG : DEFAULT_NORSK_BINGO_CONFIG);
+  const fallbackPatterns = resolvedFallback.patterns;
+  const patternOrder =
+    spill1?.subVariant === "kvikkis" ? PATTERN_ORDER_KVIKKIS : PATTERN_ORDER;
 
   // Ingen admin-config → ren fallback, men med eksplisitt __default__
   // slik at engine alltid har en path for ukjente farger.
   if (!spill1 || typeof spill1 !== "object") {
     return {
-      ...fallback,
+      ...resolvedFallback,
       patternsByColor: { [PATTERNS_BY_COLOR_DEFAULT_KEY]: [...fallbackPatterns] },
     };
   }
@@ -245,11 +265,15 @@ export function buildVariantConfigFromSpill1Config(
     // Unngå duplikater hvis admin-UI har sendt samme farge to ganger.
     if (ticketTypes.some((t) => t.name === ticketType.name)) continue;
     ticketTypes.push(ticketType);
-    patternsByColor[ticketType.name] = buildPatternsForColor(tc.prizePerPattern, fallbackPatterns);
+    patternsByColor[ticketType.name] = buildPatternsForColor(
+      tc.prizePerPattern,
+      fallbackPatterns,
+      patternOrder,
+    );
   }
 
   // Hvis admin ikke har valgt noen farger → fall tilbake til fallback.ticketTypes.
-  const finalTicketTypes = ticketTypes.length > 0 ? ticketTypes : fallback.ticketTypes;
+  const finalTicketTypes = ticketTypes.length > 0 ? ticketTypes : resolvedFallback.ticketTypes;
 
   // Jackpot-felt: mapper til legacy single-prize-shape på GameVariantConfig.
   // Admin-UI støtter per-farge jackpot (Record<color, kr>). Engine har kun
@@ -260,19 +284,23 @@ export function buildVariantConfigFromSpill1Config(
   const luckyNumberPrize =
     typeof spill1.luckyNumberPrizeNok === "number" && spill1.luckyNumberPrizeNok > 0
       ? spill1.luckyNumberPrizeNok
-      : fallback.luckyNumberPrize;
+      : resolvedFallback.luckyNumberPrize;
 
   const replaceAmount =
     typeof spill1.elvis?.replaceTicketPriceNok === "number" && spill1.elvis.replaceTicketPriceNok > 0
       ? spill1.elvis.replaceTicketPriceNok
-      : fallback.replaceAmount;
+      : resolvedFallback.replaceAmount;
 
   return {
-    ...fallback,
+    ...resolvedFallback,
     ticketTypes: finalTicketTypes,
     patterns: fallbackPatterns.map((p) => ({ ...p })), // flat fallback beholdes
     patternsByColor,
-    ...(jackpot ? { jackpot } : fallback.jackpot ? { jackpot: fallback.jackpot } : {}),
+    ...(jackpot
+      ? { jackpot }
+      : resolvedFallback.jackpot
+        ? { jackpot: resolvedFallback.jackpot }
+        : {}),
     ...(typeof luckyNumberPrize === "number" ? { luckyNumberPrize } : {}),
     ...(typeof replaceAmount === "number" ? { replaceAmount } : {}),
   };

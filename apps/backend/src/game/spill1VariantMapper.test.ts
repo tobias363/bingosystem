@@ -21,6 +21,7 @@ import {
 } from "./spill1VariantMapper.js";
 import {
   DEFAULT_NORSK_BINGO_CONFIG,
+  DEFAULT_QUICKBINGO_CONFIG,
   PATTERNS_BY_COLOR_DEFAULT_KEY,
   type GameVariantConfig,
 } from "./variantConfig.js";
@@ -338,4 +339,98 @@ test("resolvePatternsForColor: returnerer flat patterns[] når patternsByColor e
   };
   const patterns = resolvePatternsForColor(vc, "Small White");
   assert.equal(patterns, vc.patterns);
+});
+
+// ── BIN-689: Kvikkis-routing ────────────────────────────────────────────────
+
+test("BIN-689: subVariant='kvikkis' → DEFAULT_QUICKBINGO_CONFIG brukes som default-fallback", () => {
+  const input: Spill1ConfigInput = {
+    subVariant: "kvikkis",
+    ticketColors: [
+      {
+        color: "small_yellow",
+        priceNok: 20,
+        prizePerPattern: {
+          full_house: { mode: "fixed", amount: 1000 },
+        },
+      },
+    ],
+  };
+  const vc = buildVariantConfigFromSpill1Config(input);
+  // Fallback-patterns er Kvikkis-styled (1-entry), ikke 5-fase.
+  assert.equal(vc.patterns.length, 1, "Kvikkis skal ha kun én pattern");
+  assert.equal(vc.patterns[0].name, "Fullt Hus");
+  // Per-farge-matrise for Small Yellow har også kun Fullt Hus.
+  const smallYellowPatterns = vc.patternsByColor?.["Small Yellow"];
+  assert.ok(smallYellowPatterns);
+  assert.equal(smallYellowPatterns!.length, 1);
+  assert.equal(smallYellowPatterns![0].name, "Fullt Hus");
+  assert.equal(smallYellowPatterns![0].winningType, "fixed");
+  assert.equal(smallYellowPatterns![0].prize1, 1000);
+});
+
+test("BIN-689: subVariant='norsk-bingo' → DEFAULT_NORSK_BINGO_CONFIG brukes (default-path)", () => {
+  const input: Spill1ConfigInput = {
+    subVariant: "norsk-bingo",
+    ticketColors: [
+      {
+        color: "small_yellow",
+        priceNok: 20,
+        prizePerPattern: {
+          row_1: { mode: "fixed", amount: 100 },
+          full_house: { mode: "fixed", amount: 1000 },
+        },
+      },
+    ],
+  };
+  const vc = buildVariantConfigFromSpill1Config(input);
+  // Norsk 5-fase.
+  assert.equal(vc.patterns.length, 5);
+  const smallYellowPatterns = vc.patternsByColor?.["Small Yellow"];
+  assert.ok(smallYellowPatterns);
+  assert.equal(smallYellowPatterns!.length, 5);
+});
+
+test("BIN-689: subVariant undefined → norsk-bingo-default (bakoverkompat med legacy-config)", () => {
+  const input: Spill1ConfigInput = {
+    ticketColors: [{ color: "small_yellow", priceNok: 20, prizePerPattern: {} }],
+  };
+  const vc = buildVariantConfigFromSpill1Config(input);
+  assert.equal(vc.patterns.length, 5, "ingen subVariant → default til 5-fase");
+});
+
+test("BIN-689: Kvikkis — eksplisitt fallback respekteres (backward-compat for tester)", () => {
+  const input: Spill1ConfigInput = {
+    subVariant: "kvikkis",
+    ticketColors: [],
+  };
+  // Når caller eksplisitt gir fallback, ignoreres subVariant-routing.
+  const vc = buildVariantConfigFromSpill1Config(input, DEFAULT_NORSK_BINGO_CONFIG);
+  assert.equal(vc.patterns.length, 5, "eksplisitt fallback overstyrer subVariant");
+});
+
+test("BIN-689: Kvikkis — jackpot-feltet overføres som før", () => {
+  const input: Spill1ConfigInput = {
+    subVariant: "kvikkis",
+    ticketColors: [
+      {
+        color: "small_yellow",
+        priceNok: 20,
+        prizePerPattern: { full_house: { mode: "fixed", amount: 1000 } },
+      },
+    ],
+    jackpot: {
+      prizeByColor: { small_yellow: 10000 },
+      draw: 55,
+    },
+  };
+  const vc = buildVariantConfigFromSpill1Config(input);
+  assert.ok(vc.jackpot);
+  assert.equal(vc.jackpot!.drawThreshold, 55);
+  assert.equal(vc.jackpot!.prize, 10000);
+});
+
+// Sanity: DEFAULT_QUICKBINGO_CONFIG is imported for test usage.
+test("BIN-689: DEFAULT_QUICKBINGO_CONFIG-import er bundet (smoke)", () => {
+  assert.equal(DEFAULT_QUICKBINGO_CONFIG.patterns.length, 1);
 });
