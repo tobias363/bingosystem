@@ -60,6 +60,7 @@ import type { Game1TicketPurchaseService, Game1TicketPurchaseRow } from "./Game1
 import type { AuditLogService } from "../compliance/AuditLogService.js";
 import type { Game1PayoutService, Game1WinningAssignment } from "./Game1PayoutService.js";
 import type { Game1JackpotService, Game1JackpotConfig } from "./Game1JackpotService.js";
+import type { AdminGame1Broadcaster } from "./AdminGame1Broadcaster.js";
 import { evaluatePhase, TOTAL_PHASES } from "./Game1PatternEvaluator.js";
 import {
   buildVariantConfigFromSpill1Config,
@@ -116,6 +117,13 @@ export interface Game1DrawEngineServiceOptions {
    * Hvis ikke satt eller ticket_config ikke har jackpot-config → 0 jackpot.
    */
   jackpotService?: Game1JackpotService;
+  /**
+   * GAME1_SCHEDULE PR 4d.3: valgfri broadcaster for admin-namespace.
+   * Fire-and-forget — engine kaller `onDrawProgressed` etter persistert
+   * draw slik at admin-UI får sanntids-oppdatering uten REST-polling.
+   * Feil i broadcaster loggres men påvirker ikke draw-flyten.
+   */
+  adminBroadcaster?: AdminGame1Broadcaster;
 }
 
 // ── Internal row shapes ─────────────────────────────────────────────────────
@@ -298,6 +306,7 @@ export class Game1DrawEngineService {
   private readonly config: Game1DrawEngineConfig;
   private readonly payoutService: Game1PayoutService | null;
   private readonly jackpotService: Game1JackpotService | null;
+  private adminBroadcaster: AdminGame1Broadcaster | null;
 
   constructor(options: Game1DrawEngineServiceOptions) {
     this.pool = options.pool;
@@ -314,6 +323,36 @@ export class Game1DrawEngineService {
     };
     this.payoutService = options.payoutService ?? null;
     this.jackpotService = options.jackpotService ?? null;
+    this.adminBroadcaster = options.adminBroadcaster ?? null;
+  }
+
+  /** PR 4d.3: late-binding for admin-broadcaster (io må finnes først). */
+  setAdminBroadcaster(broadcaster: AdminGame1Broadcaster): void {
+    this.adminBroadcaster = broadcaster;
+  }
+
+  /** PR 4d.3: fire-and-forget admin-broadcast for draw-progress. */
+  private notifyDrawProgressed(
+    scheduledGameId: string,
+    ballNumber: number,
+    drawIndex: number,
+    currentPhase: number
+  ): void {
+    if (!this.adminBroadcaster) return;
+    try {
+      this.adminBroadcaster.onDrawProgressed({
+        gameId: scheduledGameId,
+        ballNumber,
+        drawIndex,
+        currentPhase,
+        at: Date.now(),
+      });
+    } catch (err) {
+      log.warn(
+        { err, scheduledGameId, drawIndex },
+        "adminBroadcaster.onDrawProgressed kastet — ignorert"
+      );
+    }
   }
 
   // ── Table helpers ─────────────────────────────────────────────────────────
@@ -593,6 +632,19 @@ export class Game1DrawEngineService {
       const updatedStatus = isFinished ? "completed" : game.status;
       const draws = await this.loadDrawsInOrder(client, scheduledGameId);
       return this.buildStateView(updatedState, updatedStatus, draws);
+    }).then((view) => {
+      // PR 4d.3: admin-broadcast etter commit. view.lastDrawnBall er alltid
+      // satt her (vi har akkurat trukket og persistert), og drawsCompleted
+      // avspeiler sekvensen for tell-logikk i UI.
+      if (view.lastDrawnBall != null) {
+        this.notifyDrawProgressed(
+          scheduledGameId,
+          view.lastDrawnBall,
+          view.drawsCompleted,
+          view.currentPhase
+        );
+      }
+      return view;
     });
   }
 

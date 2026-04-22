@@ -46,6 +46,7 @@ import type { Pool, PoolClient } from "pg";
 import { DomainError } from "./BingoEngine.js";
 import { logger as rootLogger } from "../util/logger.js";
 import type { Game1DrawEngineService } from "./Game1DrawEngineService.js";
+import type { AdminGame1Broadcaster } from "./AdminGame1Broadcaster.js";
 
 const log = rootLogger.child({ module: "game1-master-control-service" });
 
@@ -135,6 +136,13 @@ export interface Game1MasterControlServiceOptions {
    * moduser). Produksjonssetup injisierer alltid engine via index.ts.
    */
   drawEngine?: Game1DrawEngineService;
+  /**
+   * GAME1_SCHEDULE PR 4d.3: valgfri broadcaster for admin-namespace.
+   * Fire-and-forget — service-metoder kaller broadcaster.onStatusChange
+   * etter DB-commit. Feil i broadcaster loggres men påvirker ikke
+   * service-flyten.
+   */
+  adminBroadcaster?: AdminGame1Broadcaster;
 }
 
 interface ScheduledGameRow {
@@ -180,7 +188,8 @@ function toIso(value: unknown): string | null {
 export class Game1MasterControlService {
   private readonly pool: Pool;
   private readonly schema: string;
-  private readonly drawEngine: Game1DrawEngineService | null;
+  private drawEngine: Game1DrawEngineService | null;
+  private adminBroadcaster: AdminGame1Broadcaster | null;
 
   constructor(options: Game1MasterControlServiceOptions) {
     this.pool = options.pool;
@@ -190,6 +199,42 @@ export class Game1MasterControlService {
     }
     this.schema = schema;
     this.drawEngine = options.drawEngine ?? null;
+    this.adminBroadcaster = options.adminBroadcaster ?? null;
+  }
+
+  /**
+   * PR 4d.3: late-binding for admin-broadcaster. Brukes av index.ts etter
+   * at `/admin-game1`-namespace er opprettet (io må finnes før).
+   */
+  setAdminBroadcaster(broadcaster: AdminGame1Broadcaster): void {
+    this.adminBroadcaster = broadcaster;
+  }
+
+  /**
+   * PR 4d.3: fire-and-forget admin-broadcast etter DB-commit. Wrap i try/catch
+   * slik at en eventuell broadcaster-feil aldri kan krasje action-responsen.
+   */
+  private notifyStatusChange(
+    result: MasterActionResult,
+    action: MasterAuditAction,
+    actorUserId: string
+  ): void {
+    if (!this.adminBroadcaster) return;
+    try {
+      this.adminBroadcaster.onStatusChange({
+        gameId: result.gameId,
+        status: result.status,
+        action,
+        auditId: result.auditId,
+        actorUserId,
+        at: Date.now(),
+      });
+    } catch (err) {
+      log.warn(
+        { err, gameId: result.gameId, action },
+        "adminBroadcaster.onStatusChange kastet — ignorert for å ikke påvirke action-responsen"
+      );
+    }
   }
 
   /** @internal test helper. */
@@ -312,6 +357,7 @@ export class Game1MasterControlService {
       await this.drawEngine.startGame(input.gameId, input.actor.userId);
     }
 
+    this.notifyStatusChange(result, "start", input.actor.userId);
     return result;
   }
 
@@ -391,6 +437,9 @@ export class Game1MasterControlService {
         actualEndTime: null,
         auditId,
       };
+    }).then((result) => {
+      this.notifyStatusChange(result, "exclude_hall", input.actor.userId);
+      return result;
     });
   }
 
@@ -443,6 +492,9 @@ export class Game1MasterControlService {
         actualEndTime: toIso(game.actual_end_time),
         auditId,
       };
+    }).then((result) => {
+      this.notifyStatusChange(result, "include_hall", input.actor.userId);
+      return result;
     });
   }
 
@@ -500,6 +552,7 @@ export class Game1MasterControlService {
     if (this.drawEngine) {
       await this.drawEngine.pauseGame(input.gameId, input.actor.userId);
     }
+    this.notifyStatusChange(result, "pause", input.actor.userId);
     return result;
   }
 
@@ -557,6 +610,7 @@ export class Game1MasterControlService {
     if (this.drawEngine) {
       await this.drawEngine.resumeGame(input.gameId, input.actor.userId);
     }
+    this.notifyStatusChange(result, "resume", input.actor.userId);
     return result;
   }
 
@@ -635,6 +689,7 @@ export class Game1MasterControlService {
     ) {
       await this.drawEngine.stopGame(input.gameId, reason, input.actor.userId);
     }
+    this.notifyStatusChange(result, "stop", input.actor.userId);
     return result;
   }
 
