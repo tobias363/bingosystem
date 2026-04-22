@@ -1,34 +1,37 @@
 import { Container, Graphics, Text } from "pixi.js";
 import gsap from "gsap";
-import type { MiniGameActivatedPayload, MiniGamePlayResult } from "@spillorama/shared-types/socket-events";
 
 /**
- * Wheel of Fortune mini-game overlay for Game 1 (Classic Bingo).
- * Shown after BINGO win. Player spins to win bonus prize.
- * Outcome is server-determined.
+ * BIN-690 PR-M6: Wheel of Fortune overlay — wired to M6 protocol.
  *
- *   - `SpinWheelScript.cs:174,180,186` — **50 physical segments**, 7.2° per segment,
- *     `zRotation = -3.6f` initial offset. Prize labels repeat if prizeList is shorter
- *     than 50 (modulo), matching Unity's prefab-style duplicate labels.
- *   - `SpinWheelScript.cs:85` — physics deceleration `rotationSpeed *= rMultiplier`
- *     (0.96/frame at ~60fps). Web uses a raf-loop with the same per-frame decay math
- *     to reproduce the tactile feel.
- *   - `SpinWheelScript.cs:199,236` — final jitter `± 3.25°` randomisation applied to
- *     the chosen prize angle.
- *   - `SpinWheelScript.cs:490,497` — pause-hook: auto-spin countdown respects
- *     `state.isPaused` and does not tick down while the round is paused.
+ * Trigger payload (from M2 MiniGameWheelEngine):
+ *   `{ totalBuckets: number, prizes: Array<{amount, buckets}>, spinCount: 1 }`
+ *
+ * Choice payload: `{}` (Wheel has no player decision; the click on "Snurr"
+ * is just the signal that the player wants to start the spin).
+ *
+ * Result payload:
+ *   `{ winningBucketIndex, prizeGroupIndex, amountKroner, totalBuckets, animationSeed }`
+ *
+ * Unity parity (legacy reference preserved — visuals unchanged):
+ *   - `SpinWheelScript.cs:174,180,186` — 50 physical segments × 7.2° per segment
+ *   - `SpinWheelScript.cs:85` — per-frame decay `rotationSpeed *= rMultiplier`
+ *   - `SpinWheelScript.cs:199,236` — final jitter ± 3.25°
+ *   - `SpinWheelScript.cs:490,497` — pause-hook
+ *
+ * The wheel is rendered with `totalBuckets` segments (defaulting to 50).
+ * Segment colours are HSL-rotated; labels repeat modulo `prizes.length` so
+ * a shorter prize list still covers the whole wheel.
  */
 
-const NUM_SEGMENTS = 50;
-const SEGMENT_ANGLE_DEG = 360 / NUM_SEGMENTS; // 7.2°
-const INITIAL_Z_ROTATION_DEG = -3.6; // SetData offset
+const DEFAULT_NUM_SEGMENTS = 50;
+const INITIAL_Z_ROTATION_DEG = -3.6;
 const STOP_JITTER_DEG = 3.25;
 const R_MULTIPLIER = 0.96;
-const INITIAL_ROTATION_SPEED = 60; // deg/frame — tuned so decay yields ~5s total spin
 const STOP_SPEED_THRESHOLD = 0.005;
 const AUTO_SPIN_SECONDS = 10;
+const AUTO_DISMISS_AFTER_RESULT_SECONDS = 4;
 
-/** Simple HSL → RGB helper returning a 24-bit colour int. */
 function hslToInt(h: number, s: number, l: number): number {
   const a = s * Math.min(l, 1 - l);
   const f = (n: number): number => {
@@ -41,9 +44,24 @@ function hslToInt(h: number, s: number, l: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
-/** Bridge-state shape we actually read. Keeps the test surface tiny. */
 interface PauseAwareBridge {
   getState(): { isPaused: boolean };
+}
+
+/** Trigger-payload shape (matches M2 MiniGameWheelEngine.ts:trigger.payload). */
+interface WheelTriggerPayload {
+  totalBuckets?: number;
+  prizes?: Array<{ amount: number; buckets: number }>;
+  spinCount?: number;
+}
+
+/** Result-payload shape (matches M2 WheelResultJson). */
+interface WheelResultJson {
+  winningBucketIndex: number;
+  prizeGroupIndex?: number;
+  amountKroner: number;
+  totalBuckets: number;
+  animationSeed?: number;
 }
 
 export class WheelOverlay extends Container {
@@ -55,30 +73,30 @@ export class WheelOverlay extends Container {
   private resultText: Text;
   private titleText: Text;
   private timerText: Text;
-  private prizeList: number[] = [];
+  private errorText: Text;
+  private prizeLabels: number[] = [];
+  private numSegments: number = DEFAULT_NUM_SEGMENTS;
   private isSpinning = false;
   private radius: number;
-  private onPlay: (() => void) | null = null;
+  private onChoice: ((choiceJson: Readonly<Record<string, unknown>>) => void) | null = null;
   private onDismiss: (() => void) | null = null;
   private autoSpinTimer: ReturnType<typeof setInterval> | null = null;
   private autoSpinCountdown = AUTO_SPIN_SECONDS;
   private rafId: number | null = null;
   private rotationSpeed = 0;
-  private bridge: PauseAwareBridge | null = null;
+  private bridge: PauseAwareBridge | null;
 
   constructor(screenWidth: number, screenHeight: number, bridge?: PauseAwareBridge) {
     super();
     this.bridge = bridge ?? null;
     this.radius = Math.min(140, Math.floor(screenHeight * 0.25));
 
-    // Semi-transparent backdrop
     this.backdrop = new Graphics();
     this.backdrop.rect(0, 0, screenWidth, screenHeight);
     this.backdrop.fill({ color: 0x000000, alpha: 0.75 });
     this.backdrop.eventMode = "static";
     this.addChild(this.backdrop);
 
-    // Title
     this.titleText = new Text({
       text: "LYKKEHJUL!",
       style: {
@@ -94,7 +112,6 @@ export class WheelOverlay extends Container {
     this.titleText.y = 50;
     this.addChild(this.titleText);
 
-    // Wheel
     this.wheelContainer = new Container();
     this.wheelContainer.x = screenWidth / 2;
     this.wheelContainer.y = screenHeight / 2 - 20;
@@ -103,7 +120,6 @@ export class WheelOverlay extends Container {
     this.wheelContainer.addChild(this.wheelInner);
     this.drawWheel();
 
-    // Arrow pointer
     const arrow = new Graphics();
     arrow.moveTo(0, -this.radius - 14);
     arrow.lineTo(-10, -this.radius - 28);
@@ -115,7 +131,6 @@ export class WheelOverlay extends Container {
     arrow.y = screenHeight / 2 - 20;
     this.addChild(arrow);
 
-    // Timer text
     this.timerText = new Text({
       text: "",
       style: { fontFamily: "Arial", fontSize: 18, fill: 0xffffff, align: "center" },
@@ -125,7 +140,6 @@ export class WheelOverlay extends Container {
     this.timerText.y = screenHeight / 2 + this.radius + 50;
     this.addChild(this.timerText);
 
-    // Spin button
     this.spinBtn = new Container();
     const btnBg = new Graphics();
     btnBg.roundRect(0, 0, 180, 50, 12);
@@ -147,7 +161,6 @@ export class WheelOverlay extends Container {
     this.spinBtn.on("pointerdown", () => this.handleSpinClick());
     this.addChild(this.spinBtn);
 
-    // Result text
     this.resultText = new Text({
       text: "",
       style: {
@@ -164,38 +177,76 @@ export class WheelOverlay extends Container {
     this.resultText.visible = false;
     this.addChild(this.resultText);
 
+    this.errorText = new Text({
+      text: "",
+      style: {
+        fontFamily: "Arial",
+        fontSize: 16,
+        fill: 0xff6464,
+        align: "center",
+      },
+    });
+    this.errorText.anchor.set(0.5);
+    this.errorText.x = screenWidth / 2;
+    this.errorText.y = screenHeight / 2 + this.radius + 180;
+    this.errorText.visible = false;
+    this.addChild(this.errorText);
+
     this.visible = false;
   }
 
-  setOnPlay(callback: () => void): void {
-    this.onPlay = callback;
+  setOnChoice(callback: (choiceJson: Readonly<Record<string, unknown>>) => void): void {
+    this.onChoice = callback;
   }
 
   setOnDismiss(callback: () => void): void {
     this.onDismiss = callback;
   }
 
-  /** Allow late-wiring of the pause-aware bridge (Game1Controller passes it in). */
   setBridge(bridge: PauseAwareBridge): void {
     this.bridge = bridge;
   }
 
-  show(data: MiniGameActivatedPayload): void {
-    this.prizeList = data.prizeList;
-    // Redraw with the actual prize list (colors + labels per 50 segments)
+  /**
+   * Handle `mini_game:trigger` payload from server. Re-renders the wheel with
+   * the actual prize layout and starts the auto-spin countdown.
+   */
+  show(triggerPayload: Readonly<Record<string, unknown>>): void {
+    const data = triggerPayload as unknown as WheelTriggerPayload;
+    // Derive numSegments from totalBuckets (default 50 for Unity parity).
+    const total =
+      typeof data.totalBuckets === "number" && data.totalBuckets >= 1
+        ? data.totalBuckets
+        : DEFAULT_NUM_SEGMENTS;
+    this.numSegments = total;
+    // Flatten prizes into a per-segment label list (prize.amount repeated
+    // `prize.buckets` times). Falls back to empty labels if the payload is
+    // malformed — we still render segments for visual continuity.
+    this.prizeLabels = [];
+    if (Array.isArray(data.prizes)) {
+      for (const p of data.prizes) {
+        if (typeof p?.amount !== "number" || typeof p?.buckets !== "number") continue;
+        for (let i = 0; i < p.buckets; i += 1) this.prizeLabels.push(p.amount);
+      }
+    }
+    // Pad/trim to exactly numSegments so every segment has a label slot.
+    while (this.prizeLabels.length < this.numSegments) {
+      this.prizeLabels.push(this.prizeLabels[0] ?? 0);
+    }
+    this.prizeLabels = this.prizeLabels.slice(0, this.numSegments);
+
     this.drawWheel();
     this.isSpinning = false;
     this.spinBtn.visible = true;
     this.spinBtnText.text = "SPINN";
     this.resultText.visible = false;
+    this.errorText.visible = false;
     this.visible = true;
 
-    // Auto-spin countdown (10 seconds). Respects server-authoritative pause —
-    // while paused, the timer does not decrement.
     this.autoSpinCountdown = AUTO_SPIN_SECONDS;
     this.timerText.text = `Auto-spinn om ${this.autoSpinCountdown}s`;
     this.autoSpinTimer = setInterval(() => {
-      if (this.bridge?.getState().isPaused) return; // Pause-hook
+      if (this.bridge?.getState().isPaused) return;
       this.autoSpinCountdown -= 1;
       if (this.autoSpinCountdown <= 0) {
         this.clearAutoTimer();
@@ -207,43 +258,40 @@ export class WheelOverlay extends Container {
     }, 1000);
   }
 
-  animateResult(result: MiniGamePlayResult): void {
+  /**
+   * Handle `mini_game:result` payload. Spins the wheel to the server-picked
+   * `winningBucketIndex`, then displays the payout text and auto-dismisses.
+   */
+  animateResult(resultJson: Readonly<Record<string, unknown>>, payoutCents: number): void {
+    const result = resultJson as unknown as WheelResultJson;
     this.isSpinning = true;
     this.spinBtn.visible = false;
+    this.errorText.visible = false;
     this.clearAutoTimer();
     this.timerText.text = "";
 
-    // angle with ± 3.25° jitter, then Update() spins with decay until it
-    // reaches target. We replicate by placing the wheel at a starting rotation
-    // then stepping via raf with rotationSpeed *= R_MULTIPLIER.
-    const targetAngleDeg = result.segmentIndex * SEGMENT_ANGLE_DEG + SEGMENT_ANGLE_DEG / 2;
+    const segmentAngleDeg = 360 / this.numSegments;
+    const targetAngleDeg =
+      result.winningBucketIndex * segmentAngleDeg + segmentAngleDeg / 2;
     const jitter = (Math.random() * 2 - 1) * STOP_JITTER_DEG;
     const finalAngleDeg = 360 * 6 + (360 - targetAngleDeg) + jitter;
 
     this.wheelInner.rotation = 0;
-
-    // Drive rotation with Unity-style per-frame decay so the feel matches.
-    // Adjust INITIAL_ROTATION_SPEED so the geometric series
-    //   Σ v0 * R_MULTIPLIER^k  ≈ finalAngleDeg  ⇒  v0 ≈ finalAngleDeg * (1 - R_MULTIPLIER)
     this.rotationSpeed = finalAngleDeg * (1 - R_MULTIPLIER);
     let accumulatedDeg = 0;
 
     const tick = (): void => {
-      // Pause-hook: freeze rotation while round is paused.
       if (this.bridge?.getState().isPaused) {
         this.rafId = requestAnimationFrame(tick);
         return;
       }
-
       accumulatedDeg += this.rotationSpeed;
       this.wheelInner.rotation = (accumulatedDeg * Math.PI) / 180;
       this.rotationSpeed *= R_MULTIPLIER;
-
       if (this.rotationSpeed <= STOP_SPEED_THRESHOLD) {
-        // Snap to exact final angle (minor drift correction)
         this.wheelInner.rotation = (finalAngleDeg * Math.PI) / 180;
         this.rafId = null;
-        this.onSpinComplete(result);
+        this.onSpinComplete(result, payoutCents);
         return;
       }
       this.rafId = requestAnimationFrame(tick);
@@ -251,12 +299,30 @@ export class WheelOverlay extends Container {
     this.rafId = requestAnimationFrame(tick);
   }
 
-  private onSpinComplete(result: MiniGamePlayResult): void {
+  /**
+   * Fail-closed display of a choice-error. Since Wheel sends `{}` immediately
+   * on click, the error state lets the player retry without dismissing the
+   * overlay (server tracks completion idempotently).
+   */
+  showChoiceError(err: { code: string; message: string }): void {
+    this.errorText.text = `Feil: ${err.message}`;
+    this.errorText.visible = true;
+    // Re-enable spin button so player can retry.
     this.isSpinning = false;
-    this.resultText.text = `Du vant ${result.prizeAmount} kr!`;
+    this.spinBtn.visible = true;
+  }
+
+  private onSpinComplete(result: WheelResultJson, payoutCents: number): void {
+    this.isSpinning = false;
+    // Prefer explicit amountKroner from result; fall back to payoutCents/100.
+    const amountKroner =
+      typeof result.amountKroner === "number"
+        ? result.amountKroner
+        : Math.round(payoutCents / 100);
+    this.resultText.text = `Du vant ${amountKroner} kr!`;
     this.resultText.visible = true;
 
-    gsap.delayedCall(4, () => {
+    gsap.delayedCall(AUTO_DISMISS_AFTER_RESULT_SECONDS, () => {
       this.visible = false;
       this.onDismiss?.();
     });
@@ -276,7 +342,10 @@ export class WheelOverlay extends Container {
     if (this.isSpinning) return;
     this.clearAutoTimer();
     this.timerText.text = "";
-    this.onPlay?.();
+    this.errorText.visible = false;
+    // Wheel has no choice UI — send empty choiceJson. Server decides the
+    // outcome; we just signal the player is ready.
+    this.onChoice?.({});
   }
 
   private clearAutoTimer(): void {
@@ -286,25 +355,15 @@ export class WheelOverlay extends Container {
     }
   }
 
-  /**
-   * Draw the 50-segment wheel.
-   * When prizeList < 50 we cycle through it modulo, matching Unity's behaviour
-   * of duplicate prize tiers across the physical wheel.
-   */
   private drawWheel(): void {
     this.wheelInner.removeChildren();
-    const segmentAngleRad = (2 * Math.PI) / NUM_SEGMENTS;
+    const segmentAngleRad = (2 * Math.PI) / this.numSegments;
     const initialOffsetRad = (INITIAL_Z_ROTATION_DEG * Math.PI) / 180;
 
-    for (let i = 0; i < NUM_SEGMENTS; i++) {
+    for (let i = 0; i < this.numSegments; i++) {
       const startAngle = i * segmentAngleRad - Math.PI / 2 + initialOffsetRad;
       const endAngle = startAngle + segmentAngleRad;
-
-      // Dynamic palette: HSL rotation around the colour wheel so neighbouring
-      // segments contrast and the full wheel reads as a rainbow. Alternating slight
-      // lightness/saturation gives a segmented look without requiring a 50-
-      // colour hand-tuned palette.
-      const hue = (i * 360) / NUM_SEGMENTS;
+      const hue = (i * 360) / this.numSegments;
       const lightness = i % 2 === 0 ? 0.45 : 0.55;
       const color = hslToInt(hue, 0.7, lightness);
 
@@ -315,11 +374,10 @@ export class WheelOverlay extends Container {
       seg.fill(color);
       seg.stroke({ color: 0x1a0a0a, width: 0.5 });
       this.wheelInner.addChild(seg);
-      const prize =
-        this.prizeList.length > 0 ? this.prizeList[i % this.prizeList.length] : 0;
+
+      const prize = this.prizeLabels[i] ?? 0;
       const midAngle = startAngle + segmentAngleRad / 2;
       const labelR = this.radius * 0.72;
-      // Smaller font: 50 segments are narrow. "X kr" on a 7.2° wedge.
       const label = new Text({
         text: `${prize}`,
         style: {
@@ -336,7 +394,6 @@ export class WheelOverlay extends Container {
       this.wheelInner.addChild(label);
     }
 
-    // Outer ring + hub
     const ring = new Graphics();
     ring.circle(0, 0, this.radius);
     ring.stroke({ color: 0x790001, width: 3 });
@@ -347,5 +404,5 @@ export class WheelOverlay extends Container {
   }
 }
 
-/** Test-only accessor for NUM_SEGMENTS — avoids exporting the constant publicly. */
-export const __WheelOverlay_NUM_SEGMENTS__ = NUM_SEGMENTS;
+/** Test-only accessor for default segment count. */
+export const __WheelOverlay_DEFAULT_NUM_SEGMENTS__ = DEFAULT_NUM_SEGMENTS;

@@ -131,8 +131,10 @@ packages/game-client/src/games/game1/
 │   └── EndScreen.ts            # → gjenbruker Game 2 EndScreen direkte
 └── components/
     ├── ChatPanel.ts            # Sanntids chat med meldingshistorikk
-    ├── WheelOverlay.ts         # Lykkehjul mini-game (8 segmenter, GSAP spin)
-    └── TreasureChestOverlay.ts # Skattekiste mini-game (N kister, server-styrt)
+    ├── WheelOverlay.ts         # [M6] Lykkehjul — trigger.payload: totalBuckets + prizes
+    ├── TreasureChestOverlay.ts # [M6] Skattekiste — trigger.payload: chestCount + prizeRange
+    ├── ColorDraftOverlay.ts    # [M6] Fargetrekning — trigger.payload: slotColors + targetColor
+    └── OddsenOverlay.ts        # [M6] Oddsen — trigger.payload: validNumbers (cross-round)
 ```
 
 ### Gjenbruk fra Game 2
@@ -160,8 +162,93 @@ Identisk med Game 2, pluss chat:
 | `draw:new` | server→client | Nytt trukket tall |
 | `pattern:won` | server→client | Mønster vunnet |
 | `chat:message` | server→client | Ny chat-melding |
-| `minigame:activated` | server→client | Mini-spill aktivert etter BINGO (lykkehjul/skattekiste) |
-| `minigame:play` | client→server | Spill mini-game (selectedIndex for skattekiste) |
+| `mini_game:trigger` | server→client | **[M6]** Mini-spill aktivert etter Fullt Hus i scheduled-game (wheel/chest/colordraft/oddsen) |
+| `mini_game:choice` | client→server | **[M6]** Spillerens valg — `{resultId, choiceJson}` |
+| `mini_game:result` | server→client | **[M6]** Server-autoritativt resultat med `payoutCents + resultJson` |
+| `minigame:activated` | server→client | **[LEGACY]** Fjernet i M6 — host-player-room mini-games wired tidligere til Spill 5 Free Spin; ikke brukt i scheduled-games |
+| `minigame:play` | client→server | **[LEGACY]** Tilsvarende fjernet fra klient-wiring i M6 |
+
+## Mini-game-protokoll (BIN-690 PR-M6)
+
+Scheduled-games mini-games følger en enkel 3-stegs server-autoritativ protokoll.
+Klient-siden er delt mellom `MiniGameRouter` (event-dispatch + socket-wrapper) og
+én overlay-klasse per `miniGameType`.
+
+### Event-flyt
+
+```
+  [server]  Fullt Hus detektert → Game1MiniGameOrchestrator.maybeTriggerFor()
+                                   INSERT app_game1_mini_game_results (triggered)
+    │
+    │ 1. mini_game:trigger
+    │    { resultId, miniGameType, payload, timeoutSeconds? }
+    ▼
+  [client]  SpilloramaSocket.on("miniGameTrigger")
+    → GameBridge.emit("miniGameTrigger")
+    → MiniGameRouter.onTrigger()
+    → instansierer overlay (wheel / chest / colordraft / oddsen)
+    → overlay.show(payload)
+    ▼
+  [client]  spilleren velger → overlay.onChoice({...})
+    ▼
+    │ 2. mini_game:choice (ack-påvent)
+    │    { resultId, choiceJson }
+    ▼
+  [server]  socket-handler → orchestrator.handleChoice()
+                              → implementation.handleChoice()
+                              → wallet.credit() hvis payoutCents > 0
+                              → UPDATE mini_game_results (completed)
+    │
+    │ 3. mini_game:result
+    │    { resultId, miniGameType, payoutCents, resultJson }
+    ▼
+  [client]  MiniGameRouter.onResult()
+    → overlay.animateResult(resultJson, payoutCents)
+    → auto-dismiss etter animasjon → router.dismiss()
+```
+
+### Per-type payload-kontrakter
+
+| Type | trigger.payload | choiceJson | resultJson |
+|------|-----------------|------------|-----------|
+| `wheel` | `{ totalBuckets, prizes: [{amount, buckets}], spinCount }` | `{}` (auto-sendt på Snurr-klikk) | `{ winningBucketIndex, prizeGroupIndex, amountKroner, totalBuckets, animationSeed }` |
+| `chest` | `{ chestCount, prizeRange: {minNok, maxNok}, hasDiscreteTiers }` | `{ chosenIndex: number }` | `{ chosenIndex, prizeAmountKroner, allValuesKroner, chestCount }` |
+| `colordraft` | `{ numberOfSlots, targetColor, slotColors: string[], winPrizeNok, consolationPrizeNok }` | `{ chosenIndex: number }` | `{ chosenIndex, chosenColor, targetColor, matched, prizeAmountKroner, allSlotColors, numberOfSlots }` |
+| `oddsen` | `{ validNumbers, potSmallNok, potLargeNok, resolveAtDraw }` | `{ chosenNumber: number }` | Fase 1: `{ chosenNumber, oddsenStateId, chosenForGameId, ticketSizeAtWin, potAmountNokIfHit, payoutDeferred: true }` — `payoutCents === 0`. Fase 2 (neste spill): `{ chosenNumber, resolvedOutcome: "hit"\|"miss", potAmountKroner }`. |
+
+### Oddsen — cross-round semantics
+
+Oddsen er unikt fordi utfallet avgjøres i NESTE spill (ved `resolveAtDraw`,
+default draw #57). Klienten får TO `mini_game:result`-events:
+
+1. **Umiddelbart etter choice:** `payoutCents: 0, resultJson.payoutDeferred: true`.
+   Overlay viser "Valg registrert. Resultat avgjøres i neste spill." og
+   auto-dismisses etter ~6 sekunder.
+2. **Under neste spill ved terskel-draw:** ny `mini_game:trigger`/`result`-
+   syklus som viser hit/miss + payout-animasjon. (Backend-wiring for denne
+   andre-fase-broadcasten er fortsatt i M5-scope; OddsenOverlay støtter
+   formatene når de kommer.)
+
+### Fail-closed policy
+
+- **Socket-error under choice:** overlayen beholdes, `showChoiceError(err)`
+  kalles med server-error. Spilleren kan retry; server-sidens `completed_at`-
+  lock garanterer idempotens (ingen dobbel-payout).
+- **Stale result-events:** `resultId` match er påkrevd — `MiniGameRouter`
+  dropper `mini_game:result` der `resultId` ikke matcher aktiv overlay.
+- **Skjult data aldri pre-rendret:** Chest's `allValuesKroner` sendes først i
+  `result`; overlay renderer bare closed-chests med tallabel i `show()`.
+
+### Hvordan legge til en ny overlay
+
+1. Lag `packages/game-client/src/games/game1/components/<Navn>Overlay.ts`
+   som utvider `Container`. Eksponer `setOnChoice`, `setOnDismiss`, `show()`,
+   `animateResult()`, `showChoiceError()`, `destroy()`.
+2. Legg den til i `MiniGameRouter.ts`'s `MiniGameOverlay`-union + switch-case.
+3. Utvid backend `MiniGameType`-union i `apps/backend/src/game/minigames/types.ts`.
+4. Skriv egen `<Navn>MiniGameEngine` backend + register i orchestrator.
+5. Legg overlay-tester (6-8 per overlay) + router-test for dispatch.
+6. Oppdater per-type-tabellen over med payload-kontraktene.
 
 ### Kjente begrensninger (MVP)
 

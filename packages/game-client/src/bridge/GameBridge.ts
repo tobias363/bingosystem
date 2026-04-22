@@ -4,7 +4,8 @@ import type {
   PatternWonPayload,
   ChatMessage,
   JackpotActivatedPayload,
-  MiniGameActivatedPayload,
+  MiniGameTriggerPayload,
+  MiniGameResultPayload,
 } from "@spillorama/shared-types/socket-events";
 import type {
   RoomSnapshot,
@@ -99,7 +100,17 @@ export interface GameBridgeEvents {
   patternWon: (result: PatternWonPayload, state: GameState) => void;
   chatMessage: (message: ChatMessage) => void;
   jackpotActivated: (data: JackpotActivatedPayload) => void;
-  minigameActivated: (data: MiniGameActivatedPayload) => void;
+  /**
+   * BIN-690 PR-M6: new scheduled-games mini-game protocol. `miniGameTrigger`
+   * delivers `{resultId, miniGameType, payload, timeoutSeconds?}` — overlay
+   * dispatch keyed on `miniGameType`.
+   */
+  miniGameTrigger: (data: MiniGameTriggerPayload) => void;
+  /**
+   * BIN-690 PR-M6: Server-resolved result. `payoutCents === 0` is valid
+   * (e.g. Oddsen choice-phase, losing color-draft pick).
+   */
+  miniGameResult: (data: MiniGameResultPayload) => void;
 }
 
 type EventMap = {
@@ -149,7 +160,8 @@ export class GameBridge {
     patternWon: new Set(),
     chatMessage: new Set(),
     jackpotActivated: new Set(),
-    minigameActivated: new Set(),
+    miniGameTrigger: new Set(),
+    miniGameResult: new Set(),
   };
 
   constructor(socket: SpilloramaSocket) {
@@ -169,7 +181,9 @@ export class GameBridge {
       this.socket.on("patternWon", (payload) => this.handlePatternWon(payload)),
       this.socket.on("chatMessage", (msg) => this.emit("chatMessage", msg)),
       this.socket.on("jackpotActivated", (data) => this.emit("jackpotActivated", data)),
-      this.socket.on("minigameActivated", (data) => this.emit("minigameActivated", data)),
+      // BIN-690 PR-M6: new scheduled-games mini-game protocol.
+      this.socket.on("miniGameTrigger", (data) => this.emit("miniGameTrigger", data)),
+      this.socket.on("miniGameResult", (data) => this.emit("miniGameResult", data)),
     );
   }
 

@@ -1,6 +1,6 @@
 import { Container, Graphics, Text } from "pixi.js";
 import type { ChatMessage } from "@spillorama/shared-types/socket-events";
-import type { SpilloramaSocket } from "../../../net/SpilloramaSocket.js";
+import type { SpilloramaSocket } from "../net/SpilloramaSocket.js";
 
 const PANEL_WIDTH = 280;
 const MESSAGE_HEIGHT = 28;

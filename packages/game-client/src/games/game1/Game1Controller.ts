@@ -84,12 +84,14 @@ class Game1Controller implements GameController {
 
     // Wire logic-moduler. Getters brukes der state kan endre seg (roomCode
     // settes etter room:create, playScreen skiftes ved screen-transition).
+    // BIN-690 PR-M6: router subscribes to `miniGameTrigger` + `miniGameResult`
+    // via bridge, and emits `mini_game:choice` via socket.sendMiniGameChoice.
+    // No room-code needed — the wire contract is resultId-based.
     this.miniGame = new MiniGameRouter({
       root: this.root,
       app,
       socket,
       bridge,
-      getRoomCode: () => this.actualRoomCode,
     });
     this.actions = new Game1SocketActions({
       socket,
@@ -171,7 +173,11 @@ class Game1Controller implements GameController {
       bridge.on("gameEnded", (state) => this.onGameEnded(state)),
       bridge.on("numberDrawn", (num, idx, state) => this.onNumberDrawn(num, idx, state)),
       bridge.on("patternWon", (result, state) => this.onPatternWon(result, state)),
-      bridge.on("minigameActivated", (data) => this.miniGame?.onActivated(data)),
+      // BIN-690 PR-M6: new scheduled-games mini-game protocol.
+      // Legacy `minigameActivated` is removed — router now wires to
+      // `miniGameTrigger` + `miniGameResult`.
+      bridge.on("miniGameTrigger", (data) => this.miniGame?.onTrigger(data)),
+      bridge.on("miniGameResult", (data) => this.miniGame?.onResult(data)),
     );
 
     // Lucky number picker (persists across screen transitions)

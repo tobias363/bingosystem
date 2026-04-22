@@ -117,6 +117,12 @@ export const SocketEvents = {
   LEADERBOARD_GET: "leaderboard:get",
   JACKPOT_SPIN: "jackpot:spin",
   MINIGAME_PLAY: "minigame:play",
+  /**
+   * BIN-690 PR-M6: Player sends their choice for the active mini-game (scheduled-
+   * games framework). Payload: `{ resultId, choiceJson }`. Distinct from the
+   * legacy host-room `minigame:play` event — that path is unused by M6.
+   */
+  MINI_GAME_CHOICE: "mini_game:choice",
   // Server → Client (broadcast)
   ROOM_UPDATE: "room:update",
   DRAW_NEW: "draw:new",
@@ -124,6 +130,18 @@ export const SocketEvents = {
   CHAT_MESSAGE: "chat:message",
   JACKPOT_ACTIVATED: "jackpot:activated",
   MINIGAME_ACTIVATED: "minigame:activated",
+  /**
+   * BIN-690 PR-M6: Server triggers a mini-game for the Fullt Hus-winner.
+   * Payload: `{ resultId, miniGameType, payload, timeoutSeconds? }`. Emitted by
+   * `Game1MiniGameOrchestrator.maybeTriggerFor()` via `MiniGameBroadcaster.onTrigger`.
+   */
+  MINI_GAME_TRIGGER: "mini_game:trigger",
+  /**
+   * BIN-690 PR-M6: Server resolves the mini-game result and broadcasts payout.
+   * Payload: `{ resultId, miniGameType, payoutCents, resultJson }`. Emitted by
+   * orchestrator post-commit via `MiniGameBroadcaster.onResult`.
+   */
+  MINI_GAME_RESULT: "mini_game:result",
   // Server → Client (private, to marking socket only — BIN-499)
   TICKET_MARKED: "ticket:marked",
 
@@ -341,6 +359,75 @@ export interface MiniGamePlayPayload extends RoomActionPayload {
  * Runtime-validated via `MiniGamePlayResultSchema`.
  */
 export type MiniGamePlayResult = MiniGamePlayResultT;
+
+// ── BIN-690 PR-M6: scheduled-games mini-game wire contract ─────────────────
+//
+// These events replace the legacy `minigame:activated`/`minigame:play` pair for
+// the scheduled-games framework (Spill 1 Fullt Hus path). The framework
+// discriminator is the M1 `MiniGameType` union — "wheel"/"chest"/"colordraft"/
+// "oddsen" — which is INTENTIONALLY different from the legacy
+// `"wheelOfFortune"|"treasureChest"|"mysteryGame"|"colorDraft"` names above.
+//
+// Event flow:
+//   1. Server → Client: `mini_game:trigger` {resultId, miniGameType, payload, timeoutSeconds?}
+//   2. Client → Server: `mini_game:choice`  {resultId, choiceJson}
+//   3. Server → Client: `mini_game:result`  {resultId, miniGameType, payoutCents, resultJson}
+//
+// `payload` and `choiceJson`/`resultJson` are free-form per type; each overlay
+// validates its own shape. See `packages/game-client/src/games/game1/README.md`
+// for the per-type schemas.
+
+/**
+ * M6 framework mini-game type discriminator. Mirrors
+ * `apps/backend/src/game/minigames/types.ts:MiniGameType`. Intentionally
+ * separate from the legacy `MiniGameType` above.
+ */
+export type M6MiniGameType = "wheel" | "chest" | "colordraft" | "oddsen";
+
+/** Server → Client: trigger payload for a newly activated mini-game. */
+export interface MiniGameTriggerPayload {
+  /** Unique UUID for this mini-game round — echoed back in choice + result. */
+  readonly resultId: string;
+  /** Framework-type; drives overlay selection on the client. */
+  readonly miniGameType: M6MiniGameType;
+  /** Type-specific UI payload. Per-type shapes:
+   *    - wheel:      { totalBuckets, prizes, spinCount }
+   *    - chest:      { chestCount, prizeRange, hasDiscreteTiers }
+   *    - colordraft: { numberOfSlots, targetColor, slotColors, winPrizeNok, consolationPrizeNok }
+   *    - oddsen:     { validNumbers, potSmallNok, potLargeNok, resolveAtDraw }
+   */
+  readonly payload: Readonly<Record<string, unknown>>;
+  /** Optional client-side countdown in seconds. */
+  readonly timeoutSeconds?: number;
+}
+
+/** Client → Server: player's choice for the active mini-game. */
+export interface MiniGameChoicePayload extends AuthenticatedSocketPayload {
+  readonly resultId: string;
+  /** Type-specific choice payload. Per-type shapes:
+   *    - wheel:      {} (no choice — auto-sent on spin click)
+   *    - chest:      { chosenIndex: number }
+   *    - colordraft: { chosenIndex: number }
+   *    - oddsen:     { chosenNumber: number }
+   */
+  readonly choiceJson: Readonly<Record<string, unknown>>;
+}
+
+/** Server → Client: resolved mini-game result with payout. */
+export interface MiniGameResultPayload {
+  readonly resultId: string;
+  readonly miniGameType: M6MiniGameType;
+  /** Total payout in øre (cents). 0 for Oddsen choice-phase (deferred to next game). */
+  readonly payoutCents: number;
+  /** Type-specific result payload. Per-type shapes:
+   *    - wheel:      { winningBucketIndex, prizeGroupIndex, amountKroner, totalBuckets, animationSeed }
+   *    - chest:      { chosenIndex, prizeAmountKroner, allValuesKroner, chestCount }
+   *    - colordraft: { chosenIndex, chosenColor, targetColor, matched, prizeAmountKroner, allSlotColors, numberOfSlots }
+   *    - oddsen:     { chosenNumber, oddsenStateId, chosenForGameId, ticketSizeAtWin, potAmountNokIfHit, validNumbers, payoutDeferred: true }
+   *                    (resolved outcome arrives via separate event in the next game)
+   */
+  readonly resultJson: Readonly<Record<string, unknown>>;
+}
 
 // ── BIN-615 / PR-C1: reserved Game 2 / Game 3 broadcast payloads ────────────
 // Types are part of the wire contract now; backend emits in PR-C2 / PR-C3.
