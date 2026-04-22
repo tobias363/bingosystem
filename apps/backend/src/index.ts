@@ -113,7 +113,9 @@ import { PostgresPhysicalTicketReadPort } from "./agent/ports/PhysicalTicketRead
 import { createAdminPhysicalTicketsRouter } from "./routes/adminPhysicalTickets.js";
 import { createAdminPhysicalTicketCheckBingoRouter } from "./routes/adminPhysicalTicketCheckBingo.js";
 import { createAdminPhysicalTicketsRewardAllRouter } from "./routes/adminPhysicalTicketsRewardAll.js";
+import { createAdminStaticTicketsRouter } from "./routes/adminStaticTickets.js";
 import { PhysicalTicketService } from "./compliance/PhysicalTicketService.js";
+import { StaticTicketService } from "./compliance/StaticTicketService.js";
 import { createAdminReportsPhysicalTicketsRouter } from "./routes/adminReportsPhysicalTickets.js";
 import { createAdminReportsRedFlagCategoriesRouter } from "./routes/adminReportsRedFlagCategories.js";
 import { PhysicalTicketsAggregateService } from "./admin/PhysicalTicketsAggregate.js";
@@ -214,14 +216,18 @@ const corsOrigins: string[] | "*" = corsAllowedOriginsRaw
   : "*";
 app.use(cors({ origin: corsOrigins, credentials: true }));
 // LAV-3: 100 KB for all endpoints, except registration which carries compressed photo IDs (~2 * 100KB base64)
+// PT1: static-ticket CSV-import kan ha opptil ~50k rader (~10MB raw), derfor 15mb limit.
 //
 // BIN-603: also stash the raw UTF-8 body on `req.rawBody` so the Swedbank
 // webhook-handler can HMAC-verify the original bytes. JSON re-serialisation
 // would desync on whitespace/key-order so we cannot regenerate the signed
 // payload after parsing.
 app.use((req, _res, next) => {
+  const isCsvImport = req.path === "/api/admin/physical-tickets/static/import";
+  const isRegister = req.path === "/api/auth/register";
+  const limit = isCsvImport ? "15mb" : isRegister ? "5mb" : "100kb";
   express.json({
-    limit: req.path === "/api/auth/register" ? "5mb" : "100kb",
+    limit,
     verify: (rawReq, _rawRes, buf) => {
       (rawReq as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
     },
@@ -406,6 +412,14 @@ void securityService.warmBlockedIpCache().catch((err) => {
 // BIN-587 B4a: physical papirbillett-admin. Agent-POS-salget (BIN-583)
 // oppdaterer samme tabell via agent-endepunkt.
 const physicalTicketService = new PhysicalTicketService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+
+// PT1: fysisk-bong inventar (legacy-port). Eier `app_static_tickets` og
+// CSV-import-flyt. Lever parallelt med PhysicalTicketService — de eier
+// separate tabeller (app_static_tickets vs app_physical_tickets).
+const staticTicketService = new StaticTicketService({
   connectionString: platformConnectionString,
   schema: pgSchema,
 });
@@ -1020,6 +1034,12 @@ app.use(createAdminPhysicalTicketsRouter({
   platformService,
   auditLogService,
   physicalTicketService,
+}));
+// PT1: POST /api/admin/physical-tickets/static/import — CSV-import av fysisk-bong
+app.use(createAdminStaticTicketsRouter({
+  platformService,
+  auditLogService,
+  staticTicketService,
 }));
 // BIN-641: POST /api/admin/physical-tickets/:uniqueId/check-bingo
 app.use(createAdminPhysicalTicketCheckBingoRouter({
