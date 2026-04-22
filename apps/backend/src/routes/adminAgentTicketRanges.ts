@@ -1,9 +1,12 @@
 /**
- * PT2+PT3 — Admin-router for agent (bingovert) range-registrering og batch-salg.
+ * PT2+PT3+PT5 — Admin-router for agent (bingovert) range-registrering,
+ * batch-salg, handover og påfylling.
  *
  * Spec: docs/architecture/PHYSICAL_TICKETS_FINAL_SPEC_2026-04-22.md
  *       (§ "Fase 2: Vakt-start + range-registrering", linje 48-69)
  *       (§ "Fase 4: Batch-oppdatering (returnering til stativ)", linje 76-104)
+ *       (§ "Fase 7: Handover (vakt-skift)", linje 157-191)
+ *       (§ "Fase 8: Range-påfylling", linje 193-216)
  *
  * Endpoints:
  *   POST   /api/admin/physical-tickets/ranges/register            (PT2)
@@ -13,6 +16,10 @@
  *   GET    /api/admin/physical-tickets/ranges?agentId=&hallId=    (PT2)
  *   POST   /api/admin/physical-tickets/ranges/:id/record-batch-sale (PT3)
  *          body: { newTopSerial: string, scheduledGameId?: string }
+ *   POST   /api/admin/physical-tickets/ranges/:id/handover        (PT5)
+ *          body: { toUserId: string }
+ *   POST   /api/admin/physical-tickets/ranges/:id/extend          (PT5)
+ *          body: { additionalCount: number }
  *
  * Permission: `PHYSICAL_TICKET_WRITE` (ADMIN + HALL_OPERATOR) — matcher PT1.
  * HALL_OPERATOR må selv-validere at hallId matcher eget hall-scope.
@@ -87,6 +94,8 @@ function actorTypeFromRole(
  * - TICKET_* / RANGE_* / INSUFFICIENT_INVENTORY → 409 CONFLICT
  * - PT3: NO_TICKETS_SOLD / NO_UPCOMING_GAME_FOR_HALL /
  *        INVALID_NEW_TOP / SERIAL_NOT_IN_RANGE / SCHEDULED_GAME_* → 409
+ * - PT5: HANDOVER_SAME_USER / TARGET_USER_NOT_FOUND /
+ *        TARGET_USER_NOT_IN_HALL → 409
  * - FORBIDDEN / UNAUTHORIZED                     → 403
  * - alt annet (inkl. INVALID_INPUT)             → 400
  */
@@ -108,6 +117,9 @@ function statusForDomainCode(code: string): number {
     || code === "SCHEDULED_GAME_NOT_FOUND"
     || code === "SCHEDULED_GAME_HALL_MISMATCH"
     || code === "SCHEDULED_GAME_NOT_JOINABLE"
+    || code === "HANDOVER_SAME_USER"
+    || code === "TARGET_USER_NOT_FOUND"
+    || code === "TARGET_USER_NOT_IN_HALL"
   ) {
     return 409;
   }
@@ -408,6 +420,143 @@ export function createAdminAgentTicketRangesRouter(
             toSerial: result.soldSerials[result.soldSerials.length - 1] ?? null,
             previousTopSerial: result.previousTopSerial,
             newTopSerial: result.newTopSerial,
+            onBehalf: adminOverride && user.id !== existing.agentId,
+          },
+          ipAddress: clientIp(req),
+          userAgent: userAgentHeader(req),
+        });
+
+        apiSuccess(res, result);
+      } catch (error) {
+        replyFailure(res, error);
+      }
+    },
+  );
+
+  // PT5 — POST /api/admin/physical-tickets/ranges/:id/handover
+  // Body: { toUserId: string }
+  // Response (happy): 200 { ok:true, data: { newRangeId, unsoldCount, ... } }
+  // Response (feil):  400/403/409 { ok:false, error: { code, message } }
+  router.post(
+    "/api/admin/physical-tickets/ranges/:id/handover",
+    async (req, res) => {
+      try {
+        const user = await requirePermission(req, "PHYSICAL_TICKET_WRITE");
+        const rangeId = mustBeNonEmptyString(req.params.id, "id");
+
+        if (!isRecordObject(req.body)) {
+          throw new DomainError("INVALID_INPUT", "Payload må være et objekt.");
+        }
+        const toUserId = mustBeNonEmptyString(req.body.toUserId, "toUserId");
+
+        // Hent rangen for hall-scope-validering før vi kaller service.
+        const existing = await agentTicketRangeService.getRangeById(rangeId);
+        if (!existing) {
+          throw new DomainError(
+            "RANGE_NOT_FOUND",
+            `Range '${rangeId}' finnes ikke.`,
+          );
+        }
+        assertUserHallScope(user, existing.hallId);
+
+        // ADMIN kan utføre handover på vegne av bingovert; ellers må caller
+        // eie rangen.
+        const adminOverride = user.role === "ADMIN";
+        const performedByUserId = adminOverride ? existing.agentId : user.id;
+
+        const result = await agentTicketRangeService.handoverRange({
+          fromRangeId: rangeId,
+          toUserId,
+          performedByUserId,
+          adminOverride,
+        });
+
+        fireAudit({
+          actorId: user.id,
+          actorType: actorTypeFromRole(user.role),
+          action: "physical_ticket.range_handover",
+          resource: "agent_ticket_range",
+          resourceId: result.newRangeId,
+          details: {
+            fromRangeId: result.fromRangeId,
+            newRangeId: result.newRangeId,
+            fromUserId: result.fromUserId,
+            toUserId: result.toUserId,
+            hallId: result.hallId,
+            ticketColor: result.ticketColor,
+            unsoldCount: result.unsoldCount,
+            soldPendingCount: result.soldPendingCount,
+            newInitialSerial: result.newInitialSerial,
+            newFinalSerial: result.newFinalSerial,
+            handoverAt: result.handoverAt,
+            onBehalf: adminOverride && user.id !== existing.agentId,
+          },
+          ipAddress: clientIp(req),
+          userAgent: userAgentHeader(req),
+        });
+
+        apiSuccess(res, result);
+      } catch (error) {
+        replyFailure(res, error);
+      }
+    },
+  );
+
+  // PT5 — POST /api/admin/physical-tickets/ranges/:id/extend
+  // Body: { additionalCount: number }
+  // Response (happy): 200 { ok:true, data: { addedCount, newFinalSerial, ... } }
+  // Response (feil):  400/403/409 { ok:false, error: { code, message } }
+  router.post(
+    "/api/admin/physical-tickets/ranges/:id/extend",
+    async (req, res) => {
+      try {
+        const user = await requirePermission(req, "PHYSICAL_TICKET_WRITE");
+        const rangeId = mustBeNonEmptyString(req.params.id, "id");
+
+        if (!isRecordObject(req.body)) {
+          throw new DomainError("INVALID_INPUT", "Payload må være et objekt.");
+        }
+        const additionalCount = parsePositiveInt(
+          req.body.additionalCount,
+          "additionalCount",
+        );
+
+        // Hent rangen for hall-scope-validering.
+        const existing = await agentTicketRangeService.getRangeById(rangeId);
+        if (!existing) {
+          throw new DomainError(
+            "RANGE_NOT_FOUND",
+            `Range '${rangeId}' finnes ikke.`,
+          );
+        }
+        assertUserHallScope(user, existing.hallId);
+
+        const adminOverride = user.role === "ADMIN";
+        const performedByUserId = adminOverride ? existing.agentId : user.id;
+
+        const result = await agentTicketRangeService.extendRange({
+          rangeId,
+          additionalCount,
+          performedByUserId,
+          adminOverride,
+        });
+
+        fireAudit({
+          actorId: user.id,
+          actorType: actorTypeFromRole(user.role),
+          action: "physical_ticket.range_extended",
+          resource: "agent_ticket_range",
+          resourceId: rangeId,
+          details: {
+            agentId: existing.agentId,
+            hallId: existing.hallId,
+            ticketColor: existing.ticketColor,
+            addedCount: result.addedCount,
+            newFinalSerial: result.newFinalSerial,
+            newTopOfAddedSerial: result.newTopOfAddedSerial,
+            totalSerialsAfter: result.totalSerialsAfter,
+            firstNewSerial: result.newSerials[0] ?? null,
+            lastNewSerial: result.newSerials[result.newSerials.length - 1] ?? null,
             onBehalf: adminOverride && user.id !== existing.agentId,
           },
           ipAddress: clientIp(req),

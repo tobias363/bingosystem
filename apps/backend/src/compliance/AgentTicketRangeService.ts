@@ -59,7 +59,9 @@ export interface AgentTicketRange {
   nextAvailableIndex: number;
   registeredAt: string;
   closedAt: string | null;
+  /** PT5: pekere for handover-kjede (bidireksjonell audit-trail). */
   handoverFromRangeId: string | null;
+  handedOffToRangeId: string | null;
 }
 
 export interface RegisterRangeInput {
@@ -120,6 +122,87 @@ export interface RecordBatchSaleResult {
   newTopSerial: string;
   /** Forrige `current_top_serial` (før oppdatering) — for audit/UI. */
   previousTopSerial: string;
+}
+
+/**
+ * PT5 — Handover (vakt-skift).
+ *
+ * Scenariet: Kari går av, Per tar over samme stativ. Karis usolgte bonger
+ * overføres til Pers nye range, og Karis solgte-men-uutbetalte bonger får
+ * `responsible_user_id = Per` (PM-beslutning 2026-04-22 — Kari slipper å
+ * vente på fantom-vinnere).
+ */
+export interface HandoverRangeInput {
+  /** ID på avtroppende (Karis) range — må være åpen. */
+  fromRangeId: string;
+  /** Bruker-ID på overtakende bingovert (Per). */
+  toUserId: string;
+  /**
+   * Bruker som utfører operasjonen. Må enten eie `fromRange` (Kari selv) eller
+   * være ADMIN (se `adminOverride`). Audit-log-ansvarlig — skal samsvare med
+   * den autentiserte sesjonen i route-laget.
+   */
+  performedByUserId: string;
+  /**
+   * ADMIN kan tvinge handover på vegne av bingoverten. Default false. Route-
+   * laget er ansvarlig for å sette denne etter rollesjekk.
+   */
+  adminOverride?: boolean;
+}
+
+export interface HandoverRangeResult {
+  /** ID på Pers nye range. */
+  newRangeId: string;
+  /** ID på Karis (lukket) range. */
+  fromRangeId: string;
+  /** Antall usolgte bonger overført (ny reserved_by_range_id = newRangeId). */
+  unsoldCount: number;
+  /** Antall solgte-uutbetalte bonger som fikk nytt responsible_user_id. */
+  soldPendingCount: number;
+  /** ISO-timestamp for handover (closed_at på Karis range). */
+  handoverAt: string;
+  /** Kopiert fra gammel range — gjør route-laget enklere. */
+  fromUserId: string;
+  toUserId: string;
+  hallId: string;
+  ticketColor: StaticTicketColor;
+  /** Pers nye initialSerial = Karis currentTopSerial ved handover-tidspunkt. */
+  newInitialSerial: string;
+  /** Pers nye finalSerial = Karis finalSerial (uendret). */
+  newFinalSerial: string;
+}
+
+/**
+ * PT5 — Range-påfylling (extend).
+ *
+ * Scenariet: Per har 14 bonger igjen, vil ta 50 flere fra stativet. Vi
+ * utvider eksisterende range inn i nye, lavere serials (samme hall + farge),
+ * markerer dem `reserved_by_range_id = rangeId`. Alle nye bonger legges til
+ * nederst i rangens `serials`-array (siste = laveste).
+ */
+export interface ExtendRangeInput {
+  /** ID på åpen range som skal utvides. */
+  rangeId: string;
+  /** Antall nye bonger som skal legges til. */
+  additionalCount: number;
+  /** Bruker som utfører operasjonen. Må være rangens eier eller ADMIN. */
+  performedByUserId: string;
+  /** ADMIN kan utvide på vegne av bingoverten. */
+  adminOverride?: boolean;
+}
+
+export interface ExtendRangeResult {
+  rangeId: string;
+  /** Antall bonger faktisk lagt til (== additionalCount ved suksess). */
+  addedCount: number;
+  /** Lavest-nye serial (rangens nye final_serial). */
+  newFinalSerial: string;
+  /** Høyest-nye serial (første i `newSerials`). */
+  newTopOfAddedSerial: string;
+  /** Alle nye serials lagt til (DESC-sortert). */
+  newSerials: string[];
+  /** Total antall serials i rangen etter utvidelse. */
+  totalSerialsAfter: number;
 }
 
 export interface AgentTicketRangeServiceOptions {
@@ -750,6 +833,477 @@ export class AgentTicketRangeService {
   }
 
   /**
+   * PT5 — Handover (vakt-skift).
+   *
+   * Spec: docs/architecture/PHYSICAL_TICKETS_FINAL_SPEC_2026-04-22.md
+   *       (§ "Fase 7: Handover (vakt-skift)", linje 157-191)
+   *
+   * Flyt (atomisk transaksjon + FOR UPDATE-lås):
+   *   1. Hent avtroppende range (`fromRange`) med FOR UPDATE.
+   *   2. Validér: åpen (RANGE_ALREADY_CLOSED hvis lukket), eierskap/override.
+   *   3. Validér: fromUserId ≠ toUserId (HANDOVER_SAME_USER).
+   *   4. Validér: `toUserId` eksisterer som bruker OG tilhører samme hall
+   *      (TARGET_USER_NOT_IN_HALL) — HALL_OPERATOR bindes til én hall.
+   *   5. Opprett ny range (Pers) med same serials DESC ≥ currentTopSerial
+   *      av fromRange. Kopierer `ticket_color`, `hall_id` fra fromRange.
+   *      `handover_from_range_id = fromRangeId`.
+   *   6. Batch-UPDATE usolgte bonger (reserved_by_range_id = fromRangeId,
+   *      is_purchased = false) → ny reserved_by_range_id = newRangeId.
+   *   7. Batch-UPDATE solgte+uutbetalte (sold_from_range_id = fromRangeId,
+   *      is_purchased = true, paid_out_at IS NULL) → responsible_user_id =
+   *      toUserId. PM-beslutning 2026-04-22: Kari kan gå uten å vente.
+   *   8. Lukk fromRange: closed_at = now(), handed_off_to_range_id = newRangeId.
+   *   9. COMMIT. Retur { newRangeId, unsoldCount, soldPendingCount, ... }.
+   *
+   * Fail-closed: enhver feil → ROLLBACK.
+   *
+   * Audit-log skrives IKKE her — caller (route-laget) skriver
+   * `physical_ticket.range_handover` med { from_user, to_user, unsold_count,
+   * sold_pending_count, new_range_id, hall_id } etter vellykket retur.
+   */
+  async handoverRange(input: HandoverRangeInput): Promise<HandoverRangeResult> {
+    const fromRangeId = assertNonEmpty(input.fromRangeId, "fromRangeId");
+    const toUserId = assertNonEmpty(input.toUserId, "toUserId");
+    const performedByUserId = assertNonEmpty(
+      input.performedByUserId,
+      "performedByUserId",
+    );
+    const adminOverride = input.adminOverride === true;
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Hent fromRange med FOR UPDATE.
+      const { rows: fromRows } = await client.query<{
+        id: string;
+        agent_id: string;
+        hall_id: string;
+        ticket_color: StaticTicketColor;
+        initial_serial: string;
+        final_serial: string;
+        serials: string[] | string;
+        current_top_serial: string | null;
+        closed_at: Date | string | null;
+      }>(
+        `SELECT id, agent_id, hall_id, ticket_color,
+                initial_serial, final_serial, serials,
+                current_top_serial, closed_at
+         FROM ${this.rangesTable()}
+         WHERE id = $1
+         FOR UPDATE`,
+        [fromRangeId],
+      );
+      if (fromRows.length === 0) {
+        throw new DomainError(
+          "RANGE_NOT_FOUND",
+          `Range '${fromRangeId}' finnes ikke.`,
+        );
+      }
+      const fromRange = fromRows[0]!;
+
+      // 2a. Lukket?
+      if (fromRange.closed_at !== null) {
+        throw new DomainError(
+          "RANGE_ALREADY_CLOSED",
+          `Range '${fromRangeId}' er lukket — kan ikke overføres.`,
+        );
+      }
+
+      // 2b. Eierskap (adminOverride = ADMIN kjører på vegne av bingovert).
+      if (!adminOverride && fromRange.agent_id !== performedByUserId) {
+        throw new DomainError(
+          "FORBIDDEN",
+          `Bruker '${performedByUserId}' eier ikke range '${fromRangeId}'.`,
+        );
+      }
+
+      const fromUserId = fromRange.agent_id;
+
+      // 3. Same-user-sjekk.
+      if (fromUserId === toUserId) {
+        throw new DomainError(
+          "HANDOVER_SAME_USER",
+          `Kan ikke overføre range til samme bruker '${toUserId}'.`,
+        );
+      }
+
+      // 4. toUserId finnes + tilhører samme hall (ADMIN-bypass tillatt, men
+      // her tvinger vi sjekken uavhengig av rolle fordi handover = regulatorisk
+      // kritisk. ADMIN som overfører til feil hall blir fanget her også).
+      const { rows: toUserRows } = await client.query<{
+        id: string;
+        role: string;
+        hall_id: string | null;
+      }>(
+        `SELECT id, role, hall_id
+         FROM "${this.schema}"."app_users"
+         WHERE id = $1`,
+        [toUserId],
+      );
+      if (toUserRows.length === 0) {
+        throw new DomainError(
+          "TARGET_USER_NOT_FOUND",
+          `Bruker '${toUserId}' finnes ikke.`,
+        );
+      }
+      const toUser = toUserRows[0]!;
+      // HALL_OPERATOR må matche hallen. ADMIN/AGENT med egen hall-binding
+      // (via app_agent_halls) er follow-up — per spec 2026-04-22 er
+      // handover-flyt mellom HALL_OPERATOR til HALL_OPERATOR i samme hall.
+      if (toUser.role === "HALL_OPERATOR") {
+        if (toUser.hall_id !== fromRange.hall_id) {
+          throw new DomainError(
+            "TARGET_USER_NOT_IN_HALL",
+            `Bruker '${toUserId}' tilhører ikke hall '${fromRange.hall_id}'.`,
+          );
+        }
+      } else if (toUser.role !== "ADMIN" && toUser.role !== "AGENT") {
+        // Andre roller (PLAYER/SUPPORT) kan ikke ta imot handover.
+        throw new DomainError(
+          "TARGET_USER_NOT_IN_HALL",
+          `Bruker '${toUserId}' har rolle '${toUser.role}' — kan ikke ta imot handover.`,
+        );
+      }
+
+      // 5. Beregn Pers nye serials = fromRange.serials fra currentTop og ned.
+      // Bonger over currentTop er solgt (PT3 har flyttet top nedover), og
+      // overføres som "solgte-pending" — ikke som del av Pers nye range.
+      const fromSerials = Array.isArray(fromRange.serials)
+        ? (fromRange.serials as string[])
+        : typeof fromRange.serials === "string"
+          ? (JSON.parse(fromRange.serials) as string[])
+          : [];
+      if (fromSerials.length === 0) {
+        throw new DomainError(
+          "INTERNAL_ERROR",
+          `Range '${fromRangeId}' har ingen serials — kan ikke overføre.`,
+        );
+      }
+      const currentTop = fromRange.current_top_serial ?? fromRange.initial_serial;
+      const topIndex = fromSerials.indexOf(currentTop);
+      if (topIndex === -1) {
+        throw new DomainError(
+          "INTERNAL_ERROR",
+          `Range '${fromRangeId}' har current_top_serial '${currentTop}' utenfor serials.`,
+        );
+      }
+      // Pers nye range får alle USOLGTE serials: fra currentTop og ned.
+      // Edge: hvis hele rangen er solgt (currentTop = final_serial og alle
+      // bonger over er solgt), så gjenstår én bong (currentTop). Range med
+      // én bong er lovlig (MIN_RANGE_COUNT = 1).
+      const newSerials = fromSerials.slice(topIndex);
+      const newInitialSerial = newSerials[0]!;
+      const newFinalSerial = newSerials[newSerials.length - 1]!;
+
+      const newRangeId = randomUUID();
+
+      // 5b. INSERT ny range.
+      await client.query(
+        `INSERT INTO ${this.rangesTable()}
+           (id, agent_id, hall_id, ticket_color,
+            initial_serial, final_serial, serials,
+            next_available_index, current_top_serial,
+            registered_at, closed_at,
+            handover_from_range_id, handed_off_to_range_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb,
+                 0, $5, now(), NULL, $8, NULL)`,
+        [
+          newRangeId,
+          toUserId,
+          fromRange.hall_id,
+          fromRange.ticket_color,
+          newInitialSerial,
+          newFinalSerial,
+          JSON.stringify(newSerials),
+          fromRangeId,
+        ],
+      );
+
+      // 6. UPDATE usolgte bonger: reserved_by_range_id = newRangeId.
+      const { rowCount: unsoldUpdated } = await client.query(
+        `UPDATE ${this.staticTicketsTable()}
+            SET reserved_by_range_id = $1
+          WHERE reserved_by_range_id = $2
+            AND is_purchased = false`,
+        [newRangeId, fromRangeId],
+      );
+      const unsoldCount = unsoldUpdated ?? 0;
+
+      // 7. UPDATE solgte+uutbetalte: responsible_user_id = toUserId.
+      const { rowCount: soldUpdated } = await client.query(
+        `UPDATE ${this.staticTicketsTable()}
+            SET responsible_user_id = $1
+          WHERE sold_from_range_id = $2
+            AND is_purchased = true
+            AND paid_out_at IS NULL`,
+        [toUserId, fromRangeId],
+      );
+      const soldPendingCount = soldUpdated ?? 0;
+
+      // 8. Lukk fromRange + sett handed_off_to_range_id.
+      const { rows: closedRows } = await client.query<{ closed_at: string }>(
+        `UPDATE ${this.rangesTable()}
+            SET closed_at = now(),
+                handed_off_to_range_id = $1
+          WHERE id = $2
+          RETURNING closed_at`,
+        [newRangeId, fromRangeId],
+      );
+      if (closedRows.length === 0) {
+        throw new DomainError(
+          "INTERNAL_ERROR",
+          `Kunne ikke lukke fromRange '${fromRangeId}' (ingen RETURNING).`,
+        );
+      }
+      const handoverAt = asIso(closedRows[0]!.closed_at);
+
+      await client.query("COMMIT");
+
+      logger.info(
+        {
+          fromRangeId,
+          newRangeId,
+          fromUserId,
+          toUserId,
+          hallId: fromRange.hall_id,
+          ticketColor: fromRange.ticket_color,
+          unsoldCount,
+          soldPendingCount,
+          adminOverride,
+        },
+        "[PT5] range handover registrert",
+      );
+
+      return {
+        newRangeId,
+        fromRangeId,
+        unsoldCount,
+        soldPendingCount,
+        handoverAt,
+        fromUserId,
+        toUserId,
+        hallId: fromRange.hall_id,
+        ticketColor: fromRange.ticket_color,
+        newInitialSerial,
+        newFinalSerial,
+      };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {
+        // ignorer rollback-feil
+      });
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * PT5 — Range-påfylling (extend).
+   *
+   * Spec: docs/architecture/PHYSICAL_TICKETS_FINAL_SPEC_2026-04-22.md
+   *       (§ "Fase 8: Range-påfylling", linje 193-216)
+   *
+   * Flyt (atomisk transaksjon + FOR UPDATE-lås):
+   *   1. Hent range med FOR UPDATE.
+   *   2. Validér: åpen (RANGE_ALREADY_CLOSED), eierskap/override.
+   *   3. Finn `additionalCount` tilgjengelige bonger (is_purchased=false,
+   *      reserved_by_range_id IS NULL) i samme hall+farge, sortert DESC på
+   *      serial. Ikke nok → INSUFFICIENT_INVENTORY.
+   *   4. UPDATE range: `serials = serials || newSerials`, final_serial =
+   *      lavest-nye. Merk: `initial_serial` og `current_top_serial` forblir
+   *      uendret (toppen er uendret; vi legger bare til lavere serials).
+   *   5. UPDATE app_static_tickets: reserved_by_range_id = rangeId.
+   *   6. COMMIT. Retur { addedCount, newFinalSerial, newSerials }.
+   *
+   * Fail-closed: enhver feil → ROLLBACK.
+   *
+   * Audit-log skrives IKKE her — route-laget skriver `physical_ticket.range_extended`
+   * med { rangeId, addedCount, newFinalSerial, hallId, ticketColor, agentId }
+   * etter vellykket retur.
+   */
+  async extendRange(input: ExtendRangeInput): Promise<ExtendRangeResult> {
+    const rangeId = assertNonEmpty(input.rangeId, "rangeId");
+    const performedByUserId = assertNonEmpty(
+      input.performedByUserId,
+      "performedByUserId",
+    );
+    const additionalCount = assertPositiveInt(
+      input.additionalCount,
+      "additionalCount",
+    );
+    if (additionalCount > MAX_RANGE_COUNT) {
+      throw new DomainError(
+        "INVALID_INPUT",
+        `additionalCount = ${additionalCount}, maks ${MAX_RANGE_COUNT} per operasjon.`,
+      );
+    }
+    const adminOverride = input.adminOverride === true;
+
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // 1. Hent range med FOR UPDATE.
+      const { rows: rangeRows } = await client.query<{
+        id: string;
+        agent_id: string;
+        hall_id: string;
+        ticket_color: StaticTicketColor;
+        initial_serial: string;
+        final_serial: string;
+        serials: string[] | string;
+        current_top_serial: string | null;
+        closed_at: Date | string | null;
+      }>(
+        `SELECT id, agent_id, hall_id, ticket_color,
+                initial_serial, final_serial, serials,
+                current_top_serial, closed_at
+         FROM ${this.rangesTable()}
+         WHERE id = $1
+         FOR UPDATE`,
+        [rangeId],
+      );
+      if (rangeRows.length === 0) {
+        throw new DomainError(
+          "RANGE_NOT_FOUND",
+          `Range '${rangeId}' finnes ikke.`,
+        );
+      }
+      const range = rangeRows[0]!;
+
+      // 2a. Lukket?
+      if (range.closed_at !== null) {
+        throw new DomainError(
+          "RANGE_ALREADY_CLOSED",
+          `Range '${rangeId}' er lukket — kan ikke utvides.`,
+        );
+      }
+
+      // 2b. Eierskap.
+      if (!adminOverride && range.agent_id !== performedByUserId) {
+        throw new DomainError(
+          "FORBIDDEN",
+          `Bruker '${performedByUserId}' eier ikke range '${rangeId}'.`,
+        );
+      }
+
+      const existingSerials = Array.isArray(range.serials)
+        ? (range.serials as string[])
+        : typeof range.serials === "string"
+          ? (JSON.parse(range.serials) as string[])
+          : [];
+      if (existingSerials.length === 0) {
+        throw new DomainError(
+          "INTERNAL_ERROR",
+          `Range '${rangeId}' har ingen serials — kan ikke utvides.`,
+        );
+      }
+
+      // 3. Finn additionalCount bonger < current final_serial, samme hall+farge,
+      // usolgt og ikke reservert. DESC slik at vi får de høyeste først (= de
+      // nærmest rangens eksisterende bunn). FOR UPDATE blokkerer parallelle
+      // extend-kall som kjemper om samme inventar.
+      const { rows: availableRows } = await client.query<{
+        id: string;
+        ticket_serial: string;
+      }>(
+        `SELECT s.id, s.ticket_serial
+         FROM ${this.staticTicketsTable()} s
+         LEFT JOIN ${this.rangesTable()} r
+           ON r.id = s.reserved_by_range_id AND r.closed_at IS NULL
+         WHERE s.hall_id = $1
+           AND s.ticket_color = $2
+           AND s.is_purchased = false
+           AND s.ticket_serial < $3
+           AND (s.reserved_by_range_id IS NULL OR r.id IS NULL)
+         ORDER BY s.ticket_serial DESC
+         LIMIT $4
+         FOR UPDATE OF s`,
+        [range.hall_id, range.ticket_color, range.final_serial, additionalCount],
+      );
+
+      if (availableRows.length < additionalCount) {
+        throw new DomainError(
+          "INSUFFICIENT_INVENTORY",
+          `Fant ${availableRows.length} tilgjengelige bonger < '${range.final_serial}' i hall+farge, trenger ${additionalCount}.`,
+        );
+      }
+
+      const newSerials = availableRows.map((r) => r.ticket_serial);
+      const newTicketIds = availableRows.map((r) => r.id);
+      const newFinalSerial = newSerials[newSerials.length - 1]!;
+      const newTopOfAdded = newSerials[0]!;
+      const mergedSerials = [...existingSerials, ...newSerials];
+
+      // 4. UPDATE range — erstatt serials-array, oppdater final_serial.
+      // `initial_serial` og `current_top_serial` forblir uendret.
+      const { rowCount: rangeUpdated } = await client.query(
+        `UPDATE ${this.rangesTable()}
+            SET serials = $1::jsonb,
+                final_serial = $2
+          WHERE id = $3`,
+        [JSON.stringify(mergedSerials), newFinalSerial, rangeId],
+      );
+      if ((rangeUpdated ?? 0) !== 1) {
+        throw new DomainError(
+          "INTERNAL_ERROR",
+          `Kunne ikke oppdatere range ved extend (rowCount=${rangeUpdated ?? 0}).`,
+        );
+      }
+
+      // 5. Reservér de nye bongene.
+      const { rowCount: reservedCount } = await client.query(
+        `UPDATE ${this.staticTicketsTable()}
+            SET reserved_by_range_id = $1
+          WHERE id = ANY($2::text[])
+            AND is_purchased = false`,
+        [rangeId, newTicketIds],
+      );
+
+      if ((reservedCount ?? 0) !== newTicketIds.length) {
+        throw new DomainError(
+          "INTERNAL_ERROR",
+          `Extend reservation-mismatch: forventet ${newTicketIds.length}, fikk ${reservedCount ?? 0}.`,
+        );
+      }
+
+      await client.query("COMMIT");
+
+      logger.info(
+        {
+          rangeId,
+          performedByUserId,
+          hallId: range.hall_id,
+          ticketColor: range.ticket_color,
+          addedCount: newSerials.length,
+          previousFinalSerial: range.final_serial,
+          newFinalSerial,
+          totalSerialsAfter: mergedSerials.length,
+          adminOverride,
+        },
+        "[PT5] range utvidet",
+      );
+
+      return {
+        rangeId,
+        addedCount: newSerials.length,
+        newFinalSerial,
+        newTopOfAddedSerial: newTopOfAdded,
+        newSerials,
+        totalSerialsAfter: mergedSerials.length,
+      };
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {
+        // ignorer rollback-feil
+      });
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * Finner neste planlagte Spill 1-instans for en gitt hall. En hall deltar
    * hvis den er `master_hall_id` eller forekommer i `participating_halls_json`.
    *
@@ -857,7 +1411,8 @@ export class AgentTicketRangeService {
       `SELECT id, agent_id, hall_id, ticket_color,
               initial_serial, final_serial, serials,
               next_available_index, current_top_serial,
-              registered_at, closed_at, handover_from_range_id
+              registered_at, closed_at,
+              handover_from_range_id, handed_off_to_range_id
        FROM ${this.rangesTable()}
        WHERE agent_id = $1 AND closed_at IS NULL
        ORDER BY registered_at DESC`,
@@ -876,7 +1431,8 @@ export class AgentTicketRangeService {
       `SELECT id, agent_id, hall_id, ticket_color,
               initial_serial, final_serial, serials,
               next_available_index, current_top_serial,
-              registered_at, closed_at, handover_from_range_id
+              registered_at, closed_at,
+              handover_from_range_id, handed_off_to_range_id
        FROM ${this.rangesTable()}
        WHERE hall_id = $1 AND closed_at IS NULL
        ORDER BY registered_at DESC`,
@@ -895,7 +1451,8 @@ export class AgentTicketRangeService {
       `SELECT id, agent_id, hall_id, ticket_color,
               initial_serial, final_serial, serials,
               next_available_index, current_top_serial,
-              registered_at, closed_at, handover_from_range_id
+              registered_at, closed_at,
+              handover_from_range_id, handed_off_to_range_id
        FROM ${this.rangesTable()}
        WHERE id = $1`,
       [id],
@@ -925,6 +1482,7 @@ export class AgentTicketRangeService {
       registeredAt: asIso(r.registered_at),
       closedAt: asIsoOrNull(r.closed_at),
       handoverFromRangeId: r.handover_from_range_id,
+      handedOffToRangeId: r.handed_off_to_range_id,
     };
   }
 }
@@ -942,5 +1500,6 @@ interface RangeRow {
   registered_at: Date | string;
   closed_at: Date | string | null;
   handover_from_range_id: string | null;
+  handed_off_to_range_id: string | null;
 }
 
