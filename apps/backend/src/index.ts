@@ -61,6 +61,7 @@ import { Game1HallReadyService } from "./game/Game1HallReadyService.js";
 import { Game1MasterControlService } from "./game/Game1MasterControlService.js";
 import { Game1TicketPurchaseService } from "./game/Game1TicketPurchaseService.js";
 import { Game1DrawEngineService } from "./game/Game1DrawEngineService.js";
+import { Game1PotService } from "./game/pot/Game1PotService.js";
 import { Game1MiniGameOrchestrator } from "./game/minigames/Game1MiniGameOrchestrator.js";
 import { MiniGameWheelEngine } from "./game/minigames/MiniGameWheelEngine.js";
 import { MiniGameChestEngine } from "./game/minigames/MiniGameChestEngine.js";
@@ -910,6 +911,16 @@ const game1MasterControlService = new Game1MasterControlService({
   schema: pgSchema,
 });
 
+// PR-T1 Spor 4: akkumulerende pot-service (Jackpott + Innsatsen). Konstrueres
+// FØR Game1TicketPurchaseService fordi sistnevnte trenger PotSalesHookPort
+// for å akkumulere andel av salg etter vellykket kjøp (PR-T3). Service
+// håndterer begge pot-typer — draw-engine-evaluatoren diskriminerer på
+// `config.potType` når den evaluerer vinn.
+const game1PotService = new Game1PotService({
+  pool: platformService.getPool(),
+  schema: pgSchema,
+});
+
 // GAME1_SCHEDULE PR 4a: ticket-purchase-foundation. Drifter
 // app_game1_ticket_purchases (kjøp + refund). Player-flow bruker servicen
 // direkte via createGame1PurchaseRouter; agent-POS-flyten bruker adapteren
@@ -926,6 +937,10 @@ const game1TicketPurchaseService = new Game1TicketPurchaseService({
   // ComplianceManager — vi bruker narrow-port (recordLossEntry) så servicen
   // ikke tar direkte avhengighet til engine-klassen.
   complianceLossPort: engine.getComplianceLossPort(),
+  // PR-T3 Spor 4: pot-akkumulering (Innsatsen + Jackpott) via narrow-port.
+  // Soft-fail — pot-feil ruller ikke tilbake purchase. Hele kjøpssum teller
+  // mot pot (pot er intern akkumulering, ikke loss-ledger-entry).
+  potSalesHook: engine.getPotSalesHookPort(game1PotService),
 });
 // GAME1_SCHEDULE PR 4a: bind forward-ref slik at `ticketPurchasePort` (opprettet
 // tidligere pga. agent-service dependency) kan delegere til den nye servicen.
@@ -964,6 +979,11 @@ const game1DrawEngineService = new Game1DrawEngineService({
   payoutService: game1PayoutService,
   jackpotService: game1JackpotService,
   physicalTicketPayoutService,
+  // PR-T3 Spor 4: akkumulerende pot-evaluering etter Fullt Hus. Pot-payout
+  // kjører INNE i draw-transaksjonen med samme fail-closed-semantikk som
+  // Game1PayoutService (payout-feil → draw rolls back).
+  potService: game1PotService,
+  walletAdapter,
 });
 game1MasterControlService.setDrawEngine(game1DrawEngineService);
 // GAME1_SCHEDULE PR 4d.4: inject ticket-purchase-service slik at stopGame()

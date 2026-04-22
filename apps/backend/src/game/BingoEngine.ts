@@ -520,6 +520,35 @@ export class BingoEngine {
     };
   }
 
+  /**
+   * PR-T3 Spor 4: eksponer Game1PotService som narrow PotSalesHookPort slik at
+   * Game1TicketPurchaseService kan akkumulere salg til Innsatsen/Jackpott-pot
+   * uten å ta direkte avhengighet til pot-service-klassen. Samme port-pattern
+   * som `getComplianceLossPort` og `LoyaltyPointsHookPort`.
+   *
+   * Wiring: `index.ts` kaller `engine.getPotSalesHookPort(game1PotService)` og
+   * sender resultatet inn i `Game1TicketPurchaseService`-konstruktøren.
+   * Tester kan bruke `NoopPotSalesHook` eller mock.
+   *
+   * Merk: engine eier ikke potService direkte (den er service-laget), så
+   * porten injeksjoneres som parameter her — ulikt ComplianceLossPort som
+   * wrapper engine-eid `this.compliance`.
+   *
+   * Se docs/architecture/SPILL1_FULL_VARIANT_CATALOG_2026-04-21.md §Innsatsen.
+   */
+  getPotSalesHookPort(
+    potService: import("./pot/Game1PotService.js").Game1PotService
+  ): import("../adapters/PotSalesHookPort.js").PotSalesHookPort {
+    return {
+      async onSaleCompleted(params: {
+        hallId: string;
+        saleAmountCents: number;
+      }): Promise<void> {
+        await potService.onSaleCompleted(params);
+      },
+    };
+  }
+
   async createRoom(input: CreateRoomInput): Promise<{ roomCode: string; playerId: string }> {
     const hallId = this.assertHallId(input.hallId);
     const playerId = randomUUID();

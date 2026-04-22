@@ -63,6 +63,10 @@ import {
   NoopComplianceLossPort,
   type ComplianceLossPort,
 } from "../adapters/ComplianceLossPort.js";
+import {
+  NoopPotSalesHook,
+  type PotSalesHookPort,
+} from "../adapters/PotSalesHookPort.js";
 
 const log = rootLogger.child({ module: "game1-ticket-purchase-service" });
 
@@ -165,6 +169,17 @@ export interface Game1TicketPurchaseServiceOptions {
    * Se docs/architecture/WALLET_SPLIT_DESIGN_2026-04-22.md §3.4.
    */
   complianceLossPort?: ComplianceLossPort;
+  /**
+   * PR-T3 Spor 4: port for å akkumulere andel av salg til Innsatsen/
+   * Jackpott-pot. Kalles fire-and-forget etter vellykket wallet-debit +
+   * INSERT. Default no-op — wires i index.ts via
+   * `engine.getPotSalesHookPort(game1PotService)`.
+   *
+   * Soft-fail: port-feil ruller ikke tilbake purchase.
+   *
+   * Se docs/architecture/SPILL1_FULL_VARIANT_CATALOG_2026-04-21.md §Innsatsen.
+   */
+  potSalesHook?: PotSalesHookPort;
 }
 
 // ── Internal row shapes ───────────────────────────────────────────────────────
@@ -208,6 +223,11 @@ export class Game1TicketPurchaseService {
    * Default no-op — wiringen i index.ts setter den til engine.getComplianceLossPort().
    */
   private readonly complianceLoss: ComplianceLossPort;
+  /**
+   * PR-T3 Spor 4: port for pot-akkumulering (Innsatsen/Jackpott).
+   * Default no-op — wires i index.ts til engine.getPotSalesHookPort(potService).
+   */
+  private readonly potSalesHook: PotSalesHookPort;
 
   constructor(options: Game1TicketPurchaseServiceOptions) {
     this.pool = options.pool;
@@ -221,6 +241,7 @@ export class Game1TicketPurchaseService {
     this.hallReady = options.hallReadyService;
     this.audit = options.auditLogService;
     this.complianceLoss = options.complianceLossPort ?? new NoopComplianceLossPort();
+    this.potSalesHook = options.potSalesHook ?? new NoopPotSalesHook();
   }
 
   // ── Table helpers ──────────────────────────────────────────────────────────
@@ -399,6 +420,28 @@ export class Game1TicketPurchaseService {
           "[PR-W5] purchase dekket 100% av winnings — ingen BUYIN-entry logget"
         );
       }
+    }
+
+    // PR-T3 Spor 4: pot-akkumulering (Innsatsen + Jackpott). Triggeres for
+    // ALLE betalingsmetoder siden pot bygger på total-salg i hallen, ikke
+    // bare digital-flyt. Soft-fail — pot-feil ruller ikke tilbake purchase
+    // (matcher W5-patternet). Hele kjøpssum teller mot pot (winnings-kjøp
+    // inkludert); pot er intern akkumulering, ikke loss-ledger-entry.
+    try {
+      await this.potSalesHook.onSaleCompleted({
+        hallId: input.hallId,
+        saleAmountCents: totalAmountCents,
+      });
+    } catch (err) {
+      log.warn(
+        {
+          err,
+          purchaseId,
+          hallId: input.hallId,
+          totalAmountCents,
+        },
+        "[PR-T3] potSalesHook.onSaleCompleted feilet — purchase fortsetter uansett"
+      );
     }
 
     // Fire-and-forget audit.

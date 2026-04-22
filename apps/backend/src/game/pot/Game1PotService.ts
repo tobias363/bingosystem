@@ -71,6 +71,19 @@ export interface PotWinRulePhaseAtOrBeforeDraw {
 
 export type PotWinRule = PotWinRulePhaseAtOrBeforeDraw;
 
+/**
+ * PR-T3 Spor 4: Pot-type-diskriminator.
+ *
+ * Brukes av draw-engine-evaluator for å velge rett evaluerings-logikk:
+ *   - "jackpott"  — T2-flyt (fixed-amount, T2 legger sin logikk i evaluator)
+ *   - "innsatsen" — T3-flyt (target-amount + threshold-window)
+ *   - "generic"   — T1-semantikk (matcher kun på fast winRule)
+ *
+ * "generic" er default når ikke satt slik at eksisterende T1-tester og
+ * eventuelle pot-er opprettet før T3 fortsetter å fungere uendret.
+ */
+export type PotType = "jackpott" | "innsatsen" | "generic";
+
 export interface PotConfig {
   /** Reset-sokkel i øre — saldo etter reset/init. */
   seedAmountCents: number;
@@ -87,6 +100,40 @@ export interface PotConfig {
    * Case-insensitiv sammenligning.
    */
   ticketColors: string[];
+  /**
+   * PR-T3 Spor 4: pot-type-diskriminator (jackpott | innsatsen | generic).
+   *
+   * Draw-engine-evaluatoren (`evaluateAccumulatingPots`) bruker denne for å
+   * velge rett win-logikk:
+   *   - "innsatsen" → target-amount + threshold-window (spec §Innsatsen:
+   *     "pot øker til 2000 innen 56 trekk, så til 58").
+   *   - "jackpott"  → T2-flyt (Agent 1 implementerer).
+   *   - "generic"   → T1-semantikk (default — bakoverkompat).
+   *
+   * Valgfri: ikke satt = "generic" (bakoverkompat med T1-pot-er).
+   */
+  potType?: PotType;
+  /**
+   * PR-T3 Innsatsen: nedre grense (inklusiv) for draw-sekvens-vindu. Sammen
+   * med `winRule.drawThreshold` (øvre grense) avgrenser dette vinduet der
+   * pot kan utløses:
+   *   - drawSequence < drawThresholdLower: for tidlig — pot venter
+   *   - drawSequence > winRule.drawThreshold: for sent — pot ruller over
+   *
+   * Valgfri: ikke satt → kun øvre grense (T1-semantikk).
+   *
+   * Spec-eksempel (Innsatsen #13): lower=56, upper=58.
+   */
+  drawThresholdLower?: number;
+  /**
+   * PR-T3 Innsatsen: target-amount i øre. Pot kan KUN utløses når
+   * `currentAmountCents >= targetAmountCents`. Kombinert med
+   * drawThresholdLower/upper definerer dette Innsatsen-semantikken:
+   *   "pot øker til 2000 innen 56 trekk, så til 58"
+   *
+   * Valgfri: ikke satt = ingen minimum pot-størrelse for vinn (T1-semantikk).
+   */
+  targetAmountCents?: number;
 }
 
 export interface PotRow {
@@ -169,6 +216,8 @@ export interface TryWinResult {
     | "POT_NOT_FOUND"
     | "WRONG_PHASE"
     | "DRAW_AFTER_THRESHOLD"
+    | "DRAW_BEFORE_WINDOW"
+    | "BELOW_TARGET"
     | "COLOR_NOT_ALLOWED"
     | "POT_EMPTY";
   eventId: string | null;
@@ -488,6 +537,110 @@ export class Game1PotService {
   }
 
   /**
+   * PR-T3 Spor 4: dispatcher-variant av `accumulateFromSale` brukt av
+   * PotSalesHookPort. Itererer alle aktive pot-er for hallen og akkumulerer
+   * hver sin andel basert på pot-konfigurasjonens salePercentBps.
+   *
+   * Graceful no-op hvis ingen pot-er finnes for hallen (ny hall, pot ikke
+   * aktivert enda). Feil i én pot-akkumulering stopper IKKE resten —
+   * hver pot isoleres så Innsatsen-feil ikke hindrer Jackpott-akkumulering.
+   *
+   * Brukes via `BingoEngine.getPotSalesHookPort()` → kalles fra
+   * Game1TicketPurchaseService etter vellykket wallet-debit + INSERT. Soft-
+   * fail-semantikken ivaretas der (pino-warning, ingen rollback av purchase).
+   *
+   * @param params.hallId       Hallen kjøpet tilhører.
+   * @param params.saleAmountCents Total kjøpssum i øre.
+   * @returns Liste av resultater per pot (tom liste hvis ingen pot-er).
+   */
+  async onSaleCompleted(params: {
+    hallId: string;
+    saleAmountCents: number;
+  }): Promise<
+    Array<{
+      potKey: string;
+      appliedCents: number;
+      newBalanceCents: number;
+      eventId: string | null;
+      error?: string;
+    }>
+  > {
+    if (!params.hallId || typeof params.hallId !== "string") {
+      throw new DomainError("INVALID_HALL", "hallId mangler.");
+    }
+    if (
+      !Number.isFinite(params.saleAmountCents) ||
+      params.saleAmountCents < 0
+    ) {
+      throw new DomainError(
+        "INVALID_AMOUNT",
+        "saleAmountCents må være et ikke-negativt tall."
+      );
+    }
+
+    // Hent alle pot-er for hallen. Hvis ingen finnes → no-op.
+    const pots = await this.listPotsForHall(params.hallId);
+    if (pots.length === 0) {
+      return [];
+    }
+
+    const results: Array<{
+      potKey: string;
+      appliedCents: number;
+      newBalanceCents: number;
+      eventId: string | null;
+      error?: string;
+    }> = [];
+
+    // Feil-isolering per pot: Én pot-feil stopper IKKE resten.
+    for (const pot of pots) {
+      // salePercentBps = 0 → hopp over (unngår tomme sale-events).
+      if (pot.config.salePercentBps <= 0) {
+        results.push({
+          potKey: pot.potKey,
+          appliedCents: 0,
+          newBalanceCents: pot.currentAmountCents,
+          eventId: null,
+        });
+        continue;
+      }
+      try {
+        const res = await this.accumulateFromSale({
+          hallId: params.hallId,
+          potKey: pot.potKey,
+          ticketTotalCents: params.saleAmountCents,
+        });
+        results.push({
+          potKey: pot.potKey,
+          appliedCents: res.appliedCents,
+          newBalanceCents: res.newBalanceCents,
+          eventId: res.eventId,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "ukjent feil";
+        log.warn(
+          {
+            hallId: params.hallId,
+            potKey: pot.potKey,
+            saleAmountCents: params.saleAmountCents,
+            err,
+          },
+          "[PR-T3] onSaleCompleted — rad isolert feil, fortsetter"
+        );
+        results.push({
+          potKey: pot.potKey,
+          appliedCents: 0,
+          newBalanceCents: pot.currentAmountCents,
+          eventId: null,
+          error: msg,
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
    * Forsøk å utløse pot-vinn. Evaluerer winRule, og hvis matchende:
    *   1) skriver "win"-event med amountCents = pot-saldo FØR reset
    *   2) resetter saldo til seedAmountCents
@@ -535,6 +688,21 @@ export class Game1PotService {
           eventId: null,
         };
       }
+      // PR-T3 Innsatsen: nedre vindu-grense (valgfri). Hvis drawThresholdLower
+      // er satt og drawSequence er før den → pot venter (rolls til senere draw
+      // innen øvre grense).
+      if (
+        pot.config.drawThresholdLower !== undefined &&
+        input.drawSequenceAtWin < pot.config.drawThresholdLower
+      ) {
+        await client.query("COMMIT");
+        return {
+          triggered: false,
+          amountCents: 0,
+          reasonCode: "DRAW_BEFORE_WINDOW",
+          eventId: null,
+        };
+      }
       if (input.drawSequenceAtWin > rule.drawThreshold) {
         await client.query("COMMIT");
         return {
@@ -550,6 +718,20 @@ export class Game1PotService {
           triggered: false,
           amountCents: 0,
           reasonCode: "COLOR_NOT_ALLOWED",
+          eventId: null,
+        };
+      }
+      // PR-T3 Innsatsen: target-amount-gate (valgfri). Hvis targetAmountCents
+      // er satt og pot-saldo er under → pot venter (rolls til neste draw/spill).
+      if (
+        pot.config.targetAmountCents !== undefined &&
+        pot.currentAmountCents < pot.config.targetAmountCents
+      ) {
+        await client.query("COMMIT");
+        return {
+          triggered: false,
+          amountCents: 0,
+          reasonCode: "BELOW_TARGET",
           eventId: null,
         };
       }
@@ -899,6 +1081,61 @@ export function validatePotConfig(config: PotConfig): void {
       throw new DomainError(
         "INVALID_CONFIG",
         "ticketColors må inneholde ikke-tomme strenger."
+      );
+    }
+  }
+  // PR-T3 Spor 4: valgfrie Innsatsen-felter.
+  if (config.potType !== undefined) {
+    if (
+      config.potType !== "jackpott" &&
+      config.potType !== "innsatsen" &&
+      config.potType !== "generic"
+    ) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "potType må være 'jackpott', 'innsatsen' eller 'generic'."
+      );
+    }
+  }
+  if (config.drawThresholdLower !== undefined) {
+    if (
+      !Number.isInteger(config.drawThresholdLower) ||
+      config.drawThresholdLower < 1 ||
+      config.drawThresholdLower > 75
+    ) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "drawThresholdLower må være heltall 1..75."
+      );
+    }
+    if (config.drawThresholdLower > config.winRule.drawThreshold) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "drawThresholdLower må være <= winRule.drawThreshold."
+      );
+    }
+  }
+  if (config.targetAmountCents !== undefined) {
+    if (
+      !Number.isFinite(config.targetAmountCents) ||
+      config.targetAmountCents < 0
+    ) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "targetAmountCents må være >= 0."
+      );
+    }
+  }
+  // PR-T3 Spor 4: hvis potType='innsatsen' → sales-percent må være > 0
+  // (Innsatsen livnærer seg av salgs-andel). Draw-threshold-lower bør også
+  // være satt for at vindu-logikken skal ha effekt, men vi krever det ikke
+  // strengt — admin kan midlertidig konfigurere Innsatsen med kun øvre
+  // grense (T1-semantikk).
+  if (config.potType === "innsatsen") {
+    if (config.salePercentBps <= 0) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "potType='innsatsen' krever salePercentBps > 0."
       );
     }
   }
