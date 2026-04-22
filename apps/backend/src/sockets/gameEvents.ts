@@ -9,8 +9,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Socket } from "socket.io";
-import { ClaimSubmitPayloadSchema } from "@spillorama/shared-types/socket-events";
-import { DomainError, toPublicError } from "./../game/BingoEngine.js";
+import { DomainError } from "./../game/BingoEngine.js";
 import { addBreadcrumb } from "./../observability/sentry.js";
 import { metrics as promMetrics } from "./../util/metrics.js";
 import type { RoomSnapshot } from "./../game/types.js";
@@ -19,11 +18,11 @@ import { registerRoomEvents } from "./gameEvents/roomEvents.js";
 import { registerGameLifecycleEvents } from "./gameEvents/gameLifecycleEvents.js";
 import { registerDrawEvents } from "./gameEvents/drawEvents.js";
 import { registerTicketEvents } from "./gameEvents/ticketEvents.js";
+import { registerClaimEvents } from "./gameEvents/claimEvents.js";
 import type {
   AckResponse,
   ChatMessage,
   ChatSendPayload,
-  ClaimPayload,
   LeaderboardEntry,
   LeaderboardPayload,
   RoomActionPayload,
@@ -65,95 +64,7 @@ export function createGameEventHandlers(deps: GameEventsDeps) {
     registerGameLifecycleEvents(sctx);
     registerDrawEvents(sctx);
     registerTicketEvents(sctx);
-
-    socket.on("claim:submit", rateLimited("claim:submit", async (payload: ClaimPayload, callback: (response: AckResponse<{ snapshot: RoomSnapshot }>) => void) => {
-      try {
-        // BIN-545: runtime-validate the incoming claim:submit payload against the
-        // shared-types Zod schema. `roomCode` and `type` must be present and
-        // well-typed before we let the engine act.
-        const parsed = ClaimSubmitPayloadSchema.safeParse(payload);
-        if (!parsed.success) {
-          const first = parsed.error.issues[0];
-          const field = first?.path.join(".") || "payload";
-          throw new DomainError("INVALID_INPUT", `claim:submit payload invalid (${field}: ${first?.message ?? "unknown"}).`);
-        }
-        const { roomCode, playerId } = await requireAuthenticatedPlayerAction(parsed.data);
-        const claim = await engine.submitClaim({
-          roomCode,
-          playerId,
-          type: parsed.data.type
-        });
-        const snapshot = await emitRoomUpdate(roomCode);
-        // BIN-539: Record the claim + payout so operator dashboards can
-        // correlate wallet movement with in-game state. `hallId` is taken
-        // from the room snapshot because `snapshot.hallId` is the canonical
-        // source of truth (client-claimed hall is untrusted).
-        const gameLabel = snapshot.gameSlug ?? "unknown";
-        const hallLabel = snapshot.hallId ?? "unknown";
-        promMetrics.claimSubmitted.inc({ game: gameLabel, hall: hallLabel, type: parsed.data.type });
-        if (claim.valid && typeof claim.payoutAmount === "number" && claim.payoutAmount > 0) {
-          promMetrics.payoutAmount.observe(
-            { game: gameLabel, hall: hallLabel, type: parsed.data.type },
-            claim.payoutAmount,
-          );
-        }
-        addBreadcrumb("claim:submit", {
-          game: gameLabel,
-          hall: hallLabel,
-          type: parsed.data.type,
-          valid: claim.valid,
-          payoutAmount: claim.payoutAmount ?? 0,
-        });
-        // Emit pattern:won if a pattern was completed by this claim
-        if (claim.valid) {
-          const wonPattern = snapshot.currentGame?.patternResults?.find(
-            (r) => r.claimId === claim.id && r.isWon
-          );
-          if (wonPattern) {
-            io.to(roomCode).emit("pattern:won", {
-              patternId: wonPattern.patternId,
-              patternName: wonPattern.patternName,
-              winnerId: wonPattern.winnerId,
-              wonAtDraw: wonPattern.wonAtDraw,
-              payoutAmount: wonPattern.payoutAmount,
-              claimType: wonPattern.claimType,
-              gameId: snapshot.currentGame?.id
-            });
-          }
-          // Game 1 (Classic Bingo): activate mini-game after BINGO win
-          if (payload.type === "BINGO" && snapshot.gameSlug === "bingo") {
-            const miniGame = engine.activateMiniGame(roomCode, playerId);
-            if (miniGame) {
-              socket.emit("minigame:activated", {
-                gameId: snapshot.currentGame?.id,
-                playerId,
-                type: miniGame.type,
-                prizeList: miniGame.prizeList,
-              });
-            }
-          }
-          // Game 5 (Spillorama): activate jackpot after BINGO win
-          if (payload.type === "BINGO" && snapshot.gameSlug === "spillorama") {
-            const jackpot = engine.activateJackpot(roomCode, playerId);
-            if (jackpot) {
-              // Send jackpot activation to the winning player only
-              socket.emit("jackpot:activated", {
-                gameId: snapshot.currentGame?.id,
-                playerId,
-                prizeList: jackpot.prizeList,
-                totalSpins: jackpot.totalSpins,
-                playedSpins: jackpot.playedSpins,
-                spinHistory: jackpot.spinHistory,
-              });
-            }
-          }
-        }
-        ackSuccess(callback, { snapshot });
-      } catch (error) {
-        ackFailure(callback, error);
-      }
-    }));
-
+    registerClaimEvents(sctx);
 
     // ── Jackpot (Game 5 Free Spin) ─────────────────────────────────────────
     socket.on("jackpot:spin", rateLimited("jackpot:spin", async (payload: RoomActionPayload, callback: (response: AckResponse<unknown>) => void) => {
