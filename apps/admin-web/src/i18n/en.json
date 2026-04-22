@@ -2523,5 +2523,14 @@
   "name_too_long": "Name is too long (max 200 characters).",
   "tv_id_invalid": "TV-ID must be a non-negative integer.",
   "hall_id_invalid": "Invalid hall ID in selection.",
-  "no_changes": "No changes to save."
+  "no_changes": "No changes to save.",
+  "pt_csv_import_section": "Import physical-ticket inventory (CSV)",
+  "pt_csv_import_file_label": "CSV file from supplier",
+  "pt_csv_import_file_hint": "Format: hall_name,ticket_id,ticket_color,num1..num25",
+  "pt_csv_import_upload_button": "Upload CSV",
+  "pt_csv_import_select_hall_first": "Select hall first.",
+  "pt_csv_import_select_file_first": "Select CSV file first.",
+  "pt_csv_import_uploading": "Uploading and importing...",
+  "pt_csv_import_success": "{{inserted}} tickets imported, {{skipped}} skipped (already in DB).",
+  "pt_csv_import_failed": "Import failed"
 }

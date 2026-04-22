@@ -22,6 +22,7 @@ import {
   deleteBatch,
   generateTickets,
   lastRegisteredId,
+  importStaticTicketsCsv,
   type PhysicalTicketBatch,
 } from "../../api/admin-physical-tickets.js";
 import { listHalls, type AdminHall } from "../../api/dashboard.js";
@@ -93,6 +94,26 @@ export function renderAddPage(container: HTMLElement): void {
         <hr>
         <h4>${escapeHtml(t("physical_ticket_batches"))}</h4>
         <div id="batches-table">${escapeHtml(t("loading_ellipsis"))}</div>
+        <hr>
+        <h4>${escapeHtml(t("pt_csv_import_section"))}</h4>
+        <form id="static-csv-form" novalidate style="margin-top:10px;">
+          <div class="row">
+            <div class="col-sm-8">
+              <label for="staticCsvFile">${escapeHtml(t("pt_csv_import_file_label"))}</label>
+              <input type="file" id="staticCsvFile" name="staticCsvFile"
+                accept=".csv,text/csv,text/plain">
+              <p class="help-block" style="margin-top:6px;">
+                <code>${escapeHtml(t("pt_csv_import_file_hint"))}</code>
+              </p>
+            </div>
+            <div class="col-sm-4 text-right" style="padding-top:24px;">
+              <button type="submit" class="btn btn-primary" id="static-csv-submit">
+                <i class="fa fa-upload"></i> ${escapeHtml(t("pt_csv_import_upload_button"))}
+              </button>
+            </div>
+          </div>
+          <div id="static-csv-status" style="margin-top:10px;"></div>
+        </form>
       ${boxClose()}
     </section>`;
 
@@ -100,6 +121,10 @@ export function renderAddPage(container: HTMLElement): void {
   const tableHost = container.querySelector<HTMLElement>("#batches-table")!;
   const lastIdCell = container.querySelector<HTMLElement>("#last-id");
   const form = container.querySelector<HTMLFormElement>("#batch-form")!;
+  const csvForm = container.querySelector<HTMLFormElement>("#static-csv-form")!;
+  const csvFileInput = container.querySelector<HTMLInputElement>("#staticCsvFile")!;
+  const csvSubmitBtn = container.querySelector<HTMLButtonElement>("#static-csv-submit")!;
+  const csvStatus = container.querySelector<HTMLElement>("#static-csv-status")!;
 
   // Initial data load: halls (admin only) + batches (scoped).
   void (async () => {
@@ -430,4 +455,60 @@ export function renderAddPage(container: HTMLElement): void {
       void instance;
     });
   }
+
+  // PT1: CSV-import for fysisk-bong inventar (app_static_tickets).
+  // Leser fil som tekst via FileReader, POSTer som JSON. Fremvise suksess/feil
+  // inline under formet så admin ser hvor mange rader som ble importert vs.
+  // hoppet over (idempotent re-import er lovlig).
+  csvForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const hallId = state.hallId;
+    if (!hallId) {
+      Toast.error(t("pt_csv_import_select_hall_first"));
+      return;
+    }
+    const file = csvFileInput.files?.[0];
+    if (!file) {
+      Toast.error(t("pt_csv_import_select_file_first"));
+      return;
+    }
+
+    csvStatus.innerHTML = `<div class="callout callout-info" style="margin:0;">${escapeHtml(t("pt_csv_import_uploading"))}</div>`;
+    csvSubmitBtn.disabled = true;
+
+    try {
+      const csvContent = await readFileAsText(file);
+      const result = await importStaticTicketsCsv({ hallId, csvContent });
+      const msg = t("pt_csv_import_success", {
+        inserted: result.inserted,
+        skipped: result.skipped,
+      });
+      csvStatus.innerHTML = `<div class="callout callout-success" style="margin:0;">${escapeHtml(msg)}</div>`;
+      Toast.success(msg);
+      csvFileInput.value = "";
+    } catch (err) {
+      const msg = err instanceof ApiError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : t("something_went_wrong");
+      csvStatus.innerHTML = `<div class="callout callout-danger" style="margin:0;">${escapeHtml(`${t("pt_csv_import_failed")}: ${msg}`)}</div>`;
+      Toast.error(msg);
+    } finally {
+      csvSubmitBtn.disabled = false;
+    }
+  });
+}
+
+function readFileAsText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === "string") resolve(result);
+      else reject(new Error("FileReader returnerte ikke en streng."));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("FileReader feilet."));
+    reader.readAsText(file, "utf-8");
+  });
 }

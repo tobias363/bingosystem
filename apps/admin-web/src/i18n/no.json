@@ -2516,5 +2516,14 @@
   "name_too_long": "Navnet er for langt (maks 200 tegn).",
   "tv_id_invalid": "TV-ID må være et ikke-negativt heltall.",
   "hall_id_invalid": "Ugyldig hall-ID i valg.",
-  "no_changes": "Ingen endringer å lagre."
+  "no_changes": "Ingen endringer å lagre.",
+  "pt_csv_import_section": "Importer fysisk-bong-inventar (CSV)",
+  "pt_csv_import_file_label": "CSV-fil fra leverandør",
+  "pt_csv_import_file_hint": "Format: hall_name,ticket_id,ticket_color,num1..num25",
+  "pt_csv_import_upload_button": "Last opp CSV",
+  "pt_csv_import_select_hall_first": "Velg hall først.",
+  "pt_csv_import_select_file_first": "Velg CSV-fil først.",
+  "pt_csv_import_uploading": "Laster opp og importerer...",
+  "pt_csv_import_success": "{{inserted}} bonger importert, {{skipped}} hoppet over (allerede i DB).",
+  "pt_csv_import_failed": "Import feilet"
 }

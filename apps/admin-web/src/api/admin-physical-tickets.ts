@@ -161,6 +161,38 @@ export function assignBatchToGame(id: string, body: AssignGameRequest): Promise<
   );
 }
 
+// ── PT1: fysisk-bong CSV-import (app_static_tickets) ────────────────────────
+
+export interface StaticTicketImportRequest {
+  hallId: string;
+  csvContent: string;
+}
+
+export interface StaticTicketImportResult {
+  hallId: string;
+  inserted: number;
+  skipped: number;
+  totalRows: number;
+}
+
+/**
+ * Laster opp fysisk-bong CSV for valgt hall. CSV-innhold sendes som JSON-
+ * streng (ikke multipart) — admin-UI leser filen via FileReader.readAsText()
+ * og POSTer resultatet. Server har 15mb body-limit for denne endpointen.
+ *
+ * Atomisk: hvis én rad feiler valideringen, rulles hele importen tilbake
+ * (all-or-nothing). Eksisterende rader (samme hall/serial/color) hoppes
+ * over (idempotent).
+ */
+export function importStaticTicketsCsv(
+  body: StaticTicketImportRequest
+): Promise<StaticTicketImportResult> {
+  return apiRequest<StaticTicketImportResult>(
+    "/api/admin/physical-tickets/static/import",
+    { method: "POST", body, auth: true }
+  );
+}
+
 // ── BIN-587 B4b: unique-id lookup + list ────────────────────────────────────
 
 export type PhysicalTicketStatus = "UNSOLD" | "SOLD" | "VOIDED";
