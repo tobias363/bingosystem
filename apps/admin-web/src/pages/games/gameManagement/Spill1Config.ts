@@ -36,6 +36,26 @@ export const SPILL1_PATTERNS = ["row_1", "row_2", "row_3", "row_4", "full_house"
 
 export type Spill1Pattern = (typeof SPILL1_PATTERNS)[number];
 
+/**
+ * BIN-689: Spill 1-sub-varianter.
+ *
+ * - `"norsk-bingo"` — standard 5-fase (1 Rad → 2 Rader → 3 Rader → 4 Rader → Fullt Hus).
+ *   Dette er default-valget og matcher `DEFAULT_NORSK_BINGO_CONFIG` i backend.
+ * - `"kvikkis"` — hurtig-bingo med kun én pattern (Fullt Hus, 1000 kr fastpremie).
+ *   Matcher `DEFAULT_QUICKBINGO_CONFIG` i backend. Admin-UI viser kun
+ *   Fullt Hus-premie-kolonnen; rad 1-4 er skjult/disabled.
+ *
+ * Verdien lagres i `config.spill1.subVariant` og leses av backend-mapperen
+ * for å bestemme hvilken default-patterns-liste som skal brukes.
+ */
+export const SPILL1_SUB_VARIANTS = ["norsk-bingo", "kvikkis"] as const;
+export type Spill1SubVariant = (typeof SPILL1_SUB_VARIANTS)[number];
+
+/** Pattern-sliste som er aktiv for en gitt sub-variant. */
+export function patternsForSubVariant(subVariant: Spill1SubVariant): ReadonlyArray<Spill1Pattern> {
+  return subVariant === "kvikkis" ? (["full_house"] as const) : SPILL1_PATTERNS;
+}
+
 /** Hvordan en admin-konfigurert pattern-gevinst tolkes. */
 export type PatternPrizeMode = "percent" | "fixed";
 
@@ -106,6 +126,12 @@ export interface Spill1Timing {
 
 /** Hele Spill 1-config-strukturen som lagres i backend `config.spill1`. */
 export interface Spill1Config {
+  /**
+   * BIN-689: Sub-variant. `"norsk-bingo"` = 5-fase (default), `"kvikkis"` =
+   * hurtig-bingo (kun Fullt Hus). Kan være undefined i legacy-konfig —
+   * tolkes da som `"norsk-bingo"` i UI + mapper for bakoverkompat.
+   */
+  subVariant?: Spill1SubVariant;
   /** Override av generisk `name`-felt; "" betyr ikke satt. */
   customGameName: string;
   /** Klokkeslett "HH:MM". */
@@ -136,6 +162,7 @@ export type ValidationResult =
 /** Default tom Spill 1-config — brukt for nye skjema-inits. */
 export function emptySpill1Config(): Spill1Config {
   return {
+    subVariant: "norsk-bingo",
     customGameName: "",
     startTime: "",
     endTime: "",
@@ -233,6 +260,13 @@ export function validateSpill1Config(config: Spill1Config, baseName: string): Va
     errors.push({ path: "ticketColors", message: "please_select_at_least_one_ticket_color" });
   }
 
+  // BIN-689: for Kvikkis er det kun Fullt Hus-fasen som konfigureres —
+  // andre pattern-entries ignoreres av UI-en men må ikke feile validering
+  // hvis de ligger fra gammelt av i state.
+  const activePatterns = new Set(
+    patternsForSubVariant(config.subVariant ?? "norsk-bingo") as ReadonlyArray<string>,
+  );
+
   // Per ticket-farge.
   config.ticketColors.forEach((tc, i) => {
     if (!Number.isFinite(tc.priceNok) || tc.priceNok <= 0) {
@@ -245,6 +279,9 @@ export function validateSpill1Config(config: Spill1Config, baseName: string): Va
     let percentTotal = 0;
     for (const [pattern, prize] of Object.entries(tc.prizePerPattern)) {
       if (!prize) continue;
+      // Kvikkis: kun full_house er aktiv — hopp over validering for
+      // inaktive fase-entries (UI-en viser dem ikke uansett).
+      if (!activePatterns.has(pattern)) continue;
       if (!Number.isFinite(prize.amount) || prize.amount < 0) {
         errors.push({
           path: `ticketColors[${i}].prizePerPattern.${pattern}`,

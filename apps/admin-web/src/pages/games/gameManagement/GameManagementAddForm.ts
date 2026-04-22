@@ -32,13 +32,15 @@ import type { WriteResult } from "./GameManagementState.js";
 import type { GameType } from "../common/types.js";
 import {
   SPILL1_TICKET_COLORS,
-  SPILL1_PATTERNS,
+  SPILL1_SUB_VARIANTS,
   emptySpill1Config,
+  patternsForSubVariant,
   validateSpill1Config,
   buildSpill1Payload,
   type Spill1Config,
   type Spill1TicketColor,
   type Spill1Pattern,
+  type Spill1SubVariant,
   type TicketColorConfig,
   type PatternPrizeMode,
   type ValidationError,
@@ -173,6 +175,7 @@ function renderFormShell(s: FormState): string {
               <form id="gm-add-form" onsubmit="return false;" novalidate>
                 <div id="gm-global-alert" data-testid="gm-global-alert"></div>
                 ${renderSectionBasics(s)}
+                ${renderSectionSubVariant(s)}
                 ${renderSectionTiming(s)}
                 ${renderSectionTicketColors(s)}
                 ${renderSectionPatternPrizes(s)}
@@ -232,6 +235,30 @@ function renderSectionBasics(s: FormState): string {
           <label for="gm-end-time">${escapeHtml(t("end_time"))}</label>
           <input type="time" class="form-control" id="gm-end-time"
             value="${escapeHtml(s.spill1.endTime)}">
+        </div>
+      </div>
+    </fieldset>`;
+}
+
+function renderSectionSubVariant(s: FormState): string {
+  // BIN-689: velg mellom "norsk-bingo" (5-fase standard) og "kvikkis" (hurtig-
+  // bingo, kun Fullt Hus). Default er norsk-bingo — Kvikkis-valget skjuler
+  // rad 1-4-kolonnene i premie-matrisen.
+  const current: Spill1SubVariant = s.spill1.subVariant ?? "norsk-bingo";
+  const options = SPILL1_SUB_VARIANTS.map((v) => {
+    const selected = v === current ? " selected" : "";
+    return `<option value="${escapeHtml(v)}"${selected}>${escapeHtml(t(`gm_sub_variant_${v}`))}</option>`;
+  }).join("");
+  return `
+    <fieldset class="form-group" data-testid="gm-section-sub-variant" style="border:1px solid #eee;padding:12px;margin-bottom:12px;">
+      ${sectionHeader(t("gm_section_sub_variant"))}
+      <div class="row">
+        <div class="col-sm-6">
+          <label for="gm-sub-variant">${escapeHtml(t("gm_sub_variant_label"))}</label>
+          <select class="form-control" id="gm-sub-variant" data-testid="gm-sub-variant">
+            ${options}
+          </select>
+          <p class="text-muted" style="font-size:12px;margin-top:4px;">${escapeHtml(t("gm_sub_variant_hint"))}</p>
         </div>
       </div>
     </fieldset>`;
@@ -317,13 +344,15 @@ function renderSectionPatternPrizes(s: FormState): string {
       </fieldset>`;
   }
 
+  // BIN-689: Kvikkis skjuler rad 1-4 — kun Fullt Hus-kolonnen vises.
+  const activePatterns = patternsForSubVariant(s.spill1.subVariant ?? "norsk-bingo");
   const header =
     `<thead><tr><th style="min-width:140px;">${escapeHtml(t("ticket_type"))}</th>` +
-    SPILL1_PATTERNS.map((p) => `<th>${escapeHtml(t(p))}</th>`).join("") +
+    activePatterns.map((p) => `<th>${escapeHtml(t(p))}</th>`).join("") +
     `<th>${escapeHtml(t("gm_sum_label"))} %</th></tr></thead>`;
   const rows = s.spill1.ticketColors
     .map((tc) => {
-      const cells = SPILL1_PATTERNS.map((p) => {
+      const cells = activePatterns.map((p) => {
         const prize = tc.prizePerPattern[p];
         const mode = prize?.mode ?? "percent";
         const amount = prize?.amount ?? 0;
@@ -457,12 +486,37 @@ function renderSectionLuckyNumber(s: FormState): string {
 /** Wire events + submit-handler. */
 export function wireForm(container: HTMLElement, state: FormState): void {
   wireBasics(container, state);
+  wireSubVariant(container, state);
   wireTiming(container, state);
   wireTicketColors(container, state);
   wirePatternPrizeCells(container, state);
   wireJackpot(container, state);
   wireElvisAndLucky(container, state);
   wireSubmit(container, state);
+}
+
+function wireSubVariant(container: HTMLElement, state: FormState): void {
+  const sel = container.querySelector<HTMLSelectElement>("#gm-sub-variant");
+  if (!sel) return;
+  sel.addEventListener("change", () => {
+    const v = sel.value;
+    if (v === "norsk-bingo" || v === "kvikkis") {
+      state.spill1.subVariant = v;
+      // Når man bytter til Kvikkis: fjern eksisterende rad 1-4-entries fra
+      // state så de ikke lekker tilbake ved submit. Fullt-hus-entries
+      // beholdes. Ved bytte til norsk-bingo beholdes eksisterende data —
+      // brukeren kan fylle inn rad 1-4 uten å miste progress.
+      if (v === "kvikkis") {
+        for (const tc of state.spill1.ticketColors) {
+          delete tc.prizePerPattern.row_1;
+          delete tc.prizePerPattern.row_2;
+          delete tc.prizePerPattern.row_3;
+          delete tc.prizePerPattern.row_4;
+        }
+      }
+      refreshPatternPrizeTable(container, state);
+    }
+  });
 }
 
 function wireBasics(container: HTMLElement, state: FormState): void {

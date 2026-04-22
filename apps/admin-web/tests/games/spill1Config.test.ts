@@ -5,8 +5,10 @@ import {
   emptySpill1Config,
   validateSpill1Config,
   buildSpill1Payload,
+  patternsForSubVariant,
   SPILL1_TICKET_COLORS,
   SPILL1_PATTERNS,
+  SPILL1_SUB_VARIANTS,
 } from "../../src/pages/games/gameManagement/Spill1Config.js";
 
 function validConfig() {
@@ -341,5 +343,100 @@ describe("buildSpill1Payload", () => {
       elvis3: 20000,
       large_purple: 30000,
     });
+  });
+});
+
+// ── BIN-689: Kvikkis sub-variant ────────────────────────────────────────────
+
+describe("SPILL1_SUB_VARIANTS / patternsForSubVariant", () => {
+  it("eksponerer både norsk-bingo og kvikkis", () => {
+    expect(SPILL1_SUB_VARIANTS).toContain("norsk-bingo");
+    expect(SPILL1_SUB_VARIANTS).toContain("kvikkis");
+  });
+
+  it("norsk-bingo gir alle 5 patterns", () => {
+    expect(patternsForSubVariant("norsk-bingo")).toEqual(SPILL1_PATTERNS);
+  });
+
+  it("kvikkis gir kun full_house", () => {
+    expect(patternsForSubVariant("kvikkis")).toEqual(["full_house"]);
+  });
+});
+
+describe("emptySpill1Config subVariant", () => {
+  it("default-config har subVariant='norsk-bingo'", () => {
+    const c = emptySpill1Config();
+    expect(c.subVariant).toBe("norsk-bingo");
+  });
+});
+
+describe("validateSpill1Config with Kvikkis", () => {
+  function validKvikkisConfig() {
+    const c = emptySpill1Config();
+    c.subVariant = "kvikkis";
+    c.startTime = "18:00";
+    c.ticketColors = [
+      {
+        color: "small_yellow",
+        priceNok: 20,
+        prizePerPattern: {
+          full_house: { mode: "fixed", amount: 1000 },
+        },
+      },
+    ];
+    return c;
+  }
+
+  it("aksepterer fullstendig Kvikkis-config", () => {
+    const res = validateSpill1Config(validKvikkisConfig(), "Kvikkis-test");
+    expect(res.ok).toBe(true);
+  });
+
+  it("Kvikkis: rad 1-4-entries ignoreres i validering (selv ved ugyldige verdier)", () => {
+    const c = validKvikkisConfig();
+    // Legg inn rad 1-entry med ulovlig negativ verdi — må ikke trigge feil
+    // siden den IKKE er aktiv for Kvikkis.
+    c.ticketColors[0]!.prizePerPattern.row_1 = { mode: "percent", amount: -999 };
+    const res = validateSpill1Config(c, "x");
+    expect(res.ok).toBe(true);
+  });
+
+  it("Kvikkis: Fullt Hus-entry valideres (negativ beløp avvises)", () => {
+    const c = validKvikkisConfig();
+    c.ticketColors[0]!.prizePerPattern.full_house = { mode: "fixed", amount: -10 };
+    const res = validateSpill1Config(c, "x");
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors.some((e) => e.path.includes("full_house"))).toBe(true);
+    }
+  });
+
+  it("norsk-bingo: rad 1-entry valideres som før (negativ beløp avvises)", () => {
+    const c = validKvikkisConfig();
+    c.subVariant = "norsk-bingo";
+    c.ticketColors[0]!.prizePerPattern.row_1 = { mode: "percent", amount: -5 };
+    const res = validateSpill1Config(c, "x");
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.errors.some((e) => e.path.includes("row_1"))).toBe(true);
+    }
+  });
+});
+
+describe("buildSpill1Payload with Kvikkis", () => {
+  it("propagerer subVariant='kvikkis' i payload.config.spill1", () => {
+    const c = emptySpill1Config();
+    c.subVariant = "kvikkis";
+    c.startTime = "18:00";
+    c.ticketColors = [
+      { color: "small_yellow", priceNok: 20, prizePerPattern: {} },
+    ];
+    const p = buildSpill1Payload({
+      gameTypeId: "gt-1",
+      name: "Kvikkis",
+      isoDate: "2026-05-15",
+      spill1: c,
+    });
+    expect(p.config.spill1.subVariant).toBe("kvikkis");
   });
 });
