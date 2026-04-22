@@ -175,6 +175,9 @@ test("validatePotConfig: phase utenfor 1..5 → INVALID_CONFIG", () => {
 
 test("validatePotConfig: drawThreshold utenfor 1..75 → INVALID_CONFIG", () => {
   const bad = validConfig();
+  if (bad.winRule.kind !== "phase_at_or_before_draw") {
+    throw new Error("validConfig() skal returnere phase_at_or_before_draw-variant");
+  }
   bad.winRule.drawThreshold = 0;
   assert.throws(() => validatePotConfig(bad), DomainError);
   bad.winRule.drawThreshold = 76;
