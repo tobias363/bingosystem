@@ -7,11 +7,10 @@
 // diff-støy. Alle tidligere eksporterte skjemaer + type-alias er bevart
 // byte-identisk; kun filplassering er endret.
 //
-// Subfiler legges til i etterfølgende commits (PR-R3 step 2..N).
-
 export * from "./payments.js";
 export * from "./game.js";
 export * from "./admin.js";
 export * from "./compliance.js";
 export * from "./system.js";
 export * from "./minigames.js";
+export * from "./game1-scheduled.js";
