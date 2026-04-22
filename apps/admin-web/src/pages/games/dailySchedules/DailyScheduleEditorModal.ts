@@ -11,6 +11,13 @@
 // det rettes opp i et eget BIN bruker vi `other_data.scheduleId` /
 // `other_data.scheduleIdByDay` som første-klasses signal. Admin-UI laster
 // schedule-liste ved modal-åpning og presenterer dropdown.
+//
+// PR 4e.2 (2026-04-22): erstattet fri-tekst CSV-felt for master-hall +
+// hall-IDs + group-hall-IDs med dropdown + multi-select basert på
+// `listHalls()` + `listHallGroups()`. Admin slipper å vite UUID utenat,
+// og pre-fyller med hallene fra valgt gruppe. Validerer at alle hallIds
+// er medlemmer av minst én valgt gruppe (soft-warn, ikke hard-feil, siden
+// group-picker kan pre-fylle men bruker kan overstyre).
 
 import { Modal, type ModalInstance } from "../../../components/Modal.js";
 import { Toast } from "../../../components/Toast.js";
@@ -32,6 +39,11 @@ import {
   type DailyScheduleHallIds,
 } from "./DailyScheduleState.js";
 import { listSchedules, type ScheduleRow } from "../../../api/admin-schedules.js";
+import { listHalls, type AdminHall } from "../../../api/admin-halls.js";
+import {
+  listHallGroups,
+  type HallGroupRow,
+} from "../../../api/admin-hall-groups.js";
 
 /**
  * GAME1_SCHEDULE PR 2: weekday-nøkler matcher backend
@@ -96,19 +108,26 @@ function parseJsonArray<T>(raw: string): T[] | null {
   return parsed as T[];
 }
 
-function parseHallIds(
+/**
+ * PR 4e.2: les alle markerte options fra `<select multiple>`.
+ * Returnerer unike verdier i selection-rekkefølge.
+ */
+function readMultiSelect(form: HTMLElement, id: string): string[] {
+  const el = form.querySelector<HTMLSelectElement>(`#${id}`);
+  if (!el) return [];
+  const values: string[] = [];
+  for (const opt of Array.from(el.selectedOptions)) {
+    const v = opt.value.trim();
+    if (v && !values.includes(v)) values.push(v);
+  }
+  return values;
+}
+
+function buildHallIds(
   master: string,
-  hallsCsv: string,
-  groupsCsv: string
+  hallIds: string[],
+  groupHallIds: string[]
 ): DailyScheduleHallIds | undefined {
-  const hallIds = hallsCsv
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const groupHallIds = groupsCsv
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
   if (!master && hallIds.length === 0 && groupHallIds.length === 0) {
     return undefined;
   }
@@ -177,11 +196,73 @@ export async function openDailyScheduleEditorModal(
     // Ikke-kritisk — scheduleId er fortsatt valgfritt manuelt inntastet i fallback.
     scheduleMalList = [];
   }
+
+  // PR 4e.2: last haller + hall-grupper for dropdown/multi-select.
+  // Soft-fail — modalen fungerer fortsatt (med tom liste) hvis API feiler.
+  let hallList: AdminHall[] = [];
+  try {
+    const halls = await listHalls({ includeInactive: false });
+    hallList = Array.isArray(halls) ? halls : [];
+  } catch {
+    hallList = [];
+  }
+  let hallGroupList: HallGroupRow[] = [];
+  try {
+    const groups = await listHallGroups({ status: "active", limit: 200 });
+    hallGroupList = Array.isArray(groups?.groups) ? groups.groups : [];
+  } catch {
+    hallGroupList = [];
+  }
+
   const otherDataInitial = (existing?.otherData ?? {}) as Record<string, unknown>;
   const scheduleIdState = readScheduleIdFromOtherData(otherDataInitial);
 
   const body = document.createElement("div");
-  body.innerHTML = renderForm(existing, isSpecial, scheduleMalList, scheduleIdState);
+  body.innerHTML = renderForm(
+    existing,
+    isSpecial,
+    scheduleMalList,
+    scheduleIdState,
+    hallList,
+    hallGroupList
+  );
+
+  // PR 4e.2: når admin velger en hall-gruppe, pre-fyll hallIds + master-hall
+  // med gruppens medlemmer (bruker kan overstyre etterpå).
+  const groupSelect = body.querySelector<HTMLSelectElement>("#ds-group-hall-ids");
+  if (groupSelect) {
+    groupSelect.addEventListener("change", () => {
+      const selectedGroupIds = readMultiSelect(body, "ds-group-hall-ids");
+      if (selectedGroupIds.length === 0) return;
+      // Union av medlemshaller for alle valgte grupper.
+      const memberHallIds = new Set<string>();
+      for (const gid of selectedGroupIds) {
+        const grp = hallGroupList.find((g) => g.id === gid);
+        if (!grp) continue;
+        for (const m of grp.members) {
+          memberHallIds.add(m.hallId);
+        }
+      }
+      if (memberHallIds.size === 0) return;
+      // Pre-velg i hallIds-multi-select.
+      const hallSelect = body.querySelector<HTMLSelectElement>("#ds-hall-ids");
+      if (hallSelect) {
+        for (const opt of Array.from(hallSelect.options)) {
+          if (memberHallIds.has(opt.value)) opt.selected = true;
+        }
+      }
+      // Pre-velg master-hall-dropdown hvis ikke satt manuelt.
+      const masterSelect = body.querySelector<HTMLSelectElement>("#ds-master-hall-id");
+      if (masterSelect && !masterSelect.value) {
+        for (const opt of Array.from(masterSelect.options)) {
+          if (memberHallIds.has(opt.value)) {
+            masterSelect.value = opt.value;
+            break;
+          }
+        }
+      }
+    });
+  }
 
   const validate = (): DailyScheduleFormPayload | null => {
     setError(body, null);
@@ -225,10 +306,32 @@ export async function openDailyScheduleEditorModal(
 
     const gameManagementId = readField(body, "ds-game-management-id") || null;
     const hallId = readField(body, "ds-hall-id") || null;
+    // PR 4e.2: dropdown + multi-select for master-hall, hallIds, groupHallIds.
     const masterHallId = readField(body, "ds-master-hall-id");
-    const hallIdsRaw = readField(body, "ds-hall-ids");
-    const groupHallIdsRaw = readField(body, "ds-group-hall-ids");
-    const hallIds = parseHallIds(masterHallId, hallIdsRaw, groupHallIdsRaw);
+    const selectedHallIds = readMultiSelect(body, "ds-hall-ids");
+    const selectedGroupHallIds = readMultiSelect(body, "ds-group-hall-ids");
+    const hallIds = buildHallIds(masterHallId, selectedHallIds, selectedGroupHallIds);
+
+    // PR 4e.2: soft-validering — hvis bruker har valgt både grupper og haller,
+    // advar hvis en valgt hall ikke er medlem av noen valgt gruppe. Dette er
+    // som regel user-error (gruppe-pre-fylling ble overstyrt).
+    if (selectedGroupHallIds.length > 0 && selectedHallIds.length > 0) {
+      const memberUnion = new Set<string>();
+      for (const gid of selectedGroupHallIds) {
+        const grp = hallGroupList.find((g) => g.id === gid);
+        if (grp) {
+          for (const m of grp.members) memberUnion.add(m.hallId);
+        }
+      }
+      const orphanHallIds = selectedHallIds.filter((hid) => !memberUnion.has(hid));
+      if (orphanHallIds.length > 0) {
+        setError(
+          body,
+          `${t("daily_schedule_hall_not_in_group")}: ${orphanHallIds.join(", ")}`
+        );
+        return null;
+      }
+    }
 
     const status = (readField(body, "ds-status") || "active") as DailyScheduleStatus;
     if (!["active", "running", "finish", "inactive"].includes(status)) {
@@ -331,6 +434,65 @@ export async function openDailyScheduleEditorModal(
   });
 }
 
+/**
+ * PR 4e.2: bygg options for `<select multiple>` over hall-grupper.
+ * Viser name + antall haller. Active-flagget styres allerede i listHallGroups-fetch.
+ */
+function buildGroupOptions(
+  groups: HallGroupRow[],
+  selected: readonly string[]
+): string {
+  if (groups.length === 0) {
+    return `<option value="" disabled>${escapeHtml(t("daily_schedule_no_groups_available"))}</option>`;
+  }
+  return groups
+    .map((g) => {
+      const isSel = selected.includes(g.id) ? "selected" : "";
+      const count = Array.isArray(g.members) ? g.members.length : 0;
+      const label = `${g.name} (${count})`;
+      return `<option value="${escapeHtml(g.id)}" ${isSel}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+/**
+ * PR 4e.2: bygg options for `<select multiple>` over haller.
+ */
+function buildHallOptions(
+  halls: AdminHall[],
+  selected: readonly string[]
+): string {
+  if (halls.length === 0) {
+    return `<option value="" disabled>${escapeHtml(t("daily_schedule_no_halls_available"))}</option>`;
+  }
+  return halls
+    .map((h) => {
+      const isSel = selected.includes(h.id) ? "selected" : "";
+      const label = h.slug ? `${h.name} (${h.slug})` : h.name;
+      return `<option value="${escapeHtml(h.id)}" ${isSel}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+/**
+ * PR 4e.2: bygg options for master-hall single-select. Inkluderer en tom
+ * "ingen master"-option øverst slik at feltet er valgfritt (spesialspill).
+ */
+function buildMasterHallOptions(halls: AdminHall[], selected: string): string {
+  const emptyOpt = `<option value="" ${selected ? "" : "selected"}>—</option>`;
+  if (halls.length === 0) {
+    return `${emptyOpt}<option value="" disabled>${escapeHtml(t("daily_schedule_no_halls_available"))}</option>`;
+  }
+  const opts = halls
+    .map((h) => {
+      const isSel = h.id === selected ? "selected" : "";
+      const label = h.slug ? `${h.name} (${h.slug})` : h.name;
+      return `<option value="${escapeHtml(h.id)}" ${isSel}>${escapeHtml(label)}</option>`;
+    })
+    .join("");
+  return `${emptyOpt}${opts}`;
+}
+
 function renderForm(
   existing: DailyScheduleRow | null,
   isSpecial: boolean,
@@ -338,7 +500,9 @@ function renderForm(
   scheduleIdState: {
     scheduleId: string;
     scheduleIdByDay: Partial<Record<DailyScheduleDay, string>>;
-  }
+  },
+  hallList: AdminHall[],
+  hallGroupList: HallGroupRow[]
 ): string {
   const name = existing?.name ?? "";
   const startDate = existing?.startDate ?? new Date().toISOString().slice(0, 10);
@@ -348,8 +512,8 @@ function renderForm(
   const gameManagementId = existing?.gameManagementId ?? "";
   const hallId = existing?.hallId ?? "";
   const masterHallId = existing?.hallIds.masterHallId ?? "";
-  const hallIdsList = (existing?.hallIds.hallIds ?? []).join(", ");
-  const groupHallIdsList = (existing?.hallIds.groupHallIds ?? []).join(", ");
+  const existingHallIds = existing?.hallIds.hallIds ?? [];
+  const existingGroupHallIds = existing?.hallIds.groupHallIds ?? [];
   const status: DailyScheduleStatus = existing?.status ?? "active";
   const stopGame = Boolean(existing?.stopGame);
   const specialGame = isSpecial || Boolean(existing?.specialGame);
@@ -473,20 +637,34 @@ function renderForm(
       <fieldset style="border:1px solid #ddd;padding:8px 12px;margin-bottom:12px;">
         <legend style="font-size:14px;width:auto;padding:0 4px;">${escapeHtml(t("multi_hall_settings"))}</legend>
         <div class="row">
-          <div class="form-group col-sm-4">
+          <div class="form-group col-sm-6">
+            <label for="ds-group-hall-ids">${escapeHtml(t("daily_schedule_group_halls_label"))}</label>
+            <select id="ds-group-hall-ids" class="form-control" multiple size="4">
+              ${buildGroupOptions(hallGroupList, existingGroupHallIds)}
+            </select>
+            <p class="help-block" style="font-size:11px;">
+              ${escapeHtml(t("daily_schedule_group_halls_hint"))}
+            </p>
+          </div>
+          <div class="form-group col-sm-6">
+            <label for="ds-hall-ids">${escapeHtml(t("daily_schedule_halls_label"))}</label>
+            <select id="ds-hall-ids" class="form-control" multiple size="4">
+              ${buildHallOptions(hallList, existingHallIds)}
+            </select>
+            <p class="help-block" style="font-size:11px;">
+              ${escapeHtml(t("daily_schedule_halls_hint"))}
+            </p>
+          </div>
+        </div>
+        <div class="row">
+          <div class="form-group col-sm-6">
             <label for="ds-master-hall-id">${escapeHtml(t("master_hall_id"))}</label>
-            <input type="text" id="ds-master-hall-id" class="form-control" maxlength="200"
-                   value="${escapeHtml(masterHallId)}">
-          </div>
-          <div class="form-group col-sm-4">
-            <label for="ds-hall-ids">${escapeHtml(t("halls_csv"))}</label>
-            <input type="text" id="ds-hall-ids" class="form-control" placeholder="hall-1,hall-2"
-                   value="${escapeHtml(hallIdsList)}">
-          </div>
-          <div class="form-group col-sm-4">
-            <label for="ds-group-hall-ids">${escapeHtml(t("group_hall_ids_csv"))}</label>
-            <input type="text" id="ds-group-hall-ids" class="form-control" placeholder="group-1,group-2"
-                   value="${escapeHtml(groupHallIdsList)}">
+            <select id="ds-master-hall-id" class="form-control">
+              ${buildMasterHallOptions(hallList, masterHallId)}
+            </select>
+            <p class="help-block" style="font-size:11px;">
+              ${escapeHtml(t("daily_schedule_master_hall_hint"))}
+            </p>
           </div>
         </div>
       </fieldset>
