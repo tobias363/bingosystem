@@ -72,19 +72,43 @@ export interface PatternDefinition {
   /**
    * Admin-configurable prize mode for this pattern.
    * - "percent" (default, absent): `prizePercent` of remaining pool.
-   * - "fixed":   flat `prize1` kr amount, capped by RTP guards at payout.
+   * - "fixed":           flat `prize1` kr amount, capped by RTP guards at payout.
+   * - "multiplier-chain" (BIN-687 / PR-P2 Spillernes spill):
+   *     Phase 1 uses `prizePercent` of pool with `minPrizeCents` floor.
+   *     Phase N > 1 uses `phase1BasePrize × phase1Multiplier` with own
+   *     `minPrizeCents` floor. All phases in the chain share the same
+   *     mode; mixing percent/multiplier-chain across phases is allowed
+   *     (typical Spillernes-config has phase 1 in percent-mode and
+   *     phases 2-5 in multiplier-chain-mode).
    *
    * Promoted from backend-local `PatternDefinition` (BIN-615 / PR-C1) so
    * admin-UI → engine coupling can send per-game prize matrices over the
    * wire. Clients may read this to render expected prize amounts in the
    * pattern banner before the game starts.
    */
-  winningType?: "percent" | "fixed";
+  winningType?: "percent" | "fixed" | "multiplier-chain";
   /**
    * Fixed prize amount in kr when `winningType === "fixed"`. Ignored for
    * "percent" mode. Legacy field name: prize1.
    */
   prize1?: number;
+  /**
+   * BIN-687 / PR-P2: Multiplier against phase-1 base prize. Only used when
+   * `winningType === "multiplier-chain"` AND the pattern is NOT phase 1.
+   * For Spillernes spill: Rad 2 = Rad 1 × 2 (multiplier=2), Rad 3 = Rad 1 × 3
+   * (multiplier=3), etc. Absent on the phase-1 pattern itself.
+   */
+  phase1Multiplier?: number;
+  /**
+   * BIN-687 / PR-P2: Minimum prize floor in *kr* for this phase. Applied
+   * after percent/multiplier calculation so the phase prize never falls
+   * below the regulatory/UX floor even for low-pool games.
+   *
+   * Unit: kr (not cents) — matches `prize1`, `game.prizePool`, and the
+   * percent-calculation path already used in BingoEngine.evaluateActivePhase.
+   * Admin-UI accepts NOK input and writes kr directly.
+   */
+  minPrize?: number;
 }
 
 export interface PatternResult {

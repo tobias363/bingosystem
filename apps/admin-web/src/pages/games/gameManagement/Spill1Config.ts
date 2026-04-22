@@ -57,7 +57,7 @@ export function patternsForSubVariant(subVariant: Spill1SubVariant): ReadonlyArr
 }
 
 /** Hvordan en admin-konfigurert pattern-gevinst tolkes. */
-export type PatternPrizeMode = "percent" | "fixed";
+export type PatternPrizeMode = "percent" | "fixed" | "multiplier-chain";
 
 /**
  * Admin-konfigurert gevinst for én fase på én farge.
@@ -66,11 +66,33 @@ export type PatternPrizeMode = "percent" | "fixed";
  * - `mode: "fixed"`   → `amount` er hele kroner, flat utbetaling. Kan kappes
  *   av RTP-guards i backend `payoutPhaseWinner` hvis pool er for liten —
  *   vinner får da mindre enn lovet beløp (PM-vedtak 2026-04-21).
+ * - `mode: "multiplier-chain"` (BIN-687 / PR-P2 Spillernes spill):
+ *   Fase 1: `amount` = 0-100 (prosent av pot), `minPrizeNok` er gulvet.
+ *   Fase N>1: `amount` = 0 (ubrukt), `phase1Multiplier` × fase 1 base,
+ *   `minPrizeNok` er gulvet.
+ *   Backend mapper til `PatternConfig.winningType = "multiplier-chain"` +
+ *   `phase1Multiplier` + `minPrize` (kr).
  */
 export interface PatternPrize {
   mode: PatternPrizeMode;
-  /** Prosent (0-100) eller kr-beløp ≥ 0 — avhengig av `mode`. */
+  /**
+   * percent-mode: prosent 0-100 av pot.
+   * fixed-mode: kr-beløp ≥ 0.
+   * multiplier-chain fase 1: prosent 0-100 av pot (samme som percent-mode).
+   * multiplier-chain fase N>1: ubrukt (0), ignoreres av mapper.
+   */
   amount: number;
+  /**
+   * BIN-687 / PR-P2: multiplier-of-phase-1. Kun satt i multiplier-chain-mode
+   * på fase > 1. Absent på fase 1 (base-fasen som andre faser refererer til).
+   */
+  phase1Multiplier?: number;
+  /**
+   * BIN-687 / PR-P2: minimum gevinst i NOK (hele kroner) for denne fasen.
+   * Hvis beregnet gevinst < minPrizeNok, brukes minPrizeNok. Gjelder alle
+   * mode-er men typisk mest relevant for percent + multiplier-chain.
+   */
+  minPrizeNok?: number;
 }
 
 /** Per-farge pris + gevinst-fordeling per pattern. */
@@ -324,6 +346,44 @@ export function validateSpill1Config(config: Spill1Config, baseName: string): Va
       }
       if (prize.mode === "percent") {
         percentTotal += prize.amount;
+      }
+      // BIN-687 / PR-P2 validering for multiplier-chain-modus.
+      if (prize.mode === "multiplier-chain") {
+        // isPhase1 = fravær av phase1Multiplier-felt. `0` er eksplisitt
+        // ugyldig (avvises nedenfor), ikke tolket som phase-1-marker.
+        const isPhase1 = prize.phase1Multiplier === undefined;
+        if (isPhase1) {
+          // Fase 1: amount = prosent 0-100. Brukes i percent-total-summen
+          // for cascade-base-beregning.
+          if (prize.amount > 100) {
+            errors.push({
+              path: `ticketColors[${i}].prizePerPattern.${pattern}.amount`,
+              message: "multiplier_chain_phase1_percent_must_be_0_to_100",
+            });
+          }
+          percentTotal += prize.amount;
+        } else {
+          // Fase N > 1: phase1Multiplier må være > 0.
+          if (
+            !Number.isFinite(prize.phase1Multiplier) ||
+            (prize.phase1Multiplier ?? 0) <= 0
+          ) {
+            errors.push({
+              path: `ticketColors[${i}].prizePerPattern.${pattern}.phase1Multiplier`,
+              message: "multiplier_chain_multiplier_must_be_positive",
+            });
+          }
+        }
+      }
+      // minPrizeNok (valgfri, gjelder alle moduser) må være ≥ 0 hvis satt.
+      if (
+        prize.minPrizeNok !== undefined &&
+        (!Number.isFinite(prize.minPrizeNok) || prize.minPrizeNok < 0)
+      ) {
+        errors.push({
+          path: `ticketColors[${i}].prizePerPattern.${pattern}.minPrizeNok`,
+          message: "pattern_prize_min_must_be_non_negative",
+        });
       }
     }
     if (percentTotal > 100) {
