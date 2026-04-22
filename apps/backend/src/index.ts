@@ -62,6 +62,7 @@ import { Game1MasterControlService } from "./game/Game1MasterControlService.js";
 import { Game1TicketPurchaseService } from "./game/Game1TicketPurchaseService.js";
 import { Game1DrawEngineService } from "./game/Game1DrawEngineService.js";
 import { Game1MiniGameOrchestrator } from "./game/minigames/Game1MiniGameOrchestrator.js";
+import { MiniGameWheelEngine } from "./game/minigames/MiniGameWheelEngine.js";
 import { Game1TicketPurchasePortAdapter } from "./game/Game1TicketPurchasePortAdapter.js";
 import { createAdminGame1ReadyRouter } from "./routes/adminGame1Ready.js";
 import { createAdminGame1MasterRouter } from "./routes/adminGame1Master.js";
@@ -951,6 +952,13 @@ const game1MiniGameOrchestrator = new Game1MiniGameOrchestrator({
   auditLog: auditLogService,
   walletAdapter,
 });
+
+// BIN-690 M2: registrer Wheel-implementasjon. Orchestrator leser admin-
+// config (app_mini_games_config.config_json for game_type='wheel') og
+// passer det inn som configSnapshot til MiniGameWheelEngine.trigger/
+// handleChoice. Hvis admin ikke har konfigurert → DEFAULT_WHEEL_CONFIG.
+game1MiniGameOrchestrator.registerMiniGame(new MiniGameWheelEngine());
+
 game1DrawEngineService.setMiniGameOrchestrator(game1MiniGameOrchestrator);
 
 // GAME1_SCHEDULE PR 4c Bolk 4: auto-draw-tick (global 1s tick, fixed

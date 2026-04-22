@@ -652,6 +652,11 @@ export class Game1MiniGameOrchestrator {
    *
    * `payoutCents` konverteres til kroner for wallet.credit (legacy API
    * forventer kroner). Idempotency-key er resultId-scoped.
+   *
+   * PR-M2 regulatorisk: mål-konto er `"winnings"` (ikke `"deposit"`) slik
+   * at mini-game-premier teller som gevinst (ikke innskudd) i netto-
+   * tap-beregning. Matcher BIN-690-spec + W1 wallet-split-regel om at
+   * game-engine er eneste kilde til `to: "winnings"`-credits.
    */
   private async creditPayout(
     context: MiniGameTriggerContext,
@@ -663,7 +668,10 @@ export class Game1MiniGameOrchestrator {
       context.winnerWalletId,
       amountKroner,
       `Mini-game ${miniGameType} premie`,
-      { idempotencyKey: `g1-minigame-${context.resultId}` },
+      {
+        idempotencyKey: `g1-minigame-${context.resultId}`,
+        to: "winnings",
+      },
     );
   }
 
