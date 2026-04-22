@@ -10,11 +10,19 @@
 // `/admin-game1`-namespacet — status-update/draw-progressed trigger
 // umiddelbar refresh. REST-polling (5s) er fallback som starter hvis
 // socket er frakoblet > 10s, og stopper automatisk ved reconnect.
+//
+// PR 4e.2 (2026-04-22):
+//   - Stop-dialog viser refund-omfang (# digitale + # fysiske bonger per
+//     hall, summert) før bekreftelse. NOK-total krever backend-endpoint
+//     (post-pilot per design-dok §3.2.5).
+//   - Master-hall-exclude: tooltip som forklarer hvorfor knapp er disabled.
+//   - Audit-tabell: erstatt JSON.stringify-dump med nøkkel:verdi-pretty-print.
 
 import { t } from "../../../i18n/I18n.js";
 import { escapeHtml } from "../common/escape.js";
 import { ApiError } from "../../../api/client.js";
 import { Toast } from "../../../components/Toast.js";
+import { Modal, type ModalInstance } from "../../../components/Modal.js";
 import {
   fetchGame1Detail,
   startGame1,
@@ -32,6 +40,9 @@ const POLL_INTERVAL_MS = 5000;
 
 let activePoll: ReturnType<typeof setInterval> | null = null;
 let activeSocket: AdminGame1Socket | null = null;
+// PR 4e.2: siste vellykkede detail-fetch — brukes i stop-dialog for å vise
+// refund-omfang uten å kreve ekstra API-kall.
+let lastDetail: Game1GameDetail | null = null;
 
 export async function renderGame1MasterConsole(
   container: HTMLElement,
@@ -90,6 +101,7 @@ function disposeSocket(): void {
     activeSocket.dispose();
     activeSocket = null;
   }
+  lastDetail = null;
 }
 
 function renderShell(gameId: string): string {
@@ -124,6 +136,7 @@ function renderShell(gameId: string): string {
 async function refresh(container: HTMLElement, gameId: string): Promise<void> {
   try {
     const detail = await fetchGame1Detail(gameId);
+    lastDetail = detail;
     renderGameInfo(container, detail);
     renderHalls(container, detail);
     renderActions(container, detail);
@@ -187,10 +200,14 @@ function renderHalls(container: HTMLElement, detail: Game1GameDetail): void {
                ${escapeHtml(t("game1_master_include_hall"))}
              </button>`
           : h.hallId === detail.game.masterHallId
-            ? '<span class="text-muted small">master</span>'
+            ? `<span class="text-muted small"
+                     title="${escapeHtml(t("game1_master_hall_exclude_disabled_tooltip"))}">
+                 master
+               </span>`
             : `<button class="btn btn-xs btn-warning"
                        data-action="exclude-hall"
-                       data-hall-id="${escapeHtml(h.hallId)}">
+                       data-hall-id="${escapeHtml(h.hallId)}"
+                       title="${escapeHtml(t("game1_master_exclude_hall_tooltip"))}">
                  ${escapeHtml(t("game1_master_exclude_hall"))}
                </button>`;
       return `
@@ -293,7 +310,7 @@ function renderAudit(container: HTMLElement, detail: Game1GameDetail): void {
           <td><code>${escapeHtml(a.action)}</code></td>
           <td><small>${escapeHtml(a.actorUserId)}</small></td>
           <td><small>${escapeHtml(a.actorHallId)}</small></td>
-          <td><small><code>${escapeHtml(JSON.stringify(a.metadata))}</code></small></td>
+          <td>${formatAuditMetadata(a.metadata)}</td>
         </tr>
       `;
     })
@@ -347,17 +364,137 @@ async function onResume(container: HTMLElement, gameId: string): Promise<void> {
   });
 }
 
+/**
+ * PR 4e.2: stop-dialog som viser forventet refund-omfang før bekreftelse.
+ * Bruker siste fetched detail for å vise per-hall ticket-tellinger.
+ *
+ * Scope-avvik: NOK-total per hall krever aggregat-endpoint på backend
+ * (post-pilot per design-dok §3.2.5 punkt 2) fordi pris-info per bong ikke
+ * er i detail-responsen. Vi viser derfor bong-antall, ikke kroner.
+ */
 async function onStop(container: HTMLElement, gameId: string): Promise<void> {
-  const reason = window.prompt(t("game1_master_stop_reason_prompt"), "") ?? "";
-  if (!reason.trim()) {
-    Toast.warning(t("game1_master_stop_reason_required"));
-    return;
-  }
-  const ok = window.confirm(t("game1_master_stop_confirm"));
-  if (!ok) return;
-  await callAction(container, gameId, async () => {
-    await stopGame1(gameId, reason);
+  const detail = lastDetail;
+  let instance: ModalInstance | null = null;
+  await new Promise<void>((resolve) => {
+    const body = document.createElement("div");
+    body.innerHTML = renderStopDialog(detail);
+    instance = Modal.open({
+      title: t("game1_master_stop_dialog_title"),
+      content: body,
+      size: "lg",
+      backdrop: "static",
+      keyboard: true,
+      className: "modal-stop-game",
+      buttons: [
+        {
+          label: t("no_cancle"),
+          variant: "default",
+          action: "cancel",
+          onClick: () => resolve(),
+        },
+        {
+          label: t("game1_master_stop"),
+          variant: "danger",
+          action: "confirm",
+          dismiss: false,
+          onClick: async (modal) => {
+            const reasonInput = body.querySelector<HTMLTextAreaElement>("#g1-stop-reason");
+            const errorHost = body.querySelector<HTMLElement>("#g1-stop-error");
+            const reason = reasonInput?.value.trim() ?? "";
+            if (!reason) {
+              if (errorHost) {
+                errorHost.textContent = t("game1_master_stop_reason_required");
+                errorHost.style.display = "block";
+              }
+              return;
+            }
+            try {
+              await stopGame1(gameId, reason);
+              Toast.success(t("saved"));
+              modal.close("button");
+              resolve();
+              await refresh(container, gameId);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (errorHost) {
+                errorHost.textContent = msg;
+                errorHost.style.display = "block";
+              }
+              Toast.error(msg);
+            }
+          },
+        },
+      ],
+      onClose: () => resolve(),
+    });
   });
+  // instance rydder seg selv via Modal-implementasjon; vi trenger ikke disposing.
+  void instance;
+}
+
+/**
+ * PR 4e.2: render HTML for stop-confirm-dialogen med refund-omfang.
+ * `detail === null` er soft-case (f.eks. hvis detail ikke var lastet ved
+ * trigger): vi viser warning og lar bruker fortsette uansett.
+ */
+function renderStopDialog(detail: Game1GameDetail | null): string {
+  const includedHalls = detail
+    ? detail.halls.filter((h) => !h.excludedFromGame)
+    : [];
+  let totalDigital = 0;
+  let totalPhysical = 0;
+  for (const h of includedHalls) {
+    totalDigital += h.digitalTicketsSold ?? 0;
+    totalPhysical += h.physicalTicketsSold ?? 0;
+  }
+  const hallRows = includedHalls
+    .map((h) => {
+      return `
+        <tr>
+          <td><small>${escapeHtml(h.hallName || h.hallId)}</small></td>
+          <td class="text-right"><small>${h.digitalTicketsSold}</small></td>
+          <td class="text-right"><small>${h.physicalTicketsSold}</small></td>
+        </tr>`;
+    })
+    .join("");
+  const summary = detail
+    ? `
+      <div class="alert alert-warning" style="margin-bottom:12px;">
+        <strong>${escapeHtml(t("game1_master_stop_refund_summary"))}</strong><br>
+        <small>
+          ${escapeHtml(t("game1_master_stop_refund_digital"))}: <strong>${totalDigital}</strong>${" "}
+          ${escapeHtml(t("game1_master_stop_refund_physical"))}: <strong>${totalPhysical}</strong>
+        </small>
+        <br>
+        <small class="text-muted">${escapeHtml(t("game1_master_stop_refund_note"))}</small>
+      </div>
+      <table class="table table-condensed" style="font-size:12px;">
+        <thead>
+          <tr>
+            <th>${escapeHtml(t("hall"))}</th>
+            <th class="text-right">${escapeHtml(t("game1_master_digital_tickets"))}</th>
+            <th class="text-right">${escapeHtml(t("game1_master_physical_tickets"))}</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${hallRows || `<tr><td colspan="3" class="text-center text-muted"><small>—</small></td></tr>`}
+        </tbody>
+      </table>`
+    : `<div class="alert alert-warning">
+         <small>${escapeHtml(t("game1_master_stop_refund_unavailable"))}</small>
+       </div>`;
+  return `
+    <div>
+      ${summary}
+      <p>${escapeHtml(t("game1_master_stop_confirm"))}</p>
+      <div class="form-group">
+        <label for="g1-stop-reason">${escapeHtml(t("game1_master_stop_reason_label"))} *</label>
+        <textarea id="g1-stop-reason" class="form-control" rows="2"
+                  placeholder="${escapeHtml(t("game1_master_stop_reason_prompt"))}"></textarea>
+      </div>
+      <p id="g1-stop-error" class="help-block"
+         style="color:#a94442;display:none;margin-top:4px;"></p>
+    </div>`;
 }
 
 async function onExcludeHall(
@@ -403,6 +540,36 @@ async function callAction(
     const msg = err instanceof Error ? err.message : String(err);
     Toast.error(msg);
   }
+}
+
+/**
+ * PR 4e.2: pretty-print audit-metadata som nøkkel:verdi-par istedenfor
+ * rå JSON.stringify. Scalar-verdier rendes inline (f.eks.
+ * `excludedHallId: hall-2, reason: hall-closed`). Objekt/array-verdier
+ * faller tilbake til kompakt JSON for å bevare info.
+ */
+function formatAuditMetadata(metadata: Record<string, unknown>): string {
+  if (!metadata || typeof metadata !== "object") return "";
+  const entries = Object.entries(metadata);
+  if (entries.length === 0) return '<small class="text-muted">—</small>';
+  const parts = entries.map(([key, value]) => {
+    const keyHtml = `<span style="color:#666;">${escapeHtml(key)}:</span>`;
+    let valueHtml: string;
+    if (value === null || value === undefined) {
+      valueHtml = '<span class="text-muted">null</span>';
+    } else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      valueHtml = escapeHtml(String(value));
+    } else {
+      // Fallback for objekter/arrays — kompakt JSON.
+      try {
+        valueHtml = `<code>${escapeHtml(JSON.stringify(value))}</code>`;
+      } catch {
+        valueHtml = '<span class="text-muted">[unserializable]</span>';
+      }
+    }
+    return `${keyHtml} ${valueHtml}`;
+  });
+  return `<small>${parts.join("<br>")}</small>`;
 }
 
 function formatIso(iso: string | null | undefined): string {

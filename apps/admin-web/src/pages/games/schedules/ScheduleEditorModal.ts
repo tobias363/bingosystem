@@ -6,6 +6,11 @@
 //
 // Feil fra backend (INVALID_INPUT, FORBIDDEN, NOT_FOUND) overflates via
 // ApiError.message.
+//
+// PR 4e.2 (2026-04-22): lagt til "Eksempel"-knapp som fyller inn minimal
+// JSON-skjema for subGames + "Valider JSON"-knapp som kjører JSON.parse
+// og viser feil/OK-indikator inline. Full strukturert subgames-editor er
+// post-pilot scope (legacy create.html = 5 382L).
 
 import { Modal, type ModalInstance } from "../../../components/Modal.js";
 import { Toast } from "../../../components/Toast.js";
@@ -51,6 +56,23 @@ function setError(form: HTMLElement, message: string | null): void {
   host.style.display = "block";
 }
 
+/**
+ * PR 4e.2: inline status for subGames-validering. Typer:
+ * "ok" = grønn, "error" = rød, "info" = nøytral grå.
+ */
+function setSubgamesStatus(
+  form: HTMLElement,
+  kind: "ok" | "error" | "info",
+  message: string
+): void {
+  const host = form.querySelector<HTMLElement>("#sch-subgames-status");
+  if (!host) return;
+  host.textContent = message;
+  host.style.display = "block";
+  const color = kind === "ok" ? "#3c763d" : kind === "error" ? "#a94442" : "#555";
+  host.style.color = color;
+}
+
 function parseSubGames(raw: string): ScheduleSubgame[] | null {
   const trimmed = raw.trim();
   if (!trimmed) return [];
@@ -84,6 +106,55 @@ export async function openScheduleEditorModal(
 
   const body = document.createElement("div");
   body.innerHTML = renderForm(existing);
+
+  // PR 4e.2: event-handlers for subGames JSON-hjelpe-knapper.
+  const exampleBtn = body.querySelector<HTMLButtonElement>("#sch-subgames-example");
+  if (exampleBtn) {
+    exampleBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const textarea = body.querySelector<HTMLTextAreaElement>("#sch-subgames");
+      if (!textarea) return;
+      // Minimal eksempel — én subgame med typiske felter (gameManagementId +
+      // startTime + endTime). Pilot-bruk kan starte fra dette skjemaet.
+      const example = [
+        {
+          gameManagementId: "<gameManagementId>",
+          startTime: "10:00",
+          endTime: "11:00",
+        },
+      ];
+      textarea.value = JSON.stringify(example, null, 2);
+      setSubgamesStatus(body, "info", t("schedule_subgames_example_inserted"));
+    });
+  }
+  const validateBtn = body.querySelector<HTMLButtonElement>("#sch-subgames-validate");
+  if (validateBtn) {
+    validateBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const textarea = body.querySelector<HTMLTextAreaElement>("#sch-subgames");
+      if (!textarea) return;
+      const raw = textarea.value.trim();
+      if (!raw) {
+        setSubgamesStatus(body, "info", t("schedule_subgames_validate_empty"));
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+          setSubgamesStatus(body, "error", t("schedule_subgames_validate_not_array"));
+          return;
+        }
+        setSubgamesStatus(
+          body,
+          "ok",
+          `${t("schedule_subgames_validate_ok")} (${parsed.length})`
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setSubgamesStatus(body, "error", `${t("schedule_subgames_validate_error")}: ${msg}`);
+      }
+    });
+  }
 
   const validate = (): ScheduleFormPayload | null => {
     setError(body, null);
@@ -220,6 +291,16 @@ function renderForm(existing: ScheduleRow | null): string {
         <label for="sch-subgames">${escapeHtml(t("sub_games"))} (JSON)</label>
         <textarea id="sch-subgames" class="form-control" rows="5"
                   spellcheck="false" style="font-family:monospace;font-size:12px;">${escapeHtml(subgamesJson)}</textarea>
+        <div style="margin-top:4px;">
+          <button type="button" id="sch-subgames-example" class="btn btn-xs btn-default">
+            ${escapeHtml(t("schedule_subgames_example_btn"))}
+          </button>
+          <button type="button" id="sch-subgames-validate" class="btn btn-xs btn-default">
+            ${escapeHtml(t("schedule_subgames_validate_btn"))}
+          </button>
+        </div>
+        <p id="sch-subgames-status" class="help-block"
+           style="display:none;margin-top:4px;font-size:12px;"></p>
         <p class="help-block">${escapeHtml(t("subgames_json_hint"))}</p>
       </div>
       <p id="schedule-editor-error" class="help-block"
