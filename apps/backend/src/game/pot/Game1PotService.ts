@@ -57,9 +57,19 @@ export type PotEventKind =
   | "config";
 
 /**
- * Regel for når en pot utbetales. T1 støtter én variant:
- *   "phase_at_or_before_draw" — phase må matche OG draw-sekvens må være
- *   på eller før threshold.
+ * Regel for når en pot utbetales. Varianter:
+ *
+ * T1 — "phase_at_or_before_draw":
+ *   Phase må matche OG draw-sekvens må være på eller før threshold.
+ *   (Enkelt øvre cap; passer fixed-window-pot.)
+ *
+ * T2 — "progressive_threshold":
+ *   Phase må matche OG draw-sekvens må være innenfor et vindu definert
+ *   av `thresholdLadder` (inklusiv start OG slutt). Mellom-verdiene i
+ *   listen brukes som informative stages for rapportering / admin-UI
+ *   ("hvor lenge har pot stått urørt?"), men selve vindu-sjekken er
+ *   [ladder[0], ladder[last]]. Eksempel: [50,55,56,57] = pot aktiv for
+ *   draw 50..57. Utenfor vinduet → pot står og ruller over til neste spill.
  */
 export interface PotWinRulePhaseAtOrBeforeDraw {
   kind: "phase_at_or_before_draw";
@@ -69,7 +79,21 @@ export interface PotWinRulePhaseAtOrBeforeDraw {
   drawThreshold: number;
 }
 
-export type PotWinRule = PotWinRulePhaseAtOrBeforeDraw;
+export interface PotWinRuleProgressiveThreshold {
+  kind: "progressive_threshold";
+  /** Hvilken fase (1..5). 5 = Fullt Hus. */
+  phase: number;
+  /**
+   * Stigende liste (minst 1 verdi) der `ladder[0]` = nedre vindu-grense og
+   * `ladder[last]` = øvre vindu-grense (begge inklusiv). Mellom-verdiene er
+   * informative stages — påvirker ikke vindu-sjekken i T2.
+   */
+  thresholdLadder: number[];
+}
+
+export type PotWinRule =
+  | PotWinRulePhaseAtOrBeforeDraw
+  | PotWinRuleProgressiveThreshold;
 
 /**
  * PR-T3 Spor 4: Pot-type-diskriminator.
@@ -688,10 +712,13 @@ export class Game1PotService {
           eventId: null,
         };
       }
-      // PR-T3 Innsatsen: nedre vindu-grense (valgfri). Hvis drawThresholdLower
-      // er satt og drawSequence er før den → pot venter (rolls til senere draw
-      // innen øvre grense).
+      // PR-T3 Innsatsen: nedre vindu-grense (valgfri, kun relevant for
+      // `phase_at_or_before_draw`-variant). Hvis drawThresholdLower er satt
+      // og drawSequence er før den → pot venter (rolls til senere draw
+      // innen øvre grense). For `progressive_threshold` bruker vi i stedet
+      // helper-en under (thresholdLadder har egen nedre grense).
       if (
+        rule.kind === "phase_at_or_before_draw" &&
         pot.config.drawThresholdLower !== undefined &&
         input.drawSequenceAtWin < pot.config.drawThresholdLower
       ) {
@@ -703,12 +730,18 @@ export class Game1PotService {
           eventId: null,
         };
       }
-      if (input.drawSequenceAtWin > rule.drawThreshold) {
+      // T1 fixed-threshold vs T2 progressive-window. Evaluér drawSequence mot
+      // riktig vindu for rule-variant.
+      const windowCheck = evaluateDrawSequenceAgainstRule(
+        rule,
+        input.drawSequenceAtWin
+      );
+      if (windowCheck !== "ok") {
         await client.query("COMMIT");
         return {
           triggered: false,
           amountCents: 0,
-          reasonCode: "DRAW_AFTER_THRESHOLD",
+          reasonCode: windowCheck,
           eventId: null,
         };
       }
@@ -1047,10 +1080,16 @@ export function validatePotConfig(config: PotConfig): void {
       );
     }
   }
-  if (!config.winRule || config.winRule.kind !== "phase_at_or_before_draw") {
+  if (!config.winRule || typeof config.winRule !== "object") {
+    throw new DomainError("INVALID_CONFIG", "winRule mangler.");
+  }
+  if (
+    config.winRule.kind !== "phase_at_or_before_draw" &&
+    config.winRule.kind !== "progressive_threshold"
+  ) {
     throw new DomainError(
       "INVALID_CONFIG",
-      "winRule.kind må være 'phase_at_or_before_draw' (T1 støtter kun denne varianten)."
+      "winRule.kind må være 'phase_at_or_before_draw' eller 'progressive_threshold'."
     );
   }
   if (
@@ -1060,15 +1099,42 @@ export function validatePotConfig(config: PotConfig): void {
   ) {
     throw new DomainError("INVALID_CONFIG", "winRule.phase må være 1..5.");
   }
-  if (
-    !Number.isInteger(config.winRule.drawThreshold) ||
-    config.winRule.drawThreshold < 1 ||
-    config.winRule.drawThreshold > 75
-  ) {
-    throw new DomainError(
-      "INVALID_CONFIG",
-      "winRule.drawThreshold må være 1..75."
-    );
+  if (config.winRule.kind === "phase_at_or_before_draw") {
+    if (
+      !Number.isInteger(config.winRule.drawThreshold) ||
+      config.winRule.drawThreshold < 1 ||
+      config.winRule.drawThreshold > 75
+    ) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "winRule.drawThreshold må være 1..75."
+      );
+    }
+  } else {
+    // progressive_threshold
+    const ladder = config.winRule.thresholdLadder;
+    if (!Array.isArray(ladder) || ladder.length === 0) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "winRule.thresholdLadder må være en ikke-tom liste."
+      );
+    }
+    let prev = 0;
+    for (const v of ladder) {
+      if (!Number.isInteger(v) || v < 1 || v > 75) {
+        throw new DomainError(
+          "INVALID_CONFIG",
+          "winRule.thresholdLadder må kun inneholde heltall 1..75."
+        );
+      }
+      if (v <= prev) {
+        throw new DomainError(
+          "INVALID_CONFIG",
+          "winRule.thresholdLadder må være strengt stigende."
+        );
+      }
+      prev = v;
+    }
   }
   if (!Array.isArray(config.ticketColors)) {
     throw new DomainError(
@@ -1106,6 +1172,14 @@ export function validatePotConfig(config: PotConfig): void {
       throw new DomainError(
         "INVALID_CONFIG",
         "drawThresholdLower må være heltall 1..75."
+      );
+    }
+    // `drawThresholdLower` gir bare mening for `phase_at_or_before_draw`-varianten.
+    // `progressive_threshold` har egen nedre grense via `thresholdLadder[0]`.
+    if (config.winRule.kind !== "phase_at_or_before_draw") {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "drawThresholdLower kan kun settes sammen med winRule.kind='phase_at_or_before_draw'."
       );
     }
     if (config.drawThresholdLower > config.winRule.drawThreshold) {
@@ -1160,6 +1234,35 @@ export function computeCappedAdd(
   const room = maxAmountCents - currentCents;
   const applied = Math.min(deltaCents, room);
   return { appliedCents: applied, newBalance: currentCents + applied };
+}
+
+/**
+ * PR-T2: ren evaluator for draw-sekvens vs winRule. Returnerer "ok" eller
+ * en reason-kode som kan mappes direkte til TryWinResult.reasonCode.
+ *
+ * T1 `phase_at_or_before_draw`:
+ *   - Over `drawThreshold` → DRAW_AFTER_THRESHOLD
+ *
+ * T2 `progressive_threshold`:
+ *   - Under `ladder[0]` → DRAW_BEFORE_WINDOW
+ *   - Over `ladder[last]` → DRAW_AFTER_THRESHOLD
+ *   - Innenfor vinduet (inklusiv begge ender) → "ok"
+ */
+export function evaluateDrawSequenceAgainstRule(
+  rule: PotWinRule,
+  drawSequenceAtWin: number
+): "ok" | "DRAW_BEFORE_WINDOW" | "DRAW_AFTER_THRESHOLD" {
+  if (rule.kind === "phase_at_or_before_draw") {
+    return drawSequenceAtWin > rule.drawThreshold
+      ? "DRAW_AFTER_THRESHOLD"
+      : "ok";
+  }
+  // progressive_threshold
+  const first = rule.thresholdLadder[0]!;
+  const last = rule.thresholdLadder[rule.thresholdLadder.length - 1]!;
+  if (drawSequenceAtWin < first) return "DRAW_BEFORE_WINDOW";
+  if (drawSequenceAtWin > last) return "DRAW_AFTER_THRESHOLD";
+  return "ok";
 }
 
 /**

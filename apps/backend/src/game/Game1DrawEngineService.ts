@@ -60,7 +60,7 @@ import type { Game1TicketPurchaseService, Game1TicketPurchaseRow } from "./Game1
 import type { AuditLogService } from "../compliance/AuditLogService.js";
 import type { Game1PayoutService, Game1WinningAssignment } from "./Game1PayoutService.js";
 import type { Game1JackpotService, Game1JackpotConfig } from "./Game1JackpotService.js";
-import type { Game1PotService, PotRow } from "./pot/Game1PotService.js";
+import type { Game1PotService } from "./pot/Game1PotService.js";
 import type { WalletAdapter } from "../adapters/WalletAdapter.js";
 import { evaluateAccumulatingPots } from "./pot/PotEvaluator.js";
 import type { AdminGame1Broadcaster } from "./AdminGame1Broadcaster.js";
@@ -72,6 +72,7 @@ import {
   type OddsenResolveResult,
 } from "./minigames/MiniGameOddsenEngine.js";
 import type { PhysicalTicketPayoutService } from "../compliance/PhysicalTicketPayoutService.js";
+import type { PotDailyAccumulationTickService } from "./pot/PotDailyAccumulationTickService.js";
 import { evaluatePhase, TOTAL_PHASES } from "./Game1PatternEvaluator.js";
 import {
   buildVariantConfigFromSpill1Config,
@@ -161,17 +162,28 @@ export interface Game1DrawEngineServiceOptions {
    */
   physicalTicketPayoutService?: PhysicalTicketPayoutService;
   /**
-   * PR-T3 Spor 4: valgfri akkumulerende pot-service (Jackpott + Innsatsen).
-   * Når wired opp vil engine etter Fullt Hus (phase 5) vunnet kjøre
-   * `evaluateAccumulatingPots(...)` for å evaluere og ev. utbetale
-   * Innsatsen/Jackpott-pot. Hvis ikke satt → ingen pot-evaluering (T1/T2-
+   * PR-T2/T3 Spor 4: valgfri akkumulerende pot-service (Jackpott + Innsatsen).
+   * Når wired opp vil engine etter Fullt Hus (phase 5) vunnet kjøre:
+   *   - T3's `evaluateAccumulatingPots(...)` for generisk pot-evaluering
+   *     (håndterer potType='innsatsen' + 'generic').
+   *   - T2's `evaluateAccumulatingJackpotPots(...)` for jackpott-spesifikk
+   *     sti (progressive_threshold-window + potKey='jackpott').
+   * Begge kalles etter hverandre; hver filtrerer egen potType slik at de
+   * ikke dobbel-krediterer. Hvis ikke satt → ingen pot-evaluering (T1/T2-
    * pot-er står urørt, akkumulerer fortsatt via PotSalesHookPort).
    */
   potService?: Game1PotService;
   /**
-   * PR-T3 Spor 4: wallet-adapter brukt for pot-utbetaling. Påkrevd hvis
-   * `potService` er satt. Utbetaling er alltid `to: "winnings"` (pot-vinn
-   * er gevinst fra spill, ikke refund).
+   * PR-T2 Spor 4: valgfri tick-service for daglig pot-boost. Kalles lazy
+   * fra draw-engine rett før jackpot-evaluering slik at dagens boost er
+   * applisert før saldo leses. Fail-closed (per-pot-feil svelges).
+   */
+  potDailyTickService?: PotDailyAccumulationTickService;
+  /**
+   * PR-T2/T3 Spor 4: WalletAdapter for pot-credit. Påkrevd når potService
+   * er satt. Pot-utbetaling er alltid `to: "winnings"` (pot-vinn er gevinst
+   * fra spill, ikke refund). Brukes av BÅDE T3's generiske evaluator og
+   * T2's jackpott-evaluator.
    */
   walletAdapter?: WalletAdapter;
 }
@@ -361,15 +373,23 @@ export class Game1DrawEngineService {
   private oddsenEngine: MiniGameOddsenEngine | null;
   private physicalTicketPayoutService: PhysicalTicketPayoutService | null;
   /**
-   * PR-T3 Spor 4: pot-service (Jackpott + Innsatsen). Valgfri — hvis ikke
-   * wired opp hopper engine over pot-evaluering.
+   * PR-T2/T3 Spor 4: akkumulerende pot-service (Jackpott + Innsatsen).
+   * Valgfri — hvis ikke wired opp hopper engine over pot-evaluering.
+   * Ikke `readonly` så late-binding via `setPotService` (T2) er mulig.
    */
-  private readonly potService: Game1PotService | null;
+  private potService: Game1PotService | null;
   /**
-   * PR-T3 Spor 4: wallet-adapter for pot-payout. Kun brukt når potService
-   * er satt. Pot-utbetaling kjører `to: "winnings"` (gevinst fra spill).
+   * PR-T2 Spor 4: tick-service for daglig pot-boost. Kalles lazy fra
+   * jackpot-evaluering FØR tryWin slik at dagens boost er applisert.
    */
-  private readonly walletAdapter: WalletAdapter | null;
+  private potDailyTickService: PotDailyAccumulationTickService | null;
+  /**
+   * PR-T2/T3 Spor 4: wallet-adapter for pot-payout. Kun brukt når
+   * potService er satt. Pot-utbetaling kjører `to: "winnings"` (gevinst
+   * fra spill). Brukes av BÅDE T3's evaluateAccumulatingPots og T2's
+   * evaluateAccumulatingJackpotPots.
+   */
+  private walletAdapter: WalletAdapter | null;
 
   constructor(options: Game1DrawEngineServiceOptions) {
     this.pool = options.pool;
@@ -391,14 +411,33 @@ export class Game1DrawEngineService {
     this.oddsenEngine = options.oddsenEngine ?? null;
     this.physicalTicketPayoutService = options.physicalTicketPayoutService ?? null;
     this.potService = options.potService ?? null;
+    this.potDailyTickService = options.potDailyTickService ?? null;
     this.walletAdapter = options.walletAdapter ?? null;
-    // Fail-closed: hvis potService wired uten walletAdapter → ugyldig konfig.
+    // PR-T3 Spor 4: fail-closed — hvis potService wired ved konstruksjon uten
+    // walletAdapter → ugyldig konfig. (Late-binding via setters er unntak for
+    // test-oppsett og sirkulær wiring; der ansvarliggjøres caller for å sette
+    // begge før første draw.)
     if (this.potService !== null && this.walletAdapter === null) {
       throw new DomainError(
         "INVALID_CONFIG",
         "potService krever også walletAdapter i Game1DrawEngineService."
       );
     }
+  }
+
+  /** PR-T2: late-binding for Game1PotService (unngå sirkulær wiring). */
+  setPotService(svc: Game1PotService): void {
+    this.potService = svc;
+  }
+
+  /** PR-T2: late-binding for PotDailyAccumulationTickService. */
+  setPotDailyTickService(svc: PotDailyAccumulationTickService): void {
+    this.potDailyTickService = svc;
+  }
+
+  /** PR-T2: late-binding for WalletAdapter (pot-credit). */
+  setWalletAdapter(adapter: WalletAdapter): void {
+    this.walletAdapter = adapter;
   }
 
   /** PT4: late-binding for physical-ticket payout service (unngå sirkulær wiring). */
@@ -1646,12 +1685,171 @@ export class Game1DrawEngineService {
       }
     }
 
+    // PR-T2 Spor 4 (samme hook som per-color-path).
+    await this.evaluateAccumulatingJackpotPots(
+      scheduledGameId,
+      currentPhase,
+      drawSequenceAtWin,
+      winners
+    );
+
     return {
       phaseWon: true,
       winnerCount: winners.length,
       winnerIds,
       physicalWinners,
     };
+  }
+
+  /**
+   * PR-T2 Spor 4: evaluér akkumulerende Jackpott-pot-er etter Fullt Hus.
+   *
+   * Kontrakt:
+   *   - Kalles kun etter fase-payout (både per-color + flat-path) slik at
+   *     ordinær phase-utbetaling aldri blokkeres av pot-feil.
+   *   - Kjører BARE når currentPhase === 5 (Fullt Hus). Andre faser ignoreres.
+   *   - Bruker vinnerens egen hallId for å slå opp hallens "jackpott"-pot.
+   *   - Én vinner per hall tar hele pot-en (BINGO-claim-orden = array-orden fra
+   *     assignments-SELECT). Etterfølgende vinnere i samme hall får POT_EMPTY
+   *     (T1-kontrakt: tryWin returnerer triggered=false når saldo=0).
+   *   - Lazy-kaller `potDailyTickService.ensureDailyAccumulatedForHall` hvis
+   *     satt, slik at dagens boost er applisert før pot-saldo leses.
+   *   - Wallet-credit bruker idempotency-key `g1-jackpot-{hallId}-{gameId}` →
+   *     retries av draw-en kan ikke dobbel-kreditere samme vinner.
+   *
+   * Fail-closed:
+   *   - Alle feil (tryWin, wallet.credit, audit) svelges og loggres ERROR. Draw-
+   *     transaksjonen fortsetter. Mismatch mellom pot_events ("win"-rad) og
+   *     wallet_transactions er synlig for admin og må fikses manuelt. Dette er
+   *     safer enn å rulle tilbake draw-en (som ville annullere fase-payout for
+   *     andre vinnere).
+   */
+  private async evaluateAccumulatingJackpotPots(
+    scheduledGameId: string,
+    currentPhase: number,
+    drawSequenceAtWin: number,
+    winners: Array<Game1WinningAssignment & { userId: string }>
+  ): Promise<void> {
+    if (currentPhase !== 5) return;
+    if (!this.potService) return;
+    if (winners.length === 0) return;
+
+    // Første vinner per hall (array-orden = BINGO-claim-orden).
+    const firstWinnerPerHall = new Map<string, typeof winners[number]>();
+    for (const w of winners) {
+      if (!firstWinnerPerHall.has(w.hallId)) {
+        firstWinnerPerHall.set(w.hallId, w);
+      }
+    }
+
+    for (const [hallId, winner] of firstWinnerPerHall) {
+      try {
+        // Lazy daily-boost (hvis service er wired).
+        if (this.potDailyTickService) {
+          try {
+            await this.potDailyTickService.ensureDailyAccumulatedForHall(
+              hallId
+            );
+          } catch (err) {
+            log.warn(
+              { err, hallId, scheduledGameId },
+              "[PR-T2] ensureDailyAccumulatedForHall feilet — fortsetter"
+            );
+          }
+        }
+
+        const result = await this.potService.tryWin({
+          hallId,
+          potKey: "jackpott",
+          phase: 5,
+          drawSequenceAtWin,
+          ticketColor: winner.ticketColor,
+          winnerUserId: winner.userId,
+          scheduledGameId,
+        });
+
+        if (!result.triggered) {
+          // Ikke utløst — loggre reason for observability, fortsett.
+          log.debug(
+            {
+              hallId,
+              scheduledGameId,
+              drawSequenceAtWin,
+              reasonCode: result.reasonCode,
+            },
+            "[PR-T2] Jackpott ikke utløst"
+          );
+          continue;
+        }
+
+        // Utløst → krediter vinner. Fail-closed: én credit-feil svelges (pot
+        // er allerede decremented via T1-commit; admin må evt manuell-refund).
+        if (this.walletAdapter && result.amountCents > 0) {
+          try {
+            await this.walletAdapter.credit(
+              winner.walletId,
+              potCentsToKroner(result.amountCents),
+              `Spill 1 Jackpott — spill ${scheduledGameId}`,
+              {
+                to: "winnings",
+                idempotencyKey: `g1-jackpot-${hallId}-${scheduledGameId}`,
+              }
+            );
+          } catch (err) {
+            log.error(
+              {
+                err,
+                hallId,
+                scheduledGameId,
+                winnerUserId: winner.userId,
+                walletId: winner.walletId,
+                amountCents: result.amountCents,
+                eventId: result.eventId,
+              },
+              "[PR-T2] Jackpott-credit FEILET etter pot-utløsning — krever manuell admin-refund"
+            );
+          }
+        }
+
+        // Admin-audit (fire-and-forget).
+        this.audit
+          .record({
+            actorId: null,
+            actorType: "SYSTEM",
+            action: "game1.jackpot_won",
+            resource: "game1_pot",
+            resourceId: result.eventId,
+            details: {
+              hallId,
+              scheduledGameId,
+              winnerUserId: winner.userId,
+              assignmentId: winner.assignmentId,
+              amountCents: result.amountCents,
+              drawSequenceAtWin,
+              potKey: "jackpott",
+            },
+          })
+          .catch((err) => {
+            log.warn({ err }, "[PR-T2] Jackpott audit-log feilet");
+          });
+
+        log.info(
+          {
+            hallId,
+            scheduledGameId,
+            winnerUserId: winner.userId,
+            amountCents: result.amountCents,
+            drawSequenceAtWin,
+          },
+          "[PR-T2] Jackpott utløst og kreditert"
+        );
+      } catch (err) {
+        log.error(
+          { err, hallId, scheduledGameId, drawSequenceAtWin },
+          "[PR-T2] Jackpott-evaluering krasjet for hall — fortsetter med neste"
+        );
+      }
+    }
   }
 
   /**
@@ -2616,4 +2814,9 @@ function buildMarkingsFromGrid(
     }
   }
   return out;
+}
+
+/** PR-T2 Spor 4: lokal øre→kroner-konvertering (speil av Game1PayoutService-helper). */
+function potCentsToKroner(cents: number): number {
+  return Math.round(cents) / 100;
 }
