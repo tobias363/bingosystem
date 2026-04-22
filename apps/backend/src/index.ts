@@ -163,6 +163,7 @@ import { createAdminUsersRouter } from "./routes/adminUsers.js";
 import { createAdminPlayerActivityRouter } from "./routes/adminPlayerActivity.js";
 import { createGameRouter } from "./routes/game.js";
 import { createGameEventHandlers } from "./sockets/gameEvents.js";
+import { createGame1ScheduledEventHandlers } from "./sockets/game1ScheduledEvents.js";
 import { initSentry, setSocketSentryContext, addBreadcrumb, captureError, flushSentry } from "./observability/sentry.js";
 import { errorReporter } from "./middleware/errorReporter.js";
 import { PostgresChatMessageStore, type ChatMessageStore } from "./store/ChatMessageStore.js";
@@ -1721,10 +1722,23 @@ const registerAdminHallEvents = createAdminHallHandlers({
   engine, platformService, io, emitRoomUpdate, walletAdapter,
 });
 
+// GAME1_SCHEDULE PR 4d.2: Spill 1-spesifikk socket-handler — isolert fra
+// gameEvents.ts for å skille schedulert-Spill-1-flyt fra ad-hoc-rom.
+const registerGame1ScheduledEvents = createGame1ScheduledEventHandlers({
+  pool: platformService.getPool(),
+  engine,
+  game1DrawEngine: game1DrawEngineService,
+  platformService,
+  socketRateLimiter,
+  emitRoomUpdate,
+  bindDefaultVariantConfig: (code, slug) => roomState.bindDefaultVariantConfig(code, slug),
+});
+
 io.on("connection", (socket: Socket) => {
   registerGameEvents(socket);
   registerAdminDisplayEvents(socket);
   registerAdminHallEvents(socket);
+  registerGame1ScheduledEvents(socket);
 });
 
 // ── Debug/test endpoint — room gap detection (localhost-only) ─────────────────

@@ -35,6 +35,16 @@ export {
   PatternDefinitionSchema,
   PatternResultSchema,
 } from "./schemas.js";
+
+// GAME1_SCHEDULE PR 4d.2: re-export player-join schemas for scheduled games.
+export {
+  Game1JoinScheduledPayloadSchema,
+  Game1JoinScheduledAckDataSchema,
+} from "./schemas.js";
+export type {
+  Game1JoinScheduledPayload,
+  Game1JoinScheduledAckData,
+} from "./schemas.js";
 import type {
   RoomUpdatePayload as RoomUpdatePayloadT,
   DrawNewPayload as DrawNewPayloadT,
