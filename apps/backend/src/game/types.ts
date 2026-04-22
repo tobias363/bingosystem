@@ -32,10 +32,17 @@ export interface PatternDefinition {
    */
   prize1?: number;
   /**
-   * BIN-615 / PR-C1: G3 — prize-calculation variant.
-   * "percent" = prizePercent of pool (default). "fixed" = prizePercent is a fixed kr amount.
+   * Prize-calculation variant.
+   *   - "percent" (default): prizePercent of pool.
+   *   - "fixed":             prize1 is flat kr.
+   *   - "multiplier-chain"   (BIN-687 / PR-P2): phase 1 = percent with floor;
+   *                          phase N = phase1Base × phase1Multiplier with floor.
    */
-  winningType?: "percent" | "fixed";
+  winningType?: "percent" | "fixed" | "multiplier-chain";
+  /** BIN-687 / PR-P2: multiplier of phase-1 base prize. Only on phase > 1. */
+  phase1Multiplier?: number;
+  /** BIN-687 / PR-P2: minimum phase prize in kr (gulv). */
+  minPrize?: number;
 }
 
 export interface PatternResult {

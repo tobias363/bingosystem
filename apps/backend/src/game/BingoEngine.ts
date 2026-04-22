@@ -1054,20 +1054,86 @@ export class BingoEngine {
     let firstWinnerId = "";
     const allWinnerIds: string[] = [];
 
+    // BIN-687 / PR-P2: cache for multiplier-chain phase-1 base price per
+    // color. Computed on-demand when first phase > 1 pattern is payouts.
+    // Key = groupKey (FLAT_GROUP_KEY for flat-path, color-name for per-color).
+    // Value = phase-1 base prize in kr AFTER minPrize-floor applied — so
+    // multiplier-chain-phase-N cascade bygger på gulv-justert base (samsvar
+    // med papir-regelen: "Rad 2 min 50 kr" gjelder også når fase 1 ble
+    // gulv-justert).
+    const phase1BaseCache = new Map<string, number>();
+    const computePhase1Base = (
+      groupKey: string,
+      patterns: readonly PatternConfig[] | null
+    ): number => {
+      const cached = phase1BaseCache.get(groupKey);
+      if (cached !== undefined) return cached;
+      // Flat-path (patterns=null): bruk game.patterns[0] som fase-1-kilde.
+      // Per-color: bruk patterns[0] fra fargens matrise.
+      const phase1 = patterns
+        ? patterns[0]
+        : (game.patterns?.[0] ?? null);
+      if (!phase1) {
+        phase1BaseCache.set(groupKey, 0);
+        return 0;
+      }
+      const rawPhase1 = Math.floor(
+        game.prizePool * (phase1.prizePercent ?? 0) / 100
+      );
+      const base = Math.max(rawPhase1, phase1.minPrize ?? 0);
+      phase1BaseCache.set(groupKey, base);
+      return base;
+    };
+
     for (const [groupKey, group] of winnerGroups.byColor) {
       const winnerIds = [...group.playerIds];
       if (winnerIds.length === 0) continue;
 
       // Resolve prize for this color. flat-path bruker activePattern direkte.
-      const prizeSource: { winningType?: "percent" | "fixed"; prize1?: number; prizePercent: number; name: string } =
+      const prizeSource: {
+        winningType?: "percent" | "fixed" | "multiplier-chain";
+        prize1?: number;
+        prizePercent: number;
+        name: string;
+        phase1Multiplier?: number;
+        minPrize?: number;
+      } =
         hasPerColorMatrix && group.patternForColor
           ? group.patternForColor
           : activePattern;
 
-      const isFixed = prizeSource.winningType === "fixed";
-      const totalPhasePrize = isFixed
-        ? Math.max(0, prizeSource.prize1 ?? 0)
-        : Math.floor(game.prizePool * (prizeSource.prizePercent ?? 0) / 100);
+      // BIN-687 / PR-P2: resolve color-specific phase-1 base for
+      // multiplier-chain lookups. For flat-path, patterns=null → cache
+      // uses game.patterns[0]; for per-color, patterns from
+      // resolvePatternsForColor for denne fargen.
+      const colorPatternsForPhase1 = hasPerColorMatrix
+        ? resolvePatternsForColor(
+            this.variantConfigByRoom.get(room.code)!,
+            groupKey === FLAT_GROUP_KEY ? "" : groupKey
+          )
+        : null;
+
+      let totalPhasePrize: number;
+      if (prizeSource.winningType === "fixed") {
+        totalPhasePrize = Math.max(0, prizeSource.prize1 ?? 0);
+      } else if (prizeSource.winningType === "multiplier-chain") {
+        // Fase 1 identifiseres ved fravær av phase1Multiplier-felt (undefined).
+        // I så fall bruker vi percent + gulv. For fase N > 1: phase1Base ×
+        // multiplier med egen gulv. Admin-valideringen i Spill1Config avviser
+        // phase1Multiplier === 0 så engine slipper å håndtere edge-casen.
+        const isPhase1 = prizeSource.phase1Multiplier === undefined;
+        const basePrize = isPhase1
+          ? Math.floor(game.prizePool * (prizeSource.prizePercent ?? 0) / 100)
+          : Math.floor(
+              computePhase1Base(groupKey, colorPatternsForPhase1) *
+                prizeSource.phase1Multiplier!
+            );
+        totalPhasePrize = Math.max(basePrize, prizeSource.minPrize ?? 0);
+      } else {
+        totalPhasePrize = Math.floor(
+          game.prizePool * (prizeSource.prizePercent ?? 0) / 100
+        );
+      }
       // Floor division — any remainder stays with the house (house-rounding).
       const prizePerWinner = Math.floor(totalPhasePrize / winnerIds.length);
 

@@ -52,10 +52,26 @@ export interface PatternConfig {
    */
   prize1?: number;
   /**
-   * BIN-615 / PR-C3b: G3 — prize-calculation variant. "percent" = prizePercent
-   * of pool (default). "fixed" = prize1 is a fixed kr amount.
+   * BIN-615 / PR-C3b: G3 — prize-calculation variant.
+   *   - "percent" (default): prizePercent of pool
+   *   - "fixed":             prize1 is a flat kr amount
+   *   - "multiplier-chain"   (BIN-687 / PR-P2 Spillernes spill):
+   *       phase 1 = pool × prizePercent / 100 (min `minPrize`)
+   *       phase N = phase1Base × phase1Multiplier (min `minPrize`)
    */
-  winningType?: "percent" | "fixed";
+  winningType?: "percent" | "fixed" | "multiplier-chain";
+  /**
+   * BIN-687 / PR-P2: multiplier of phase-1 base prize. Only used when
+   * `winningType === "multiplier-chain"` AND pattern is NOT phase 1.
+   * Spillernes spill: Rad N = Rad 1 × N.
+   */
+  phase1Multiplier?: number;
+  /**
+   * BIN-687 / PR-P2: minimum phase prize in kr (gulv). Gjelder alle
+   * winningType-moduser — hvis beregnet totalPhasePrize < minPrize,
+   * brukes minPrize. Matcher enhet med `prize1` og `prizePool`.
+   */
+  minPrize?: number;
 }
 
 // ── Full variant config ───────────────────────────────────────────────────────
@@ -448,7 +464,18 @@ export function patternConfigToDefinitions(patterns: PatternConfig[]): PatternDe
     // Game3Engine.buildCycler() can read it without re-resolving the variantConfig.
     if (typeof p.ballNumberThreshold === "number") def.ballNumberThreshold = p.ballNumberThreshold;
     if (typeof p.prize1 === "number") def.prize1 = p.prize1;
-    if (p.winningType === "percent" || p.winningType === "fixed") def.winningType = p.winningType;
+    if (
+      p.winningType === "percent" ||
+      p.winningType === "fixed" ||
+      p.winningType === "multiplier-chain"
+    ) {
+      def.winningType = p.winningType;
+    }
+    // BIN-687 / PR-P2: propagate multiplier-chain metadata into PatternDefinition
+    // so BingoEngine.evaluateActivePhase can read the per-phase parameters
+    // without re-resolving the variantConfig at payout time.
+    if (typeof p.phase1Multiplier === "number") def.phase1Multiplier = p.phase1Multiplier;
+    if (typeof p.minPrize === "number") def.minPrize = p.minPrize;
     return def;
   });
 }

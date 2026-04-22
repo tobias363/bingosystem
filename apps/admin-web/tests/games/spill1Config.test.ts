@@ -525,3 +525,134 @@ describe("buildSpill1Payload: miniGames passerer gjennom", () => {
     expect(p.config.spill1.miniGames).toEqual([]);
   });
 });
+
+// ── BIN-687 / PR-P2: multiplier-chain-modus (Spillernes spill) ────────────
+
+describe("validateSpill1Config — multiplier-chain-modus", () => {
+  it("godtar fase 1 percent-base + fase 2-5 multiplier-chain", () => {
+    const c = validConfig();
+    c.ticketColors = [
+      {
+        color: "small_yellow",
+        priceNok: 50,
+        prizePerPattern: {
+          row_1: {
+            mode: "multiplier-chain",
+            amount: 3, // 3 % av pot
+            minPrizeNok: 50,
+          },
+          row_2: {
+            mode: "multiplier-chain",
+            amount: 0,
+            phase1Multiplier: 2,
+            minPrizeNok: 50,
+          },
+          row_3: {
+            mode: "multiplier-chain",
+            amount: 0,
+            phase1Multiplier: 3,
+            minPrizeNok: 100,
+          },
+          row_4: {
+            mode: "multiplier-chain",
+            amount: 0,
+            phase1Multiplier: 4,
+            minPrizeNok: 100,
+          },
+          full_house: {
+            mode: "multiplier-chain",
+            amount: 0,
+            phase1Multiplier: 10,
+            minPrizeNok: 500,
+          },
+        },
+      },
+    ];
+    expect(validateSpill1Config(c, "Spillernes")).toEqual({ ok: true });
+  });
+
+  it("avviser fase 1 multiplier-chain percent > 100", () => {
+    const c = validConfig();
+    c.ticketColors[0]!.prizePerPattern = {
+      row_1: { mode: "multiplier-chain", amount: 150, minPrizeNok: 50 },
+    };
+    const result = validateSpill1Config(c, "Test");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some((e) =>
+          /multiplier_chain_phase1_percent/.test(e.message)
+        )
+      ).toBe(true);
+    }
+  });
+
+  it("avviser fase N med multiplier ≤ 0", () => {
+    const c = validConfig();
+    c.ticketColors[0]!.prizePerPattern = {
+      row_1: { mode: "multiplier-chain", amount: 3, minPrizeNok: 50 },
+      row_2: {
+        mode: "multiplier-chain",
+        amount: 0,
+        phase1Multiplier: 0, // ugyldig
+        minPrizeNok: 50,
+      },
+    };
+    const result = validateSpill1Config(c, "Test");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some((e) => /multiplier_chain_multiplier/.test(e.message))
+      ).toBe(true);
+    }
+  });
+
+  it("avviser negativt minPrizeNok", () => {
+    const c = validConfig();
+    c.ticketColors[0]!.prizePerPattern = {
+      row_1: { mode: "multiplier-chain", amount: 3, minPrizeNok: -50 },
+    };
+    const result = validateSpill1Config(c, "Test");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some((e) => /min_must_be_non_negative/.test(e.message))
+      ).toBe(true);
+    }
+  });
+
+  it("multiplier-chain fase 1 (percent) + andre percent-faser må summere ≤ 100", () => {
+    const c = validConfig();
+    c.ticketColors[0]!.prizePerPattern = {
+      // Fase 1 multiplier-chain (3%) + fase 2 percent (98%) = 101 → avvist.
+      row_1: { mode: "multiplier-chain", amount: 3, minPrizeNok: 50 },
+      row_2: { mode: "percent", amount: 98 },
+    };
+    const result = validateSpill1Config(c, "Test");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(
+        result.errors.some((e) =>
+          /must_be_less_or_equal_to_100/.test(e.message)
+        )
+      ).toBe(true);
+    }
+  });
+
+  it("multiplier-chain fase N (uten amount-sum-bidrag) blandet med percent OK", () => {
+    const c = validConfig();
+    c.ticketColors[0]!.prizePerPattern = {
+      // Fase 1 multiplier-chain 5% + fase 2-5 multiplier (ingen prosent-bidrag) +
+      // full_house percent 50% = 55% totalt → OK.
+      row_1: { mode: "multiplier-chain", amount: 5, minPrizeNok: 50 },
+      row_2: {
+        mode: "multiplier-chain",
+        amount: 0,
+        phase1Multiplier: 2,
+        minPrizeNok: 50,
+      },
+      full_house: { mode: "percent", amount: 50 },
+    };
+    expect(validateSpill1Config(c, "Test")).toEqual({ ok: true });
+  });
+});

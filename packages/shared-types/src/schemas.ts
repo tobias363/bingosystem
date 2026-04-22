@@ -77,11 +77,25 @@ export const PatternDefinitionSchema = z.object({
   design: z.number().int(),
   /**
    * Admin-configurable prize mode per pattern.
-   * "percent" uses prizePercent of pool; "fixed" uses prize1 as flat kr.
+   * - "percent": prizePercent of pool.
+   * - "fixed":   flat prize1 kr amount.
+   * - "multiplier-chain" (BIN-687): phase 1 = percent-of-pool with
+   *   minPrizeCents floor; phase N = phase1Base × phase1Multiplier with
+   *   own minPrizeCents floor.
    */
-  winningType: z.enum(["percent", "fixed"]).optional(),
+  winningType: z.enum(["percent", "fixed", "multiplier-chain"]).optional(),
   /** Flat kr amount when winningType === "fixed". */
   prize1: z.number().optional(),
+  /**
+   * BIN-687 / PR-P2: multiplier of phase-1 base prize. Only used with
+   * `winningType: "multiplier-chain"` on phase > 1.
+   */
+  phase1Multiplier: z.number().positive().optional(),
+  /**
+   * BIN-687 / PR-P2: minimum prize floor in kr per phase (matches prize1
+   * and prizePool unit).
+   */
+  minPrize: z.number().nonnegative().optional(),
 });
 
 export const PatternResultSchema = z.object({
