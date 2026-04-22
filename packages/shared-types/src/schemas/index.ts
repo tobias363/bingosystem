@@ -10,3 +10,4 @@
 // Subfiler legges til i etterfølgende commits (PR-R3 step 2..N).
 
 export * from "./payments.js";
+export * from "./game.js";
