@@ -60,6 +60,9 @@ import type { Game1TicketPurchaseService, Game1TicketPurchaseRow } from "./Game1
 import type { AuditLogService } from "../compliance/AuditLogService.js";
 import type { Game1PayoutService, Game1WinningAssignment } from "./Game1PayoutService.js";
 import type { Game1JackpotService, Game1JackpotConfig } from "./Game1JackpotService.js";
+import type { Game1PotService, PotRow } from "./pot/Game1PotService.js";
+import type { WalletAdapter } from "../adapters/WalletAdapter.js";
+import { evaluateAccumulatingPots } from "./pot/PotEvaluator.js";
 import type { AdminGame1Broadcaster } from "./AdminGame1Broadcaster.js";
 import type { Game1MiniGameOrchestrator } from "./minigames/Game1MiniGameOrchestrator.js";
 import {
@@ -157,6 +160,20 @@ export interface Game1DrawEngineServiceOptions {
    * uten papirbong-pilot).
    */
   physicalTicketPayoutService?: PhysicalTicketPayoutService;
+  /**
+   * PR-T3 Spor 4: valgfri akkumulerende pot-service (Jackpott + Innsatsen).
+   * Når wired opp vil engine etter Fullt Hus (phase 5) vunnet kjøre
+   * `evaluateAccumulatingPots(...)` for å evaluere og ev. utbetale
+   * Innsatsen/Jackpott-pot. Hvis ikke satt → ingen pot-evaluering (T1/T2-
+   * pot-er står urørt, akkumulerer fortsatt via PotSalesHookPort).
+   */
+  potService?: Game1PotService;
+  /**
+   * PR-T3 Spor 4: wallet-adapter brukt for pot-utbetaling. Påkrevd hvis
+   * `potService` er satt. Utbetaling er alltid `to: "winnings"` (pot-vinn
+   * er gevinst fra spill, ikke refund).
+   */
+  walletAdapter?: WalletAdapter;
 }
 
 // ── Internal row shapes ─────────────────────────────────────────────────────
@@ -343,6 +360,16 @@ export class Game1DrawEngineService {
   private miniGameOrchestrator: Game1MiniGameOrchestrator | null;
   private oddsenEngine: MiniGameOddsenEngine | null;
   private physicalTicketPayoutService: PhysicalTicketPayoutService | null;
+  /**
+   * PR-T3 Spor 4: pot-service (Jackpott + Innsatsen). Valgfri — hvis ikke
+   * wired opp hopper engine over pot-evaluering.
+   */
+  private readonly potService: Game1PotService | null;
+  /**
+   * PR-T3 Spor 4: wallet-adapter for pot-payout. Kun brukt når potService
+   * er satt. Pot-utbetaling kjører `to: "winnings"` (gevinst fra spill).
+   */
+  private readonly walletAdapter: WalletAdapter | null;
 
   constructor(options: Game1DrawEngineServiceOptions) {
     this.pool = options.pool;
@@ -363,6 +390,15 @@ export class Game1DrawEngineService {
     this.miniGameOrchestrator = options.miniGameOrchestrator ?? null;
     this.oddsenEngine = options.oddsenEngine ?? null;
     this.physicalTicketPayoutService = options.physicalTicketPayoutService ?? null;
+    this.potService = options.potService ?? null;
+    this.walletAdapter = options.walletAdapter ?? null;
+    // Fail-closed: hvis potService wired uten walletAdapter → ugyldig konfig.
+    if (this.potService !== null && this.walletAdapter === null) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "potService krever også walletAdapter i Game1DrawEngineService."
+      );
+    }
   }
 
   /** PT4: late-binding for physical-ticket payout service (unngå sirkulær wiring). */
@@ -1560,31 +1596,55 @@ export class Game1DrawEngineService {
         variantConfig,
         jackpotCfg
       );
-      return {
-        phaseWon: true,
-        winnerCount: winners.length,
-        winnerIds,
-        physicalWinners,
-      };
+    } else {
+      // Flat-path (bakoverkompat): én global pott fordelt likt. Jackpot-
+      // routing bruker hver vinners egen farge (Bug 2-fix).
+      const resolved = resolvePhaseConfig(ticketConfigJson, currentPhase);
+      const totalPhasePrizeCents =
+        resolved.kind === "percent"
+          ? Math.floor((potCents * resolved.percent) / 100)
+          : resolved.amountCents;
+
+      await this.payoutFlatPathWithPerWinnerJackpot(
+        client,
+        scheduledGameId,
+        currentPhase,
+        drawSequenceAtWin,
+        winners,
+        totalPhasePrizeCents,
+        jackpotCfg
+      );
     }
 
-    // Flat-path (bakoverkompat): én global pott fordelt likt. Jackpot-
-    // routing bruker hver vinners egen farge (Bug 2-fix).
-    const resolved = resolvePhaseConfig(ticketConfigJson, currentPhase);
-    const totalPhasePrizeCents =
-      resolved.kind === "percent"
-        ? Math.floor(potCents * resolved.percent / 100)
-        : resolved.amountCents;
-
-    await this.payoutFlatPathWithPerWinnerJackpot(
-      client,
-      scheduledGameId,
-      currentPhase,
-      drawSequenceAtWin,
-      winners,
-      totalPhasePrizeCents,
-      jackpotCfg
-    );
+    // PR-T3 Spor 4: evaluér akkumulerende pot-er (Innsatsen + Jackpott).
+    // Kjøres kun når Fullt Hus er vunnet — ingen av pot-typene utløses før
+    // phase 5. Inne i draw-transaksjonen → pot-payout-feil ruller tilbake
+    // hele draw-en (§11 fail-closed).
+    //
+    // Første vinner i winners-listen får hele potten (PM-vedtak: ingen
+    // split for pot-vinn — T3-brief §Del 2 "Innsatsen-spesifikk sti").
+    if (currentPhase === TOTAL_PHASES && this.potService && winners.length > 0) {
+      try {
+        await evaluateAccumulatingPots({
+          client,
+          potService: this.potService,
+          walletAdapter: this.walletAdapter!,
+          hallId: winners[0]!.hallId,
+          scheduledGameId,
+          drawSequenceAtWin,
+          firstWinner: winners[0]!,
+          audit: this.audit,
+        });
+      } catch (err) {
+        // Pot-evaluerings-feil er regulatorisk kritisk — rull hele draw-en
+        // tilbake slik at en half-credit-tilstand aldri blir persistert.
+        log.error(
+          { err, scheduledGameId, drawSequenceAtWin, hallId: winners[0]!.hallId },
+          "[PR-T3] evaluateAccumulatingPots kastet — draw-transaksjon ruller tilbake"
+        );
+        throw err;
+      }
+    }
 
     return {
       phaseWon: true,
