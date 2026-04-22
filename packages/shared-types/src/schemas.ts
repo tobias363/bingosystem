@@ -1811,3 +1811,32 @@ export const FaqListResponseSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 export type FaqListResponse = z.infer<typeof FaqListResponseSchema>;
+
+// ── GAME1_SCHEDULE PR 4d.2: socket player-join for schedulert Spill 1 ───────
+// Spec: docs/architecture/GAME1_PR4D_SOCKET_REALTIME_DESIGN_2026-04-21.md §3.3.
+// Spiller joiner en schedulert Spill 1-økt via scheduled_game_id — server
+// slår opp/oppretter BingoEngine-rom og returnerer standard snapshot-ack.
+
+export const Game1JoinScheduledPayloadSchema = z.object({
+  /** UUID av raden i app_game1_scheduled_games. */
+  scheduledGameId: z.string().min(1),
+  /** accessToken-format matcher eksisterende room:create/room:join. */
+  accessToken: z.string().min(1),
+  /** Hallen spilleren spiller fra — må være i participating_halls_json. */
+  hallId: z.string().min(1),
+  /** Display-navn på spilleren (matcher CreateRoomInput.playerName). */
+  playerName: z.string().min(1).max(50),
+});
+export type Game1JoinScheduledPayload = z.infer<typeof Game1JoinScheduledPayloadSchema>;
+
+/**
+ * Ack returnert av `game1:join-scheduled`. Formen matcher eksisterende
+ * `room:create`/`room:join` så klient-bridge ikke trenger ny parser.
+ * `snapshot` er samme `RoomSnapshotSchema`-shape som øvrige ack-er.
+ */
+export const Game1JoinScheduledAckDataSchema = z.object({
+  roomCode: z.string().min(1),
+  playerId: z.string().min(1),
+  snapshot: RoomSnapshotSchema,
+});
+export type Game1JoinScheduledAckData = z.infer<typeof Game1JoinScheduledAckDataSchema>;
