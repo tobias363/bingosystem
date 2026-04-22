@@ -1,6 +1,27 @@
 import { Container, Graphics, Text } from "pixi.js";
 import gsap from "gsap";
-import type { MiniGameActivatedPayload, MiniGamePlayResult } from "@spillorama/shared-types/socket-events";
+
+/**
+ * BIN-690 PR-M6: Treasure Chest overlay — wired to M6 protocol.
+ *
+ * Trigger payload (from M3 MiniGameChestEngine):
+ *   `{ chestCount: number, prizeRange: {minNok, maxNok}, hasDiscreteTiers: boolean }`
+ *
+ * Choice payload: `{ chosenIndex: number }`
+ *
+ * Result payload:
+ *   `{ chosenIndex, prizeAmountKroner, allValuesKroner: number[], chestCount }`
+ *
+ * Critical anti-juks property: the trigger payload does NOT include the
+ * actual prize values per chest — only the range. Values arrive in the
+ * result after the server has picked them server-side. The overlay renders
+ * N closed chests labelled only by index; values appear in `animateResult`.
+ *
+ * Unity parity (visuals unchanged):
+ *   - `TreasureChestPanel.cs:107` — auto-select after countdown (10 s)
+ *   - `TreasureChestPanel.cs:611` — 12 s auto-back after reveal
+ *   - `TreasureChestPanel.cs:633,643` — pause-hook on countdowns
+ */
 
 const CHEST_COLORS = {
   closed: 0x8b4513,
@@ -10,53 +31,58 @@ const CHEST_COLORS = {
   winner: 0xffe83d,
 };
 
-/** Auto-back delay after reveal, in seconds. */
 const AUTO_BACK_SECONDS = 12;
 const AUTO_SELECT_SECONDS = 10;
 
-/** Bridge-state shape we actually read. */
 interface PauseAwareBridge {
   getState(): { isPaused: boolean };
 }
 
-/**
- * Treasure Chest mini-game overlay for Game 1 (Classic Bingo).
- * Shows N chests — player picks one. Outcome is server-determined.
- * After reveal, all chests open showing prizes.
- *
- *   - `TreasureChestPanel.cs:107` — auto-select after countdown.
- *   - `TreasureChestPanel.cs:541-542` — `OrderBy(Guid.NewGuid())` shuffle of prizes
- *     (client-side, cosmetic only — server still picks the winner).
- *   - `TreasureChestPanel.cs:611` — 12 s auto-back after reveal.
- *   - `TreasureChestPanel.cs:633,643` — pause-hook on countdowns.
- */
+interface ChestTriggerPayload {
+  chestCount?: number;
+  prizeRange?: { minNok: number; maxNok: number };
+  hasDiscreteTiers?: boolean;
+}
+
+interface ChestResultJson {
+  chosenIndex: number;
+  prizeAmountKroner: number;
+  allValuesKroner: number[];
+  chestCount: number;
+}
+
 export class TreasureChestOverlay extends Container {
   private backdrop: Graphics;
   private chestContainer: Container;
   private resultText: Text;
   private titleText: Text;
   private timerText: Text;
-  private prizeList: number[] = [];
+  private errorText: Text;
+  private subtitleText: Text;
+  private chestCount = 0;
   private chests: Container[] = [];
   private isRevealing = false;
-  private onPlay: ((selectedIndex: number) => void) | null = null;
+  private choiceSent = false;
+  private onChoice: ((choiceJson: Readonly<Record<string, unknown>>) => void) | null = null;
   private onDismiss: (() => void) | null = null;
   private autoSelectTimer: ReturnType<typeof setInterval> | null = null;
   private autoSelectCountdown = AUTO_SELECT_SECONDS;
   private bridge: PauseAwareBridge | null;
 
-  constructor(private screenWidth: number, private screenHeight: number, bridge?: PauseAwareBridge) {
+  constructor(
+    private screenWidth: number,
+    private screenHeight: number,
+    bridge?: PauseAwareBridge,
+  ) {
     super();
     this.bridge = bridge ?? null;
 
-    // Semi-transparent backdrop
     this.backdrop = new Graphics();
     this.backdrop.rect(0, 0, screenWidth, screenHeight);
     this.backdrop.fill({ color: 0x000000, alpha: 0.75 });
     this.backdrop.eventMode = "static";
     this.addChild(this.backdrop);
 
-    // Title
     this.titleText = new Text({
       text: "SKATTEKISTE!",
       style: {
@@ -72,22 +98,18 @@ export class TreasureChestOverlay extends Container {
     this.titleText.y = 40;
     this.addChild(this.titleText);
 
-    // Subtitle
-    const subtitle = new Text({
+    this.subtitleText = new Text({
       text: "Velg en kiste!",
       style: { fontFamily: "Arial", fontSize: 20, fill: 0xffffff, align: "center" },
     });
-    subtitle.anchor.set(0.5);
-    subtitle.x = screenWidth / 2;
-    subtitle.y = 80;
-    subtitle.name = "subtitle";
-    this.addChild(subtitle);
+    this.subtitleText.anchor.set(0.5);
+    this.subtitleText.x = screenWidth / 2;
+    this.subtitleText.y = 80;
+    this.addChild(this.subtitleText);
 
-    // Chest container
     this.chestContainer = new Container();
     this.addChild(this.chestContainer);
 
-    // Timer text
     this.timerText = new Text({
       text: "",
       style: { fontFamily: "Arial", fontSize: 18, fill: 0xffffff, align: "center" },
@@ -97,7 +119,6 @@ export class TreasureChestOverlay extends Container {
     this.timerText.y = screenHeight - 80;
     this.addChild(this.timerText);
 
-    // Result text
     this.resultText = new Text({
       text: "",
       style: {
@@ -114,40 +135,65 @@ export class TreasureChestOverlay extends Container {
     this.resultText.visible = false;
     this.addChild(this.resultText);
 
+    this.errorText = new Text({
+      text: "",
+      style: { fontFamily: "Arial", fontSize: 16, fill: 0xff6464, align: "center" },
+    });
+    this.errorText.anchor.set(0.5);
+    this.errorText.x = screenWidth / 2;
+    this.errorText.y = screenHeight - 110;
+    this.errorText.visible = false;
+    this.addChild(this.errorText);
+
     this.visible = false;
   }
 
-  setOnPlay(callback: (selectedIndex: number) => void): void {
-    this.onPlay = callback;
+  setOnChoice(callback: (choiceJson: Readonly<Record<string, unknown>>) => void): void {
+    this.onChoice = callback;
   }
 
   setOnDismiss(callback: () => void): void {
     this.onDismiss = callback;
   }
 
-  show(data: MiniGameActivatedPayload): void {
-    // client-side before assigning each chest a label (`OrderBy(Guid.NewGuid())`).
-    // The server still determines the winning index — this is cosmetic only so
-    // players don't see the same chest order every round.
-    this.prizeList = shufflePrizes(data.prizeList);
+  /**
+   * Handle `mini_game:trigger` payload. Renders `chestCount` closed chests —
+   * values are NOT shown (they arrive only in the result after the server
+   * has picked them server-side).
+   */
+  show(triggerPayload: Readonly<Record<string, unknown>>): void {
+    const data = triggerPayload as unknown as ChestTriggerPayload;
+    this.chestCount =
+      typeof data.chestCount === "number" && data.chestCount >= 2
+        ? data.chestCount
+        : 6;
+
+    // Update subtitle with prize range hint.
+    if (data.prizeRange) {
+      const { minNok, maxNok } = data.prizeRange;
+      this.subtitleText.text = `Velg en kiste! (${minNok}–${maxNok} kr)`;
+    } else {
+      this.subtitleText.text = "Velg en kiste!";
+    }
+    this.subtitleText.visible = true;
+
     this.isRevealing = false;
+    this.choiceSent = false;
     this.resultText.visible = false;
-    const subtitle = this.getChildByName("subtitle") as Text | null;
-    if (subtitle) subtitle.visible = true;
+    this.errorText.visible = false;
+
     this.buildChests();
     this.visible = true;
 
-    // Auto-select countdown (10 s). Respects server-authoritative pause —
     this.autoSelectCountdown = AUTO_SELECT_SECONDS;
     this.timerText.text = `Auto-valg om ${this.autoSelectCountdown}s`;
     this.autoSelectTimer = setInterval(() => {
-      if (this.bridge?.getState().isPaused) return; // Pause-hook
+      if (this.bridge?.getState().isPaused) return;
       this.autoSelectCountdown -= 1;
       if (this.autoSelectCountdown <= 0) {
         this.clearAutoTimer();
         this.timerText.text = "";
-        // Auto-select random chest
-        const randomIdx = Math.floor(Math.random() * this.prizeList.length);
+        const randomIdx = Math.floor(Math.random() * this.chestCount);
         this.handleChestClick(randomIdx);
       } else {
         this.timerText.text = `Auto-valg om ${this.autoSelectCountdown}s`;
@@ -155,32 +201,72 @@ export class TreasureChestOverlay extends Container {
     }, 1000);
   }
 
-  animateResult(result: MiniGamePlayResult): void {
+  /**
+   * Handle `mini_game:result`. Opens every chest to reveal its value
+   * (`allValuesKroner`), highlights the winning index, and auto-dismisses.
+   */
+  animateResult(resultJson: Readonly<Record<string, unknown>>, payoutCents: number): void {
+    const result = resultJson as unknown as ChestResultJson;
     this.isRevealing = true;
     this.clearAutoTimer();
     this.timerText.text = "";
-    const subtitle = this.getChildByName("subtitle") as Text | null;
-    if (subtitle) subtitle.visible = false;
+    this.subtitleText.visible = false;
+    this.errorText.visible = false;
 
-    // Reveal all chests with prizes
+    // Reveal all chests with their server-picked values.
+    const values = result.allValuesKroner ?? [];
     for (let i = 0; i < this.chests.length; i++) {
       const chest = this.chests[i];
-      const prize = result.prizeList[i] ?? 0;
-      const isWinner = i === result.segmentIndex;
-      this.revealChest(chest, i, prize, isWinner);
+      const prize = values[i] ?? 0;
+      const isWinner = i === result.chosenIndex;
+      this.revealChest(chest, prize, isWinner);
     }
 
-    // Show result
     gsap.delayedCall(1, () => {
-      this.resultText.text = `Du vant ${result.prizeAmount} kr!`;
+      const amountKroner =
+        typeof result.prizeAmountKroner === "number"
+          ? result.prizeAmountKroner
+          : Math.round(payoutCents / 100);
+      this.resultText.text = `Du vant ${amountKroner} kr!`;
       this.resultText.visible = true;
     });
 
-    // Auto-back after 12 s — Unity parity (TreasureChestPanel.cs:611).
     gsap.delayedCall(AUTO_BACK_SECONDS, () => {
       this.visible = false;
       this.onDismiss?.();
     });
+  }
+
+  /**
+   * Fail-closed: show error + allow retry by re-enabling chest clicks.
+   * The overlay stays open; server's `completed_at` lock prevents dupe-pays.
+   */
+  showChoiceError(err: { code: string; message: string }): void {
+    this.errorText.text = `Feil: ${err.message}`;
+    this.errorText.visible = true;
+    this.choiceSent = false;
+    // Re-enable chest clicks so player can retry.
+    for (const chest of this.chests) {
+      chest.eventMode = "static";
+      chest.cursor = "pointer";
+    }
+    // Restart auto-select countdown.
+    if (!this.autoSelectTimer) {
+      this.autoSelectCountdown = AUTO_SELECT_SECONDS;
+      this.timerText.text = `Auto-valg om ${this.autoSelectCountdown}s`;
+      this.autoSelectTimer = setInterval(() => {
+        if (this.bridge?.getState().isPaused) return;
+        this.autoSelectCountdown -= 1;
+        if (this.autoSelectCountdown <= 0) {
+          this.clearAutoTimer();
+          this.timerText.text = "";
+          const randomIdx = Math.floor(Math.random() * this.chestCount);
+          this.handleChestClick(randomIdx);
+        } else {
+          this.timerText.text = `Auto-valg om ${this.autoSelectCountdown}s`;
+        }
+      }, 1000);
+    }
   }
 
   destroy(options?: Parameters<Container["destroy"]>[0]): void {
@@ -190,17 +276,24 @@ export class TreasureChestOverlay extends Container {
   }
 
   private handleChestClick(index: number): void {
-    if (this.isRevealing) return;
+    if (this.isRevealing || this.choiceSent) return;
+    this.choiceSent = true;
     this.clearAutoTimer();
     this.timerText.text = "";
+    this.errorText.visible = false;
 
-    // Highlight selected chest
+    // Disable further clicks until we get a result (or error).
+    for (const chest of this.chests) {
+      chest.eventMode = "none";
+      chest.cursor = "default";
+    }
+
     const chest = this.chests[index];
     if (chest) {
       gsap.to(chest, { y: chest.y - 10, duration: 0.2, yoyo: true, repeat: 1 });
     }
 
-    this.onPlay?.(index);
+    this.onChoice?.({ chosenIndex: index });
   }
 
   private clearAutoTimer(): void {
@@ -211,18 +304,13 @@ export class TreasureChestOverlay extends Container {
   }
 
   private buildChests(): void {
-    // Clear existing
     for (const chest of this.chests) chest.destroy({ children: true });
     this.chests = [];
     this.chestContainer.removeChildren();
 
-    const count = this.prizeList.length;
+    const count = this.chestCount;
     const chestSize = Math.min(70, Math.floor((this.screenWidth - 40) / count) - 10);
-    const totalWidth = count * (chestSize + 10) - 10;
-    const startX = (this.screenWidth - totalWidth) / 2;
     const centerY = this.screenHeight / 2;
-
-    // Arrange in two rows if many chests
     const perRow = count <= 4 ? count : Math.ceil(count / 2);
     const rows = Math.ceil(count / perRow);
 
@@ -248,27 +336,23 @@ export class TreasureChestOverlay extends Container {
   private drawClosedChest(size: number, number: number): Container {
     const c = new Container();
 
-    // Body
     const body = new Graphics();
     body.roundRect(-size / 2, -size / 2, size, size, 6);
     body.fill(CHEST_COLORS.closed);
     body.stroke({ color: CHEST_COLORS.lid, width: 2 });
     c.addChild(body);
 
-    // Lid stripe
     const lid = new Graphics();
     lid.rect(-size / 2, -size / 2, size, size * 0.3);
     lid.fill(CHEST_COLORS.closedLight);
     lid.stroke({ color: CHEST_COLORS.lid, width: 1 });
     c.addChild(lid);
 
-    // Lock
     const lock = new Graphics();
     lock.circle(0, -size * 0.05, size * 0.08);
     lock.fill(CHEST_COLORS.lid);
     c.addChild(lock);
 
-    // Number
     const label = new Text({
       text: `${number}`,
       style: { fontFamily: "Arial", fontSize: Math.floor(size * 0.3), fill: 0xffffff, fontWeight: "bold" },
@@ -280,26 +364,21 @@ export class TreasureChestOverlay extends Container {
     return c;
   }
 
-  private revealChest(chest: Container, _index: number, prize: number, isWinner: boolean): void {
-    // Animate open
+  private revealChest(chest: Container, prize: number, isWinner: boolean): void {
     gsap.to(chest, {
       alpha: 0.5,
       duration: 0.3,
       onComplete: () => {
-        // Rebuild as open chest
         chest.removeChildren();
         chest.alpha = 1;
 
         const size = 70;
-
-        // Open body
         const body = new Graphics();
         body.roundRect(-size / 2, -size / 2, size, size, 6);
         body.fill(isWinner ? CHEST_COLORS.winner : CHEST_COLORS.openBg);
         body.stroke({ color: isWinner ? 0xffffff : CHEST_COLORS.lid, width: isWinner ? 3 : 2 });
         chest.addChild(body);
 
-        // Prize label
         const label = new Text({
           text: `${prize}\nkr`,
           style: {
@@ -313,7 +392,6 @@ export class TreasureChestOverlay extends Container {
         label.anchor.set(0.5);
         chest.addChild(label);
 
-        // Winner glow
         if (isWinner) {
           gsap.to(chest, { alpha: 0.7, duration: 0.4, yoyo: true, repeat: 3 });
         }
@@ -322,20 +400,6 @@ export class TreasureChestOverlay extends Container {
   }
 }
 
-/**
- * Fisher–Yates shuffle, emulating Unity's `prizes.OrderBy(_ => Guid.NewGuid())`.
- * Pure function + isolated to a helper so tests can assert determinism across
- * fixed seeds (Math.random is stubbed in test).
- */
-export function shufflePrizes(prizes: number[]): number[] {
-  const out = prizes.slice();
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
 /** Exposed for tests. */
 export const __TreasureChest_AUTO_BACK_SECONDS__ = AUTO_BACK_SECONDS;
-
+export const __TreasureChest_AUTO_SELECT_SECONDS__ = AUTO_SELECT_SECONDS;

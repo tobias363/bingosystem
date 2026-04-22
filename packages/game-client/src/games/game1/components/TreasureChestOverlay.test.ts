@@ -1,64 +1,75 @@
 /**
  * @vitest-environment happy-dom
  *
- * TreasureChestOverlay tests (BIN-420 G22 — Unity parity polish).
+ * BIN-690 PR-M6: TreasureChestOverlay tests — wired to M6 protocol.
  *
- * Unity-refs:
- *   - `TreasureChestPanel.cs:541-542` — client-side shuffle of prize list
- *     (`OrderBy(Guid.NewGuid())`) so players don't see the same chest order
- *     every round. Cosmetic — server still picks the winning index.
- *   - `TreasureChestPanel.cs:611` — 12 s auto-back after reveal (was 5 s in
- *     web port before this change).
- *   - `TreasureChestPanel.cs:633,643` — pause-hook: countdowns freeze while
- *     the round is paused (server-authoritative state).
+ * Verifies:
+ *   - show() reads chestCount from trigger payload.
+ *   - Click fires onChoice with {chosenIndex: N}.
+ *   - animateResult uses allValuesKroner + chosenIndex.
+ *   - Pause-hook still freezes auto-select countdown.
+ *   - 12s auto-back matches Unity parity.
+ *   - Chest values are NOT pre-shown before animateResult (anti-juks).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   TreasureChestOverlay,
-  shufflePrizes,
   __TreasureChest_AUTO_BACK_SECONDS__,
+  __TreasureChest_AUTO_SELECT_SECONDS__,
 } from "./TreasureChestOverlay.js";
 
 function makeBridge(isPaused = false): { getState: () => { isPaused: boolean } } {
   return { getState: () => ({ isPaused }) };
 }
 
-describe("TreasureChestOverlay — auto-back delay (Unity 12 s, was 5 s)", () => {
-  it("uses 12 s auto-back (not 5 s) per TreasureChestPanel.cs:611", () => {
+describe("TreasureChestOverlay — defaults", () => {
+  it("uses 12 s auto-back (Unity parity TreasureChestPanel.cs:611)", () => {
     expect(__TreasureChest_AUTO_BACK_SECONDS__).toBe(12);
   });
+
+  it("uses 10 s auto-select countdown", () => {
+    expect(__TreasureChest_AUTO_SELECT_SECONDS__).toBe(10);
+  });
 });
 
-describe("shufflePrizes — Unity OrderBy(Guid.NewGuid()) parity", () => {
-  it("returns a permutation of the input (same length, same elements)", () => {
-    const input = [10, 20, 30, 40, 50, 60, 70, 80];
-    const shuffled = shufflePrizes(input);
-    expect(shuffled).toHaveLength(input.length);
-    expect(shuffled.slice().sort((a, b) => a - b)).toEqual(input.slice().sort((a, b) => a - b));
+describe("TreasureChestOverlay — trigger rendering", () => {
+  it("renders one chest per chestCount from trigger payload", () => {
+    const overlay = new TreasureChestOverlay(800, 600, makeBridge());
+    overlay.show({ chestCount: 6, prizeRange: { minNok: 400, maxNok: 4000 } });
+    // @ts-expect-error — accessing private chests for test assertion.
+    expect(overlay.chests.length).toBe(6);
+    overlay.destroy();
   });
 
-  it("can produce a different order than the input (deterministic with stubbed Math.random)", () => {
-    // Stub Math.random so the Fisher–Yates swaps always use index 0 — this
-    // produces a predictable rotation that differs from the input ordering.
-    const spy = vi.spyOn(Math, "random").mockReturnValue(0);
-    try {
-      const input = [1, 2, 3, 4, 5];
-      const shuffled = shufflePrizes(input);
-      expect(shuffled).not.toEqual(input);
-    } finally {
-      spy.mockRestore();
+  it("defaults to 6 chests when chestCount missing", () => {
+    const overlay = new TreasureChestOverlay(800, 600, makeBridge());
+    overlay.show({});
+    // @ts-expect-error — private.
+    expect(overlay.chests.length).toBe(6);
+    overlay.destroy();
+  });
+
+  it("does NOT pre-expose any prize values (anti-juks — values only in result)", () => {
+    const overlay = new TreasureChestOverlay(800, 600, makeBridge());
+    overlay.show({ chestCount: 3, prizeRange: { minNok: 100, maxNok: 200 } });
+    // @ts-expect-error — private.
+    const chests = overlay.chests as import("pixi.js").Container[];
+    for (const chest of chests) {
+      const hasValueText = chest.children.some((c) => {
+        if ("text" in c && typeof (c as { text: unknown }).text === "string") {
+          const t = (c as { text: string }).text;
+          // Labels 1/2/3/… are chest numbers; values would be "400 kr" etc.
+          return /\d+\s*kr/i.test(t);
+        }
+        return false;
+      });
+      expect(hasValueText).toBe(false);
     }
-  });
-
-  it("does not mutate the source array", () => {
-    const input = [1, 2, 3, 4];
-    const snapshot = input.slice();
-    shufflePrizes(input);
-    expect(input).toEqual(snapshot);
+    overlay.destroy();
   });
 });
 
-describe("TreasureChestOverlay — pause-hook (Unity TreasureChestPanel.cs:633)", () => {
+describe("TreasureChestOverlay — onChoice wire-up", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -66,40 +77,68 @@ describe("TreasureChestOverlay — pause-hook (Unity TreasureChestPanel.cs:633)"
     vi.useRealTimers();
   });
 
-  it("does NOT auto-select while bridge.isPaused === true", () => {
+  it("fires onChoice with {chosenIndex} when auto-select triggers", () => {
+    const overlay = new TreasureChestOverlay(800, 600, makeBridge());
+    const onChoice = vi.fn();
+    overlay.setOnChoice(onChoice);
+    overlay.show({ chestCount: 4, prizeRange: { minNok: 100, maxNok: 500 } });
+    vi.advanceTimersByTime(11000);
+    expect(onChoice).toHaveBeenCalledTimes(1);
+    const arg = onChoice.mock.calls[0][0];
+    expect(arg).toHaveProperty("chosenIndex");
+    expect(typeof arg.chosenIndex).toBe("number");
+    expect(arg.chosenIndex).toBeGreaterThanOrEqual(0);
+    expect(arg.chosenIndex).toBeLessThan(4);
+    overlay.destroy();
+  });
+});
+
+describe("TreasureChestOverlay — pause-hook", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does NOT auto-select while bridge.isPaused", () => {
     const bridgeState = { isPaused: true };
     const overlay = new TreasureChestOverlay(800, 600, { getState: () => bridgeState });
-    const onPlay = vi.fn();
-    overlay.setOnPlay(onPlay);
-    overlay.show({
-      type: "treasureChest",
-      prizeList: [100, 200, 300, 400, 500, 600, 700, 800],
-      durationMs: 10000,
-    } as never);
+    const onChoice = vi.fn();
+    overlay.setOnChoice(onChoice);
+    overlay.show({ chestCount: 6, prizeRange: { minNok: 100, maxNok: 500 } });
 
-    // Paused — no auto-select even after 30s.
     vi.advanceTimersByTime(30000);
-    expect(onPlay).not.toHaveBeenCalled();
+    expect(onChoice).not.toHaveBeenCalled();
 
-    // Resume — auto-select fires within the 10s countdown.
     bridgeState.isPaused = false;
     vi.advanceTimersByTime(11000);
-    expect(onPlay).toHaveBeenCalledTimes(1);
+    expect(onChoice).toHaveBeenCalledTimes(1);
 
     overlay.destroy();
   });
+});
 
-  it("renders one chest per prizeList entry (matches backend-driven count)", () => {
+describe("TreasureChestOverlay — animateResult + showChoiceError", () => {
+  it("animateResult reveals all values without throwing", () => {
     const overlay = new TreasureChestOverlay(800, 600, makeBridge());
-    const prizeList = [100, 200, 300, 400, 500, 600, 700, 800]; // 8 (Unity default)
-    overlay.show({
-      type: "treasureChest",
-      prizeList,
-      durationMs: 10000,
-    } as never);
+    overlay.show({ chestCount: 3, prizeRange: { minNok: 100, maxNok: 400 } });
+    expect(() =>
+      overlay.animateResult(
+        { chosenIndex: 1, prizeAmountKroner: 300, allValuesKroner: [100, 300, 200], chestCount: 3 },
+        30000,
+      ),
+    ).not.toThrow();
+    overlay.destroy();
+  });
 
-    // @ts-expect-error — accessing private chests for test assertion.
-    expect(overlay.chests.length).toBe(prizeList.length);
+  it("showChoiceError leaves overlay intact and alive", () => {
+    const overlay = new TreasureChestOverlay(800, 600, makeBridge());
+    overlay.show({ chestCount: 3, prizeRange: { minNok: 100, maxNok: 400 } });
+    const onDismiss = vi.fn();
+    overlay.setOnDismiss(onDismiss);
+    overlay.showChoiceError({ code: "E", message: "x" });
+    expect(onDismiss).not.toHaveBeenCalled();
     overlay.destroy();
   });
 });

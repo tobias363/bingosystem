@@ -17,8 +17,8 @@ import type {
   LeaderboardEntry,
   JackpotActivatedPayload,
   JackpotSpinResult,
-  MiniGameActivatedPayload,
-  MiniGamePlayResult,
+  MiniGameTriggerPayload,
+  MiniGameResultPayload,
 } from "@spillorama/shared-types/socket-events";
 import type { RoomSnapshot } from "@spillorama/shared-types/game";
 import { SocketEvents } from "@spillorama/shared-types/socket-events";
@@ -41,7 +41,19 @@ export interface SpilloramaSocketListeners {
   patternWon: (payload: PatternWonPayload) => void;
   chatMessage: (payload: ChatMessage) => void;
   jackpotActivated: (payload: JackpotActivatedPayload) => void;
-  minigameActivated: (payload: MiniGameActivatedPayload) => void;
+  /**
+   * BIN-690 PR-M6: scheduled-games mini-game trigger. Replaces the legacy
+   * `minigameActivated` channel (removed in M6 per PM decision — no backwards
+   * compatibility). Server fires this after Fullt Hus is won and the
+   * orchestrator has persisted a triggered-row.
+   */
+  miniGameTrigger: (payload: MiniGameTriggerPayload) => void;
+  /**
+   * BIN-690 PR-M6: scheduled-games mini-game result. Fires after the server
+   * has resolved the player's choice (or for Oddsen, after the next game's
+   * terskel-draw).
+   */
+  miniGameResult: (payload: MiniGameResultPayload) => void;
   connectionStateChanged: ConnectionListener;
 }
 
@@ -77,7 +89,8 @@ export class SpilloramaSocket {
     patternWon: new Set(),
     chatMessage: new Set(),
     jackpotActivated: new Set(),
-    minigameActivated: new Set(),
+    miniGameTrigger: new Set(),
+    miniGameResult: new Set(),
     connectionStateChanged: new Set(),
   };
 
@@ -109,7 +122,8 @@ export class SpilloramaSocket {
     patternWon: [],
     chatMessage: [],
     jackpotActivated: [],
-    minigameActivated: [],
+    miniGameTrigger: [],
+    miniGameResult: [],
     connectionStateChanged: [],
   };
 
@@ -240,8 +254,14 @@ export class SpilloramaSocket {
       this.dispatchOrBuffer("jackpotActivated", payload);
     });
 
-    this.socket.on(SocketEvents.MINIGAME_ACTIVATED, (payload: MiniGameActivatedPayload) => {
-      this.dispatchOrBuffer("minigameActivated", payload);
+    // BIN-690 PR-M6: new scheduled-games mini-game protocol.
+    // Legacy `minigame:activated` is intentionally NOT subscribed here.
+    this.socket.on(SocketEvents.MINI_GAME_TRIGGER, (payload: MiniGameTriggerPayload) => {
+      this.dispatchOrBuffer("miniGameTrigger", payload);
+    });
+
+    this.socket.on(SocketEvents.MINI_GAME_RESULT, (payload: MiniGameResultPayload) => {
+      this.dispatchOrBuffer("miniGameResult", payload);
     });
   }
 
@@ -387,8 +407,17 @@ export class SpilloramaSocket {
     return this.emit(SocketEvents.JACKPOT_SPIN, payload);
   }
 
-  async playMiniGame(payload: { roomCode: string; selectedIndex?: number }): Promise<AckResponse<MiniGamePlayResult>> {
-    return this.emit(SocketEvents.MINIGAME_PLAY, payload);
+  /**
+   * BIN-690 PR-M6: Send the player's mini-game choice. `choiceJson` is free-
+   * form per type — see `MiniGameChoicePayload` in shared-types for the
+   * per-type shapes. Server is authoritative on the outcome; the choice is
+   * just input.
+   */
+  async sendMiniGameChoice(payload: {
+    resultId: string;
+    choiceJson: Readonly<Record<string, unknown>>;
+  }): Promise<AckResponse<{ accepted: true }>> {
+    return this.emit(SocketEvents.MINI_GAME_CHOICE, payload);
   }
 
   // ── Private ───────────────────────────────────────────────────────────
