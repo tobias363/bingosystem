@@ -118,6 +118,13 @@ interface ScheduledGameRow {
   id: string;
   status: string;
   ticket_config_json: unknown;
+  /**
+   * PR 4d.1: BingoEngine room_code for denne schedulerte økten.
+   * NULL frem til første spiller joiner (handler i PR 4d.2). Lesing er
+   * tilgjengelig her så crash recovery + PR 4d.2-join-handler har én
+   * kilde til sannhet.
+   */
+  room_code: string | null;
 }
 
 interface GameStateRow {
@@ -710,7 +717,7 @@ export class Game1DrawEngineService {
     scheduledGameId: string
   ): Promise<ScheduledGameRow> {
     const { rows } = await client.query<ScheduledGameRow>(
-      `SELECT id, status, ticket_config_json
+      `SELECT id, status, ticket_config_json, room_code
          FROM ${this.scheduledGamesTable()}
          WHERE id = $1
          FOR UPDATE`,
@@ -724,6 +731,38 @@ export class Game1DrawEngineService {
       );
     }
     return row;
+  }
+
+  /**
+   * PR 4d.1: Les BingoEngine `room_code` for en schedulert økt.
+   *
+   * Semantikk:
+   *   - Returnerer string når scheduled_game eksisterer og har fått
+   *     `room_code` satt (av PR 4d.2-join-handler).
+   *   - Returnerer `null` når scheduled_game eksisterer men ingen spiller
+   *     har joinet ennå (kolonnen er NULL).
+   *   - Kaster `DomainError("GAME_NOT_FOUND")` når `scheduledGameId` ikke
+   *     finnes (matcher `loadScheduledGameForUpdate`-semantikken).
+   *
+   * Read-only: bruker pool direkte (ingen transaction).
+   */
+  async getRoomCodeForScheduledGame(
+    scheduledGameId: string
+  ): Promise<string | null> {
+    const { rows } = await this.pool.query<{ room_code: string | null }>(
+      `SELECT room_code
+         FROM ${this.scheduledGamesTable()}
+         WHERE id = $1`,
+      [scheduledGameId]
+    );
+    const row = rows[0];
+    if (!row) {
+      throw new DomainError(
+        "GAME_NOT_FOUND",
+        "Spillet finnes ikke."
+      );
+    }
+    return row.room_code;
   }
 
   private async loadGameState(
