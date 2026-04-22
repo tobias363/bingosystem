@@ -64,6 +64,7 @@ import { Game1DrawEngineService } from "./game/Game1DrawEngineService.js";
 import { Game1MiniGameOrchestrator } from "./game/minigames/Game1MiniGameOrchestrator.js";
 import { MiniGameWheelEngine } from "./game/minigames/MiniGameWheelEngine.js";
 import { MiniGameChestEngine } from "./game/minigames/MiniGameChestEngine.js";
+import { MiniGameColordraftEngine } from "./game/minigames/MiniGameColordraftEngine.js";
 import { Game1TicketPurchasePortAdapter } from "./game/Game1TicketPurchasePortAdapter.js";
 import { createAdminGame1ReadyRouter } from "./routes/adminGame1Ready.js";
 import { createAdminGame1MasterRouter } from "./routes/adminGame1Master.js";
@@ -976,6 +977,15 @@ game1MiniGameOrchestrator.registerMiniGame(new MiniGameWheelEngine());
 // 400-4000 kr uniform). Chest tar `{ chosenIndex }` i choiceJson og
 // returnerer alle lukers verdier i result_json for reveal-all-animasjon.
 game1MiniGameOrchestrator.registerMiniGame(new MiniGameChestEngine());
+
+// BIN-690 M4: registrer Colordraft-implementasjon. Admin config
+// (game_type='colordraft') overstyrer DEFAULT_COLORDRAFT_CONFIG (12 luker,
+// 4 farger, 1000 kr winPrize, 0 consolation). Colordraft tar
+// `{ chosenIndex }` i choiceJson. Server trekker target-farge +
+// slot-farger deterministisk fra resultId-seed slik at trigger-payload
+// (synlig for klient) matcher handleChoice-state EXAKT. Match ⇒ full
+// winPrize; mismatch ⇒ consolationPrizeNok (ofte 0).
+game1MiniGameOrchestrator.registerMiniGame(new MiniGameColordraftEngine());
 
 game1DrawEngineService.setMiniGameOrchestrator(game1MiniGameOrchestrator);
 
