@@ -1,9 +1,11 @@
 /**
- * PT2+PT3 — enhetstester for AgentTicketRangeService.
+ * PT2+PT3+PT5 — enhetstester for AgentTicketRangeService.
  *
  * Spec: docs/architecture/PHYSICAL_TICKETS_FINAL_SPEC_2026-04-22.md
  *       (§ "Fase 2: Vakt-start + range-registrering")
  *       (§ "Fase 4: Batch-oppdatering (returnering til stativ)")
+ *       (§ "Fase 7: Handover (vakt-skift)")
+ *       (§ "Fase 8: Range-påfylling")
  *
  * Dekker (≥20 tester):
  *   PT2:
@@ -65,6 +67,12 @@ interface MockTicket {
   ticket_color: StaticTicketColor;
   is_purchased: boolean;
   reserved_by_range_id: string | null;
+  /** PT5: settes ved PT3-batch-salg. */
+  sold_from_range_id?: string | null;
+  /** PT4/PT5: nåværende ansvarlig bingovert. */
+  responsible_user_id?: string | null;
+  /** PT4: NULL = ikke utbetalt. PT5 filtrerer på dette. */
+  paid_out_at?: Date | null;
 }
 
 interface MockRange {
@@ -80,6 +88,14 @@ interface MockRange {
   registered_at: Date;
   closed_at: Date | null;
   handover_from_range_id: string | null;
+  /** PT5: settes ved handover. */
+  handed_off_to_range_id: string | null;
+}
+
+interface MockUser {
+  id: string;
+  role: "ADMIN" | "HALL_OPERATOR" | "SUPPORT" | "PLAYER" | "AGENT";
+  hall_id: string | null;
 }
 
 interface MockScheduledGame {
@@ -95,6 +111,8 @@ interface MockStore {
   tickets: Map<string, MockTicket>; // key: ticket id
   ranges: Map<string, MockRange>; // key: range id
   scheduledGames: Map<string, MockScheduledGame>;
+  /** PT5: app_users lookup for handover-validering. */
+  users: Map<string, MockUser>;
   txActive: number;
   commitCount: number;
   rollbackCount: number;
@@ -123,6 +141,7 @@ function newStore(): MockStore {
     tickets: new Map(),
     ranges: new Map(),
     scheduledGames: new Map(),
+    users: new Map(),
     txActive: 0,
     commitCount: 0,
     rollbackCount: 0,
@@ -131,6 +150,10 @@ function newStore(): MockStore {
     forceBatchUpdateMismatch: false,
     onBeforeBatchUpdateHook: null,
   };
+}
+
+function seedUser(store: MockStore, user: MockUser): void {
+  store.users.set(user.id, user);
 }
 
 function seedScheduledGame(
@@ -184,6 +207,7 @@ function seedRange(store: MockStore, range: Partial<MockRange> & { id: string; a
     registered_at: range.registered_at ?? new Date(),
     closed_at: range.closed_at ?? null,
     handover_from_range_id: range.handover_from_range_id ?? null,
+    handed_off_to_range_id: range.handed_off_to_range_id ?? null,
     ...range,
   };
   store.ranges.set(full.id, full);
@@ -270,7 +294,9 @@ function makeMockPool(store: MockStore): Pool {
       return { rows, rowCount: rows.length };
     }
 
-    // INSERT range
+    // INSERT range (PT2 registerRange + PT5 handoverRange).
+    // PT2 bruker 7 params (handover_from_range_id = NULL), PT5 bruker 8
+    // (handover_from_range_id = $8). Differensieres via params.length.
     if (
       sql.includes("INSERT INTO")
       && sql.includes("app_agent_ticket_ranges")
@@ -278,6 +304,7 @@ function makeMockPool(store: MockStore): Pool {
       const [id, agentId, hallId, color, initial, final, serialsJson] = params as [
         string, string, string, StaticTicketColor, string, string, string,
       ];
+      const handoverFrom = (params[7] as string | undefined) ?? null;
       const serials = JSON.parse(serialsJson) as string[];
       const now = new Date();
       const row: MockRange = {
@@ -292,17 +319,21 @@ function makeMockPool(store: MockStore): Pool {
         current_top_serial: initial,
         registered_at: now,
         closed_at: null,
-        handover_from_range_id: null,
+        handover_from_range_id: handoverFrom,
+        handed_off_to_range_id: null,
       };
       store.ranges.set(id, row);
+      // PT2 bruker RETURNING, PT5 ikke — men det skader ikke å returnere uansett.
       return { rows: [{ registered_at: now }], rowCount: 1 };
     }
 
-    // UPDATE tickets reserved_by_range_id
+    // UPDATE tickets reserved_by_range_id WHERE id = ANY (PT2 registerRange +
+    // PT5 extendRange). Bruker id-array for å identifisere kandidater.
     if (
       sql.includes("UPDATE")
       && sql.includes("app_static_tickets")
       && sql.includes("SET reserved_by_range_id = $1")
+      && sql.includes("WHERE id = ANY($2::text[])")
     ) {
       const [rangeId, ids] = params as [string, string[]];
       let count = 0;
@@ -462,12 +493,23 @@ function makeMockPool(store: MockStore): Pool {
       return { rows: [], rowCount: 1 };
     }
 
-    // UPDATE range SET closed_at = now()
+    // UPDATE range SET closed_at = now() (PT2 closeRange + PT5 handoverRange)
+    // PT2: 1 param, ingen handed_off_to_range_id.
+    // PT5: 2 params: [handed_off_to_range_id, id], setter begge.
     if (
       sql.includes("UPDATE")
       && sql.includes("app_agent_ticket_ranges")
       && sql.includes("SET closed_at = now()")
     ) {
+      const hasHandedOff = sql.includes("handed_off_to_range_id");
+      if (hasHandedOff) {
+        const [handedOffTo, id] = params as [string, string];
+        const r = store.ranges.get(id);
+        if (!r) return { rows: [], rowCount: 0 };
+        r.closed_at = new Date();
+        r.handed_off_to_range_id = handedOffTo;
+        return { rows: [{ closed_at: r.closed_at }], rowCount: 1 };
+      }
       const [id] = params as [string];
       const r = store.ranges.get(id);
       if (!r) return { rows: [], rowCount: 0 };
@@ -501,6 +543,7 @@ function makeMockPool(store: MockStore): Pool {
           registered_at: r.registered_at,
           closed_at: r.closed_at,
           handover_from_range_id: r.handover_from_range_id,
+          handed_off_to_range_id: r.handed_off_to_range_id,
         }));
       return { rows, rowCount: rows.length };
     }
@@ -530,9 +573,111 @@ function makeMockPool(store: MockStore): Pool {
           registered_at: r.registered_at,
           closed_at: r.closed_at,
           handover_from_range_id: r.handover_from_range_id,
+          handed_off_to_range_id: r.handed_off_to_range_id,
         }],
         rowCount: 1,
       };
+    }
+
+    // PT5: SELECT app_users by id (handover target-validering).
+    if (
+      sql.includes("FROM")
+      && sql.includes("app_users")
+      && sql.includes("WHERE id = $1")
+    ) {
+      const [id] = params as [string];
+      const u = store.users.get(id);
+      if (!u) return { rows: [], rowCount: 0 };
+      return {
+        rows: [{ id: u.id, role: u.role, hall_id: u.hall_id }],
+        rowCount: 1,
+      };
+    }
+
+    // PT5 handover: UPDATE tickets SET reserved_by_range_id WHERE reserved_by_range_id = $2
+    if (
+      sql.includes("UPDATE")
+      && sql.includes("app_static_tickets")
+      && sql.includes("SET reserved_by_range_id = $1")
+      && sql.includes("WHERE reserved_by_range_id = $2")
+      && sql.includes("is_purchased = false")
+    ) {
+      const [newRangeId, oldRangeId] = params as [string, string];
+      let count = 0;
+      for (const t of store.tickets.values()) {
+        if (t.reserved_by_range_id === oldRangeId && !t.is_purchased) {
+          t.reserved_by_range_id = newRangeId;
+          count += 1;
+        }
+      }
+      return { rows: [], rowCount: count };
+    }
+
+    // PT5 handover: UPDATE tickets SET responsible_user_id WHERE sold_from_range_id AND is_purchased=true AND paid_out_at IS NULL
+    if (
+      sql.includes("UPDATE")
+      && sql.includes("app_static_tickets")
+      && sql.includes("SET responsible_user_id = $1")
+      && sql.includes("WHERE sold_from_range_id = $2")
+      && sql.includes("paid_out_at IS NULL")
+    ) {
+      const [newUserId, oldRangeId] = params as [string, string];
+      let count = 0;
+      for (const t of store.tickets.values()) {
+        if (
+          t.sold_from_range_id === oldRangeId
+          && t.is_purchased
+          && (t.paid_out_at === null || t.paid_out_at === undefined)
+        ) {
+          t.responsible_user_id = newUserId;
+          count += 1;
+        }
+      }
+      return { rows: [], rowCount: count };
+    }
+
+    // PT5 extend: SELECT available tickets (LEFT JOIN, ticket_serial < $3, FOR UPDATE OF s)
+    if (
+      sql.includes("LEFT JOIN")
+      && sql.includes("is_purchased = false")
+      && sql.includes("ticket_serial < $3")
+      && sql.includes("FOR UPDATE OF s")
+    ) {
+      const [hallId, color, lessThanSerial, limit] = params as [
+        string, StaticTicketColor, string, number,
+      ];
+      const candidates = [...store.tickets.values()]
+        .filter((t) => t.hall_id === hallId
+          && t.ticket_color === color
+          && !t.is_purchased
+          && t.ticket_serial < lessThanSerial)
+        .filter((t) => {
+          if (!t.reserved_by_range_id) return true;
+          const r = store.ranges.get(t.reserved_by_range_id);
+          return !r || r.closed_at !== null;
+        })
+        .sort((a, b) => (a.ticket_serial < b.ticket_serial ? 1 : -1))
+        .slice(0, limit);
+      const rows = candidates.map((t) => ({
+        id: t.id,
+        ticket_serial: t.ticket_serial,
+      }));
+      return { rows, rowCount: rows.length };
+    }
+
+    // PT5 extend: UPDATE range SET serials = $1::jsonb, final_serial = $2
+    if (
+      sql.includes("UPDATE")
+      && sql.includes("app_agent_ticket_ranges")
+      && sql.includes("SET serials = $1::jsonb")
+      && sql.includes("final_serial = $2")
+    ) {
+      const [serialsJson, newFinalSerial, id] = params as [string, string, string];
+      const r = store.ranges.get(id);
+      if (!r) return { rows: [], rowCount: 0 };
+      r.serials = JSON.parse(serialsJson) as string[];
+      r.final_serial = newFinalSerial;
+      return { rows: [], rowCount: 1 };
     }
 
     throw new Error(`MockPool: unhandled SQL: ${s.slice(0, 120)}`);
@@ -1565,4 +1710,773 @@ test("PT3 recordBatchSale: dobbeltkall med samme newTop → andre kall NO_TICKET
     }),
     (err: unknown) => err instanceof DomainError && err.code === "NO_TICKETS_SOLD",
   );
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PT5 — handoverRange (vakt-skift)
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Helper: Kari har en åpen range (range-kari) med serials ["100"..."95"],
+ * currentTop = "97" (dvs. "100", "99", "98" er solgt og har sold_from_range_id
+ * = range-kari). Per (bruker per-1) er seedet som HALL_OPERATOR i samme hall.
+ */
+function seedHandoverScenario(store: MockStore): void {
+  const serials = ["100", "99", "98", "97", "96", "95"];
+  seedRange(store, {
+    id: "range-kari",
+    agent_id: "kari-1",
+    hall_id: "hall-a",
+    ticket_color: "small",
+    initial_serial: "100",
+    final_serial: "95",
+    serials,
+    current_top_serial: "97", // 100, 99, 98 er solgt
+  });
+  // Usolgte bonger (97-95) har reserved_by_range_id = range-kari.
+  for (const s of ["97", "96", "95"]) {
+    const id = `tkt-hall-a-small-${s}`;
+    store.tickets.set(id, {
+      id,
+      hall_id: "hall-a",
+      ticket_serial: s,
+      ticket_color: "small",
+      is_purchased: false,
+      reserved_by_range_id: "range-kari",
+      sold_from_range_id: null,
+      responsible_user_id: null,
+      paid_out_at: null,
+    });
+  }
+  // Solgte-uutbetalte bonger (100, 99, 98) har sold_from_range_id = range-kari
+  // og responsible_user_id = kari-1.
+  for (const s of ["100", "99", "98"]) {
+    const id = `tkt-hall-a-small-${s}`;
+    store.tickets.set(id, {
+      id,
+      hall_id: "hall-a",
+      ticket_serial: s,
+      ticket_color: "small",
+      is_purchased: true,
+      reserved_by_range_id: null,
+      sold_from_range_id: "range-kari",
+      responsible_user_id: "kari-1",
+      paid_out_at: null,
+    });
+  }
+  // Kari + Per som brukere.
+  seedUser(store, { id: "kari-1", role: "HALL_OPERATOR", hall_id: "hall-a" });
+  seedUser(store, { id: "per-1", role: "HALL_OPERATOR", hall_id: "hall-a" });
+}
+
+test("PT5 handoverRange: happy-path — usolgte overført, solgte-pending byttet til Per", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  const svc = makeService(store);
+
+  const res = await svc.handoverRange({
+    fromRangeId: "range-kari",
+    toUserId: "per-1",
+    performedByUserId: "kari-1",
+  });
+
+  assert.equal(res.fromRangeId, "range-kari");
+  assert.ok(res.newRangeId);
+  assert.notEqual(res.newRangeId, "range-kari");
+  assert.equal(res.unsoldCount, 3); // 97, 96, 95
+  assert.equal(res.soldPendingCount, 3); // 100, 99, 98
+  assert.equal(res.fromUserId, "kari-1");
+  assert.equal(res.toUserId, "per-1");
+  assert.equal(res.hallId, "hall-a");
+  assert.equal(res.ticketColor, "small");
+  assert.equal(res.newInitialSerial, "97");
+  assert.equal(res.newFinalSerial, "95");
+  assert.ok(res.handoverAt);
+
+  // Karis range lukket + peker på ny range.
+  const kari = store.ranges.get("range-kari")!;
+  assert.ok(kari.closed_at !== null);
+  assert.equal(kari.handed_off_to_range_id, res.newRangeId);
+
+  // Pers nye range.
+  const per = store.ranges.get(res.newRangeId)!;
+  assert.equal(per.agent_id, "per-1");
+  assert.equal(per.hall_id, "hall-a");
+  assert.equal(per.ticket_color, "small");
+  assert.deepEqual(per.serials, ["97", "96", "95"]);
+  assert.equal(per.initial_serial, "97");
+  assert.equal(per.final_serial, "95");
+  assert.equal(per.current_top_serial, "97");
+  assert.equal(per.handover_from_range_id, "range-kari");
+  assert.equal(per.closed_at, null);
+
+  // Usolgte bonger: reserved_by_range_id = Pers range.
+  for (const s of ["97", "96", "95"]) {
+    const t = store.tickets.get(`tkt-hall-a-small-${s}`)!;
+    assert.equal(t.reserved_by_range_id, res.newRangeId);
+    assert.equal(t.is_purchased, false);
+  }
+
+  // Solgte-uutbetalte bonger: responsible_user_id = Per.
+  for (const s of ["100", "99", "98"]) {
+    const t = store.tickets.get(`tkt-hall-a-small-${s}`)!;
+    assert.equal(t.responsible_user_id, "per-1");
+    assert.equal(t.sold_from_range_id, "range-kari"); // ikke rørt
+  }
+
+  // COMMIT, ingen rollback.
+  assert.equal(store.commitCount, 1);
+  assert.equal(store.rollbackCount, 0);
+});
+
+test("PT5 handoverRange: same user → HANDOVER_SAME_USER", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "range-kari",
+      toUserId: "kari-1", // samme som agent_id
+      performedByUserId: "kari-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "HANDOVER_SAME_USER",
+  );
+  // Ingen range-endring.
+  const kari = store.ranges.get("range-kari")!;
+  assert.equal(kari.closed_at, null);
+  assert.equal(store.rollbackCount, 1);
+});
+
+test("PT5 handoverRange: lukket range → RANGE_ALREADY_CLOSED", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  store.ranges.get("range-kari")!.closed_at = new Date();
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "range-kari",
+      toUserId: "per-1",
+      performedByUserId: "kari-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "RANGE_ALREADY_CLOSED",
+  );
+});
+
+test("PT5 handoverRange: RANGE_NOT_FOUND når fromRangeId ukjent", async () => {
+  const store = newStore();
+  seedUser(store, { id: "kari-1", role: "HALL_OPERATOR", hall_id: "hall-a" });
+  seedUser(store, { id: "per-1", role: "HALL_OPERATOR", hall_id: "hall-a" });
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "range-nope",
+      toUserId: "per-1",
+      performedByUserId: "kari-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "RANGE_NOT_FOUND",
+  );
+});
+
+test("PT5 handoverRange: ikke-eier uten adminOverride → FORBIDDEN", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "range-kari",
+      toUserId: "per-1",
+      performedByUserId: "per-1", // ikke eier av range-kari
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "FORBIDDEN",
+  );
+});
+
+test("PT5 handoverRange: adminOverride tillater handover på vegne av bingovert", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  seedUser(store, { id: "admin-1", role: "ADMIN", hall_id: null });
+  const svc = makeService(store);
+
+  const res = await svc.handoverRange({
+    fromRangeId: "range-kari",
+    toUserId: "per-1",
+    performedByUserId: "admin-1",
+    adminOverride: true,
+  });
+  assert.equal(res.unsoldCount, 3);
+  assert.equal(res.soldPendingCount, 3);
+  // Karis range fortsatt "eier" av kari-1, selv om admin kjørte handover.
+  const kari = store.ranges.get("range-kari")!;
+  assert.equal(kari.agent_id, "kari-1");
+  assert.ok(kari.closed_at !== null);
+});
+
+test("PT5 handoverRange: ukjent toUserId → TARGET_USER_NOT_FOUND", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "range-kari",
+      toUserId: "ghost-1",
+      performedByUserId: "kari-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "TARGET_USER_NOT_FOUND",
+  );
+});
+
+test("PT5 handoverRange: toUser i annen hall → TARGET_USER_NOT_IN_HALL", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  // Per er HALL_OPERATOR men i hall-B, ikke hall-A.
+  store.users.set("per-1", { id: "per-1", role: "HALL_OPERATOR", hall_id: "hall-b" });
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "range-kari",
+      toUserId: "per-1",
+      performedByUserId: "kari-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "TARGET_USER_NOT_IN_HALL",
+  );
+});
+
+test("PT5 handoverRange: PLAYER som toUser → TARGET_USER_NOT_IN_HALL", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  store.users.set("pl-1", { id: "pl-1", role: "PLAYER", hall_id: null });
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "range-kari",
+      toUserId: "pl-1",
+      performedByUserId: "kari-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "TARGET_USER_NOT_IN_HALL",
+  );
+});
+
+test("PT5 handoverRange: ADMIN som toUser er tillatt (ADMIN har ingen hall-binding)", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  // En admin-bruker uten hall-tilhørighet.
+  store.users.set("admin-helper-1", { id: "admin-helper-1", role: "ADMIN", hall_id: null });
+  const svc = makeService(store);
+
+  const res = await svc.handoverRange({
+    fromRangeId: "range-kari",
+    toUserId: "admin-helper-1",
+    performedByUserId: "kari-1",
+  });
+  assert.equal(res.toUserId, "admin-helper-1");
+});
+
+test("PT5 handoverRange: tom fromRangeId → INVALID_INPUT", async () => {
+  const svc = makeService(newStore());
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "",
+      toUserId: "per-1",
+      performedByUserId: "kari-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "INVALID_INPUT",
+  );
+});
+
+test("PT5 handoverRange: tom toUserId → INVALID_INPUT", async () => {
+  const svc = makeService(newStore());
+  await assert.rejects(
+    () => svc.handoverRange({
+      fromRangeId: "range-1",
+      toUserId: "",
+      performedByUserId: "kari-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "INVALID_INPUT",
+  );
+});
+
+test("PT5 handoverRange: rangen har ingen solgte bonger (first shift) — unsoldCount = alle", async () => {
+  const store = newStore();
+  // Kari akkurat registrerte range, ingen salg enda.
+  seedRange(store, {
+    id: "range-kari",
+    agent_id: "kari-1",
+    hall_id: "hall-a",
+    ticket_color: "small",
+    initial_serial: "100",
+    final_serial: "98",
+    serials: ["100", "99", "98"],
+    current_top_serial: "100",
+  });
+  for (const s of ["100", "99", "98"]) {
+    const id = `tkt-hall-a-small-${s}`;
+    store.tickets.set(id, {
+      id,
+      hall_id: "hall-a",
+      ticket_serial: s,
+      ticket_color: "small",
+      is_purchased: false,
+      reserved_by_range_id: "range-kari",
+      paid_out_at: null,
+    });
+  }
+  seedUser(store, { id: "kari-1", role: "HALL_OPERATOR", hall_id: "hall-a" });
+  seedUser(store, { id: "per-1", role: "HALL_OPERATOR", hall_id: "hall-a" });
+  const svc = makeService(store);
+
+  const res = await svc.handoverRange({
+    fromRangeId: "range-kari",
+    toUserId: "per-1",
+    performedByUserId: "kari-1",
+  });
+  assert.equal(res.unsoldCount, 3);
+  assert.equal(res.soldPendingCount, 0);
+  // Pers range har alle 3 serials.
+  const per = store.ranges.get(res.newRangeId)!;
+  assert.deepEqual(per.serials, ["100", "99", "98"]);
+});
+
+test("PT5 handoverRange: alt solgt (currentTop = final_serial) → unsoldCount = 1 (siste bong)", async () => {
+  const store = newStore();
+  // Alle bonger unntatt den siste er solgt; currentTop = final_serial.
+  seedRange(store, {
+    id: "range-kari",
+    agent_id: "kari-1",
+    hall_id: "hall-a",
+    ticket_color: "small",
+    initial_serial: "100",
+    final_serial: "98",
+    serials: ["100", "99", "98"],
+    current_top_serial: "98", // alt solgt unntatt 98
+  });
+  // Solgte bonger med Kari som ansvarlig, en uutbetalt.
+  store.tickets.set("tkt-hall-a-small-100", {
+    id: "tkt-hall-a-small-100",
+    hall_id: "hall-a",
+    ticket_serial: "100",
+    ticket_color: "small",
+    is_purchased: true,
+    reserved_by_range_id: null,
+    sold_from_range_id: "range-kari",
+    responsible_user_id: "kari-1",
+    paid_out_at: null,
+  });
+  store.tickets.set("tkt-hall-a-small-99", {
+    id: "tkt-hall-a-small-99",
+    hall_id: "hall-a",
+    ticket_serial: "99",
+    ticket_color: "small",
+    is_purchased: true,
+    reserved_by_range_id: null,
+    sold_from_range_id: "range-kari",
+    responsible_user_id: "kari-1",
+    paid_out_at: new Date(), // allerede utbetalt — skal IKKE overføres
+  });
+  store.tickets.set("tkt-hall-a-small-98", {
+    id: "tkt-hall-a-small-98",
+    hall_id: "hall-a",
+    ticket_serial: "98",
+    ticket_color: "small",
+    is_purchased: false,
+    reserved_by_range_id: "range-kari",
+    paid_out_at: null,
+  });
+  seedUser(store, { id: "kari-1", role: "HALL_OPERATOR", hall_id: "hall-a" });
+  seedUser(store, { id: "per-1", role: "HALL_OPERATOR", hall_id: "hall-a" });
+  const svc = makeService(store);
+
+  const res = await svc.handoverRange({
+    fromRangeId: "range-kari",
+    toUserId: "per-1",
+    performedByUserId: "kari-1",
+  });
+  assert.equal(res.unsoldCount, 1); // bare 98
+  assert.equal(res.soldPendingCount, 1); // bare 100 (99 er utbetalt)
+
+  // 99 er utbetalt — responsible_user_id skal IKKE endres.
+  const t99 = store.tickets.get("tkt-hall-a-small-99")!;
+  assert.equal(t99.responsible_user_id, "kari-1");
+
+  // 100 er uutbetalt — responsible_user_id skal være Per.
+  const t100 = store.tickets.get("tkt-hall-a-small-100")!;
+  assert.equal(t100.responsible_user_id, "per-1");
+});
+
+test("PT5 handoverRange: etter handover går solgte-pending sin responsible til Per (PT4-kompatibel broadcast)", async () => {
+  const store = newStore();
+  seedHandoverScenario(store);
+  const svc = makeService(store);
+  await svc.handoverRange({
+    fromRangeId: "range-kari",
+    toUserId: "per-1",
+    performedByUserId: "kari-1",
+  });
+
+  // Simuler PT4-vinn-broadcast-oppslag: "hvem er ansvarlig for bong 99
+  // (som ble solgt av Kari, men ikke utbetalt)?"
+  const t99 = store.tickets.get("tkt-hall-a-small-99")!;
+  assert.equal(t99.responsible_user_id, "per-1");
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PT5 — extendRange (range-påfylling)
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Helper: setter opp en åpen range range-per med serials ["100"..."96"]
+ * (5 bonger) i hall-a + farge small, og tilgjengelige bonger ["95"..."85"]
+ * (11 bonger) i inventaret som ikke er reservert.
+ */
+function seedExtendScenario(store: MockStore): void {
+  const serials = ["100", "99", "98", "97", "96"];
+  seedRange(store, {
+    id: "range-per",
+    agent_id: "per-1",
+    hall_id: "hall-a",
+    ticket_color: "small",
+    initial_serial: "100",
+    final_serial: "96",
+    serials,
+    current_top_serial: "98", // 100, 99 solgt, 98-96 usolgt
+  });
+  for (const s of serials) {
+    const id = `tkt-hall-a-small-${s}`;
+    store.tickets.set(id, {
+      id,
+      hall_id: "hall-a",
+      ticket_serial: s,
+      ticket_color: "small",
+      is_purchased: ["100", "99"].includes(s),
+      reserved_by_range_id: ["100", "99"].includes(s) ? null : "range-per",
+      sold_from_range_id: ["100", "99"].includes(s) ? "range-per" : null,
+      responsible_user_id: ["100", "99"].includes(s) ? "per-1" : null,
+      paid_out_at: null,
+    });
+  }
+  // Tilgjengelig inventar under 96: 95, 94, 93, ..., 85 (11 bonger).
+  for (let n = 95; n >= 85; n -= 1) {
+    const s = String(n);
+    const id = `tkt-hall-a-small-${s}`;
+    store.tickets.set(id, {
+      id,
+      hall_id: "hall-a",
+      ticket_serial: s,
+      ticket_color: "small",
+      is_purchased: false,
+      reserved_by_range_id: null,
+      paid_out_at: null,
+    });
+  }
+}
+
+test("PT5 extendRange: happy-path — 5 bonger lagt til, ny final_serial = 91", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  const svc = makeService(store);
+
+  const res = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 5,
+    performedByUserId: "per-1",
+  });
+
+  assert.equal(res.rangeId, "range-per");
+  assert.equal(res.addedCount, 5);
+  assert.equal(res.newTopOfAddedSerial, "95");
+  assert.equal(res.newFinalSerial, "91");
+  assert.deepEqual(res.newSerials, ["95", "94", "93", "92", "91"]);
+  assert.equal(res.totalSerialsAfter, 10); // 5 gamle + 5 nye
+
+  // Range oppdatert.
+  const range = store.ranges.get("range-per")!;
+  assert.deepEqual(range.serials, ["100", "99", "98", "97", "96", "95", "94", "93", "92", "91"]);
+  assert.equal(range.final_serial, "91");
+  assert.equal(range.initial_serial, "100"); // uendret
+  assert.equal(range.current_top_serial, "98"); // uendret
+
+  // Nye bonger reservert.
+  for (const s of ["95", "94", "93", "92", "91"]) {
+    const t = store.tickets.get(`tkt-hall-a-small-${s}`)!;
+    assert.equal(t.reserved_by_range_id, "range-per");
+  }
+
+  // COMMIT, ingen rollback.
+  assert.equal(store.commitCount, 1);
+  assert.equal(store.rollbackCount, 0);
+});
+
+test("PT5 extendRange: ikke nok inventar → INSUFFICIENT_INVENTORY", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  const svc = makeService(store);
+
+  // Prøv å utvide med 20 bonger, men inventar = 11.
+  await assert.rejects(
+    () => svc.extendRange({
+      rangeId: "range-per",
+      additionalCount: 20,
+      performedByUserId: "per-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "INSUFFICIENT_INVENTORY",
+  );
+  assert.equal(store.rollbackCount, 1);
+  // Range uendret.
+  const range = store.ranges.get("range-per")!;
+  assert.equal(range.final_serial, "96");
+});
+
+test("PT5 extendRange: ikke eier uten adminOverride → FORBIDDEN", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.extendRange({
+      rangeId: "range-per",
+      additionalCount: 5,
+      performedByUserId: "kari-1", // ikke eier
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "FORBIDDEN",
+  );
+});
+
+test("PT5 extendRange: adminOverride tillater extend på vegne av bingovert", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  const svc = makeService(store);
+
+  const res = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 3,
+    performedByUserId: "admin-1",
+    adminOverride: true,
+  });
+  assert.equal(res.addedCount, 3);
+  assert.deepEqual(res.newSerials, ["95", "94", "93"]);
+});
+
+test("PT5 extendRange: lukket range → RANGE_ALREADY_CLOSED", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  store.ranges.get("range-per")!.closed_at = new Date();
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.extendRange({
+      rangeId: "range-per",
+      additionalCount: 5,
+      performedByUserId: "per-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "RANGE_ALREADY_CLOSED",
+  );
+});
+
+test("PT5 extendRange: RANGE_NOT_FOUND når rangeId ukjent", async () => {
+  const svc = makeService(newStore());
+  await assert.rejects(
+    () => svc.extendRange({
+      rangeId: "range-nope",
+      additionalCount: 5,
+      performedByUserId: "per-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "RANGE_NOT_FOUND",
+  );
+});
+
+test("PT5 extendRange: tom rangeId → INVALID_INPUT", async () => {
+  const svc = makeService(newStore());
+  await assert.rejects(
+    () => svc.extendRange({
+      rangeId: "",
+      additionalCount: 5,
+      performedByUserId: "per-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "INVALID_INPUT",
+  );
+});
+
+test("PT5 extendRange: additionalCount = 0 → INVALID_INPUT", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.extendRange({
+      rangeId: "range-per",
+      additionalCount: 0,
+      performedByUserId: "per-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "INVALID_INPUT",
+  );
+});
+
+test("PT5 extendRange: additionalCount > MAX_RANGE_COUNT → INVALID_INPUT", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  const svc = makeService(store);
+
+  await assert.rejects(
+    () => svc.extendRange({
+      rangeId: "range-per",
+      additionalCount: 10_000, // langt over MAX_RANGE_COUNT = 5000
+      performedByUserId: "per-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "INVALID_INPUT",
+  );
+});
+
+test("PT5 extendRange: sekvensielle extends fungerer (tilsvarer to påfyllinger)", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  const svc = makeService(store);
+
+  const r1 = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 3,
+    performedByUserId: "per-1",
+  });
+  assert.deepEqual(r1.newSerials, ["95", "94", "93"]);
+  assert.equal(r1.newFinalSerial, "93");
+
+  // Andre utvidelse — tar de neste tilgjengelige.
+  const r2 = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 3,
+    performedByUserId: "per-1",
+  });
+  assert.deepEqual(r2.newSerials, ["92", "91", "90"]);
+  assert.equal(r2.newFinalSerial, "90");
+
+  // Range har totalt 5+3+3 = 11 serials nå.
+  const range = store.ranges.get("range-per")!;
+  assert.equal(range.serials.length, 11);
+  assert.equal(range.final_serial, "90");
+});
+
+test("PT5 extendRange: race — to parallelle extends; andre feiler hvis inventar tomt", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  const svc = makeService(store);
+
+  // Første extend tar alle 11 tilgjengelige.
+  const r1 = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 11,
+    performedByUserId: "per-1",
+  });
+  assert.equal(r1.addedCount, 11);
+
+  // Andre extend: ingen bonger igjen i inventar → INSUFFICIENT_INVENTORY.
+  await assert.rejects(
+    () => svc.extendRange({
+      rangeId: "range-per",
+      additionalCount: 1,
+      performedByUserId: "per-1",
+    }),
+    (err: unknown) => err instanceof DomainError && err.code === "INSUFFICIENT_INVENTORY",
+  );
+});
+
+test("PT5 extendRange: hopper over reserverte (åpen range) bonger", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  // Reserver 95 og 94 av annen åpen range → skal ikke være tilgjengelige.
+  seedRange(store, {
+    id: "range-other",
+    agent_id: "other-1",
+    hall_id: "hall-a",
+    ticket_color: "small",
+    initial_serial: "95",
+    final_serial: "94",
+    serials: ["95", "94"],
+  });
+  store.tickets.get("tkt-hall-a-small-95")!.reserved_by_range_id = "range-other";
+  store.tickets.get("tkt-hall-a-small-94")!.reserved_by_range_id = "range-other";
+  const svc = makeService(store);
+
+  // Extend med 3 → skal hente 93, 92, 91 (ikke 95, 94).
+  const res = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 3,
+    performedByUserId: "per-1",
+  });
+  assert.deepEqual(res.newSerials, ["93", "92", "91"]);
+});
+
+test("PT5 extendRange: tillater bonger reservert av LUKKET range", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  // 95, 94 er reservert av en lukket range → skal være tilgjengelige igjen.
+  seedRange(store, {
+    id: "range-old",
+    agent_id: "old-1",
+    hall_id: "hall-a",
+    ticket_color: "small",
+    initial_serial: "95",
+    final_serial: "94",
+    serials: ["95", "94"],
+    closed_at: new Date("2026-01-01"),
+  });
+  store.tickets.get("tkt-hall-a-small-95")!.reserved_by_range_id = "range-old";
+  store.tickets.get("tkt-hall-a-small-94")!.reserved_by_range_id = "range-old";
+  const svc = makeService(store);
+
+  const res = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 3,
+    performedByUserId: "per-1",
+  });
+  // Henter DESC: 95, 94 (fra lukket) + 93.
+  assert.deepEqual(res.newSerials, ["95", "94", "93"]);
+});
+
+test("PT5 extendRange: kun samme farge — annen farge ignoreres", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  // Legg til noen "large"-bonger i samme hall → skal IKKE telles.
+  for (const s of ["095", "094", "093"]) {
+    const id = `tkt-hall-a-large-${s}`;
+    store.tickets.set(id, {
+      id,
+      hall_id: "hall-a",
+      ticket_serial: s,
+      ticket_color: "large",
+      is_purchased: false,
+      reserved_by_range_id: null,
+      paid_out_at: null,
+    });
+  }
+  const svc = makeService(store);
+
+  // range-per er 'small' → skal bare få small-bonger.
+  const res = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 3,
+    performedByUserId: "per-1",
+  });
+  assert.deepEqual(res.newSerials, ["95", "94", "93"]);
+});
+
+test("PT5 extendRange: final_serial-boundary — kun bonger < current final_serial", async () => {
+  const store = newStore();
+  seedExtendScenario(store);
+  // Legg til en bong "96" i inventaret (samme som final_serial) — skal IKKE plukkes.
+  // (Allerede seedet som en del av rangen; dette er defensivt for å sikre
+  // semantikken om at `< final_serial` brukes, ikke `<=`.)
+  const svc = makeService(store);
+
+  const res = await svc.extendRange({
+    rangeId: "range-per",
+    additionalCount: 1,
+    performedByUserId: "per-1",
+  });
+  // Skal IKKE plukke 96 igjen (det er allerede i rangen). Først ledige < 96 = 95.
+  assert.deepEqual(res.newSerials, ["95"]);
 });

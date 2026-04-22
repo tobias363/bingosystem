@@ -1,11 +1,13 @@
 /**
- * PT2+PT3 — integrasjonstester for adminAgentTicketRanges-router.
+ * PT2+PT3+PT5 — integrasjonstester for adminAgentTicketRanges-router.
  *
- * Dekker alle 4 endepunkter + RBAC + hall-scope + status-koder (200/403/409):
+ * Dekker alle 6 endepunkter + RBAC + hall-scope + status-koder (200/403/409):
  *   POST /api/admin/physical-tickets/ranges/register              (PT2)
  *   POST /api/admin/physical-tickets/ranges/:id/close             (PT2)
  *   GET  /api/admin/physical-tickets/ranges?agentId=&hallId=      (PT2)
  *   POST /api/admin/physical-tickets/ranges/:id/record-batch-sale (PT3)
+ *   POST /api/admin/physical-tickets/ranges/:id/handover          (PT5)
+ *   POST /api/admin/physical-tickets/ranges/:id/extend            (PT5)
  *
  * Bygger en stub-AgentTicketRangeService rundt et in-memory Map — samme
  * mønster som adminHallGroups.test.ts / adminStaticTickets.test.ts.
@@ -28,6 +30,10 @@ import type {
   RegisterRangeResult,
   RecordBatchSaleInput,
   RecordBatchSaleResult,
+  HandoverRangeInput,
+  HandoverRangeResult,
+  ExtendRangeInput,
+  ExtendRangeResult,
 } from "../../compliance/AgentTicketRangeService.js";
 import type { PlatformService, PublicAppUser } from "../../platform/PlatformService.js";
 import { DomainError } from "../../game/BingoEngine.js";
@@ -66,6 +72,8 @@ interface Ctx {
     registers: RegisterRangeInput[];
     closes: Array<{ id: string; userId: string }>;
     batchSales: RecordBatchSaleInput[];
+    handovers: HandoverRangeInput[];
+    extends: ExtendRangeInput[];
   };
   ranges: Map<string, AgentTicketRange>;
   close: () => Promise<void>;
@@ -85,6 +93,7 @@ function makeRange(overrides: Partial<AgentTicketRange> & { id: string; agentId:
     registeredAt: overrides.registeredAt ?? "2026-04-22T10:00:00Z",
     closedAt: overrides.closedAt ?? null,
     handoverFromRangeId: overrides.handoverFromRangeId ?? null,
+    handedOffToRangeId: overrides.handedOffToRangeId ?? null,
   };
 }
 
@@ -96,6 +105,10 @@ async function startServer(
     closeFail?: DomainError;
     batchSaleFail?: DomainError;
     batchSaleResult?: Partial<RecordBatchSaleResult>;
+    handoverFail?: DomainError;
+    handoverResult?: Partial<HandoverRangeResult>;
+    extendFail?: DomainError;
+    extendResult?: Partial<ExtendRangeResult>;
   } = {},
 ): Promise<Ctx> {
   const auditStore = new InMemoryAuditLogStore();
@@ -106,6 +119,8 @@ async function startServer(
   const registers: RegisterRangeInput[] = [];
   const closes: Array<{ id: string; userId: string }> = [];
   const batchSales: RecordBatchSaleInput[] = [];
+  const handovers: HandoverRangeInput[] = [];
+  const extendOps: ExtendRangeInput[] = [];
 
   const platformService = {
     async getUserFromAccessToken(token: string) {
@@ -195,6 +210,74 @@ async function startServer(
         ...behaviour.batchSaleResult,
       };
     },
+    async handoverRange(input: HandoverRangeInput): Promise<HandoverRangeResult> {
+      handovers.push(input);
+      if (behaviour.handoverFail) {
+        throw behaviour.handoverFail;
+      }
+      const r = ranges.get(input.fromRangeId);
+      if (!r) throw new DomainError("RANGE_NOT_FOUND", "not found");
+      idCounter += 1;
+      const newRangeId = `range-${idCounter}`;
+      const newRange = makeRange({
+        id: newRangeId,
+        agentId: input.toUserId,
+        hallId: r.hallId,
+        ticketColor: r.ticketColor,
+        initialSerial: r.currentTopSerial ?? r.initialSerial,
+        finalSerial: r.finalSerial,
+        currentTopSerial: r.currentTopSerial ?? r.initialSerial,
+        handoverFromRangeId: r.id,
+      });
+      ranges.set(newRangeId, newRange);
+      ranges.set(r.id, {
+        ...r,
+        closedAt: new Date().toISOString(),
+        handedOffToRangeId: newRangeId,
+      });
+      return {
+        newRangeId,
+        fromRangeId: input.fromRangeId,
+        unsoldCount: 3,
+        soldPendingCount: 2,
+        handoverAt: new Date().toISOString(),
+        fromUserId: r.agentId,
+        toUserId: input.toUserId,
+        hallId: r.hallId,
+        ticketColor: r.ticketColor,
+        newInitialSerial: newRange.initialSerial,
+        newFinalSerial: newRange.finalSerial,
+        ...behaviour.handoverResult,
+      };
+    },
+    async extendRange(input: ExtendRangeInput): Promise<ExtendRangeResult> {
+      extendOps.push(input);
+      if (behaviour.extendFail) {
+        throw behaviour.extendFail;
+      }
+      const r = ranges.get(input.rangeId);
+      if (!r) throw new DomainError("RANGE_NOT_FOUND", "not found");
+      const newSerials: string[] = [];
+      const bottom = parseInt(r.finalSerial, 10);
+      for (let i = 1; i <= input.additionalCount; i += 1) {
+        newSerials.push(String(bottom - i));
+      }
+      const newFinalSerial = newSerials[newSerials.length - 1]!;
+      ranges.set(r.id, {
+        ...r,
+        serials: [...r.serials, ...newSerials],
+        finalSerial: newFinalSerial,
+      });
+      return {
+        rangeId: r.id,
+        addedCount: input.additionalCount,
+        newFinalSerial,
+        newTopOfAddedSerial: newSerials[0]!,
+        newSerials,
+        totalSerialsAfter: r.serials.length + newSerials.length,
+        ...behaviour.extendResult,
+      };
+    },
   } as unknown as AgentTicketRangeService;
 
   const app = express();
@@ -212,7 +295,14 @@ async function startServer(
   const port = (server.address() as AddressInfo).port;
   return {
     baseUrl: `http://127.0.0.1:${port}`,
-    spies: { auditStore, registers, closes, batchSales },
+    spies: {
+      auditStore,
+      registers,
+      closes,
+      batchSales,
+      handovers,
+      extends: extendOps,
+    },
     ranges,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
@@ -1072,6 +1162,510 @@ test("PT3 route: eksplisitt scheduledGameId videresendes til service", async () 
     assert.equal(res.status, 200);
     assert.equal(ctx.spies.batchSales[0]!.scheduledGameId, "sched-explicit");
     assert.equal(res.json.data.scheduledGameId, "sched-explicit");
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PT5 — handover
+// ══════════════════════════════════════════════════════════════════════════
+
+test("PT5 route handover: HALL_OPERATOR eier kan utføre handover — 200", async () => {
+  const ctx = await startServer(
+    { "op-a-tok": operatorA },
+    [makeRange({ id: "r1", agentId: "op-a", hallId: "hall-a" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      "op-a-tok",
+      { toUserId: "op-a-successor" },
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.ok, true);
+    assert.ok(res.json.data.newRangeId);
+    assert.equal(res.json.data.fromRangeId, "r1");
+    assert.equal(res.json.data.toUserId, "op-a-successor");
+    assert.equal(res.json.data.unsoldCount, 3);
+    assert.equal(res.json.data.soldPendingCount, 2);
+
+    assert.equal(ctx.spies.handovers.length, 1);
+    assert.equal(ctx.spies.handovers[0]!.fromRangeId, "r1");
+    assert.equal(ctx.spies.handovers[0]!.toUserId, "op-a-successor");
+    assert.equal(ctx.spies.handovers[0]!.performedByUserId, "op-a");
+    assert.equal(ctx.spies.handovers[0]!.adminOverride, false);
+
+    // Audit-log skrevet.
+    const audit = await waitForAudit(
+      ctx.spies.auditStore,
+      "physical_ticket.range_handover",
+    );
+    assert.ok(audit);
+    assert.equal(audit!.actorId, "op-a");
+    assert.equal(audit!.resource, "agent_ticket_range");
+    assert.equal(audit!.resourceId, res.json.data.newRangeId);
+    const details = audit!.details as {
+      fromRangeId: string;
+      newRangeId: string;
+      fromUserId: string;
+      toUserId: string;
+      hallId: string;
+      unsoldCount: number;
+      soldPendingCount: number;
+    };
+    assert.equal(details.fromRangeId, "r1");
+    assert.equal(details.fromUserId, "op-a");
+    assert.equal(details.toUserId, "op-a-successor");
+    assert.equal(details.hallId, "hall-a");
+    assert.equal(details.unsoldCount, 3);
+    assert.equal(details.soldPendingCount, 2);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: HALL_OPERATOR blokkeres fra annen hall — 403", async () => {
+  const ctx = await startServer(
+    { "op-a-tok": operatorA },
+    [makeRange({ id: "r1", agentId: "op-b", hallId: "hall-b" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      "op-a-tok",
+      { toUserId: "someone" },
+    );
+    assert.equal(res.status, 403);
+    assert.equal(res.json.error.code, "FORBIDDEN");
+    assert.equal(ctx.spies.handovers.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: ADMIN kan utføre handover på vegne av bingovert — 200", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({ id: "r1", agentId: "op-b", hallId: "hall-b" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      "adm-tok",
+      { toUserId: "op-b-successor" },
+    );
+    assert.equal(res.status, 200);
+    // Service kalt med performedByUserId = range-eier + adminOverride=true.
+    assert.equal(ctx.spies.handovers[0]!.performedByUserId, "op-b");
+    assert.equal(ctx.spies.handovers[0]!.adminOverride, true);
+
+    const audit = await waitForAudit(
+      ctx.spies.auditStore,
+      "physical_ticket.range_handover",
+    );
+    assert.ok(audit);
+    assert.equal(audit!.actorId, "admin-1");
+    assert.equal((audit!.details as { onBehalf: boolean }).onBehalf, true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: PLAYER får 403 FORBIDDEN", async () => {
+  const ctx = await startServer({ tok: playerUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      "tok",
+      { toUserId: "someone" },
+    );
+    assert.equal(res.status, 403);
+    assert.equal(res.json.error.code, "FORBIDDEN");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: RANGE_NOT_FOUND → 409", async () => {
+  const ctx = await startServer({ "adm-tok": adminUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/nope/handover",
+      "adm-tok",
+      { toUserId: "someone" },
+    );
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error.code, "RANGE_NOT_FOUND");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: manglende toUserId → 400 INVALID_INPUT", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({ id: "r1", agentId: "op-a", hallId: "hall-a" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      "adm-tok",
+      {}, // tom body
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "INVALID_INPUT");
+    assert.equal(ctx.spies.handovers.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: HANDOVER_SAME_USER → 409", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({ id: "r1", agentId: "op-a", hallId: "hall-a" })],
+    {
+      handoverFail: new DomainError(
+        "HANDOVER_SAME_USER",
+        "Kan ikke overføre til seg selv.",
+      ),
+    },
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      "adm-tok",
+      { toUserId: "op-a" },
+    );
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error.code, "HANDOVER_SAME_USER");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: TARGET_USER_NOT_IN_HALL → 409", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({ id: "r1", agentId: "op-a", hallId: "hall-a" })],
+    {
+      handoverFail: new DomainError(
+        "TARGET_USER_NOT_IN_HALL",
+        "Bruker i annen hall.",
+      ),
+    },
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      "adm-tok",
+      { toUserId: "someone-else" },
+    );
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error.code, "TARGET_USER_NOT_IN_HALL");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: RANGE_ALREADY_CLOSED → 409", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({
+      id: "r1",
+      agentId: "op-a",
+      hallId: "hall-a",
+      closedAt: "2026-04-22T11:00:00Z",
+    })],
+    {
+      handoverFail: new DomainError("RANGE_ALREADY_CLOSED", "lukket"),
+    },
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      "adm-tok",
+      { toUserId: "someone" },
+    );
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error.code, "RANGE_ALREADY_CLOSED");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route handover: ingen token → 403 UNAUTHORIZED", async () => {
+  const ctx = await startServer({ adm: adminUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/handover",
+      undefined,
+      { toUserId: "someone" },
+    );
+    assert.equal(res.status, 403);
+    assert.equal(res.json.error.code, "UNAUTHORIZED");
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// PT5 — extend
+// ══════════════════════════════════════════════════════════════════════════
+
+test("PT5 route extend: HALL_OPERATOR eier kan utvide — 200", async () => {
+  const ctx = await startServer(
+    { "op-a-tok": operatorA },
+    [makeRange({ id: "r1", agentId: "op-a", hallId: "hall-a" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      "op-a-tok",
+      { additionalCount: 5 },
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.ok, true);
+    assert.equal(res.json.data.addedCount, 5);
+    assert.ok(res.json.data.newFinalSerial);
+    assert.equal(res.json.data.newSerials.length, 5);
+
+    assert.equal(ctx.spies.extends.length, 1);
+    assert.equal(ctx.spies.extends[0]!.rangeId, "r1");
+    assert.equal(ctx.spies.extends[0]!.additionalCount, 5);
+    assert.equal(ctx.spies.extends[0]!.performedByUserId, "op-a");
+    assert.equal(ctx.spies.extends[0]!.adminOverride, false);
+
+    // Audit-log skrevet.
+    const audit = await waitForAudit(
+      ctx.spies.auditStore,
+      "physical_ticket.range_extended",
+    );
+    assert.ok(audit);
+    assert.equal(audit!.actorId, "op-a");
+    assert.equal(audit!.resource, "agent_ticket_range");
+    assert.equal(audit!.resourceId, "r1");
+    const details = audit!.details as {
+      addedCount: number;
+      hallId: string;
+      agentId: string;
+      ticketColor: string;
+    };
+    assert.equal(details.addedCount, 5);
+    assert.equal(details.hallId, "hall-a");
+    assert.equal(details.agentId, "op-a");
+    assert.equal(details.ticketColor, "small");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: HALL_OPERATOR blokkeres fra annen hall — 403", async () => {
+  const ctx = await startServer(
+    { "op-a-tok": operatorA },
+    [makeRange({ id: "r1", agentId: "op-b", hallId: "hall-b" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      "op-a-tok",
+      { additionalCount: 5 },
+    );
+    assert.equal(res.status, 403);
+    assert.equal(res.json.error.code, "FORBIDDEN");
+    assert.equal(ctx.spies.extends.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: ADMIN kan utvide på vegne av bingovert — 200", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({ id: "r1", agentId: "op-b", hallId: "hall-b" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      "adm-tok",
+      { additionalCount: 3 },
+    );
+    assert.equal(res.status, 200);
+    assert.equal(ctx.spies.extends[0]!.performedByUserId, "op-b");
+    assert.equal(ctx.spies.extends[0]!.adminOverride, true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: PLAYER får 403 FORBIDDEN", async () => {
+  const ctx = await startServer({ tok: playerUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      "tok",
+      { additionalCount: 5 },
+    );
+    assert.equal(res.status, 403);
+    assert.equal(res.json.error.code, "FORBIDDEN");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: RANGE_NOT_FOUND → 409", async () => {
+  const ctx = await startServer({ "adm-tok": adminUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/nope/extend",
+      "adm-tok",
+      { additionalCount: 5 },
+    );
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error.code, "RANGE_NOT_FOUND");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: manglende additionalCount → 400 INVALID_INPUT", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({ id: "r1", agentId: "op-a", hallId: "hall-a" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      "adm-tok",
+      {}, // tom body
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "INVALID_INPUT");
+    assert.equal(ctx.spies.extends.length, 0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: negativ additionalCount → 400 INVALID_INPUT", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({ id: "r1", agentId: "op-a", hallId: "hall-a" })],
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      "adm-tok",
+      { additionalCount: -1 },
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "INVALID_INPUT");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: INSUFFICIENT_INVENTORY → 409", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({ id: "r1", agentId: "op-a", hallId: "hall-a" })],
+    {
+      extendFail: new DomainError(
+        "INSUFFICIENT_INVENTORY",
+        "Ikke nok bonger.",
+      ),
+    },
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      "adm-tok",
+      { additionalCount: 100 },
+    );
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error.code, "INSUFFICIENT_INVENTORY");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: RANGE_ALREADY_CLOSED → 409", async () => {
+  const ctx = await startServer(
+    { "adm-tok": adminUser },
+    [makeRange({
+      id: "r1",
+      agentId: "op-a",
+      hallId: "hall-a",
+      closedAt: "2026-04-22T11:00:00Z",
+    })],
+    {
+      extendFail: new DomainError("RANGE_ALREADY_CLOSED", "lukket"),
+    },
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      "adm-tok",
+      { additionalCount: 5 },
+    );
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error.code, "RANGE_ALREADY_CLOSED");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("PT5 route extend: ingen token → 403 UNAUTHORIZED", async () => {
+  const ctx = await startServer({ adm: adminUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/physical-tickets/ranges/r1/extend",
+      undefined,
+      { additionalCount: 5 },
+    );
+    assert.equal(res.status, 403);
+    assert.equal(res.json.error.code, "UNAUTHORIZED");
   } finally {
     await ctx.close();
   }
