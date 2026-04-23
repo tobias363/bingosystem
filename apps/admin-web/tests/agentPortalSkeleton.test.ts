@@ -155,12 +155,13 @@ describe("Agent-portal placeholder-sider", () => {
     document.body.innerHTML = '<div id="c"></div>';
   });
 
+  // NB: physical-cashout er ikke lenger en placeholder — P0 pilot-blokker
+  // er implementert i full. Dekkes av egen test-suite (se agentBingoPages.test.ts).
   const placeholders = [
     { name: "physical-tickets", mount: mountAgentPhysicalTickets, titleKey: "add_physical_tickets" },
     { name: "games", mount: mountAgentGames, titleKey: "agent_game_management" },
     { name: "cash-in-out", mount: mountAgentCashInOut, titleKey: "agent_cash_in_out_management" },
     { name: "unique-id", mount: mountAgentUniqueId, titleKey: "agent_unique_id_management" },
-    { name: "physical-cashout", mount: mountAgentPhysicalCashout, titleKey: "agent_physical_cashout" },
   ];
 
   for (const p of placeholders) {
@@ -176,6 +177,19 @@ describe("Agent-portal placeholder-sider", () => {
       expect(container.querySelector("section.content-header h1")).toBeTruthy();
     });
   }
+
+  it("physical-cashout: rendrer full implementation (ikke placeholder)", () => {
+    const container = document.getElementById("c")!;
+    mountAgentPhysicalCashout(container);
+    // Har breadcrumb + tittel, men IKKE coming-soon-marker.
+    const crumb = container.querySelector<HTMLAnchorElement>(".breadcrumb a[href='#/agent/dashboard']");
+    expect(crumb).toBeTruthy();
+    expect(container.querySelector("section.content-header h1")).toBeTruthy();
+    expect(container.querySelector("[data-marker='coming-soon']")).toBeNull();
+    // Har game-id-input-skjema.
+    expect(container.querySelector("#agent-cashout-form")).toBeTruthy();
+    expect(container.querySelector("#agent-cashout-gameId")).toBeTruthy();
+  });
 
   // Unngå unused-warning — brukt som "hjelper" referanse.
   void makeSession;
