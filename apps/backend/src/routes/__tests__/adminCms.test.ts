@@ -1,13 +1,20 @@
 /**
- * BIN-676: integrasjonstester for admin-cms-router.
+ * BIN-676 + BIN-680: integrasjonstester for admin-cms-router.
  *
- * Dekker alle seks endepunkter:
+ * Dekker alle endepunkter:
  *   GET  /api/admin/cms/faq
  *   POST /api/admin/cms/faq
  *   PATCH /api/admin/cms/faq/:id
  *   DELETE /api/admin/cms/faq/:id
  *   GET /api/admin/cms/:slug
- *   PUT /api/admin/cms/:slug       (+ FEATURE_DISABLED-gate for responsible-gaming)
+ *   PUT /api/admin/cms/:slug                         (oppretter draft for
+ *                                                     regulatorisk slug, BIN-680)
+ *   GET /api/admin/cms/:slug/history
+ *   GET /api/admin/cms/:slug/versions/:id
+ *   POST /api/admin/cms/:slug/versions
+ *   POST /api/admin/cms/:slug/versions/:id/submit
+ *   POST /api/admin/cms/:slug/versions/:id/approve   (4-øyne)
+ *   POST /api/admin/cms/:slug/versions/:id/publish
  *
  * Testene bygger en stub-CmsService rundt in-memory Maps — samme mønster
  * som adminSettings.test.ts.
@@ -26,8 +33,9 @@ import {
 import {
   CMS_SLUGS,
   CMS_VERSION_HISTORY_REQUIRED,
-  type CmsService,
+  CmsService,
   type CmsContent,
+  type CmsContentVersion,
   type CmsSlug,
   type CreateFaqInput,
   type FaqEntry,
@@ -68,12 +76,17 @@ interface Ctx {
   };
   content: Map<CmsSlug, string>;
   faqs: Map<string, FaqEntry>;
+  versions: Map<string, CmsContentVersion>;
   close: () => Promise<void>;
 }
 
 async function startServer(
   users: Record<string, PublicAppUser>,
-  seed: { content?: Partial<Record<CmsSlug, string>>; faqs?: FaqEntry[] } = {}
+  seed: {
+    content?: Partial<Record<CmsSlug, string>>;
+    faqs?: FaqEntry[];
+    versions?: CmsContentVersion[];
+  } = {}
 ): Promise<Ctx> {
   const auditStore = new InMemoryAuditLogStore();
   const auditLogService = new AuditLogService(auditStore);
@@ -82,6 +95,9 @@ async function startServer(
   );
   const faqs = new Map<string, FaqEntry>(
     (seed.faqs ?? []).map((f) => [f.id, f])
+  );
+  const versions = new Map<string, CmsContentVersion>(
+    (seed.versions ?? []).map((v) => [v.id, v])
   );
 
   const platformService = {
@@ -111,27 +127,191 @@ async function startServer(
     return raw as CmsSlug;
   }
 
+  function nextVersionNumber(slug: CmsSlug): number {
+    let max = 0;
+    for (const v of versions.values()) {
+      if (v.slug === slug && v.versionNumber > max) max = v.versionNumber;
+    }
+    return max + 1;
+  }
+
   const cmsService = {
     async getContent(slug: string): Promise<CmsContent> {
-      return buildContent(assertValidSlug(slug));
+      const validSlug = assertValidSlug(slug);
+      // BIN-680: regulatorisk slug leser fra live-versjon.
+      if (CMS_VERSION_HISTORY_REQUIRED.includes(validSlug)) {
+        const live = [...versions.values()].find(
+          (v) => v.slug === validSlug && v.status === "live"
+        );
+        if (live) {
+          return {
+            slug: validSlug,
+            content: live.content,
+            updatedByUserId: live.publishedByUserId ?? live.createdByUserId,
+            createdAt: live.createdAt,
+            updatedAt: live.publishedAt ?? live.createdAt,
+          };
+        }
+        return {
+          slug: validSlug,
+          content: "",
+          updatedByUserId: null,
+          createdAt: "2026-04-20T12:00:00Z",
+          updatedAt: "2026-04-20T12:00:00Z",
+        };
+      }
+      return buildContent(validSlug);
     },
     async updateContent(
       slug: string,
       contentValue: unknown,
-      _actorUserId: string | null
+      actorUserId: string | null
     ): Promise<CmsContent> {
       const validSlug = assertValidSlug(slug);
-      if (CMS_VERSION_HISTORY_REQUIRED.includes(validSlug)) {
-        throw new DomainError(
-          "FEATURE_DISABLED",
-          `Blokkert av BIN-680: ${validSlug} krever versjons-historikk.`
-        );
-      }
       if (typeof contentValue !== "string") {
         throw new DomainError("INVALID_INPUT", "content må være en streng.");
       }
+      // BIN-680: regulatorisk slug oppretter ny draft i stedet for upsert.
+      if (CMS_VERSION_HISTORY_REQUIRED.includes(validSlug)) {
+        if (!actorUserId) {
+          throw new DomainError(
+            "INVALID_INPUT",
+            "actorUserId er påkrevd for regulatorisk slug."
+          );
+        }
+        const draft = await cmsService.createVersion({
+          slug: validSlug,
+          content: contentValue,
+          createdByUserId: actorUserId,
+        });
+        return {
+          slug: validSlug,
+          content: draft.content,
+          updatedByUserId: draft.createdByUserId,
+          createdAt: draft.createdAt,
+          updatedAt: draft.createdAt,
+        };
+      }
       content.set(validSlug, contentValue);
       return buildContent(validSlug);
+    },
+    async createVersion(input: {
+      slug: string;
+      content: unknown;
+      createdByUserId: string;
+    }): Promise<CmsContentVersion> {
+      const validSlug = assertValidSlug(input.slug);
+      if (!CMS_VERSION_HISTORY_REQUIRED.includes(validSlug)) {
+        throw new DomainError("CMS_SLUG_NOT_VERSIONED", "not versioned");
+      }
+      if (typeof input.content !== "string") {
+        throw new DomainError("INVALID_INPUT", "content må være en streng.");
+      }
+      if (!input.createdByUserId?.trim()) {
+        throw new DomainError("INVALID_INPUT", "createdByUserId er påkrevd.");
+      }
+      const id = randomUUID();
+      const version: CmsContentVersion = {
+        id,
+        slug: validSlug,
+        versionNumber: nextVersionNumber(validSlug),
+        content: input.content,
+        status: "draft",
+        createdByUserId: input.createdByUserId.trim(),
+        createdAt: "2026-04-20T12:00:00Z",
+        approvedByUserId: null,
+        approvedAt: null,
+        publishedByUserId: null,
+        publishedAt: null,
+        retiredAt: null,
+      };
+      versions.set(id, version);
+      return version;
+    },
+    async submitForReview(input: {
+      versionId: string;
+      userId: string;
+    }): Promise<CmsContentVersion> {
+      const v = versions.get(input.versionId);
+      if (!v) throw new DomainError("CMS_VERSION_NOT_FOUND", "not found");
+      if (v.status !== "draft") {
+        throw new DomainError("CMS_VERSION_INVALID_TRANSITION", "bad state");
+      }
+      const next: CmsContentVersion = { ...v, status: "review" };
+      versions.set(v.id, next);
+      return next;
+    },
+    async approveVersion(input: {
+      versionId: string;
+      approvedByUserId: string;
+    }): Promise<CmsContentVersion> {
+      const v = versions.get(input.versionId);
+      if (!v) throw new DomainError("CMS_VERSION_NOT_FOUND", "not found");
+      if (v.status !== "review") {
+        throw new DomainError("CMS_VERSION_INVALID_TRANSITION", "bad state");
+      }
+      if (input.approvedByUserId === v.createdByUserId) {
+        throw new DomainError(
+          "FOUR_EYES_VIOLATION",
+          "Godkjenner må være en annen admin enn skaper."
+        );
+      }
+      const next: CmsContentVersion = {
+        ...v,
+        status: "approved",
+        approvedByUserId: input.approvedByUserId,
+        approvedAt: "2026-04-20T13:00:00Z",
+      };
+      versions.set(v.id, next);
+      return next;
+    },
+    async publishVersion(input: {
+      versionId: string;
+      publishedByUserId: string;
+    }): Promise<{ live: CmsContentVersion; previousLiveVersionId: string | null }> {
+      const v = versions.get(input.versionId);
+      if (!v) throw new DomainError("CMS_VERSION_NOT_FOUND", "not found");
+      if (v.status !== "approved") {
+        throw new DomainError("CMS_VERSION_INVALID_TRANSITION", "bad state");
+      }
+      let previousLiveVersionId: string | null = null;
+      for (const other of versions.values()) {
+        if (other.slug === v.slug && other.status === "live" && other.id !== v.id) {
+          previousLiveVersionId = other.id;
+          versions.set(other.id, {
+            ...other,
+            status: "retired",
+            retiredAt: "2026-04-20T14:00:00Z",
+          });
+        }
+      }
+      const next: CmsContentVersion = {
+        ...v,
+        status: "live",
+        publishedByUserId: input.publishedByUserId,
+        publishedAt: "2026-04-20T14:00:00Z",
+      };
+      versions.set(v.id, next);
+      return { live: next, previousLiveVersionId };
+    },
+    async getVersionById(id: string): Promise<CmsContentVersion> {
+      const v = versions.get(id);
+      if (!v) throw new DomainError("CMS_VERSION_NOT_FOUND", "not found");
+      return v;
+    },
+    async getLiveVersion(slug: string): Promise<CmsContentVersion | null> {
+      const validSlug = assertValidSlug(slug);
+      return (
+        [...versions.values()].find(
+          (v) => v.slug === validSlug && v.status === "live"
+        ) ?? null
+      );
+    },
+    async getVersionHistory(slug: string): Promise<CmsContentVersion[]> {
+      const validSlug = assertValidSlug(slug);
+      return [...versions.values()]
+        .filter((v) => v.slug === validSlug)
+        .sort((a, b) => b.versionNumber - a.versionNumber);
     },
     async listFaq(): Promise<FaqEntry[]> {
       return [...faqs.values()].sort((a, b) =>
@@ -217,6 +397,7 @@ async function startServer(
     spies: { auditStore },
     content,
     faqs,
+    versions,
     close: () =>
       new Promise((resolve) => server.close(() => resolve())),
   };
@@ -438,10 +619,24 @@ test("BIN-676 cms route: GET /:slug med ukjent slug gir CMS_SLUG_UNKNOWN", async
   }
 });
 
-test("BIN-676 cms route: GET /responsible-gaming fungerer normalt (kun PUT er gated)", async () => {
+test("BIN-680 cms route: GET /responsible-gaming returnerer live-versjonens innhold", async () => {
+  const liveVersion: CmsContentVersion = {
+    id: "ver-live-1",
+    slug: "responsible-gaming",
+    versionNumber: 1,
+    content: "<p>Spill ansvarlig</p>",
+    status: "live",
+    createdByUserId: "admin-1",
+    createdAt: "2026-04-20T10:00:00Z",
+    approvedByUserId: "admin-2",
+    approvedAt: "2026-04-20T11:00:00Z",
+    publishedByUserId: "admin-2",
+    publishedAt: "2026-04-20T12:00:00Z",
+    retiredAt: null,
+  };
   const ctx = await startServer(
     { "admin-tok": adminUser },
-    { content: { "responsible-gaming": "<p>Spill ansvarlig</p>" } }
+    { versions: [liveVersion] }
   );
   try {
     const res = await req(
@@ -453,6 +648,23 @@ test("BIN-676 cms route: GET /responsible-gaming fungerer normalt (kun PUT er ga
     assert.equal(res.status, 200);
     assert.equal(res.json.data.slug, "responsible-gaming");
     assert.equal(res.json.data.content, "<p>Spill ansvarlig</p>");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: GET /responsible-gaming returnerer tom streng uten live-versjon", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "GET",
+      "/api/admin/cms/responsible-gaming",
+      "admin-tok"
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.slug, "responsible-gaming");
+    assert.equal(res.json.data.content, "");
   } finally {
     await ctx.close();
   }
@@ -484,7 +696,7 @@ test("BIN-676 cms route: PUT /aboutus lagrer innhold og skriver audit", async ()
   }
 });
 
-test("BIN-676 cms route: PUT /responsible-gaming returnerer FEATURE_DISABLED (BIN-680)", async () => {
+test("BIN-680 cms route: PUT /responsible-gaming oppretter draft og skriver draft_created-audit", async () => {
   const ctx = await startServer({ "admin-tok": adminUser });
   try {
     const res = await req(
@@ -494,18 +706,34 @@ test("BIN-676 cms route: PUT /responsible-gaming returnerer FEATURE_DISABLED (BI
       "admin-tok",
       { content: "<p>Ansvarlig spill</p>" }
     );
-    assert.equal(res.status, 400);
-    assert.equal(res.json.error.code, "FEATURE_DISABLED");
-    assert.match(
-      res.json.error.message,
-      /BIN-680/,
-      "feilmelding refererer BIN-680"
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.slug, "responsible-gaming");
+    assert.equal(res.json.data.content, "<p>Ansvarlig spill</p>");
+
+    // En draft skal ha blitt opprettet.
+    assert.equal(ctx.versions.size, 1);
+    const [draft] = [...ctx.versions.values()];
+    assert.equal(draft?.status, "draft");
+    assert.equal(draft?.createdByUserId, "admin-1");
+    assert.equal(draft?.versionNumber, 1);
+
+    // Audit-event skal være draft_created, IKKE admin.cms.update.
+    const audit = await waitForAudit(
+      ctx.spies.auditStore,
+      "admin.spillvett.text.draft_created"
     );
-    // Ingen audit-event skal ha blitt skrevet.
+    assert.ok(audit, "draft_created audit-event skrevet");
+    assert.equal(audit?.resource, "cms_content_version");
+    assert.equal(audit?.details?.slug, "responsible-gaming");
+    assert.equal(audit?.details?.versionNumber, 1);
+    assert.equal(audit?.details?.createdBy, "admin-1");
+
+    // admin.cms.update skal IKKE ha blitt skrevet for versjonert slug.
     const events = await ctx.spies.auditStore.list();
     assert.equal(
       events.filter((e) => e.action === "admin.cms.update").length,
-      0
+      0,
+      "admin.cms.update brukes kun for ikke-versjonerte slugs"
     );
   } finally {
     await ctx.close();
@@ -763,6 +991,409 @@ test("BIN-676 cms route: DELETE /faq/:id med ukjent id gir FAQ_NOT_FOUND", async
     );
     assert.equal(res.status, 400);
     assert.equal(res.json.error.code, "FAQ_NOT_FOUND");
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ── BIN-680 Lag 1: versjons-endepunkter ────────────────────────────────────
+
+async function bootstrapDraft(
+  baseUrl: string,
+  token: string,
+  slug: string,
+  content: string
+): Promise<{ id: string; versionNumber: number }> {
+  const res = await req(baseUrl, "POST", `/api/admin/cms/${slug}/versions`, token, {
+    content,
+  });
+  assert.equal(res.status, 200, "draft create status");
+  return { id: res.json.data.id, versionNumber: res.json.data.versionNumber };
+}
+
+test("BIN-680 cms route: POST /:slug/versions oppretter draft og skriver audit", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/cms/responsible-gaming/versions",
+      "admin-tok",
+      { content: "<p>Ny tekst</p>" }
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.status, "draft");
+    assert.equal(res.json.data.versionNumber, 1);
+    assert.equal(res.json.data.createdByUserId, "admin-1");
+
+    const audit = await waitForAudit(
+      ctx.spies.auditStore,
+      "admin.spillvett.text.draft_created"
+    );
+    assert.ok(audit, "draft_created audit-event skrevet");
+    assert.equal(audit?.resource, "cms_content_version");
+    assert.equal(audit?.details?.slug, "responsible-gaming");
+    assert.equal(audit?.details?.versionNumber, 1);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: POST /:slug/versions krever CMS_WRITE (SUPPORT blokkeres)", async () => {
+  const ctx = await startServer({ "sup-tok": supportUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/cms/responsible-gaming/versions",
+      "sup-tok",
+      { content: "<p>forsøk</p>" }
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "FORBIDDEN");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: POST /:slug/versions avviser ikke-versjonert slug", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/cms/aboutus/versions",
+      "admin-tok",
+      { content: "<p>forsøk</p>" }
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "CMS_SLUG_NOT_VERSIONED");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: GET /:slug/history returnerer versjons-historikk", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "v1"
+    );
+    await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "v2"
+    );
+
+    const res = await req(
+      ctx.baseUrl,
+      "GET",
+      "/api/admin/cms/responsible-gaming/history",
+      "admin-tok"
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.count, 2);
+    // Nyeste først.
+    assert.equal(res.json.data.versions[0].versionNumber, 2);
+    assert.equal(res.json.data.versions[1].versionNumber, 1);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: POST submit → draft → review med audit", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const draft = await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "v1"
+    );
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${draft.id}/submit`,
+      "admin-tok"
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.status, "review");
+
+    const audit = await waitForAudit(
+      ctx.spies.auditStore,
+      "admin.spillvett.text.submitted_for_review"
+    );
+    assert.ok(audit, "submitted_for_review audit-event skrevet");
+    assert.equal(audit?.resourceId, draft.id);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: POST approve krever 4-øyne — same user gir FOUR_EYES_VIOLATION", async () => {
+  // adminUser oppretter draft; SAMME adminUser prøver å approve → must fail.
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const draft = await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "v1"
+    );
+    await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${draft.id}/submit`,
+      "admin-tok"
+    );
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${draft.id}/approve`,
+      "admin-tok"
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "FOUR_EYES_VIOLATION");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: POST approve med annen admin OK + audit inkluderer begge IDer", async () => {
+  const admin2: PublicAppUser = { ...adminUser, id: "admin-2" };
+  const ctx = await startServer({
+    "admin-tok": adminUser,
+    "admin2-tok": admin2,
+  });
+  try {
+    const draft = await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "v1"
+    );
+    await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${draft.id}/submit`,
+      "admin-tok"
+    );
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${draft.id}/approve`,
+      "admin2-tok"
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.status, "approved");
+    assert.equal(res.json.data.approvedByUserId, "admin-2");
+
+    const audit = await waitForAudit(
+      ctx.spies.auditStore,
+      "admin.spillvett.text.approved"
+    );
+    assert.ok(audit, "approved audit-event skrevet");
+    assert.equal(audit?.details?.approvedBy, "admin-2");
+    assert.equal(audit?.details?.createdBy, "admin-1");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: POST publish setter status=live + audit med previousLiveVersionId", async () => {
+  const admin2: PublicAppUser = { ...adminUser, id: "admin-2" };
+  const ctx = await startServer({
+    "admin-tok": adminUser,
+    "admin2-tok": admin2,
+  });
+  try {
+    // Publiser v1 først for å ha en forrige live.
+    const v1 = await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "v1"
+    );
+    await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${v1.id}/submit`,
+      "admin-tok"
+    );
+    await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${v1.id}/approve`,
+      "admin2-tok"
+    );
+    await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${v1.id}/publish`,
+      "admin2-tok"
+    );
+
+    // v2 → publish.
+    const v2 = await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "v2"
+    );
+    await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${v2.id}/submit`,
+      "admin-tok"
+    );
+    await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${v2.id}/approve`,
+      "admin2-tok"
+    );
+    const pubRes = await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${v2.id}/publish`,
+      "admin2-tok"
+    );
+    assert.equal(pubRes.status, 200);
+    assert.equal(pubRes.json.data.status, "live");
+    assert.equal(pubRes.json.data.previousLiveVersionId, v1.id);
+
+    // Nå skal GET /responsible-gaming returnere v2-innhold.
+    const getRes = await req(
+      ctx.baseUrl,
+      "GET",
+      "/api/admin/cms/responsible-gaming",
+      "admin-tok"
+    );
+    assert.equal(getRes.json.data.content, "v2");
+
+    // Audit-event skal være publisert med previousLiveVersionId = v1.id.
+    const events = await ctx.spies.auditStore.list();
+    const pubAudits = events.filter(
+      (e) => e.action === "admin.spillvett.text.published"
+    );
+    assert.equal(pubAudits.length, 2);
+    const latest = pubAudits[0]; // Nyeste først i InMemoryAuditLogStore.list
+    assert.equal(latest?.details?.previousLiveVersionId, v1.id);
+    assert.equal(latest?.details?.publishedBy, "admin-2");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: GET /:slug/versions/:id returnerer spesifikk versjon", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const draft = await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "tekst"
+    );
+    const res = await req(
+      ctx.baseUrl,
+      "GET",
+      `/api/admin/cms/responsible-gaming/versions/${draft.id}`,
+      "admin-tok"
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.json.data.id, draft.id);
+    assert.equal(res.json.data.content, "tekst");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: GET /:slug/versions/:id slug-mismatch gir CMS_VERSION_SLUG_MISMATCH", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const draft = await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "tekst"
+    );
+    // Gyldig slug (aboutus), men versjon tilhører responsible-gaming.
+    const res = await req(
+      ctx.baseUrl,
+      "GET",
+      `/api/admin/cms/aboutus/versions/${draft.id}`,
+      "admin-tok"
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "CMS_VERSION_SLUG_MISMATCH");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: POST approve for ukjent versjon gir CMS_VERSION_NOT_FOUND", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/cms/responsible-gaming/versions/ikke-eksisterende/approve",
+      "admin-tok"
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "CMS_VERSION_NOT_FOUND");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: versjons-endepunkter krever CMS_WRITE (HALL_OPERATOR blokkeres)", async () => {
+  const ctx = await startServer({ "op-tok": operatorUser });
+  try {
+    const history = await req(
+      ctx.baseUrl,
+      "GET",
+      "/api/admin/cms/responsible-gaming/history",
+      "op-tok"
+    );
+    // READ er OK for HALL_OPERATOR.
+    assert.equal(history.status, 200);
+
+    const draft = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/cms/responsible-gaming/versions",
+      "op-tok",
+      { content: "forsøk" }
+    );
+    assert.equal(draft.status, 400);
+    assert.equal(draft.json.error.code, "FORBIDDEN");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-680 cms route: publish krever approved-status (draft direkte → INVALID_TRANSITION)", async () => {
+  const ctx = await startServer({ "admin-tok": adminUser });
+  try {
+    const draft = await bootstrapDraft(
+      ctx.baseUrl,
+      "admin-tok",
+      "responsible-gaming",
+      "v1"
+    );
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      `/api/admin/cms/responsible-gaming/versions/${draft.id}/publish`,
+      "admin-tok"
+    );
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "CMS_VERSION_INVALID_TRANSITION");
   } finally {
     await ctx.close();
   }
