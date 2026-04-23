@@ -14,6 +14,8 @@
     "migrate": "node-pg-migrate -d APP_PG_CONNECTION_STRING -m migrations --ignore-pattern '.*\\.md$|^\\..*' up",
     "migrate:create": "node-pg-migrate -d APP_PG_CONNECTION_STRING -m migrations --ignore-pattern '.*\\.md$|^\\..*' create",
     "seed:test-users": "tsx scripts/seed-test-users-hall.ts",
+    "seed:demo-tv-bonus": "tsx scripts/seed-demo-tv-and-bonus.ts",
+    "seed:demo-tv-minimal": "tsx scripts/seed-demo-tv-minimal.ts",
     "spec:lint": "redocly lint openapi.yaml"
   },
   "dependencies": {
@@ -23,6 +25,7 @@
     "cors": "^2.8.5",
     "dotenv": "^17.3.1",
     "express": "^4.21.2",
+    "firebase-admin": "^12.7.0",
     "ioredis": "^5.10.1",
     "mssql": "^12.3.1",
     "nodemailer": "^8.0.5",

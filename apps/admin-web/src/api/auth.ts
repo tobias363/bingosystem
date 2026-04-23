@@ -132,8 +132,23 @@ function mapUserToSession(
   u: ApiUser,
   permissions: Record<string, { view: boolean; add: boolean; edit: boolean; delete: boolean }> = {}
 ): Session {
-  const roleRaw = (u.role ?? "").toLowerCase();
-  const role: Session["role"] = roleRaw === "agent" ? "agent" : u.isSuperAdmin ? "super-admin" : "admin";
+  // Backend uses uppercase UserRole ("ADMIN" | "HALL_OPERATOR" | "SUPPORT" |
+  // "PLAYER" | "AGENT"); some legacy test-fixtures still send lowercase
+  // ("admin"/"agent"). We compare uppercased for robustness.
+  // Agent-portal PR: HALL_OPERATOR now lands in the agent-portal (same UX as
+  // AGENT, but with elevated permissions per AdminAccessPolicy). SUPPORT
+  // stays on the admin-panel (compliance role).
+  const roleRaw = (u.role ?? "").toUpperCase();
+  let role: Session["role"];
+  if (roleRaw === "AGENT") {
+    role = "agent";
+  } else if (roleRaw === "HALL_OPERATOR") {
+    role = "hall-operator";
+  } else if (u.isSuperAdmin) {
+    role = "super-admin";
+  } else {
+    role = "admin";
+  }
   return {
     id: u.id,
     name: u.displayName ?? u.email,

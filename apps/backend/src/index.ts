@@ -48,6 +48,7 @@ import { createJobScheduler } from "./jobs/JobScheduler.js";
 import { createSwedbankPaymentSyncJob } from "./jobs/swedbankPaymentSync.js";
 import { createBankIdExpiryReminderJob } from "./jobs/bankIdExpiryReminder.js";
 import { createSelfExclusionCleanupJob } from "./jobs/selfExclusionCleanup.js";
+import { createMachineTicketAutoCloseJob } from "./jobs/machineTicketAutoClose.js";
 import { createLoyaltyMonthlyResetJob } from "./jobs/loyaltyMonthlyReset.js";
 import { createGame1ScheduleTickJob } from "./jobs/game1ScheduleTick.js";
 import { Game1RecoveryService } from "./game/Game1RecoveryService.js";
@@ -56,6 +57,10 @@ import { Game1PayoutService } from "./game/Game1PayoutService.js";
 import { Game1JackpotService } from "./game/Game1JackpotService.js";
 import { Game1AutoDrawTickService } from "./game/Game1AutoDrawTickService.js";
 import { createGame1AutoDrawTickJob } from "./jobs/game1AutoDrawTick.js";
+import { FcmPushService } from "./notifications/FcmPushService.js";
+import { createGameStartNotificationsJob } from "./jobs/gameStartNotifications.js";
+import { createNotificationsRouter } from "./routes/notifications.js";
+import { createAdminNotificationsRouter } from "./routes/adminNotifications.js";
 import { LoyaltyPointsHookAdapter } from "./adapters/LoyaltyPointsHookAdapter.js";
 import { Game1HallReadyService } from "./game/Game1HallReadyService.js";
 import { Game1MasterControlService } from "./game/Game1MasterControlService.js";
@@ -85,8 +90,11 @@ import { createAdminSecurityRouter } from "./routes/adminSecurity.js";
 import { SecurityService } from "./compliance/SecurityService.js";
 import { createAgentRouter } from "./routes/agent.js";
 import { createAdminAgentsRouter } from "./routes/adminAgents.js";
+import { createAdminAgentPermissionsRouter } from "./routes/adminAgentPermissions.js";
+import { AgentPermissionService } from "./platform/AgentPermissionService.js";
 import { createAgentTransactionsRouter } from "./routes/agentTransactions.js";
 import { createAgentDashboardRouter } from "./routes/agentDashboard.js";
+import { createAgentContextRouter } from "./routes/agentContext.js";
 import { createAgentSettlementRouter } from "./routes/agentSettlement.js";
 import { createAdminProductsRouter } from "./routes/adminProducts.js";
 import { createAgentProductsRouter } from "./routes/agentProducts.js";
@@ -167,10 +175,13 @@ import { createAdminCmsRouter } from "./routes/adminCms.js";
 import { CmsService } from "./admin/CmsService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
 import { createAdminReportsSubgameDrillDownRouter } from "./routes/adminReportsSubgameDrillDown.js";
+import { createAdminReportsGame1ManagementRouter } from "./routes/adminReportsGame1Management.js";
 import { createAdminReportsRedFlagPlayersRouter } from "./routes/adminReportsRedFlagPlayers.js";
 import { createAdminPlayersTopRouter } from "./routes/adminPlayersTop.js";
 import { createAdminVouchersRouter } from "./routes/adminVouchers.js";
 import { VoucherService } from "./compliance/VoucherService.js";
+import { VoucherRedemptionService } from "./compliance/VoucherRedemptionService.js";
+import { createVoucherRouter } from "./routes/voucher.js";
 import { createAdminUniqueIdsAndPayoutsRouter } from "./routes/adminUniqueIdsAndPayouts.js";
 import { createAdminUsersRouter } from "./routes/adminUsers.js";
 import { createAdminPlayerActivityRouter } from "./routes/adminPlayerActivity.js";
@@ -184,6 +195,8 @@ import { errorReporter } from "./middleware/errorReporter.js";
 import { PostgresChatMessageStore, type ChatMessageStore } from "./store/ChatMessageStore.js";
 import { createAdminDisplayHandlers } from "./sockets/adminDisplayEvents.js";
 import { createAdminHallHandlers } from "./sockets/adminHallEvents.js";
+import { TvScreenService } from "./game/TvScreenService.js";
+import { createTvScreenRouter } from "./routes/tvScreen.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -294,9 +307,12 @@ const {
   jobsEnabled, jobSwedbankEnabled, jobSwedbankIntervalMs,
   jobBankIdEnabled, jobBankIdIntervalMs, jobBankIdRunAtHour,
   jobRgCleanupEnabled, jobRgCleanupIntervalMs, jobRgCleanupRunAtHour,
+  jobMachineAutoCloseEnabled, jobMachineAutoCloseIntervalMs,
+  jobMachineAutoCloseRunAtHour, jobMachineAutoCloseMaxAgeHours,
   jobLoyaltyMonthlyResetEnabled, jobLoyaltyMonthlyResetIntervalMs,
   jobGame1ScheduleTickEnabled, jobGame1ScheduleTickIntervalMs,
   jobGame1AutoDrawEnabled, jobGame1AutoDrawIntervalMs,
+  jobGameStartNotificationsEnabled, jobGameStartNotificationsIntervalMs,
   usePostgresBingoAdapter, checkpointConnectionString, roomStateProvider, redisUrl, useRedisLock,
   kycMinAge, kycProvider, pgSsl, pgSchema, sessionTtlHours,
 } = cfg;
@@ -476,6 +492,13 @@ const voucherService = new VoucherService({
   schema: pgSchema,
 });
 
+// BIN-587 B4b follow-up: spiller-side voucher-innløsning. Deler pg-pool med
+// PlatformService så schema-init er garantert når første redeem kommer inn.
+const voucherRedemptionService = new VoucherRedemptionService({
+  pool: platformService.getPool(),
+  schema: pgSchema,
+});
+
 // BIN-622: Game Management (admin-katalog av spill-varianter).
 const gameManagementService = new GameManagementService({
   connectionString: platformConnectionString,
@@ -600,6 +623,14 @@ const savedGameService = new SavedGameService({
   schema: pgSchema,
 });
 
+// Role Management — per-agent permission-matrix (Admin CR 21.02.2024 side 5 +
+// Agent V1.0 permissions). 15 moduler * 4-5 actions, én rad per (agent, modul).
+// AGENT_PERMISSION_READ (ADMIN/SUPPORT) / AGENT_PERMISSION_WRITE (ADMIN-only).
+const agentPermissionService = new AgentPermissionService({
+  connectionString: platformConnectionString,
+  schema: pgSchema,
+});
+
 // BIN-677: System settings + maintenance-vinduer. SettingsService bruker
 // key-value-registry (SYSTEM_SETTING_REGISTRY) — ukjente nøkler avvises.
 // MaintenanceService håndhever aktiv-invariant (max ett aktivt vindu av
@@ -629,6 +660,13 @@ const cmsService = new CmsService({
 // (EmailService blir stub uten SMTP_HOST; audit bruker in-memory uten
 // DB-backing). Agent 3 vil wire ADMIN-side audit-kall i påfølgende PR.
 const emailService = new EmailService();
+// BIN-FCM: Firebase Cloud Messaging push-service. Kjører no-op uten
+// FIREBASE_CREDENTIALS_JSON (matcher EmailService-mønsteret) — dev-miljø
+// kan starte uten Firebase-credentials, mens prod må sette env-var.
+const fcmPushService = new FcmPushService({
+  pool: platformService.getPool(),
+  schema: pgSchema,
+});
 const auditLogStore: AuditLogStore = platformConnectionString
   ? new PostgresAuditLogStore({
       pool: new Pool({
@@ -884,6 +922,23 @@ jobScheduler.register({
   run: createLoyaltyMonthlyResetJob({ loyaltyService }),
 });
 
+// BIN-FCM: sendGameStartNotifications cron (legacy 1min). Finner spill som
+// starter innen notification-vinduet og sender push til deltagende halls
+// aktive spillere. Dedup via eksisterende 'game-start'-rader i
+// app_notifications siste 24t. No-op når FCM er disabled — cron logger
+// bare 0 items i så fall.
+jobScheduler.register({
+  name: "game-start-notifications",
+  description: "Send FCM push to players when a scheduled Game 1 is within its notification window (BIN-FCM).",
+  intervalMs: jobGameStartNotificationsIntervalMs,
+  enabled: jobGameStartNotificationsEnabled,
+  run: createGameStartNotificationsJob({
+    pool: platformService.getPool(),
+    schema: pgSchema,
+    fcmPushService,
+  }),
+});
+
 // GAME1_SCHEDULE PR 1+2: 15s-tick som spawner Game 1-rader fra daily_schedules,
 // flipper status 'scheduled' → 'purchase_open', 'purchase_open' →
 // 'ready_to_start' når alle haller klare, og cancel-er utløpte rader.
@@ -1112,6 +1167,15 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// TV Screen + Winners public display. Ingen auth-middleware — kun
+// tvToken-sjekk i route-handler. Mountes før alle auth-gated routere
+// slik at CORS + body-parser er på, men ingen JWT-krav gjelder.
+const tvScreenService = new TvScreenService({
+  pool: platformService.getPool(),
+  schema: pgSchema,
+});
+app.use(createTvScreenRouter({ platformService, tvScreenService }));
+
 app.use(createAuthRouter({
   platformService,
   walletAdapter,
@@ -1207,6 +1271,11 @@ app.use(createAdminVouchersRouter({
   platformService,
   auditLogService,
   voucherService,
+}));
+// BIN-587 B4b follow-up: player-side voucher-innløsning (HTTP fallback).
+app.use(createVoucherRouter({
+  platformService,
+  voucherRedemptionService,
 }));
 app.use(createAdminGameManagementRouter({
   platformService,
@@ -1441,6 +1510,13 @@ app.use(createAdminAgentsRouter({
   agentShiftService,
   auditLogService,
 }));
+// Role Management — per-agent permission-matrix (Admin CR 21.02.2024 side 5).
+app.use(createAdminAgentPermissionsRouter({
+  platformService,
+  agentService,
+  agentPermissionService,
+  auditLogService,
+}));
 
 // BIN-583 B3.2: agent cash-ops + ticket sale + transaction log.
 // PhysicalTicketService (B4a) instansieres over — vi bygger opp
@@ -1483,6 +1559,14 @@ app.use(createAgentDashboardRouter({
   agentShiftService,
   agentTransactionStore,
   auditLogService,
+}));
+
+// Agent-portal skeleton (feat/agent-portal-skeleton): /api/agent/context.
+// AGENT + HALL_OPERATOR — gir assigned halls + coarse capabilities for
+// admin-web's Agent-portal header/side-nav.
+app.use(createAgentContextRouter({
+  platformService,
+  agentService,
 }));
 
 // BIN-583 B3.3: agent + admin daily-cash-settlement (close-day, edit, PDF).
@@ -1601,6 +1685,14 @@ app.use(createAdminReportsSubgameDrillDownRouter({
   platformService,
   engine,
 }));
+// BIN-BOT-01: "Report Management Game 1" aggregate-rapport (OMS/UTD/Payout%/RES
+// per sub-game). Filtre: fra/til dato, group-of-hall, hall, type (player|bot),
+// fritekst-søk. HALL_OPERATOR auto-scope til egen hall. Read-only.
+app.use(createAdminReportsGame1ManagementRouter({
+  platformService,
+  engine,
+  hallGroupService,
+}));
 // BIN-651: red-flag players report (AML + regulatorisk AuditLog on view).
 // Paginert liste over red-flaggede spillere med flag-årsak + siste aktivitet.
 // Skriver `admin.report.red_flag_players.viewed` til AuditLog ved vellykket
@@ -1649,6 +1741,25 @@ app.use(createAgentOkBingoRouter({
   auditLogService,
 }));
 
+// BIN-582: Metronia/OK-Bingo auto-close-cron. Registeres her fordi den
+// trenger begge ticket-services + machineTicketStore (som ikke er
+// konstruert på tidspunktet de andre jobbene registeres på linje ~854).
+// JobScheduler.start() kalles etter alle register()-kallene.
+jobScheduler.register({
+  name: "machine-ticket-auto-close",
+  description: "Daily auto-close of hanging Metronia/OK-Bingo tickets (BIN-582 legacy cron port).",
+  intervalMs: jobMachineAutoCloseIntervalMs,
+  enabled: jobMachineAutoCloseEnabled,
+  run: createMachineTicketAutoCloseJob({
+    machineTicketStore,
+    metroniaService: metroniaTicketService,
+    okBingoService: okBingoTicketService,
+    auditLogService,
+    runAtHourLocal: jobMachineAutoCloseRunAtHour,
+    maxTicketAgeHours: jobMachineAutoCloseMaxAgeHours,
+  }),
+});
+
 app.use(createAdminRouter({
   platformService, engine, io, drawScheduler, bingoSettingsState, responsibleGamingStore,
   localBingoAdapter: (usePostgresBingoAdapter ? localBingoAdapter : null) as { getGameSession?: (id: string) => Promise<unknown>; getGameTimeline?: (id: string) => Promise<unknown> } | null,
@@ -1682,6 +1793,7 @@ app.use(createAdminRouter({
   auditLogService,
   emailService,
   supportEmail,
+  hallCashLedger,
 }));
 
 app.use(createWalletRouter({ platformService, engine, walletAdapter, swedbankPayService, emitWalletRoomUpdates }));
@@ -1698,6 +1810,17 @@ app.use(createPaymentsRouter({
 }));
 app.use(createPaymentRequestsRouter({ platformService, paymentRequestService, emitWalletRoomUpdates }));
 app.use(createGameRouter({ platformService, engine, drawScheduler, emitRoomUpdate, buildRoomUpdatePayload, assertUserCanAccessRoom, assertUserCanActAsPlayer }));
+
+// BIN-FCM: notifikasjons-endpoints. Player-facing (/api/notifications*)
+// + admin-broadcast (/api/admin/notifications/broadcast).
+app.use(createNotificationsRouter({ platformService, fcmPushService }));
+app.use(createAdminNotificationsRouter({
+  platformService,
+  fcmPushService,
+  auditLogService,
+  pool: platformService.getPool(),
+  schema: pgSchema,
+}));
 
 // ── Prometheus + health ───────────────────────────────────────────────────────
 
@@ -1837,6 +1960,8 @@ const registerGameEvents = createGameEventHandlers({
       fetchGameManagementConfig: fetchGameManagementConfigForRoomState,
     }),
   chatMessageStore,
+  // BIN-587 B4b follow-up: dep for socket-event `voucher:redeem`.
+  voucherRedemptionService,
 });
 
 // BIN-498 + BIN-503: TV-display socket handlers.

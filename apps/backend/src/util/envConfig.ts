@@ -44,6 +44,11 @@ export interface BingoRuntimeConfig {
   jobRgCleanupEnabled: boolean;
   jobRgCleanupIntervalMs: number;
   jobRgCleanupRunAtHour: number;
+  // BIN-582: Metronia/OK Bingo machine-ticket auto-close (legacy 00:00-cron)
+  jobMachineAutoCloseEnabled: boolean;
+  jobMachineAutoCloseIntervalMs: number;
+  jobMachineAutoCloseRunAtHour: number;
+  jobMachineAutoCloseMaxAgeHours: number;
   // BIN-700: loyalty monthly reset
   jobLoyaltyMonthlyResetEnabled: boolean;
   jobLoyaltyMonthlyResetIntervalMs: number;
@@ -53,6 +58,9 @@ export interface BingoRuntimeConfig {
   // GAME1_SCHEDULE PR 4c: auto-draw-tick for Game 1 (fixed seconds-intervall)
   jobGame1AutoDrawEnabled: boolean;
   jobGame1AutoDrawIntervalMs: number;
+  // BIN-FCM: FCM push-notification cron (legacy sendGameStartNotifications)
+  jobGameStartNotificationsEnabled: boolean;
+  jobGameStartNotificationsIntervalMs: number;
   // Storage
   usePostgresBingoAdapter: boolean;
   checkpointConnectionString: string;
@@ -132,6 +140,15 @@ export function loadBingoRuntimeConfig(): BingoRuntimeConfig {
   const jobRgCleanupIntervalMs = Math.max(60_000, parsePositiveIntEnv(process.env.JOB_RG_CLEANUP_INTERVAL_MS, 15 * 60 * 1000));
   const jobRgCleanupRunAtHour = Math.min(23, Math.max(0, Math.floor(parseNonNegativeNumberEnv(process.env.JOB_RG_CLEANUP_RUN_AT_HOUR, 0))));
 
+  // BIN-582: daglig auto-close av hengende Metronia/OK-Bingo-billetter.
+  // Legacy kjørte 00:00 for å lukke alt fra forrige driftsdøgn. Bruker
+  // samme polling-mønster som RG-cleanup (polling 15 min + date-key);
+  // maxAgeHours=24 matcher legacy "siste driftsdøgn".
+  const jobMachineAutoCloseEnabled = parseBooleanEnv(process.env.JOB_MACHINE_AUTO_CLOSE_ENABLED, true);
+  const jobMachineAutoCloseIntervalMs = Math.max(60_000, parsePositiveIntEnv(process.env.JOB_MACHINE_AUTO_CLOSE_INTERVAL_MS, 15 * 60 * 1000));
+  const jobMachineAutoCloseRunAtHour = Math.min(23, Math.max(0, Math.floor(parseNonNegativeNumberEnv(process.env.JOB_MACHINE_AUTO_CLOSE_RUN_AT_HOUR, 0))));
+  const jobMachineAutoCloseMaxAgeHours = Math.max(1, Math.floor(parseNonNegativeNumberEnv(process.env.JOB_MACHINE_AUTO_CLOSE_MAX_AGE_HOURS, 24)));
+
   // BIN-700: loyalty-monthly-reset-job. Nullstiller month_points for alle
   // spillere ved månedskift. Default ON — idempotent, billig (single UPDATE).
   // Polling-intervall 1 time (nok presisjon for "kjør én gang pr måned").
@@ -148,6 +165,19 @@ export function loadBingoRuntimeConfig(): BingoRuntimeConfig {
   // Minimum 500 ms — auto-draw trigges hvert `seconds`-felt fra ticket_config,
   // tick-intervallet bare polles. Default 1000 ms matcher "global 1s tick".
   const jobGame1AutoDrawIntervalMs = Math.max(500, parsePositiveIntEnv(process.env.GAME1_AUTO_DRAW_INTERVAL_MS, 1_000));
+
+  // BIN-FCM: FCM push-notification cron for pre-game-varsler.
+  // Legacy kjørte hver 1min (60s). Default ON når FIREBASE_CREDENTIALS_JSON
+  // er satt — service-laget kjører i no-op-modus uten credentials, så
+  // cronen spammer ikke pending-rader.
+  const jobGameStartNotificationsEnabled = parseBooleanEnv(
+    process.env.JOB_GAME_START_NOTIFICATIONS_ENABLED,
+    true,
+  );
+  const jobGameStartNotificationsIntervalMs = Math.max(
+    30_000,
+    parsePositiveIntEnv(process.env.JOB_GAME_START_NOTIFICATIONS_INTERVAL_MS, 60_000),
+  );
 
   // BIN-159/BIN-240: PostgreSQL checkpointing
   const checkpointConnectionString = process.env.APP_PG_CONNECTION_STRING?.trim() || process.env.WALLET_PG_CONNECTION_STRING?.trim() || "";
@@ -194,9 +224,12 @@ export function loadBingoRuntimeConfig(): BingoRuntimeConfig {
     jobsEnabled, jobSwedbankEnabled, jobSwedbankIntervalMs,
     jobBankIdEnabled, jobBankIdIntervalMs, jobBankIdRunAtHour,
     jobRgCleanupEnabled, jobRgCleanupIntervalMs, jobRgCleanupRunAtHour,
+    jobMachineAutoCloseEnabled, jobMachineAutoCloseIntervalMs,
+    jobMachineAutoCloseRunAtHour, jobMachineAutoCloseMaxAgeHours,
     jobLoyaltyMonthlyResetEnabled, jobLoyaltyMonthlyResetIntervalMs,
     jobGame1ScheduleTickEnabled, jobGame1ScheduleTickIntervalMs,
     jobGame1AutoDrawEnabled, jobGame1AutoDrawIntervalMs,
+    jobGameStartNotificationsEnabled, jobGameStartNotificationsIntervalMs,
     usePostgresBingoAdapter, checkpointConnectionString,
     roomStateProvider, redisUrl, useRedisLock, kycMinAge, kycProvider,
     pgSsl, pgSchema, sessionTtlHours, screensaverConfig,

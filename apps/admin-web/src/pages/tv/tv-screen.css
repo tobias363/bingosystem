@@ -1,0 +1,433 @@
+/*
+ * TV Screen + Winners — full-screen public display stylesheet.
+ *
+ * Designreferanse: Admin V1.0 Game 1 - 24.3.2023 side 17
+ *                  Admin CR 21.02.2024 (Winners-siden)
+ *
+ * Kjennetegn:
+ *   - Red gradient bakgrunn (legacy Spill-O-Rama branding)
+ *   - Gold text for headers
+ *   - Full-screen (dekker hele viewport — ingen nav, ingen scroll)
+ *   - Stor sirkel med siste trukne tall, patterns-tabell venstre
+ */
+
+/* Root-host når TV-siden er aktiv — skjul all øvrig admin-chrome og reset */
+.tv-host,
+.tv-host * {
+  box-sizing: border-box;
+  font-family: "Helvetica Neue", Arial, sans-serif;
+}
+
+.tv-host {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: linear-gradient(135deg, #8b0000 0%, #c00000 50%, #8b0000 100%);
+  color: #fff;
+  padding: 24px 40px;
+  z-index: 9999;
+}
+
+.tv-header {
+  text-align: center;
+  font-size: 48px;
+  font-weight: 900;
+  color: #ffd700;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+  letter-spacing: 4px;
+  margin-bottom: 8px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #ffd700;
+}
+
+/* ── Sub-header: Current / Next game (Bølge 1) ──────────────────────── */
+
+.tv-subheader {
+  display: flex;
+  justify-content: center;
+  gap: 48px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  min-height: 0; /* empty state skjules naturlig */
+}
+
+.tv-subheader:empty {
+  display: none;
+}
+
+.tv-subheader-line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: #ffd700;
+  font-size: 22px;
+  font-weight: 700;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.tv-subheader-label {
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  font-size: 16px;
+  color: rgba(255, 215, 0, 0.75);
+}
+
+.tv-subheader-value {
+  color: #fff;
+  font-weight: 800;
+}
+
+/* ── TV Screen (live draw) ──────────────────────────────────────────── */
+
+.tv-screen-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  /* -140px dekker header (48px + border + margin) + sub-header
+     (~44px med både current+next-linje) + litt padding. */
+  height: calc(100% - 140px);
+}
+
+.tv-screen-left {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 12px;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.tv-patterns-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 28px;
+}
+
+.tv-patterns-table th {
+  text-align: left;
+  padding: 12px 8px;
+  border-bottom: 2px solid #ffd700;
+  color: #ffd700;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 22px;
+  letter-spacing: 1px;
+}
+
+.tv-patterns-table td {
+  padding: 16px 8px;
+  border-bottom: 1px solid rgba(255, 215, 0, 0.3);
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.tv-patterns-table tr.highlighted {
+  background: rgba(255, 0, 0, 0.45);
+  box-shadow: 0 0 12px rgba(255, 0, 0, 0.8);
+}
+
+.tv-patterns-table tr.highlighted td {
+  color: #ffd700;
+}
+
+.tv-screen-right {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px;
+}
+
+.tv-game-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.tv-game-title {
+  font-size: 38px;
+  font-weight: 800;
+  color: #ffd700;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Drawn-counter X/Y (Bølge 1) ─────────────────────────────────────
+   Erstatter den gamle tv-total-draws (samme plassering top-right i
+   .tv-game-header). Stor gul tall på rød pute — matcher legacy
+   Ball_Drawn_Count_Txt / txtTotalNumbersWithdrawn. */
+.tv-drawn-counter {
+  background: rgba(0, 0, 0, 0.35);
+  padding: 10px 22px;
+  border-radius: 10px;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  border: 1px solid rgba(255, 215, 0, 0.5);
+}
+
+.tv-drawn-counter-label {
+  font-size: 14px;
+  color: rgba(255, 215, 0, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  font-weight: 700;
+}
+
+.tv-drawn-counter-value {
+  color: #ffd700;
+  font-size: 48px;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+.tv-drawn-counter-value strong {
+  color: #fff;
+}
+
+.tv-drawn-counter-sep {
+  color: rgba(255, 215, 0, 0.7);
+}
+
+.tv-last-ball-circle {
+  margin: 24px auto;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #ffe680, #ffd700 60%, #b38600 100%);
+  color: #7a0000;
+  font-size: 160px;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 40px rgba(255, 215, 0, 0.6), inset 0 0 24px rgba(0, 0, 0, 0.3);
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.tv-last-5 {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.tv-small-ball {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 800;
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+}
+
+/* Column-colors — 75-ball bingo: 1-15 blue, 16-30 red, 31-45 white,
+   46-60 green, 61-75 yellow (legacy Spillorama). */
+.tv-small-ball.col-b {
+  background: radial-gradient(circle at 30% 30%, #6db4ff, #1a4e99);
+}
+.tv-small-ball.col-i {
+  background: radial-gradient(circle at 30% 30%, #ff8080, #a32222);
+}
+.tv-small-ball.col-n {
+  background: radial-gradient(circle at 30% 30%, #f5f5f5, #bbbbbb);
+  color: #7a0000;
+}
+.tv-small-ball.col-g {
+  background: radial-gradient(circle at 30% 30%, #7be08c, #1f8c3d);
+}
+.tv-small-ball.col-o {
+  background: radial-gradient(circle at 30% 30%, #fff1a0, #cc9a00);
+  color: #7a0000;
+}
+
+/* ── Aktivt pattern-banner (Bølge 1) ──────────────────────────────────
+   Stor bold tekst midt på skjerm (under ball-rad, over countdown) som
+   viser hvilket pattern som spilles nå. Pulse-animasjon ved mount /
+   DOM-replace så endring fanges visuelt. Legacy ref:
+   AdminTVScreenWinners.Patterns_Txt. */
+.tv-active-pattern {
+  text-align: center;
+  margin-top: 20px;
+  padding: 16px 24px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 2px solid #ffd700;
+  border-radius: 10px;
+  box-shadow: 0 0 18px rgba(255, 215, 0, 0.35);
+  animation: tv-active-pattern-pulse 1.8s ease-in-out infinite;
+}
+
+.tv-active-pattern-label {
+  display: block;
+  font-size: 16px;
+  color: rgba(255, 215, 0, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.tv-active-pattern-name {
+  display: block;
+  font-size: 56px;
+  font-weight: 900;
+  color: #ffd700;
+  letter-spacing: 2px;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.55);
+  line-height: 1.1;
+}
+
+@keyframes tv-active-pattern-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 18px rgba(255, 215, 0, 0.35);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 32px rgba(255, 215, 0, 0.7);
+    transform: scale(1.02);
+  }
+}
+
+.tv-countdown {
+  text-align: center;
+  margin-top: 20px;
+  padding: 14px 24px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  font-size: 22px;
+  color: #ffd700;
+  font-weight: 700;
+}
+
+.tv-countdown .tv-countdown-seconds {
+  font-size: 48px;
+  display: block;
+  color: #fff;
+}
+
+.tv-voice-select {
+  position: absolute;
+  top: 24px;
+  right: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffd700;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.tv-voice-select select {
+  background: #000;
+  color: #ffd700;
+  border: 2px solid #ffd700;
+  padding: 6px 12px;
+  font-size: 18px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tv-loading,
+.tv-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 48px;
+  color: #ffd700;
+  font-weight: 700;
+}
+
+.tv-error {
+  color: #ffb0b0;
+}
+
+/* ── Winners page ───────────────────────────────────────────────────── */
+
+.tv-winners-body {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  gap: 32px;
+  height: calc(100% - 100px);
+  padding: 16px;
+}
+
+.tv-winners-boxes {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  justify-content: center;
+}
+
+.tv-winners-box {
+  background: rgba(0, 0, 0, 0.35);
+  border: 2px solid #ffd700;
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.tv-winners-box-value {
+  font-size: 72px;
+  font-weight: 900;
+  color: #ffd700;
+  line-height: 1;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.tv-winners-box-label {
+  font-size: 22px;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.tv-winners-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.tv-winners-table th {
+  background: rgba(0, 0, 0, 0.4);
+  color: #ffd700;
+  padding: 14px 10px;
+  text-align: left;
+  font-size: 20px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.tv-winners-table td {
+  padding: 18px 10px;
+  font-size: 22px;
+  font-weight: 700;
+  border-bottom: 1px solid rgba(255, 215, 0, 0.25);
+}
+
+.tv-winners-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Bølge 1 oppgradering: "Venter på neste spill"-banner i empty-state */
+.tv-waiting-notice {
+  margin-top: 20px;
+  padding: 16px 24px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+  color: rgba(255, 215, 0, 0.75);
+  font-style: italic;
+  letter-spacing: 1px;
+}
+

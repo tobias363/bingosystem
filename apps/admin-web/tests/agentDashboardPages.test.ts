@@ -1,11 +1,17 @@
 /**
- * Agent dashboard + player-list admin-UI-sider.
+ * Agent-portal skeleton-dashboard + player-list admin-UI-sider.
+ *
+ * Agent-portal skeleton PR omskrev AgentDashboardPage til ren skjelett-
+ * visning med KPI + Latest Requests + Top 5 Players + Ongoing Games tabs
+ * (placeholder-bokser). Tidligere shift-info-varianten flyttes til
+ * /agent/cashinout-flyten i en oppfølger-PR (se /agent/cashinout route).
  *
  * Tester:
- *   - AgentDashboardPage rendrer shift-info + counts + recent transactions
- *   - AgentDashboardPage håndterer null shift
+ *   - AgentDashboardPage rendrer KPI-boks + Latest Requests-widget + Top
+ *     5 Players-widget + Ongoing Games tabs (game1-4)
  *   - AgentPlayersPage viser liste og export-knapp
- *   - Routes eksisterer i routes.ts
+ *   - Routes eksisterer i routes.ts med agent+hall-operator roles
+ *   - Placeholder-routes for /agent/* skeleton registrert
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { findRoute } from "../src/router/routes.js";
@@ -20,27 +26,44 @@ function okJson(data: unknown): Response {
   });
 }
 
-describe("routes — agent-dashboard + agent-players", () => {
-  it("/agent/dashboard route finnes med riktig titleKey", () => {
+describe("routes — agent-portal skeleton", () => {
+  it("/agent/dashboard route finnes med riktig titleKey og roles", () => {
     const r = findRoute("/agent/dashboard");
     expect(r).toBeDefined();
     expect(r?.titleKey).toBe("agent_dashboard");
-    expect(r?.roles).toEqual(["agent"]);
+    expect(r?.roles).toContain("agent");
+    expect(r?.roles).toContain("hall-operator");
   });
 
-  it("/agent/players route finnes med riktig titleKey", () => {
+  it("/agent/players route finnes", () => {
     const r = findRoute("/agent/players");
     expect(r).toBeDefined();
     expect(r?.titleKey).toBe("agent_players_title");
-    expect(r?.roles).toEqual(["agent"]);
+    expect(r?.roles).toContain("agent");
+    expect(r?.roles).toContain("hall-operator");
+  });
+
+  it("registrerer alle agent-portal skeleton-routes", () => {
+    const skeletonPaths = [
+      "/agent/physical-tickets",
+      "/agent/games",
+      "/agent/cash-in-out",
+      "/agent/unique-id",
+      "/agent/physical-cashout",
+    ];
+    for (const p of skeletonPaths) {
+      const r = findRoute(p);
+      expect(r, `route ${p} skal finnes`).toBeDefined();
+      expect(r?.roles).toContain("agent");
+      expect(r?.roles).toContain("hall-operator");
+    }
   });
 });
 
-describe("AgentDashboardPage", () => {
+describe("AgentDashboardPage (skeleton)", () => {
   beforeEach(() => {
     initI18n();
     document.body.innerHTML = '<div id="c"></div>';
-    // Sett token for apiRequest
     window.localStorage.setItem("bingo_admin_access_token", "tok-test");
   });
 
@@ -49,80 +72,56 @@ describe("AgentDashboardPage", () => {
     window.localStorage.removeItem("bingo_admin_access_token");
   });
 
-  it("rendrer shift-info + counts når backend returnerer aktiv shift", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      okJson({
-        agent: { userId: "a1", email: "a@x.no", displayName: "Agent One" },
-        shift: {
-          id: "s1",
-          hallId: "hall-a",
-          startedAt: "2026-04-21T08:00:00Z",
-          endedAt: null,
-          dailyBalance: 1234.56,
-          totalCashIn: 2000,
-          totalCashOut: 765.44,
-          totalCardIn: 0,
-          totalCardOut: 0,
-          sellingByCustomerNumber: 3,
-          hallCashBalance: 5000,
-          settledAt: null,
-        },
-        counts: { transactionsToday: 7, playersInHall: 42, activeShiftsInHall: 1 },
-        recentTransactions: [
-          {
-            id: "tx1",
-            actionType: "CASH_IN",
-            amount: 100,
-            paymentMethod: "CASH",
-            createdAt: "2026-04-21T09:00:00Z",
-          },
-        ],
-      })
-    );
+  it("rendrer KPI-boks, Latest Requests, Top 5 Players og Ongoing Games tabs", async () => {
     const container = document.getElementById("c")!;
     const mod = await import("../src/pages/agent-dashboard/AgentDashboardPage.js");
     mod.mountAgentDashboard(container);
-    // Vent på async refresh
-    await new Promise((r) => setTimeout(r, 50));
-    expect(container.querySelector("#agent-dashboard-shift")).toBeTruthy();
-    expect(container.querySelector("#agent-dashboard-counts")).toBeTruthy();
-    expect(container.textContent).toContain("1234.56");
-    expect(container.textContent).toContain("hall-a");
-    expect(container.textContent).toContain("CASH_IN");
-    mod.unmountAgentDashboard();
+    // Skeleton rendrer synkront — ingen fetch/polling
+    expect(container.querySelector("[data-marker='agent-dashboard-kpis']")).toBeTruthy();
+    expect(container.querySelector("[data-kpi='approved-players']")).toBeTruthy();
+    expect(container.querySelector("[data-marker='agent-dashboard-latest-requests']")).toBeTruthy();
+    expect(container.querySelector("[data-marker='agent-dashboard-top-players']")).toBeTruthy();
+    expect(container.querySelector("[data-marker='agent-dashboard-ongoing-games']")).toBeTruthy();
+
+    // Sjekk at alle 4 game-tabs finnes (Game 1-4)
+    const tabs = container.querySelectorAll("a[data-game-tab]");
+    expect(tabs).toHaveLength(4);
+    const tabIds = Array.from(tabs).map((a) => a.getAttribute("data-game-tab"));
+    expect(tabIds).toEqual(["game1", "game2", "game3", "game4"]);
+
+    // Placeholder-merke ("Kommer snart") i alle 4 panes
+    const panes = container.querySelectorAll("[data-marker='ongoing-games-pane']");
+    expect(panes).toHaveLength(4);
+
+    // 5 dummy latest-request-rader og 5 top-player-rader
+    expect(container.querySelectorAll("[data-marker='latest-request-row']")).toHaveLength(5);
+    expect(container.querySelectorAll("[data-marker='top-player-row']")).toHaveLength(5);
   });
 
-  it("viser 'Ingen aktiv shift' når backend returnerer null shift", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      okJson({
-        agent: { userId: "a1", email: "a@x.no", displayName: "Agent One" },
-        shift: null,
-        counts: { transactionsToday: 0, playersInHall: null, activeShiftsInHall: null },
-        recentTransactions: [],
-      })
-    );
+  it("tab-bytting oppdaterer active-klasse", async () => {
     const container = document.getElementById("c")!;
     const mod = await import("../src/pages/agent-dashboard/AgentDashboardPage.js");
     mod.mountAgentDashboard(container);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(container.querySelector(".callout-warning")).toBeTruthy();
-    expect(container.textContent?.toLowerCase()).toContain("ingen aktiv shift");
-    mod.unmountAgentDashboard();
+
+    // Default active tab er game1
+    const pane1 = container.querySelector("#tab-game1");
+    const pane2 = container.querySelector("#tab-game2");
+    expect(pane1?.classList.contains("active")).toBe(true);
+    expect(pane2?.classList.contains("active")).toBe(false);
+
+    // Klikk på game2 tab
+    const tab2 = container.querySelector<HTMLAnchorElement>("a[data-game-tab='game2']");
+    tab2!.click();
+    expect(pane1?.classList.contains("active")).toBe(false);
+    expect(pane2?.classList.contains("active")).toBe(true);
   });
 
-  it("viser feilmelding når API feiler", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ ok: false, error: { code: "FAIL", message: "ouch" } }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      })
-    );
+  it("unmountAgentDashboard er no-op (skeleton har ingen timere)", async () => {
     const container = document.getElementById("c")!;
     const mod = await import("../src/pages/agent-dashboard/AgentDashboardPage.js");
     mod.mountAgentDashboard(container);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(container.querySelector(".box-danger")).toBeTruthy();
-    mod.unmountAgentDashboard();
+    // Skal ikke kaste eller ha bivirkninger
+    expect(() => mod.unmountAgentDashboard()).not.toThrow();
   });
 });
 

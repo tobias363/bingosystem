@@ -1,7 +1,13 @@
 import "./styles/shell.css";
 import { initI18n, t } from "./i18n/I18n.js";
 import { bootstrapAuth } from "./auth/AuthGuard.js";
-import { getSession, type Session } from "./auth/Session.js";
+import {
+  getSession,
+  isAdminPanelRole,
+  isAgentPortalRole,
+  landingRouteForRole,
+  type Session,
+} from "./auth/Session.js";
 import { Router } from "./router/Router.js";
 import { findRoute, type RouteDef } from "./router/routes.js";
 import { mountLayout, renderLayoutChrome, type LayoutRefs } from "./shell/Layout.js";
@@ -40,14 +46,45 @@ import { isOtherGamesRoute, mountOtherGamesRoute } from "./pages/otherGames/inde
 import { mountDashboard, unmountDashboard } from "./pages/dashboard/DashboardPage.js";
 import { mountAgentDashboard, unmountAgentDashboard } from "./pages/agent-dashboard/AgentDashboardPage.js";
 import { mountAgentPlayers } from "./pages/agent-players/AgentPlayersPage.js";
+import { mountAgentPhysicalTickets } from "./pages/agent-portal/AgentPhysicalTicketsPage.js";
+import { mountAgentGames } from "./pages/agent-portal/AgentGamesPage.js";
+import { mountAgentCashInOut } from "./pages/agent-portal/AgentCashInOutPage.js";
+import { mountAgentUniqueId } from "./pages/agent-portal/AgentUniqueIdPage.js";
+import { mountAgentPhysicalCashout } from "./pages/agent-portal/AgentPhysicalCashoutPage.js";
+import { isTvRoute, mountTvRoute } from "./pages/tv/index.js";
 
 const MAINTENANCE_MODE = false;
 
 async function bootstrap(): Promise<void> {
   initI18n();
-  const state = await bootstrapAuth();
   const root = document.getElementById("app");
   if (!root) throw new Error("Missing #app element");
+
+  // TV Screen + Winners: public routes utenfor auth-gate. Bingoverten åpner
+  // `/admin/#/tv/<hallId>/<tvToken>` på hall-TV-skjermen; siden skal kunne
+  // bootstrappe uten login. Dispatcheren re-kjører på hashchange så
+  // WinnersPage↔TVScreenPage-switching fungerer uten reload.
+  const dispatchTv = (): boolean => {
+    const hashPath = window.location.hash.replace(/^#/, "") || "/";
+    if (isTvRoute(hashPath)) {
+      mountTvRoute(root, hashPath);
+      return true;
+    }
+    return false;
+  };
+  if (dispatchTv()) {
+    window.addEventListener("hashchange", () => {
+      if (!dispatchTv()) {
+        // Brukeren navigerte ut av TV-flyten — gi oppførselen videre til
+        // normal bootstrap (reload er enklest siden vi aldri har løftet
+        // auth-staten). Dette treffer kun hvis noen manuelt endrer hashen.
+        window.location.reload();
+      }
+    });
+    return;
+  }
+
+  const state = await bootstrapAuth();
 
   if (state !== "authenticated") {
     showLogin(root);
@@ -66,7 +103,23 @@ async function bootstrap(): Promise<void> {
 function showLogin(root: HTMLElement): void {
   const onAuthenticated = (): void => {
     const session = getSession();
-    if (session) mountShell(root, session);
+    if (!session) return;
+    // Role-based redirect immediately after login — AGENT/HALL_OPERATOR
+    // lands on /agent/dashboard, ADMIN/super-admin lands on /admin. We
+    // set the hash before mountShell() so the router's first render picks
+    // up the correct route.
+    const landing = landingRouteForRole(session.role);
+    const currentHash = window.location.hash.replace(/^#/, "");
+    const onPreAuthRoute =
+      currentHash === "" ||
+      currentHash === "/login" ||
+      currentHash === "/register" ||
+      currentHash === "/forgot-password" ||
+      currentHash.startsWith("/reset-password/");
+    if (onPreAuthRoute) {
+      window.location.hash = `#${landing}`;
+    }
+    mountShell(root, session);
   };
 
   // PR-B7 (BIN-675): pre-auth dispatcher. When unauthenticated and the hash
@@ -227,13 +280,32 @@ function mountShell(_root: HTMLElement, session: Session): void {
     onChange: (route, path) => {
       // Stop dashboard-polling when navigating away from the dashboard route.
       if (route?.path !== "/admin" && route?.path !== "/") unmountDashboard();
+      // Role-guard: redirect if the hash points to a route the current role
+      // isn't allowed into (AGENT/HALL_OPERATOR into /admin, ADMIN into
+      // /agent/*). The guard updates window.location.hash which re-triggers
+      // the router; we return early here so we don't render the forbidden
+      // page before the redirect lands.
+      const redirected = guardRouteForRole(path, session);
+      if (redirected !== path) {
+        window.location.hash = `#${redirected}`;
+        return;
+      }
       renderLayoutChrome(refs, session, route, path, MAINTENANCE_MODE);
     },
   });
 
-  // Guard for legacy hash-less deep-links (e.g., `/admin` direct)
+  // Role-based landing-route: ADMIN lands on /admin, AGENT/HALL_OPERATOR
+  // lands on /agent/dashboard. Respect deep-links only if they're allowed
+  // for the current role (guard applied in `guardRouteForRole()` below).
   if (!window.location.hash || window.location.hash === "#") {
-    window.location.hash = "#/admin";
+    window.location.hash = `#${landingRouteForRole(session.role)}`;
+  } else {
+    // If the user deep-linked to a route their role can't access, redirect.
+    const initialPath = router.currentPath();
+    const redirected = guardRouteForRole(initialPath, session);
+    if (redirected !== initialPath) {
+      window.location.hash = `#${redirected}`;
+    }
   }
 
   // Initial chrome render (router.start fires onChange immediately)
@@ -261,6 +333,56 @@ function mountShell(_root: HTMLElement, session: Session): void {
   void (refs satisfies LayoutRefs);
 }
 
+/**
+ * Role-based route-guard. Returns the path the user should see — either
+ * the requested path (if allowed) or the landing-route for their role.
+ *
+ * Policy:
+ *   - ADMIN / super-admin: may visit everything EXCEPT the agent-portal-
+ *     skeleton pages under /agent/dashboard, /agent/players, /agent/physical-
+ *     tickets, /agent/games, /agent/cash-in-out, /agent/unique-id, and
+ *     /agent/physical-cashout. Those are AGENT-only per spec. Other
+ *     /agent/* routes (e.g. /agent management list at `/agent`, /agent/add,
+ *     /agent/cashinout legacy) remain admin-accessible.
+ *   - AGENT / hall-operator: may visit /agent/* only. /admin + every other
+ *     legacy-admin route redirects back to the agent-portal landing.
+ */
+function guardRouteForRole(path: string, session: Session): string {
+  const bare = path.split("?")[0] ?? path;
+  if (isAgentPortalRole(session.role)) {
+    // Agent-portal users stay inside /agent/*. /admin and / redirect to
+    // their landing. Legacy /agent/* (cashinout, physicalCashOut, etc.)
+    // stays accessible since those are agent-specific anyway.
+    if (bare === "/" || bare === "/admin") return "/agent/dashboard";
+    if (bare.startsWith("/agent/")) return path;
+    // Anything else is an admin-panel route — bounce back.
+    return "/agent/dashboard";
+  }
+  if (isAdminPanelRole(session.role)) {
+    // Admin/super-admin cannot visit the dedicated agent-portal-skeleton
+    // pages. They retain access to admin-side /agent routes (like /agent
+    // management).
+    if (AGENT_PORTAL_PATHS.has(bare)) return "/admin";
+    return path;
+  }
+  return path;
+}
+
+/**
+ * Routes that belong to the agent-portal skeleton (AGENT/HALL_OPERATOR only).
+ * Does NOT include legacy admin-side /agent routes like /agent (agent-
+ * management list) or /agent/add.
+ */
+const AGENT_PORTAL_PATHS = new Set<string>([
+  "/agent/dashboard",
+  "/agent/players",
+  "/agent/physical-tickets",
+  "/agent/games",
+  "/agent/cash-in-out",
+  "/agent/unique-id",
+  "/agent/physical-cashout",
+]);
+
 function renderPage(container: HTMLElement, route: RouteDef, session: Session): void | Promise<void> {
   container.setAttribute("data-route", route.path);
   container.setAttribute("data-title", t(route.titleKey));
@@ -281,6 +403,26 @@ function renderPage(container: HTMLElement, route: RouteDef, session: Session): 
   }
   if (route.path === "/agent/players") {
     mountAgentPlayers(container);
+    return;
+  }
+  if (route.path === "/agent/physical-tickets") {
+    mountAgentPhysicalTickets(container);
+    return;
+  }
+  if (route.path === "/agent/games") {
+    mountAgentGames(container);
+    return;
+  }
+  if (route.path === "/agent/cash-in-out") {
+    mountAgentCashInOut(container);
+    return;
+  }
+  if (route.path === "/agent/unique-id") {
+    mountAgentUniqueId(container);
+    return;
+  }
+  if (route.path === "/agent/physical-cashout") {
+    mountAgentPhysicalCashout(container);
     return;
   }
   if (isCashInOutRoute(route.path)) {
