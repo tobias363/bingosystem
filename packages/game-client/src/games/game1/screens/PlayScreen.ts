@@ -168,15 +168,15 @@ export class PlayScreen extends Container {
     ringSpacer.style.cssText = `width:${RING_COLUMN_WIDTH}px;flex-shrink:0;pointer-events:none;`;
     overlayRoot.appendChild(ringSpacer);
 
-    // Column 3: "Velg heldig tall"-knapp — firkløver-ikonet (samme som i
-    // mini-gridets senter). Klikk åpner LuckyNumberPicker via eksisterende
-    // onLuckyNumberTap-callback (Game1Controller eier pickeren).
+    // Column 3: "Velg lykketall"-knapp — firkløver-ikonet + label under.
+    // Klikk åpner LuckyNumberPicker via eksisterende onLuckyNumberTap-
+    // callback (Game1Controller eier pickeren).
     const cloverColumn = document.createElement("div");
-    cloverColumn.style.cssText = `width:${CLOVER_COLUMN_WIDTH}px;flex-shrink:0;display:flex;align-items:flex-start;justify-content:center;padding-top:40px;pointer-events:none;`;
+    cloverColumn.style.cssText = `width:${CLOVER_COLUMN_WIDTH}px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:40px;gap:6px;pointer-events:none;`;
     const cloverBtn = document.createElement("button");
     cloverBtn.type = "button";
-    cloverBtn.title = "Velg heldig tall";
-    cloverBtn.setAttribute("aria-label", "Velg heldig tall");
+    cloverBtn.title = "Velg lykketall";
+    cloverBtn.setAttribute("aria-label", "Velg lykketall");
     cloverBtn.style.cssText = [
       `width:${CLOVER_SIZE}px`,
       `height:${CLOVER_SIZE}px`,
@@ -193,6 +193,29 @@ export class PlayScreen extends Container {
     cloverBtn.addEventListener("mouseleave", () => { cloverBtn.style.transform = ""; });
     cloverBtn.addEventListener("click", () => this.callbacks.onLuckyNumberTap?.());
     cloverColumn.appendChild(cloverBtn);
+
+    // Label: "Velg" over "lykketall" — to linjer sentrert under ikonet.
+    const cloverLabel = document.createElement("div");
+    cloverLabel.style.cssText = [
+      "text-align:center",
+      "color:#fff",
+      "font-size:13px",
+      "font-weight:700",
+      "line-height:1.15",
+      "letter-spacing:0.2px",
+      "text-shadow:0 2px 4px rgba(0,0,0,0.6)",
+      "pointer-events:none",
+      "user-select:none",
+    ].join(";");
+    cloverLabel.textContent = "";
+    const line1 = document.createElement("div");
+    line1.textContent = "Velg";
+    const line2 = document.createElement("div");
+    line2.textContent = "lykketall";
+    cloverLabel.appendChild(line1);
+    cloverLabel.appendChild(line2);
+    cloverColumn.appendChild(cloverLabel);
+
     overlayRoot.appendChild(cloverColumn);
 
     this.leftInfo = new LeftInfoPanel(this.overlayManager, pauseAwareBridge ?? undefined);
