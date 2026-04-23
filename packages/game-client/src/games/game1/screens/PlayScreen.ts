@@ -298,6 +298,7 @@ export class PlayScreen extends Container {
       state.totalDrawCapacity,
       state.players,
     );
+    this.centerBall.setDrawProgress(state.drawCount, state.totalDrawCapacity);
     this.chatPanel.updatePlayerCount(state.playerCount);
     this.centerTop.setGameRunning(running);
     this.centerTop.updatePatterns(state.patterns, state.patternResults, state.prizePool);
