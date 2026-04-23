@@ -206,10 +206,59 @@ describe("GameManagement write-ops (BIN-684 wired)", () => {
     );
   });
 
-  it("closeDay still resolves BACKEND_MISSING BIN-623 (ikke merget)", async () => {
+  it("closeDay POSTs to /close-day (BIN-623 live) and returns entry on success", async () => {
+    const closeEntry = {
+      id: "cd-1",
+      gameManagementId: "g1",
+      closeDate: "2026-01-02",
+      closedBy: "admin-1",
+      closedAt: "2026-01-02T23:59:00Z",
+      summary: {
+        gameManagementId: "g1",
+        closeDate: "2026-01-02",
+        alreadyClosed: false,
+        closedAt: "2026-01-02T23:59:00Z",
+        closedBy: "admin-1",
+        totalSold: 10,
+        totalEarning: 500,
+        ticketsSold: 10,
+        winnersCount: 2,
+        payoutsTotal: 200,
+        jackpotsTotal: 0,
+        capturedAt: "2026-01-02T23:59:00Z",
+      },
+    };
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, data: closeEntry }),
+    }));
+    (globalThis as unknown as { fetch: unknown }).fetch = fetchSpy as unknown as typeof fetch;
+
     const res = await closeDay({ gameTypeId: "bingo", gameId: "g1", closeDate: "2026-01-02" });
-    expect(res).toEqual({ ok: false, reason: "BACKEND_MISSING", issue: "BIN-623" });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.entry.id).toBe("cd-1");
+      expect(res.entry.summary.totalSold).toBe(10);
+    }
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/admin/games/g1/close-day",
+      expect.objectContaining({
+        method: "POST",
+        body: expect.stringContaining("2026-01-02"),
+      })
+    );
   });
+
+  it("closeDay returns ALREADY_CLOSED on HTTP 409", async () => {
+    mockFetchError(409, "CLOSE_DAY_ALREADY_CLOSED", "already");
+    const res = await closeDay({ gameTypeId: "bingo", gameId: "g1", closeDate: "2026-01-02" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe("ALREADY_CLOSED");
+    }
+  });
+
 });
 
 describe("isGame3Variant", () => {

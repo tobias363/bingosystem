@@ -19,12 +19,16 @@
 //   - closeDay.html           ( 480L) → day-close confirm (BIN-623)
 
 import { t } from "../../../i18n/I18n.js";
+import { Toast } from "../../../components/Toast.js";
 import { escapeHtml } from "../common/escape.js";
 import { fetchGameTypeList } from "../gameType/GameTypeState.js";
 import type { GameType } from "../common/types.js";
 import {
   fetchGameManagement,
+  fetchCloseDaySummary,
+  closeDay,
   type GameManagementRow,
+  type CloseDaySummary,
 } from "./GameManagementState.js";
 import { ApiError } from "../../../api/client.js";
 
@@ -295,23 +299,127 @@ export async function renderGameManagementSubGamesPage(
   }
 }
 
-// ── CloseDay — BIN-623 ikke levert ─────────────────────────────────────────
+// ── CloseDay (BIN-623) — live ──────────────────────────────────────────────
 
-/** /gameManagement/closeDay/:typeId/:id — BIN-623 placeholder. */
+/** Returnerer dagens dato som "YYYY-MM-DD" (lokal tidssone). */
+function todayIsoDate(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Tabell-rad som formatterer tall + ISO-tid. */
+function summaryRow(label: string, value: string | number): string {
+  return `<tr><th style="width:40%;">${escapeHtml(label)}</th><td>${escapeHtml(String(value))}</td></tr>`;
+}
+
+function renderCloseDayBody(row: GameManagementRow, summary: CloseDaySummary, closeDate: string): string {
+  const warn = summary.alreadyClosed
+    ? `<div class="alert alert-info" data-testid="cd-already-closed">
+         <i class="fa fa-info-circle"></i>
+         ${escapeHtml(t("already_closed"))} — ${escapeHtml(summary.closedAt ?? "")}
+       </div>`
+    : `<div class="alert alert-warning">
+         <i class="fa fa-warning"></i>
+         ${escapeHtml(t("close_day_confirm_warning"))}
+       </div>`;
+
+  return `
+    <div data-testid="cd-summary">
+      <h4>${escapeHtml(row.name)} — ${escapeHtml(closeDate)}</h4>
+      ${warn}
+      <table class="table table-bordered" style="max-width:700px;">
+        <tbody>
+          ${summaryRow(t("total_sold"), summary.totalSold)}
+          ${summaryRow(t("total_earning"), summary.totalEarning)}
+          ${summaryRow(t("tickets_sold"), summary.ticketsSold)}
+          ${summaryRow(t("winners_count"), summary.winnersCount)}
+          ${summaryRow(t("payouts_total"), summary.payoutsTotal)}
+          ${summaryRow(t("jackpots_total"), summary.jackpotsTotal)}
+          ${summaryRow(t("captured_at"), summary.capturedAt)}
+        </tbody>
+      </table>
+      <div style="padding-top:16px;">
+        <input type="hidden" id="cd-close-date" value="${escapeHtml(closeDate)}">
+        <input type="hidden" id="cd-game-id" value="${escapeHtml(row._id)}">
+        <button type="button" class="btn btn-danger btn-lg"
+          data-action="confirm-close-day"
+          ${summary.alreadyClosed ? "disabled" : ""}>
+          <i class="fa fa-lock"></i> ${escapeHtml(t("close_day"))}
+        </button>
+      </div>
+    </div>`;
+}
+
+/** /gameManagement/closeDay/:typeId/:id — live CloseDay (BIN-623). */
 export async function renderGameManagementCloseDayPage(
   container: HTMLElement,
   typeId: string,
   id: string
 ): Promise<void> {
   const gt = await resolveGameType(typeId);
+  const closeDate = todayIsoDate();
   container.innerHTML = renderShell({
     title: `${t("close_day")} — ${gt?.name ?? typeId} #${id}`,
     breadcrumb: [...baseCrumb(gt, typeId), { label: `${t("close_day")} #${id}` }],
     backHref: `#/gameManagement?typeId=${encodeURIComponent(typeId)}`,
     backLabel: t("back"),
-    body: placeholderBody(
-      "BIN-623",
-      "Venter på backend-endpoint for CloseDay — dagsavslutning av løpende spill-runde."
-    ),
+    body: loadingBody(),
   });
+  const body = container.querySelector<HTMLElement>(".panel-body");
+  if (!body) return;
+  try {
+    const [row, summary] = await Promise.all([
+      fetchGameManagement(typeId, id),
+      fetchCloseDaySummary(id, closeDate),
+    ]);
+    if (!row) {
+      body.innerHTML = `<div class="alert alert-warning" data-testid="gm-not-found">${escapeHtml(t("not_found"))}</div>`;
+      return;
+    }
+    if (!summary) {
+      body.innerHTML = `<div class="alert alert-danger" data-testid="cd-summary-missing">${escapeHtml(t("not_found"))}</div>`;
+      return;
+    }
+    body.innerHTML = renderCloseDayBody(row, summary, closeDate);
+    wireCloseDayConfirm(body, typeId, id);
+  } catch (err) {
+    body.innerHTML = `<div class="alert alert-danger" data-testid="gm-error">${escapeHtml(formatError(err))}</div>`;
+  }
+}
+
+function wireCloseDayConfirm(host: HTMLElement, _typeId: string, gameId: string): void {
+  const btn = host.querySelector<HTMLButtonElement>('button[data-action="confirm-close-day"]');
+  if (!btn) return;
+  btn.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    const dateEl = host.querySelector<HTMLInputElement>("#cd-close-date");
+    const closeDate = dateEl?.value ?? todayIsoDate();
+    if (!window.confirm(t("close_day_confirm_prompt"))) return;
+    void doCloseDay(btn, gameId, closeDate);
+  });
+}
+
+async function doCloseDay(btn: HTMLButtonElement, gameId: string, closeDate: string): Promise<void> {
+  btn.disabled = true;
+  try {
+    const result = await closeDay({ gameId, closeDate, gameTypeId: "" });
+    if (result.ok) {
+      Toast.success(t("close_day_success"));
+      // Navigate back to list after successful close.
+      setTimeout(() => {
+        window.location.hash = "#/gameManagement";
+      }, 500);
+      return;
+    }
+    if (result.reason === "ALREADY_CLOSED") {
+      Toast.info(t("already_closed"));
+      return;
+    }
+    Toast.error(result.message ?? t("something_went_wrong"));
+  } finally {
+    btn.disabled = false;
+  }
 }
