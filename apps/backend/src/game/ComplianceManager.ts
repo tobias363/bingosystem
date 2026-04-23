@@ -2,142 +2,52 @@ import { DomainError } from "./BingoEngine.js";
 import { roundCurrency } from "../util/currency.js";
 import { logger as rootLogger } from "../util/logger.js";
 import type {
-  PersistedLossEntry,
-  PersistedLossLimit,
-  PersistedMandatoryBreakSummary,
-  PersistedPendingLossLimitChange,
-  PersistedPlaySessionState,
-  PersistedRestrictionState,
   ResponsibleGamingPersistenceAdapter,
   ResponsibleGamingPersistenceSnapshot
 } from "./ResponsibleGamingPersistence.js";
+import type {
+  LossLimits,
+  PendingLossLimitChange,
+  LossLedgerEntry,
+  PlaySessionState,
+  MandatoryBreakSummary,
+  RestrictionState,
+  GameplayBlockState,
+  PlayerComplianceSnapshot,
+  ComplianceManagerConfig,
+  ComplianceHydrationSnapshot
+} from "./ComplianceManagerTypes.js";
+import {
+  startOfLocalDayMs,
+  startOfNextLocalDayMs,
+  startOfLocalMonthMs,
+  startOfNextLocalMonthMs
+} from "./ComplianceDateHelpers.js";
+import {
+  toPersistedLossEntry,
+  toPersistedPendingLossLimitChange,
+  toPersistedPlaySessionState,
+  toPersistedRestrictionState
+} from "./ComplianceMappers.js";
+
+export type {
+  LossLimits,
+  PendingLossLimitField,
+  PendingLossLimitChange,
+  LossLedgerEntry,
+  PlaySessionState,
+  MandatoryBreakSummary,
+  RestrictionState,
+  GameplayBlockType,
+  GameplayBlockState,
+  PlayerComplianceSnapshot,
+  ComplianceManagerConfig,
+  ComplianceHydrationSnapshot
+} from "./ComplianceManagerTypes.js";
 
 const logger = rootLogger.child({ module: "compliance" });
 
 const DEFAULT_SELF_EXCLUSION_MIN_MS = 365 * 24 * 60 * 60 * 1000;
-
-// ── Exported interfaces ────────────────────────────────────────────
-
-export interface LossLimits {
-  daily: number;
-  monthly: number;
-}
-
-export interface PendingLossLimitField {
-  value: number;
-  effectiveFromMs: number;
-}
-
-export interface PendingLossLimitChange {
-  daily?: PendingLossLimitField;
-  monthly?: PendingLossLimitField;
-}
-
-export interface LossLedgerEntry {
-  type: "BUYIN" | "PAYOUT";
-  amount: number;
-  createdAtMs: number;
-}
-
-export interface PlaySessionState {
-  accumulatedMs: number;
-  activeFromMs?: number;
-  pauseUntilMs?: number;
-  lastMandatoryBreak?: MandatoryBreakSummary;
-  gamesPlayedInSession?: number;
-}
-
-export interface MandatoryBreakSummary {
-  triggeredAtMs: number;
-  pauseUntilMs: number;
-  totalPlayMs: number;
-  hallId: string;
-  netLoss: LossLimits;
-  gamesPlayed: number;
-}
-
-export interface RestrictionState {
-  timedPauseUntilMs?: number;
-  timedPauseSetAtMs?: number;
-  selfExcludedAtMs?: number;
-  selfExclusionMinimumUntilMs?: number;
-}
-
-export type GameplayBlockType = "TIMED_PAUSE" | "SELF_EXCLUDED" | "MANDATORY_PAUSE";
-
-export interface GameplayBlockState {
-  type: GameplayBlockType;
-  untilMs: number;
-}
-
-export interface PlayerComplianceSnapshot {
-  walletId: string;
-  hallId?: string;
-  regulatoryLossLimits: LossLimits;
-  personalLossLimits: LossLimits;
-  pendingLossLimits?: {
-    daily?: {
-      value: number;
-      effectiveFrom: string;
-    };
-    monthly?: {
-      value: number;
-      effectiveFrom: string;
-    };
-  };
-  netLoss: LossLimits;
-  pause: {
-    isOnPause: boolean;
-    pauseUntil?: string;
-    accumulatedPlayMs: number;
-    playSessionLimitMs: number;
-    pauseDurationMs: number;
-    lastMandatoryBreak?: {
-      triggeredAt: string;
-      pauseUntil: string;
-      totalPlayMs: number;
-      hallId: string;
-      netLoss: LossLimits;
-      gamesPlayed: number;
-    };
-  };
-  restrictions: {
-    isBlocked: boolean;
-    blockedBy?: GameplayBlockType;
-    blockedUntil?: string;
-    timedPause: {
-      isActive: boolean;
-      pauseUntil?: string;
-      setAt?: string;
-    };
-    selfExclusion: {
-      isActive: boolean;
-      setAt?: string;
-      minimumUntil?: string;
-      canBeRemoved: boolean;
-    };
-  };
-}
-
-// ── Constructor config ─────────────────────────────────────────────
-
-export interface ComplianceManagerConfig {
-  regulatoryLossLimits: LossLimits;
-  playSessionLimitMs: number;
-  pauseDurationMs: number;
-  selfExclusionMinMs: number;
-  persistence?: ResponsibleGamingPersistenceAdapter;
-}
-
-// ── Hydration subset ───────────────────────────────────────────────
-
-export interface ComplianceHydrationSnapshot {
-  personalLossLimits: PersistedLossLimit[];
-  pendingLossLimitChanges: PersistedPendingLossLimitChange[];
-  restrictions: PersistedRestrictionState[];
-  playStates: PersistedPlaySessionState[];
-  lossEntries: PersistedLossEntry[];
-}
 
 // ── ComplianceManager ──────────────────────────────────────────────
 
@@ -565,7 +475,7 @@ export class ComplianceManager {
     existing.push(entry);
     this.lossEntriesByScope.set(scopeKey, existing);
     if (this.persistence) {
-      await this.persistence.insertLossEntry(this.toPersistedLossEntry(normalizedWalletId, normalizedHallId, entry));
+      await this.persistence.insertLossEntry(toPersistedLossEntry(normalizedWalletId, normalizedHallId, entry));
     }
   }
 
@@ -934,7 +844,7 @@ export class ComplianceManager {
     });
     if (hasPending) {
       await this.persistence.upsertPendingLossLimitChange(
-        this.toPersistedPendingLossLimitChange(walletId, hallId, pending)
+        toPersistedPendingLossLimitChange(walletId, hallId, pending)
       );
       return;
     }
@@ -967,7 +877,7 @@ export class ComplianceManager {
     }
     this.restrictionsByWallet.set(walletId, state);
     if (this.persistence) {
-      await this.persistence.upsertRestriction(this.toPersistedRestrictionState(walletId, state));
+      await this.persistence.upsertRestriction(toPersistedRestrictionState(walletId, state));
     }
   }
 
@@ -1011,93 +921,29 @@ export class ComplianceManager {
 
     this.playStateByWallet.set(walletId, normalized);
     if (this.persistence) {
-      await this.persistence.upsertPlaySessionState(this.toPersistedPlaySessionState(walletId, normalized));
+      await this.persistence.upsertPlaySessionState(toPersistedPlaySessionState(walletId, normalized));
     }
   }
 
-  // ── Persistence conversion helpers ───────────────────────────────
-
-  private toPersistedRestrictionState(walletId: string, state: RestrictionState): PersistedRestrictionState {
-    return {
-      walletId,
-      timedPauseUntilMs: state.timedPauseUntilMs,
-      timedPauseSetAtMs: state.timedPauseSetAtMs,
-      selfExcludedAtMs: state.selfExcludedAtMs,
-      selfExclusionMinimumUntilMs: state.selfExclusionMinimumUntilMs
-    };
-  }
-
-  private toPersistedPlaySessionState(walletId: string, state: PlaySessionState): PersistedPlaySessionState {
-    return {
-      walletId,
-      accumulatedMs: Math.max(0, Math.floor(state.accumulatedMs)),
-      activeFromMs: state.activeFromMs,
-      pauseUntilMs: state.pauseUntilMs,
-      gamesPlayedInSession: state.gamesPlayedInSession ?? 0,
-      lastMandatoryBreak: state.lastMandatoryBreak
-        ? this.toPersistedMandatoryBreakSummary(state.lastMandatoryBreak)
-        : undefined
-    };
-  }
-
-  private toPersistedMandatoryBreakSummary(summary: MandatoryBreakSummary): PersistedMandatoryBreakSummary {
-    return {
-      triggeredAtMs: summary.triggeredAtMs,
-      pauseUntilMs: summary.pauseUntilMs,
-      totalPlayMs: Math.max(0, Math.floor(summary.totalPlayMs)),
-      hallId: summary.hallId,
-      gamesPlayed: summary.gamesPlayed,
-      netLoss: {
-        daily: summary.netLoss.daily,
-        monthly: summary.netLoss.monthly
-      }
-    };
-  }
-
-  private toPersistedPendingLossLimitChange(
-    walletId: string,
-    hallId: string,
-    change: PendingLossLimitChange
-  ): PersistedPendingLossLimitChange {
-    return {
-      walletId,
-      hallId,
-      dailyPendingValue: change.daily?.value,
-      dailyEffectiveFromMs: change.daily?.effectiveFromMs,
-      monthlyPendingValue: change.monthly?.value,
-      monthlyEffectiveFromMs: change.monthly?.effectiveFromMs
-    };
-  }
-
-  private toPersistedLossEntry(walletId: string, hallId: string, entry: LossLedgerEntry): PersistedLossEntry {
-    return {
-      walletId,
-      hallId,
-      type: entry.type,
-      amount: entry.amount,
-      createdAtMs: entry.createdAtMs
-    };
-  }
-
   // ── Date helpers ─────────────────────────────────────────────────
+  //
+  // Implementasjonene finnes som pure funksjoner i ComplianceDateHelpers.ts.
+  // Public-metoden startOfLocalDayMs beholdes på klassen fordi BingoEngine
+  // kaller compliance.startOfLocalDayMs(...) eksternt.
 
   startOfLocalDayMs(referenceMs: number): number {
-    const reference = new Date(referenceMs);
-    return new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime();
+    return startOfLocalDayMs(referenceMs);
   }
 
   private startOfNextLocalDayMs(referenceMs: number): number {
-    const reference = new Date(referenceMs);
-    return new Date(reference.getFullYear(), reference.getMonth(), reference.getDate() + 1).getTime();
+    return startOfNextLocalDayMs(referenceMs);
   }
 
   private startOfLocalMonthMs(referenceMs: number): number {
-    const reference = new Date(referenceMs);
-    return new Date(reference.getFullYear(), reference.getMonth(), 1).getTime();
+    return startOfLocalMonthMs(referenceMs);
   }
 
   private startOfNextLocalMonthMs(referenceMs: number): number {
-    const reference = new Date(referenceMs);
-    return new Date(reference.getFullYear(), reference.getMonth() + 1, 1).getTime();
+    return startOfNextLocalMonthMs(referenceMs);
   }
 }
