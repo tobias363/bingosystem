@@ -15,6 +15,7 @@
     "migrate:create": "node-pg-migrate -d APP_PG_CONNECTION_STRING -m migrations --ignore-pattern '.*\\.md$|^\\..*' create",
     "seed:test-users": "tsx scripts/seed-test-users-hall.ts",
     "seed:demo-tv-bonus": "tsx scripts/seed-demo-tv-and-bonus.ts",
+    "seed:demo-tv-minimal": "tsx scripts/seed-demo-tv-minimal.ts",
     "spec:lint": "redocly lint openapi.yaml"
   },
   "dependencies": {
