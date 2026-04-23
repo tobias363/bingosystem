@@ -55,7 +55,18 @@ export class PatternMiniGrid {
         background: NORMAL_BG,
         border: NORMAL_BORDER,
         transition: "background 0.2s ease, box-shadow 0.2s ease",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
       });
+      if (i === CENTER_INDEX) {
+        // Free-space marker (mockup `Asset 4.png` — roulette/clover icon).
+        const icon = document.createElement("img");
+        icon.src = "/web/games/assets/game1/design/center-free.png";
+        icon.alt = "";
+        icon.style.cssText = "width:85%;height:85%;object-fit:contain;pointer-events:none;";
+        cell.appendChild(icon);
+      }
       this.cells.push(cell);
       this.root.appendChild(cell);
     }

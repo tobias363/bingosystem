@@ -28,13 +28,10 @@ export class ChatPanelV2 {
     overlay: HtmlOverlayManager,
     socket: SpilloramaSocket,
     roomCode: string,
-    opts?: { initialCollapsed?: boolean; sideBorder?: "left" | "right" },
+    opts?: { initialCollapsed?: boolean },
   ) {
     this.socket = socket;
     this.roomCode = roomCode;
-
-    const side = opts?.sideBorder ?? "left";
-    const borderProp = side === "left" ? "borderRight" : "borderLeft";
 
     this.root = overlay.createElement("chat-panel", {
       width: "265px",
@@ -42,7 +39,7 @@ export class ChatPanelV2 {
       display: "flex",
       flexDirection: "column",
       background: "rgba(10,2,2,0.55)",
-      [borderProp]: "1px solid rgba(200,70,70,0.4)",
+      borderLeft: "1px solid rgba(200,70,70,0.4)",
       backdropFilter: "blur(4px)",
       height: "100%",
       transition: "width 0.25s ease-in-out",
@@ -197,7 +194,23 @@ export class ChatPanelV2 {
       this.body.style.display = "none";
       this.body.style.opacity = "0";
       this.root.style.width = "48px";
-      this.toggleBtn.innerHTML = `Vis chat <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M14 6l1.41 1.41L10.83 12l4.58 4.59L14 18l-6-6z"/></svg>`;
+      this.renderToggleBtn();
+    }
+  }
+
+  /**
+   * Render the toggle button content — when collapsed we show a chat icon
+   * only (fits inside the 48px sliver), when expanded the full text label.
+   */
+  private renderToggleBtn(): void {
+    if (this.collapsed) {
+      this.toggleBtn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-label="Vis chat"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>`;
+      this.toggleBtn.setAttribute("aria-label", "Vis chat");
+      this.toggleBtn.title = "Vis chat";
+    } else {
+      this.toggleBtn.innerHTML = `Skjul chat <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>`;
+      this.toggleBtn.setAttribute("aria-label", "Skjul chat");
+      this.toggleBtn.title = "";
     }
   }
 

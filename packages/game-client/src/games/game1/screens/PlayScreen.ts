@@ -22,10 +22,9 @@ import { TicketGridHtml } from "../components/TicketGridHtml.js";
 /**
  * Redesign 2026-04-23 — mockup `.balls-column-wrap` is 140px wide,
  * `.chat-panel` 265px, `.game-number-ring` 170×170 sits just right of the
- * tube column. PM override 2026-04-23: chat sits on the LEFT edge (not
- * the right as in the mockup) and defaults to collapsed — Pixi content
- * (ball tube, ring, claim buttons, background, draw counter) shifts
- * right by `chatWidth()` so nothing renders under the chat panel.
+ * tube column. Chat is on the RIGHT edge (original placement) and
+ * defaults to collapsed so players see the game without the chat panel
+ * open on first load.
  */
 const TUBE_COLUMN_WIDTH = 140;
 const CHAT_WIDTH = 265;
@@ -125,20 +124,23 @@ export class PlayScreen extends Container {
 
     this.loadBackground(screenWidth, screenHeight);
 
-    // ── HTML overlay layer (initialise first so chat's starting width can
-    //    feed into the Pixi offset math) ───────────────────────────────────
+    // ── Pixi components (ball animation + center ball) ────────────────────
+    this.ballTube = new BallTube(screenHeight - 22);
+    this.ballTube.x = (TUBE_COLUMN_WIDTH - 108) / 2;
+    this.ballTube.y = 21;
+    this.addChild(this.ballTube);
+
+    this.centerBall = new CenterBall(pauseAwareBridge);
+    this.centerBall.x = TUBE_COLUMN_WIDTH - 10;
+    this.centerBall.y = 40;
+    this.addChild(this.centerBall);
+    this.centerBall.showWaiting();
+
+    // ── HTML overlay layer ────────────────────────────────────────────────
     this.overlayManager = new HtmlOverlayManager(container);
     const overlayRoot = this.overlayManager.getRoot();
     overlayRoot.style.display = "flex";
     overlayRoot.style.flexDirection = "row";
-
-    // PM override 2026-04-23: chat is the leftmost flex child and starts
-    // collapsed. It's constructed ahead of the rest so the other HTML
-    // children land to its right.
-    this.chatPanel = new ChatPanelV2(this.overlayManager, socket, roomCode, {
-      initialCollapsed: true,
-      sideBorder: "left",
-    });
 
     // Spacer for ball tube column (Pixi-rendered behind the HTML).
     const tubeSpacer = document.createElement("div");
@@ -169,18 +171,12 @@ export class PlayScreen extends Container {
       onStartGame: () => this.callbacks.onStartGame?.(),
     });
 
+    // Chat on the RIGHT edge (flex-row last child), default collapsed so
+    // players land in the game without the chat panel expanded.
+    this.chatPanel = new ChatPanelV2(this.overlayManager, socket, roomCode, {
+      initialCollapsed: true,
+    });
     this.headerBar = new HeaderBar(this.overlayManager);
-
-    // ── Pixi components — positioned using chatOffset() so the tube and
-    //    ring appear just right of the chat's current edge. ───────────────
-    this.ballTube = new BallTube(screenHeight - 22);
-    this.ballTube.y = 21;
-    this.addChild(this.ballTube);
-
-    this.centerBall = new CenterBall(pauseAwareBridge);
-    this.centerBall.y = 40;
-    this.addChild(this.centerBall);
-    this.centerBall.showWaiting();
 
     this.drawCountText = new Text({
       text: "",
@@ -195,6 +191,8 @@ export class PlayScreen extends Container {
       },
     });
     this.drawCountText.anchor.set(0.5);
+    this.drawCountText.x = this.centerBall.x + RING_SIZE / 2;
+    this.drawCountText.y = this.centerBall.y + RING_SIZE + DRAW_COUNT_Y_OFFSET;
     this.addChild(this.drawCountText);
 
     // ── Claim buttons (Pixi — small, self-contained, not worth HTML) ──────
@@ -206,7 +204,7 @@ export class PlayScreen extends Container {
     this.bingoBtn.setOnClaim((type) => this.callbacks.onClaim?.(type));
     this.addChild(this.bingoBtn);
 
-    this.positionPixiContent();
+    this.positionClaimButtons();
     this.positionTicketGrid();
 
     this.setupChatLayoutSync();
@@ -482,27 +480,19 @@ export class PlayScreen extends Container {
       this.bgSprite.width = width;
       this.bgSprite.height = height;
     }
-    this.positionPixiContent();
+    this.positionClaimButtons();
     this.positionTicketGrid();
   }
 
   /** Current chat column width (collapsed vs expanded). */
-  private chatOffset(): number {
+  private chatWidth(): number {
     return this.chatPanel?.isCollapsed() ? CHAT_COLLAPSED_WIDTH : CHAT_WIDTH;
   }
 
-  /** Re-pin every Pixi element against the current chat offset + screen size. */
-  private positionPixiContent(): void {
-    const cx = this.chatOffset();
-    this.ballTube.x = cx + (TUBE_COLUMN_WIDTH - 108) / 2;
-    this.centerBall.x = cx + TUBE_COLUMN_WIDTH - 10;
-    this.drawCountText.x = this.centerBall.x + RING_SIZE / 2;
-    this.drawCountText.y = this.centerBall.y + RING_SIZE + DRAW_COUNT_Y_OFFSET;
-
-    // Claim buttons: centre across the ticket area (right of the tube, left
-    // of the viewport edge). Ticket area starts right after the ball tube.
-    const ticketAreaLeft = cx + TUBE_COLUMN_WIDTH;
-    const ticketAreaWidth = this.screenW - ticketAreaLeft - 20;
+  /** Re-pin the LINE/BINGO claim buttons over the current ticket area. */
+  private positionClaimButtons(): void {
+    const ticketAreaLeft = TUBE_COLUMN_WIDTH;
+    const ticketAreaWidth = this.screenW - ticketAreaLeft - this.chatWidth() - 20;
     const btnY = this.screenH - 55;
     const btnCentreX = ticketAreaLeft + ticketAreaWidth / 2;
     this.lineBtn.x = btnCentreX - 140;
@@ -533,31 +523,27 @@ export class PlayScreen extends Container {
   }
 
   private positionTicketGrid(): void {
-    // PM override 2026-04-23: chat sits on the LEFT, so tickets occupy the
-    // area right of the ball tube through the right edge. No ring column
-    // offset — the ring (170×170 at y=40) sits above the ticket grid
-    // vertically (TICKET_TOP=230) so there's no horizontal conflict.
-    const left = this.chatOffset() + TUBE_COLUMN_WIDTH;
+    // Tickets occupy the band between the ball tube (left) and the chat
+    // panel (right). Ring (170×170 at y=40) sits above TICKET_TOP=230 so
+    // there's no horizontal conflict with the ticket grid.
+    const left = TUBE_COLUMN_WIDTH;
     const top = TICKET_TOP;
-    const width = this.screenW - left - 20;
+    const width = this.screenW - left - this.chatWidth() - 20;
     const height = this.screenH - TICKET_TOP - CLAIM_AREA;
     this.ticketGrid.setBounds(left, top, Math.max(200, width), Math.max(100, height));
   }
 
-  /** Resize ticket grid + re-pin Pixi content when the chat panel
-   *  collapses / expands (chat is on LEFT edge, so all Pixi must shift). */
+  /** Resize ticket grid + re-pin claim buttons when the chat panel
+   *  collapses / expands. */
   private setupChatLayoutSync(): void {
-    this.chatPanel.setOnToggle(() => {
-      // positionTicketGrid + positionPixiContent both read the fresh
-      // chatOffset(), so one call per toggle is enough.
+    this.chatPanel.setOnToggle((collapsed) => {
       this.positionTicketGrid();
-      this.positionPixiContent();
-      // Keep the legacy header-shift tween alive (G17 BIN-431 test uses it)
-      // even though the new HeaderBar is a no-op stub.
+      this.positionClaimButtons();
+      const targetOffset = collapsed ? 0 : -80;
       this.headerShiftTween?.kill();
       const proxy = { x: this.headerBar.currentOffsetX };
       this.headerShiftTween = gsap.to(proxy, {
-        x: 0,
+        x: targetOffset,
         duration: 0.25,
         ease: "none",
         onUpdate: () => this.headerBar.setOffsetX(proxy.x),

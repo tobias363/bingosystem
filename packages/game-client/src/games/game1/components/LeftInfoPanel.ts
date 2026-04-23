@@ -33,8 +33,8 @@ export class LeftInfoPanel {
       gap: "10px",
       paddingTop: "18px",
       minWidth: "120px",
-      // 170px ring sits in the flex row BEFORE this panel (rendered by Pixi
-      // behind the overlay) — skip past it so the text doesn't collide.
+      // 170px ring (Pixi) sits between the ball tube and this panel, so
+      // skip past it horizontally.
       marginLeft: "190px",
     });
 
