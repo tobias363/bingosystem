@@ -718,6 +718,16 @@ export class Game1MasterControlService {
       (priorStatus === "running" || priorStatus === "paused")
     ) {
       await this.drawEngine.stopGame(input.gameId, reason, input.actor.userId);
+    } else if (this.drawEngine) {
+      // PR-C1b: cancel-before-start (priorStatus ∈ {purchase_open,
+      // ready_to_start}) kjører IKKE engine.stopGame, men et BingoEngine-
+      // rom kan allerede være opprettet av `game1:join-scheduled`
+      // (purchase_open er joinable). Rydd det eksplisitt POST-commit.
+      // Fail-closed — se destroyRoomForScheduledGameSafe.
+      await this.drawEngine.destroyRoomForScheduledGameSafe(
+        input.gameId,
+        "cancellation"
+      );
     }
 
     // PR 4d.4: automatisk refund av alle purchases POST-commit. Feilet

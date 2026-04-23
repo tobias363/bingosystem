@@ -51,6 +51,7 @@ import { randomUUID } from "node:crypto";
 import { randomInt } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { DomainError } from "./BingoEngine.js";
+import type { BingoEngine } from "./BingoEngine.js";
 import {
   resolveDrawBagConfig,
   buildDrawBag,
@@ -186,6 +187,20 @@ export interface Game1DrawEngineServiceOptions {
    * T2's jackpott-evaluator.
    */
   walletAdapter?: WalletAdapter;
+  /**
+   * PR-C1b: valgfri BingoEngine-referanse for å rydde in-memory rom ved
+   * completion/cancellation av et schedulert Spill 1. BingoEngine-rommet
+   * opprettes lazy av første spiller som joiner (`game1:join-scheduled`,
+   * se PR 4d.2) og ligger i `InMemoryRoomStateStore` inntil naturlig
+   * eviction. Uten denne referansen vil `drawNext()` + `stopGame()` IKKE
+   * rydde rom (memory leak).
+   *
+   * Fail-closed: kall til `destroyRoom` er try/catch-beskyttet. Room-
+   * cleanup er ikke regulatorisk-kritisk — en feilet destroyRoom logges
+   * som warning og kan ikke ruke draw-persistens eller
+   * master-stop-responsen.
+   */
+  bingoEngine?: BingoEngine;
 }
 
 // ── Internal row shapes ─────────────────────────────────────────────────────
@@ -390,6 +405,15 @@ export class Game1DrawEngineService {
    * evaluateAccumulatingJackpotPots.
    */
   private walletAdapter: WalletAdapter | null;
+  /**
+   * PR-C1b: BingoEngine-referanse for room-cleanup ved
+   * completion/cancellation. Ikke `readonly` så late-binding via
+   * `setBingoEngine()` er mulig (matcher patternet for andre valgfrie
+   * dependencies — unngår sirkulær wiring hvis engine konstrueres senere).
+   * Default null = ingen cleanup-call (test-scenarier uten engine virker
+   * uendret).
+   */
+  private bingoEngine: BingoEngine | null;
 
   constructor(options: Game1DrawEngineServiceOptions) {
     this.pool = options.pool;
@@ -413,6 +437,7 @@ export class Game1DrawEngineService {
     this.potService = options.potService ?? null;
     this.potDailyTickService = options.potDailyTickService ?? null;
     this.walletAdapter = options.walletAdapter ?? null;
+    this.bingoEngine = options.bingoEngine ?? null;
     // PR-T3 Spor 4: fail-closed — hvis potService wired ved konstruksjon uten
     // walletAdapter → ugyldig konfig. (Late-binding via setters er unntak for
     // test-oppsett og sirkulær wiring; der ansvarliggjøres caller for å sette
@@ -459,6 +484,53 @@ export class Game1DrawEngineService {
    */
   setOddsenEngine(engine: MiniGameOddsenEngine): void {
     this.oddsenEngine = engine;
+  }
+
+  /**
+   * PR-C1b: late-binding for BingoEngine (unngå sirkulær wiring). Satt fra
+   * index.ts etter at `engine` er konstruert. Uten denne vil room-cleanup
+   * ved completion/cancellation være no-op.
+   */
+  setBingoEngine(engine: BingoEngine): void {
+    this.bingoEngine = engine;
+  }
+
+  /**
+   * PR-C1b: fail-closed destroyRoom-kall. Kalles POST-commit fra
+   * drawNext (ved `isFinished=true`) og fra stopGame. Idempotent ved
+   * design: duplisert call til destroyRoom på samme roomCode gir
+   * `ROOM_NOT_FOUND` (allerede slettet) som vi svelger.
+   *
+   * Fail-closed-kontrakt:
+   *   - `bingoEngine` ikke satt → no-op (test-scenarier uten engine).
+   *   - `roomCode` null/tomt → no-op (scheduled_game uten joinede spillere).
+   *   - `destroyRoom` ikke definert på engine-instansen → no-op
+   *     (defensivt; eldre engine-versjoner uten metoden).
+   *   - `destroyRoom` kaster → log warning og returner normalt. Room
+   *     kan i teorien bli liggende som orphan, men memory-leaket er
+   *     begrenset og ikke regulatorisk-kritisk.
+   */
+  private destroyRoomIfPresent(
+    scheduledGameId: string,
+    roomCode: string | null,
+    context: "completion" | "cancellation"
+  ): void {
+    if (!this.bingoEngine) return;
+    if (roomCode == null || roomCode.trim() === "") return;
+    const fn = this.bingoEngine.destroyRoom?.bind(this.bingoEngine);
+    if (typeof fn !== "function") return;
+    try {
+      fn(roomCode);
+      log.info(
+        { scheduledGameId, roomCode, context },
+        "[PR-C1b] destroyRoom etter scheduled-game-terminering"
+      );
+    } catch (err) {
+      log.warn(
+        { err, scheduledGameId, roomCode, context },
+        "[PR-C1b] destroyRoom feilet — rommet kan bli liggende som orphan (ikke regulatorisk-kritisk)"
+      );
+    }
   }
 
   /** PR 4d.3: late-binding for admin-broadcaster (io må finnes først). */
@@ -736,6 +808,14 @@ export class Game1DrawEngineService {
     // skjer POST-commit slik at rollback ikke sender falskt varsel.
     let capturedPhysicalWinners: PhysicalTicketWinInfo[] = [];
 
+    // PR-C1b: fanget room_code + isFinished for POST-commit destroyRoom.
+    // Kun aktuelt når scheduled_game.status blir satt til 'completed' i
+    // denne drawen. Room-cleanup skjer ETTER commit slik at rollback
+    // aldri kan slette et rom som fortsatt er i bruk.
+    let capturedCleanupInfo: {
+      roomCode: string | null;
+    } | null = null;
+
     return this.runInTransaction(async (client) => {
       const state = await this.loadGameStateForUpdate(client, scheduledGameId);
       if (!state) {
@@ -864,6 +944,13 @@ export class Game1DrawEngineService {
             WHERE id = $1`,
           [scheduledGameId]
         );
+
+        // PR-C1b: capture room_code for POST-commit destroyRoom-kall.
+        // `game.room_code` er allerede FOR UPDATE-låst tidligere i
+        // transaksjonen (se loadScheduledGameForUpdate), så vi trenger
+        // ingen ny query. roomCode er null hvis ingen spiller har joinet
+        // (vi destroyer da ikke noe — se destroyRoomIfPresent).
+        capturedCleanupInfo = { roomCode: game.room_code };
       }
 
       // BIN-690 M5: Oddsen-resolve. Hvis draw-sekvensen når terskelen (default
@@ -971,6 +1058,17 @@ export class Game1DrawEngineService {
           color: pw.color,
           adminApprovalRequired: pw.adminApprovalRequired,
         });
+      }
+
+      // PR-C1b: cleanup in-memory BingoEngine-room POST-commit. Kun når
+      // drawen akkurat fullførte scheduled_game (isFinished=true i
+      // transaksjonen). Fail-closed — se destroyRoomIfPresent.
+      if (capturedCleanupInfo) {
+        this.destroyRoomIfPresent(
+          scheduledGameId,
+          capturedCleanupInfo.roomCode,
+          "completion"
+        );
       }
       return view;
     });
@@ -1198,6 +1296,11 @@ export class Game1DrawEngineService {
    * Stopp spillet manuelt. Refund-flyt IKKE i PR 4b — kommer i PR 4d.
    * Scheduled_game status-oppdatering gjøres av master-control som orchestrator;
    * denne metoden oppdaterer kun engine-state.
+   *
+   * PR-C1b: rydder også eventuelt BingoEngine-rom (in-memory). Leser
+   * room_code fra scheduled_games og kaller destroyRoom fail-closed.
+   * Idempotent: gjentatt kall (eller kall uten engine-state) er trygt —
+   * destroyRoomIfPresent svelger ROOM_NOT_FOUND.
    */
   async stopGame(
     scheduledGameId: string,
@@ -1220,6 +1323,44 @@ export class Game1DrawEngineService {
       { scheduledGameId, actorUserId, reason },
       "[GAME1_SCHEDULE PR4b] engine stop"
     );
+
+    // PR-C1b: rydd BingoEngine-rom etter manual stop. Feil her svelges —
+    // master-control-responsen skal aldri feile pga. en room-cleanup.
+    await this.destroyRoomForScheduledGameSafe(
+      scheduledGameId,
+      "cancellation"
+    );
+  }
+
+  /**
+   * PR-C1b: les `room_code` fra scheduled_games og kall
+   * `destroyRoomIfPresent`. Fail-closed — SQL-feil eller DomainError fra
+   * destroyRoom svelges med warning.
+   *
+   * Brukes av `stopGame` (via intern call) og er også eksponert som
+   * offentlig API slik at Game1MasterControlService kan rydde rom ved
+   * cancel-before-start (der `stopGame` ikke kalles pga. status-sjekken).
+   */
+  async destroyRoomForScheduledGameSafe(
+    scheduledGameId: string,
+    context: "completion" | "cancellation"
+  ): Promise<void> {
+    try {
+      const { rows } = await this.pool.query<{ room_code: string | null }>(
+        `SELECT room_code
+           FROM ${this.scheduledGamesTable()}
+          WHERE id = $1`,
+        [scheduledGameId]
+      );
+      const row = rows[0];
+      if (!row) return; // ingen rad → ingenting å rydde
+      this.destroyRoomIfPresent(scheduledGameId, row.room_code, context);
+    } catch (err) {
+      log.warn(
+        { err, scheduledGameId, context },
+        "[PR-C1b] room-cleanup feilet ved oppslag av room_code — ignorert (fail-closed)"
+      );
+    }
   }
 
   async getState(
