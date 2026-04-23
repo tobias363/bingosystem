@@ -38,7 +38,10 @@ const TICKET_TOP = 230;        // below the center-top combo panel
 /** Y offset below the ticket grid for the LINE/BINGO claim buttons. */
 const CLAIM_AREA = 60;
 const RING_SIZE = 170;
-const RING_TOP_Y = 23;          // PM 2026-04-23: 7px opp fra mockup (30 → 23)
+const RING_TOP_Y = 18;          // PM 2026-04-23: ytterligere 5px opp (23 → 18)
+/** Clover "velg heldig tall"-knapp til høyre for ringen. */
+const CLOVER_COLUMN_WIDTH = 100;
+const CLOVER_SIZE = 72;
 const DRAW_COUNT_Y_OFFSET = 16; // gap below the ring for the "X/Y" text
 
 type Callbacks = {
@@ -164,6 +167,33 @@ export class PlayScreen extends Container {
     const ringSpacer = document.createElement("div");
     ringSpacer.style.cssText = `width:${RING_COLUMN_WIDTH}px;flex-shrink:0;pointer-events:none;`;
     overlayRoot.appendChild(ringSpacer);
+
+    // Column 3: "Velg heldig tall"-knapp — firkløver-ikonet (samme som i
+    // mini-gridets senter). Klikk åpner LuckyNumberPicker via eksisterende
+    // onLuckyNumberTap-callback (Game1Controller eier pickeren).
+    const cloverColumn = document.createElement("div");
+    cloverColumn.style.cssText = `width:${CLOVER_COLUMN_WIDTH}px;flex-shrink:0;display:flex;align-items:flex-start;justify-content:center;padding-top:40px;pointer-events:none;`;
+    const cloverBtn = document.createElement("button");
+    cloverBtn.type = "button";
+    cloverBtn.title = "Velg heldig tall";
+    cloverBtn.setAttribute("aria-label", "Velg heldig tall");
+    cloverBtn.style.cssText = [
+      `width:${CLOVER_SIZE}px`,
+      `height:${CLOVER_SIZE}px`,
+      "background:url(/web/games/assets/game1/design/center-free.png) center/contain no-repeat",
+      "background-color:transparent",
+      "border:none",
+      "padding:0",
+      "cursor:pointer",
+      "pointer-events:auto",
+      "filter:drop-shadow(0 3px 6px rgba(0,0,0,0.5))",
+      "transition:transform 0.15s ease-out",
+    ].join(";");
+    cloverBtn.addEventListener("mouseenter", () => { cloverBtn.style.transform = "scale(1.08)"; });
+    cloverBtn.addEventListener("mouseleave", () => { cloverBtn.style.transform = ""; });
+    cloverBtn.addEventListener("click", () => this.callbacks.onLuckyNumberTap?.());
+    cloverColumn.appendChild(cloverBtn);
+    overlayRoot.appendChild(cloverColumn);
 
     this.leftInfo = new LeftInfoPanel(this.overlayManager, pauseAwareBridge ?? undefined);
     this.calledNumbers = new CalledNumbersOverlay(this.overlayManager);
