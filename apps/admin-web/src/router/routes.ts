@@ -2,7 +2,7 @@ export interface RouteDef {
   path: string;
   titleKey: string;
   module?: string;
-  roles?: Array<"admin" | "super-admin" | "agent">;
+  roles?: Array<"admin" | "super-admin" | "agent" | "hall-operator">;
 }
 
 export const routes: RouteDef[] = [
@@ -145,10 +145,17 @@ export const routes: RouteDef[] = [
   { path: "/transactions/log", titleKey: "transactions_log", module: "Transactions Management" },
   { path: "/auditLog", titleKey: "audit_log_title" },
 
-  { path: "/agent/dashboard", titleKey: "agent_dashboard", roles: ["agent"] },
-  { path: "/agent/players", titleKey: "agent_players_title", roles: ["agent"] },
-  { path: "/agent/cashinout", titleKey: "cash_in_out", roles: ["agent"] },
-  { path: "/agent/physicalCashOut", titleKey: "physical_cash_out", roles: ["agent"] },
+  { path: "/agent/dashboard", titleKey: "agent_dashboard", roles: ["agent", "hall-operator"] },
+  { path: "/agent/players", titleKey: "agent_players_title", roles: ["agent", "hall-operator"] },
+  { path: "/agent/cashinout", titleKey: "cash_in_out", roles: ["agent", "hall-operator"] },
+  { path: "/agent/physicalCashOut", titleKey: "physical_cash_out", roles: ["agent", "hall-operator"] },
+  // Agent-portal skeleton (PR feat/agent-portal-skeleton) — placeholder-routes
+  // for V1.0/V2.0-wireframe-side-nav. Fylles inn i oppfølger-PR.
+  { path: "/agent/physical-tickets", titleKey: "add_physical_tickets", roles: ["agent", "hall-operator"] },
+  { path: "/agent/games", titleKey: "agent_game_management", roles: ["agent", "hall-operator"] },
+  { path: "/agent/cash-in-out", titleKey: "agent_cash_in_out_management", roles: ["agent", "hall-operator"] },
+  { path: "/agent/unique-id", titleKey: "agent_unique_id_management", roles: ["agent", "hall-operator"] },
+  { path: "/agent/physical-cashout", titleKey: "agent_physical_cashout", roles: ["agent", "hall-operator"] },
   // PR-B1: cash-inout sub-pages. Exact matches only — use query string for
   // row-scoped deep-links (e.g. `#/agent/sellPhysicalTickets?gameId=X`).
   { path: "/agent/sellPhysicalTickets", titleKey: "register_sold_ticket", roles: ["agent"] },

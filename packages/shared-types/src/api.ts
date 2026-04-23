@@ -15,7 +15,7 @@ export type ApiResult<T = unknown> = ApiResponse<T> | ApiError;
 
 // ── User & Auth ─────────────────────────────────────────────────────────────
 
-export type UserRole = "ADMIN" | "HALL_OPERATOR" | "SUPPORT" | "PLAYER";
+export type UserRole = "ADMIN" | "HALL_OPERATOR" | "SUPPORT" | "PLAYER" | "AGENT";
 export type KycStatus = "UNVERIFIED" | "PENDING" | "VERIFIED" | "REJECTED";
 
 export interface PublicAppUser {
