@@ -7,7 +7,9 @@ function isVisible(node: SidebarLeaf | SidebarGroup, session: Session): boolean 
   if (node.roles && node.roles.length > 0 && !node.roles.includes(session.role)) return false;
   if (node.kind === "leaf") {
     if (node.superAdminOnly && !session.isSuperAdmin) return false;
-    if (node.agentOnly && session.role !== "agent") return false;
+    // Agent-portal entries are visible for both AGENT and HALL_OPERATOR —
+    // HALL_OPERATOR is a super-agent who runs the same portal.
+    if (node.agentOnly && session.role !== "agent" && session.role !== "hall-operator") return false;
   }
   if (node.module) {
     if (session.role === "admin" || session.role === "super-admin") return true;

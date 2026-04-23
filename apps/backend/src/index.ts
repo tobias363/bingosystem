@@ -87,6 +87,7 @@ import { createAgentRouter } from "./routes/agent.js";
 import { createAdminAgentsRouter } from "./routes/adminAgents.js";
 import { createAgentTransactionsRouter } from "./routes/agentTransactions.js";
 import { createAgentDashboardRouter } from "./routes/agentDashboard.js";
+import { createAgentContextRouter } from "./routes/agentContext.js";
 import { createAgentSettlementRouter } from "./routes/agentSettlement.js";
 import { createAdminProductsRouter } from "./routes/adminProducts.js";
 import { createAgentProductsRouter } from "./routes/agentProducts.js";
@@ -1484,6 +1485,14 @@ app.use(createAgentDashboardRouter({
   agentShiftService,
   agentTransactionStore,
   auditLogService,
+}));
+
+// Agent-portal skeleton (feat/agent-portal-skeleton): /api/agent/context.
+// AGENT + HALL_OPERATOR — gir assigned halls + coarse capabilities for
+// admin-web's Agent-portal header/side-nav.
+app.use(createAgentContextRouter({
+  platformService,
+  agentService,
 }));
 
 // BIN-583 B3.3: agent + admin daily-cash-settlement (close-day, edit, PDF).

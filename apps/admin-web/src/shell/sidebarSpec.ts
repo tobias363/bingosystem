@@ -255,46 +255,50 @@ export const adminSidebar: SidebarNode[] = [
   { kind: "leaf", id: "audit-log", path: "/auditLog", icon: "fa fa-history", labelKey: "audit_log_title", superAdminOnly: true },
 ];
 
-// Agent sidebar — legacy/.../navigation.html:713-1548 (subset, permission-gated)
+// Agent sidebar — Agent-portal V1.0 (06.01.2025) + V2.0 (10.07.2024).
+// Struktur: Dashboard, Players Management ▾, Add Physical Ticket,
+// Game Management ▾, Cash In/Out Management ▾, Unique ID Management,
+// Physical Cashout. Legacy /agent/dashboard, /agent/players etc. er
+// placeholder-sider som fylles inn i oppfølger-PR-er.
 export const agentSidebar: SidebarNode[] = [
   { kind: "header", labelKey: "main_navigation" },
-  spilloramaLive,
-  { kind: "leaf", id: "dashboard", path: "/admin", icon: "fa fa-dashboard", labelKey: "dashboard" },
-  { kind: "leaf", id: "agent-dashboard", path: "/agent/dashboard", icon: "fa fa-line-chart", labelKey: "agent_dashboard", agentOnly: true },
-  { kind: "leaf", id: "agent-players", path: "/agent/players", icon: "fa fa-users", labelKey: "agent_players_title", agentOnly: true },
+  { kind: "leaf", id: "agent-dashboard", path: "/agent/dashboard", icon: "fa fa-dashboard", labelKey: "dashboard" },
   {
     kind: "group",
-    id: "cash-in-out",
-    icon: "fa fa-money",
-    labelKey: "cash_in_out",
-    agentOnly: true,
-    children: [
-      { kind: "leaf", id: "cashinout", path: "/agent/cashinout", icon: "fa fa-circle-o", labelKey: "cash_in_out" },
-      { kind: "leaf", id: "sold-tickets", path: "/sold-tickets", icon: "fa fa-circle-o", labelKey: "sold_tickets" },
-    ],
-  },
-  {
-    kind: "group",
-    id: "player-management",
-    icon: "fa fa-bar-chart",
+    id: "agent-player-management",
+    icon: "fa fa-users",
     labelKey: "player_management",
-    module: "Players Management",
     children: [
-      { kind: "leaf", id: "player", path: "/player", icon: "fa fa-circle-o", labelKey: "approved_players" },
-      { kind: "leaf", id: "pendingRequests", path: "/pendingRequests", icon: "fa fa-circle-o", labelKey: "pending_requests" },
-      { kind: "leaf", id: "rejectedRequests", path: "/rejectedRequests", icon: "fa fa-circle-o", labelKey: "reject_requests" },
+      { kind: "leaf", id: "agent-players", path: "/agent/players", icon: "fa fa-circle-o", labelKey: "approved_players" },
+      { kind: "leaf", id: "agent-pending", path: "/pendingRequests", icon: "fa fa-circle-o", labelKey: "pending_requests" },
+      { kind: "leaf", id: "agent-rejected", path: "/rejectedRequests", icon: "fa fa-circle-o", labelKey: "reject_requests" },
     ],
   },
-  { kind: "leaf", id: "track-spending", path: "/players/track-spending", icon: "fa fa-gamepad", labelKey: "tracking_player_spending", module: "Tracking Player Spending" },
-  { kind: "leaf", id: "schedules", path: "/schedules", icon: "fa fa-calendar", labelKey: "schedule_management", module: "Schedule Management" },
-  { kind: "leaf", id: "gameManagement", path: "/gameManagement", icon: "fa fa-gamepad", labelKey: "game_creation_management", module: "Game Creation Management" },
-  { kind: "leaf", id: "physicalCashOut", path: "/agent/physicalCashOut", icon: "fa fa-ticket", labelKey: "physical_cash_out", agentOnly: true },
-  { kind: "leaf", id: "sold-tickets-main", path: "/sold-tickets", icon: "fa fa-ticket mr-20", labelKey: "sold_tickets" },
-  { kind: "leaf", id: "hallAccountReport", path: "/hallAccountReport", icon: "fa fa-users mr-20", labelKey: "hall_account_report" },
-  { kind: "leaf", id: "hallSpecificReport", path: "/hallSpecificReport", icon: "fa fa-bar-chart", labelKey: "hall_specific_reports", module: "Report Management" },
-  { kind: "leaf", id: "wallet", path: "/wallet", icon: "fa fa-credit-card", labelKey: "wallet_management", module: "Wallet Management" },
+  { kind: "leaf", id: "agent-physical-tickets", path: "/agent/physical-tickets", icon: "fa fa-ticket", labelKey: "add_physical_tickets" },
+  {
+    kind: "group",
+    id: "agent-game-management",
+    icon: "fa fa-gamepad",
+    labelKey: "agent_game_management",
+    children: [
+      { kind: "leaf", id: "agent-games-overview", path: "/agent/games", icon: "fa fa-circle-o", labelKey: "agent_games_overview" },
+    ],
+  },
+  {
+    kind: "group",
+    id: "agent-cash-in-out",
+    icon: "fa fa-money",
+    labelKey: "agent_cash_in_out_management",
+    children: [
+      { kind: "leaf", id: "agent-cash-overview", path: "/agent/cash-in-out", icon: "fa fa-circle-o", labelKey: "cash_in_out" },
+    ],
+  },
+  { kind: "leaf", id: "agent-unique-id", path: "/agent/unique-id", icon: "fa fa-id-card", labelKey: "agent_unique_id_management" },
+  { kind: "leaf", id: "agent-physical-cashout", path: "/agent/physical-cashout", icon: "fa fa-ticket", labelKey: "agent_physical_cashout" },
 ];
 
 export function sidebarFor(role: Role): SidebarNode[] {
-  return role === "agent" ? agentSidebar : adminSidebar;
+  // HALL_OPERATOR shares the agent-portal UX with AGENT. ADMIN/super-admin
+  // keep the full admin-panel sidebar.
+  return role === "agent" || role === "hall-operator" ? agentSidebar : adminSidebar;
 }

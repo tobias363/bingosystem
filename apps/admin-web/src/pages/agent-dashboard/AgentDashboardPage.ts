@@ -1,195 +1,205 @@
-// Agent dashboard-side — viser shift-info + cash-totals + nøkkeltall + siste
-// transaksjoner. Treffer /api/agent/dashboard. Polling hver 15 sek slik at
-// agent ser oppdatert daglig balanse etter kolleger har kjørt transaksjoner.
+// Agent-portal skeleton-dashboard per Agent V1.0 (06.01.2025) + V2.0 wireframes.
+//
+// Skjelett-strukturen i denne PR-en:
+//   - KPI-boks ("Total Number of Approved Players") — dummy-tall inntil
+//     backend-integrasjon fylles inn i oppfølger-PR
+//   - Latest Requests-widget — placeholder med 5 rader dummy-data
+//   - Top 5 Players-widget — placeholder med 5 avatarer
+//   - Ongoing Games tabs (Game 1/2/3/4) — placeholder-bokser "Kommer snart"
+//
+// Den tidligere shift-info-varianten (med polling mot /api/agent/dashboard)
+// er flyttet til /agent/cashinout-flyten som del av Cash In/Out Management —
+// shift-info hører hjemme der per legacy V1.0.
 
 import { t } from "../../i18n/I18n.js";
-import { Toast } from "../../components/Toast.js";
-import { ApiError } from "../../api/client.js";
-import { getAgentDashboard, type AgentDashboard } from "../../api/agent-dashboard.js";
 
-const POLL_MS = 15_000;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+const GAME_TABS = ["game1", "game2", "game3", "game4"] as const;
+type GameTab = (typeof GAME_TABS)[number];
+const DEFAULT_TAB: GameTab = "game1";
 
+/**
+ * Mount the agent-portal skeleton-dashboard. Idempotent — safe to call on
+ * route re-entry. Unmount is a no-op (no timers, no listeners beyond tab-
+ * clicks which the renderer cleans up via DOM re-creation).
+ */
 export function mountAgentDashboard(container: HTMLElement): void {
   unmountAgentDashboard();
-  container.innerHTML = skeleton();
-  void refresh(container);
-  pollTimer = setInterval(() => {
-    if (!container.isConnected) {
-      unmountAgentDashboard();
-      return;
-    }
-    void refresh(container);
-  }, POLL_MS);
+  render(container);
 }
 
+/**
+ * Retained for backwards-compat with main.ts which called this on route-
+ * leave. The new skeleton-dashboard has no polling / timers, so this is a
+ * no-op; we keep the symbol so legacy callers don't break.
+ */
 export function unmountAgentDashboard(): void {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
+  // no-op — skeleton has no timers to clear
 }
 
-function skeleton(): string {
-  return `
-    ${contentHeader("agent_dashboard")}
-    <section class="content">
-      <div class="row"><div class="col-sm-12">
-        <div class="box box-default"><div class="box-body text-center">
-          <i class="fa fa-spinner fa-spin fa-2x"></i><br><br>${escapeHtml(t("loading"))}
-        </div></div>
-      </div></div>
-    </section>`;
-}
-
-async function refresh(container: HTMLElement): Promise<void> {
-  try {
-    const data = await getAgentDashboard();
-    render(container, data);
-  } catch (err) {
-    const msg = err instanceof ApiError ? err.message : t("something_went_wrong");
-    container.innerHTML = `
-      ${contentHeader("agent_dashboard")}
-      <section class="content">
-        <div class="box box-danger"><div class="box-body">
-          <p>${escapeHtml(msg)}</p>
-        </div></div>
-      </section>`;
-  }
-}
-
-function render(container: HTMLElement, data: AgentDashboard): void {
-  const shiftHtml = data.shift ? renderShift(data.shift) : renderNoShift();
+function render(container: HTMLElement): void {
   container.innerHTML = `
-    ${contentHeader("agent_dashboard")}
-    <section class="content">
-      <div class="row">
-        <div class="col-md-6">
-          ${boxOpen("agent_dashboard_shift_info", "primary")}
-            ${shiftHtml}
-          ${boxClose()}
-        </div>
-        <div class="col-md-6">
-          ${boxOpen("agent_dashboard_counts", "info")}
-            <table class="table table-bordered table-striped" id="agent-dashboard-counts">
-              <tbody>
-                <tr><td>${escapeHtml(t("agent_dashboard_transactions_today"))}</td><td style="text-align:right;"><strong>${data.counts.transactionsToday}</strong></td></tr>
-                <tr><td>${escapeHtml(t("agent_dashboard_players_in_hall"))}</td><td style="text-align:right;"><strong>${data.counts.playersInHall ?? "—"}</strong></td></tr>
-                <tr><td>${escapeHtml(t("agent_dashboard_active_shifts_in_hall"))}</td><td style="text-align:right;"><strong>${data.counts.activeShiftsInHall ?? "—"}</strong></td></tr>
-              </tbody>
-            </table>
-            <div class="muted"><small>${escapeHtml(t("agent"))}: <strong>${escapeHtml(data.agent.displayName)}</strong></small></div>
-          ${boxClose()}
-        </div>
-      </div>
-      <div class="row"><div class="col-sm-12">
-        ${boxOpen("agent_dashboard_recent_transactions", "default")}
-          ${renderRecent(data.recentTransactions)}
-        ${boxClose()}
-      </div></div>
+    ${contentHeader()}
+    <section class="content" data-marker="agent-dashboard">
+      ${kpiRow()}
+      ${widgetsRow()}
+      ${ongoingGamesRow()}
     </section>`;
+  wireTabs(container);
 }
 
-function renderShift(shift: NonNullable<AgentDashboard["shift"]>): string {
-  return `
-    <table class="table table-bordered table-striped" id="agent-dashboard-shift">
-      <tbody>
-        <tr><td>${escapeHtml(t("hall_name"))}</td><td style="text-align:right;">${escapeHtml(shift.hallId)}</td></tr>
-        <tr><td>${escapeHtml(t("total_cash_in"))}</td><td style="text-align:right;">${formatNOK(shift.totalCashIn)}</td></tr>
-        <tr><td>${escapeHtml(t("total_cash_out"))}</td><td style="text-align:right;">${formatNOK(shift.totalCashOut)}</td></tr>
-        <tr><td>${escapeHtml(t("daily_balance"))}</td><td style="text-align:right;"><strong>${formatNOK(shift.dailyBalance)}</strong></td></tr>
-        <tr><td>${escapeHtml(t("total_hall_cash_balance"))}</td><td style="text-align:right;">${formatNOK(shift.hallCashBalance)}</td></tr>
-        <tr><td>Started at</td><td style="text-align:right;">${escapeHtml(formatDateTime(shift.startedAt))}</td></tr>
-      </tbody>
-    </table>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <a class="btn btn-success" href="#/agent/cashinout"><i class="fa fa-exchange"></i> ${escapeHtml(t("cash_in_out"))}</a>
-      <a class="btn btn-primary" href="#/agent/players"><i class="fa fa-users"></i> ${escapeHtml(t("agent_players_title"))}</a>
-    </div>`;
-}
-
-function renderNoShift(): string {
-  return `
-    <div class="callout callout-warning">
-      <p>${escapeHtml(t("agent_dashboard_no_shift"))}</p>
-      <a class="btn btn-success" href="#/agent/cashinout"><i class="fa fa-sign-in"></i> ${escapeHtml(t("agent_dashboard_start_shift"))}</a>
-    </div>`;
-}
-
-function renderRecent(txs: AgentDashboard["recentTransactions"]): string {
-  if (txs.length === 0) {
-    return `<p class="muted">${escapeHtml(t("agent_dashboard_no_transactions"))}</p>`;
-  }
-  const rows = txs
-    .map(
-      (tx) => `
-    <tr>
-      <td>${escapeHtml(formatDateTime(tx.createdAt))}</td>
-      <td>${escapeHtml(tx.actionType)}</td>
-      <td>${escapeHtml(tx.paymentMethod)}</td>
-      <td style="text-align:right;">${formatNOK(tx.amount)}</td>
-      <td><small class="muted">${escapeHtml(tx.id)}</small></td>
-    </tr>`
-    )
-    .join("");
-  return `
-    <table class="table table-striped">
-      <thead>
-        <tr>
-          <th>${escapeHtml(t("date"))}</th>
-          <th>${escapeHtml(t("type"))}</th>
-          <th>${escapeHtml(t("payment_type"))}</th>
-          <th style="text-align:right;">${escapeHtml(t("amount"))}</th>
-          <th>ID</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>`;
-}
-
-function contentHeader(titleKey: string): string {
-  const title = escapeHtml(t(titleKey));
+function contentHeader(): string {
+  const title = escapeHtml(t("agent_dashboard"));
   return `
     <section class="content-header">
       <h1>${title}</h1>
       <ol class="breadcrumb">
-        <li><a href="#/admin"><i class="fa fa-dashboard"></i> ${escapeHtml(t("dashboard"))}</a></li>
+        <li><a href="#/agent/dashboard"><i class="fa fa-dashboard"></i> ${escapeHtml(t("dashboard"))}</a></li>
         <li class="active">${title}</li>
       </ol>
     </section>`;
 }
 
-function boxOpen(titleKey: string, variant: "default" | "primary" | "info" | "danger" | "success"): string {
+// ── KPI-row (per legacy Agent V1.0 "Total Number of Approved Players: 250") ──
+function kpiRow(): string {
   return `
-    <div class="box box-${variant}">
-      <div class="box-header with-border">
-        <h3 class="box-title">${escapeHtml(t(titleKey))}</h3>
+    <div class="row" data-marker="agent-dashboard-kpis">
+      <div class="col-md-3 col-sm-6 col-xs-12">
+        <a href="#/agent/players" style="text-decoration:none;color:inherit;">
+          <div class="info-box">
+            <span class="info-box-icon bg-blue"><i class="fa fa-users"></i></span>
+            <div class="info-box-content">
+              <span class="info-box-text" style="font-size:11px;">
+                ${escapeHtml(t("agent_dashboard_kpi_approved_players"))}
+              </span>
+              <span class="info-box-number" data-kpi="approved-players">250</span>
+            </div>
+          </div>
+        </a>
       </div>
-      <div class="box-body">`;
+    </div>`;
 }
 
-function boxClose(): string {
-  return `</div></div>`;
+// ── Latest Requests + Top 5 Players (placeholders med dummy-rader) ──
+function widgetsRow(): string {
+  return `
+    <div class="row">
+      <div class="col-md-8">
+        ${latestRequestsBox()}
+      </div>
+      <div class="col-md-4">
+        ${topPlayersBox()}
+      </div>
+    </div>`;
 }
 
-function formatNOK(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "00.00";
-  return n.toFixed(2);
+function latestRequestsBox(): string {
+  const dummyRows = [1, 2, 3, 4, 5]
+    .map(
+      (i) => `
+    <tr data-marker="latest-request-row">
+      <td>#${i}</td>
+      <td>${escapeHtml(t("agent_dashboard_placeholder_player"))} ${i}</td>
+      <td><span class="label label-warning">${escapeHtml(t("agent_placeholder_coming_soon"))}</span></td>
+      <td>—</td>
+    </tr>`
+    )
+    .join("");
+  return `
+    <div class="box box-default" data-marker="agent-dashboard-latest-requests">
+      <div class="box-header with-border">
+        <h3 class="box-title">${escapeHtml(t("agent_dashboard_latest_requests"))}</h3>
+        <div class="box-tools pull-right">
+          <span class="label label-warning">${escapeHtml(t("agent_placeholder_coming_soon"))}</span>
+        </div>
+      </div>
+      <div class="box-body table-responsive">
+        <table class="table no-margin">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>${escapeHtml(t("agent_dashboard_placeholder_player"))}</th>
+              <th>${escapeHtml(t("status"))}</th>
+              <th>${escapeHtml(t("amount"))}</th>
+            </tr>
+          </thead>
+          <tbody>${dummyRows}</tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
-function formatDateTime(iso: string): string {
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    return d.toLocaleString();
-  } catch {
-    return iso;
-  }
+function topPlayersBox(): string {
+  const dummyAvatars = [1, 2, 3, 4, 5]
+    .map(
+      (i) => `
+    <li data-marker="top-player-row" style="padding:6px 0;border-bottom:1px solid #eee;display:flex;align-items:center;gap:8px;">
+      <i class="fa fa-user-circle-o" style="font-size:28px;color:#999;"></i>
+      <span>${escapeHtml(t("agent_dashboard_placeholder_player"))} ${i}</span>
+    </li>`
+    )
+    .join("");
+  return `
+    <div class="box box-default" data-marker="agent-dashboard-top-players">
+      <div class="box-header with-border">
+        <h3 class="box-title">${escapeHtml(t("agent_dashboard_top_players"))}</h3>
+        <div class="box-tools pull-right">
+          <span class="label label-warning">${escapeHtml(t("agent_placeholder_coming_soon"))}</span>
+        </div>
+      </div>
+      <div class="box-body">
+        <ul style="list-style:none;padding:0;margin:0;">${dummyAvatars}</ul>
+      </div>
+    </div>`;
+}
+
+// ── Ongoing Games tabs (4 tabs, alle placeholder "Kommer snart") ──
+function ongoingGamesRow(): string {
+  const tabs = GAME_TABS.map(
+    (tab) => `
+    <li class="${tab === DEFAULT_TAB ? "active" : ""}">
+      <a href="#tab-${tab}" data-game-tab="${tab}">${escapeHtml(t(tab))}</a>
+    </li>`
+  ).join("");
+  const panes = GAME_TABS.map(
+    (tab) => `
+    <div id="tab-${tab}" class="tab-pane ${tab === DEFAULT_TAB ? "active" : ""}" data-marker="ongoing-games-pane">
+      <div class="text-center" style="padding:40px;">
+        <span class="label label-warning" style="font-size:14px;">${escapeHtml(t("agent_placeholder_coming_soon"))}</span>
+      </div>
+    </div>`
+  ).join("");
+  return `
+    <div class="row">
+      <div class="col-md-12">
+        <div class="box box-info" data-marker="agent-dashboard-ongoing-games">
+          <div class="box-header with-border text-center">
+            <h3 class="box-title text-bold">${escapeHtml(t("ongoing_game"))}</h3>
+          </div>
+          <div class="box-body">
+            <ul class="nav nav-tabs" style="display:flex;justify-content:center;">${tabs}</ul>
+            <div class="tab-content">${panes}</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function wireTabs(container: HTMLElement): void {
+  const tabs = container.querySelectorAll<HTMLAnchorElement>("a[data-game-tab]");
+  const panes = container.querySelectorAll<HTMLElement>(".tab-pane");
+  tabs.forEach((a) => {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const which = a.getAttribute("data-game-tab");
+      if (!which) return;
+      tabs.forEach((x) => x.closest("li")?.classList.remove("active"));
+      a.closest("li")?.classList.add("active");
+      panes.forEach((p) => p.classList.remove("active"));
+      container.querySelector(`#tab-${which}`)?.classList.add("active");
+    });
+  });
 }
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
-
-// Use Toast import to avoid "unused" error — expose for callers if needed.
-void Toast;
