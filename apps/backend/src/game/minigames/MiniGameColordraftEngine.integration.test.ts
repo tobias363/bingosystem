@@ -375,22 +375,41 @@ test("BIN-690 M4 integration: mismatch med consolation>0 → consolation payout 
   });
   orchestrator.registerMiniGame(new MiniGameColordraftEngine());
 
-  const trig = await orchestrator.maybeTriggerFor({
-    scheduledGameId: "sg-int-cd-consolation",
-    winnerUserId: "u-winner",
-    winnerWalletId: "w-winner",
-    hallId: "h-main",
-    drawSequenceAtWin: 50,
-    gameConfigJson: { spill1: { miniGames: ["colordraft"] } },
-  });
-
-  const tpayload = triggers[0]!.payload as Record<string, unknown>;
-  const target = tpayload.targetColor as string;
-  const slots = tpayload.slotColors as string[];
-  const mismatchIndex = slots.findIndex((c) => c !== target);
-  // Må finnes en mismatch siden palette = 2 farger og det er veldig usannsynlig
-  // at alle 6 slots er target.
-  assert.ok(mismatchIndex >= 0, "Må finnes en mismatch-slot");
+  // Retry-loop: hver maybeTriggerFor() genererer ny randomUUID → ny RNG-seed → ny state.
+  // Med palette=2 farger og 6 slots er p(alle slots == target) = (1/2)^6 = 1/64 per forsøk.
+  // 50 forsøk gir p(aldri mismatch) ≈ (1/64)^50 ≈ 10^-90 → deterministisk i praksis.
+  const MAX_ATTEMPTS = 50;
+  let trig: Awaited<ReturnType<typeof orchestrator.maybeTriggerFor>> | null = null;
+  let target = "";
+  let slots: string[] = [];
+  let mismatchIndex = -1;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    // Ny scheduledGameId per forsøk for å unngå state-overlapp (selv om resultId
+    // uansett er fresh per trigger via randomUUID).
+    const candidate = await orchestrator.maybeTriggerFor({
+      scheduledGameId: `sg-int-cd-consolation-${attempt}`,
+      winnerUserId: "u-winner",
+      winnerWalletId: "w-winner",
+      hallId: "h-main",
+      drawSequenceAtWin: 50,
+      gameConfigJson: { spill1: { miniGames: ["colordraft"] } },
+    });
+    const tpayload = triggers[triggers.length - 1]!.payload as Record<string, unknown>;
+    const candidateTarget = tpayload.targetColor as string;
+    const candidateSlots = tpayload.slotColors as string[];
+    const candidateMismatch = candidateSlots.findIndex((c) => c !== candidateTarget);
+    if (candidateMismatch >= 0) {
+      trig = candidate;
+      target = candidateTarget;
+      slots = candidateSlots;
+      mismatchIndex = candidateMismatch;
+      break;
+    }
+  }
+  assert.ok(
+    trig !== null && mismatchIndex >= 0,
+    `Fant ikke mismatch-slot etter ${MAX_ATTEMPTS} forsøk — statistisk umulig (p ≈ 10^-90)`,
+  );
 
   const resp = await orchestrator.handleChoice({
     resultId: trig.resultId!,
@@ -400,8 +419,10 @@ test("BIN-690 M4 integration: mismatch med consolation>0 → consolation payout 
   assert.equal(resp.payoutCents, 10_000); // 100 kr.
   const json = resp.resultJson as ColordraftResultJson;
   assert.equal(json.matched, false);
+  assert.equal(json.targetColor, target);
+  assert.deepEqual([...json.allSlotColors], slots);
   assert.equal(json.prizeAmountKroner, 100);
-  // Credit ble kalt for consolation.
+  // Credit ble kalt for consolation (nøyaktig 1 gang — kun completed trigger fikk handleChoice).
   assert.equal(credits.length, 1);
   assert.equal(credits[0]!.amount, 100);
   assert.equal(credits[0]!.options?.to, "winnings");
@@ -425,23 +446,36 @@ test("BIN-690 M4 integration: mismatch med consolation=0 → ingen credit-kall",
   });
   orchestrator.registerMiniGame(new MiniGameColordraftEngine());
 
-  const trig = await orchestrator.maybeTriggerFor({
-    scheduledGameId: "sg-int-cd-zero",
-    winnerUserId: "u-zero",
-    winnerWalletId: "w-zero",
-    hallId: "h-main",
-    drawSequenceAtWin: 50,
-    gameConfigJson: { spill1: { miniGames: ["colordraft"] } },
-  });
-
-  const tpayload = triggers[0]!.payload as Record<string, unknown>;
-  const target = tpayload.targetColor as string;
-  const slots = tpayload.slotColors as string[];
-  const mismatchIndex = slots.findIndex((c) => c !== target);
-  if (mismatchIndex < 0) {
-    // Alle slots er target (usannsynlig med 4 farger og 12 slots). Skip.
-    return;
+  // Retry-loop: hver maybeTriggerFor() genererer ny randomUUID → ny RNG-seed → ny state.
+  // Med default palette=4 farger og 12 slots er p(alle slots == target) = (1/4)^12 ≈ 1/16.7M
+  // per forsøk. 50 forsøk gir p(aldri mismatch) ≈ (1/16.7M)^50 → deterministisk i praksis.
+  // Erstatter tidligere silent-skip-pattern (1/16.7M sjanse for falsk-pass).
+  const MAX_ATTEMPTS = 50;
+  let trig: Awaited<ReturnType<typeof orchestrator.maybeTriggerFor>> | null = null;
+  let mismatchIndex = -1;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const candidate = await orchestrator.maybeTriggerFor({
+      scheduledGameId: `sg-int-cd-zero-${attempt}`,
+      winnerUserId: "u-zero",
+      winnerWalletId: "w-zero",
+      hallId: "h-main",
+      drawSequenceAtWin: 50,
+      gameConfigJson: { spill1: { miniGames: ["colordraft"] } },
+    });
+    const tpayload = triggers[triggers.length - 1]!.payload as Record<string, unknown>;
+    const candidateTarget = tpayload.targetColor as string;
+    const candidateSlots = tpayload.slotColors as string[];
+    const candidateMismatch = candidateSlots.findIndex((c) => c !== candidateTarget);
+    if (candidateMismatch >= 0) {
+      trig = candidate;
+      mismatchIndex = candidateMismatch;
+      break;
+    }
   }
+  assert.ok(
+    trig !== null && mismatchIndex >= 0,
+    `Fant ikke mismatch-slot etter ${MAX_ATTEMPTS} forsøk — statistisk umulig`,
+  );
 
   const resp = await orchestrator.handleChoice({
     resultId: trig.resultId!,
