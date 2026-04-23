@@ -15,6 +15,7 @@ import { BingoTicketHtml } from "./BingoTicketHtml.js";
  *     cell mark animations and flip state)
  *   - Propagate mark-number events to every child ticket
  */
+
 export interface TicketGridHtmlOptions {
   onCancelTicket?: (ticketId: string) => void;
 }
@@ -65,8 +66,8 @@ export class TicketGridHtml {
     this.gridEl = document.createElement("div");
     Object.assign(this.gridEl.style, {
       display: "grid",
-      gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-      gap: "18px",
+      gridTemplateColumns: "repeat(5, minmax(0px, 1fr))",
+      gap: "10px",
       alignContent: "start",
     });
     this.scrollArea.appendChild(this.gridEl);
