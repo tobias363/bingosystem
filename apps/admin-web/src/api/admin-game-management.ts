@@ -1,4 +1,4 @@
-// BIN-684: admin-game-management API-wrappers (bolk 1 — BIN-622 wired).
+// BIN-684: admin-game-management API-wrappers.
 //
 // Speiler backend-router `apps/backend/src/routes/adminGameManagement.ts`:
 //   GET    /api/admin/game-management?gameTypeId=X          (GAME_MGMT_READ)
@@ -8,9 +8,12 @@
 //   DELETE /api/admin/game-management/:id?hard=true|false    (GAME_MGMT_WRITE)
 //   POST   /api/admin/game-management/:id/repeat             (GAME_MGMT_WRITE)
 //
-// CloseDay (BIN-623) + GameTickets (BIN-622 tickets-per-game) har ingen
-// backend-endpoints ennå — de wrappers som eksisterer returnerer 501-lignende
-// placeholders. Se GameManagementState.ts for hvilke.
+// BIN-623 CloseDay (egen router `apps/backend/src/routes/adminCloseDay.ts`):
+//   GET  /api/admin/games/:id/close-day-summary?closeDate=YYYY-MM-DD
+//   POST /api/admin/games/:id/close-day
+//
+// GameTickets (tickets-per-game) har fortsatt ingen backend-rute; wrappers
+// returnerer tomme lister — se GameManagementState.ts fetchGameTickets.
 
 import { apiRequest } from "./client.js";
 
@@ -147,5 +150,58 @@ export async function repeatGameManagement(
   return apiRequest<AdminGameManagement>(
     `/api/admin/game-management/${encodeURIComponent(sourceId)}/repeat`,
     { method: "POST", body, auth: true }
+  );
+}
+
+// ── CloseDay (BIN-623) ──────────────────────────────────────────────────────
+
+export interface CloseDaySummary {
+  gameManagementId: string;
+  closeDate: string;
+  alreadyClosed: boolean;
+  closedAt: string | null;
+  closedBy: string | null;
+  totalSold: number;
+  totalEarning: number;
+  ticketsSold: number;
+  winnersCount: number;
+  payoutsTotal: number;
+  jackpotsTotal: number;
+  capturedAt: string;
+}
+
+export interface CloseDayEntry {
+  id: string;
+  gameManagementId: string;
+  closeDate: string;
+  closedBy: string | null;
+  closedAt: string;
+  summary: CloseDaySummary;
+}
+
+/** GET /api/admin/games/:id/close-day-summary — preview before lukking. */
+export async function getCloseDaySummary(
+  gameId: string,
+  closeDate?: string
+): Promise<CloseDaySummary> {
+  const qs = closeDate ? `?closeDate=${encodeURIComponent(closeDate)}` : "";
+  return apiRequest<CloseDaySummary>(
+    `/api/admin/games/${encodeURIComponent(gameId)}/close-day-summary${qs}`,
+    { auth: true }
+  );
+}
+
+/** POST /api/admin/games/:id/close-day — regulatorisk dagslukking. */
+export async function closeDay(
+  gameId: string,
+  closeDate?: string
+): Promise<CloseDayEntry> {
+  return apiRequest<CloseDayEntry>(
+    `/api/admin/games/${encodeURIComponent(gameId)}/close-day`,
+    {
+      method: "POST",
+      body: closeDate ? { closeDate } : {},
+      auth: true,
+    }
   );
 }

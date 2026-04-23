@@ -209,10 +209,41 @@ describe("GameManagement detail pages — BIN-684 wired", () => {
     expect(c.textContent).toContain("parent-99");
   });
 
-  it("closeDay page forblir placeholder med BIN-623", async () => {
+  it("closeDay page henter summary + rendrer close-button (BIN-623 live)", async () => {
+    // Need mocks for both the GM detail fetch and the close-day-summary fetch.
+    const spy = vi.fn();
+    const summary = {
+      gameManagementId: "gm-42",
+      closeDate: "2026-04-23",
+      alreadyClosed: false,
+      closedAt: null,
+      closedBy: null,
+      totalSold: 7,
+      totalEarning: 140,
+      ticketsSold: 7,
+      winnersCount: 0,
+      payoutsTotal: 0,
+      jackpotsTotal: 0,
+      capturedAt: "2026-04-23T12:00:00Z",
+    };
+    spy.mockImplementation(async (url: string | URL) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/close-day-summary")) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, data: summary }) };
+      }
+      // Any other call → sampleRow (GM detail)
+      return { ok: true, status: 200, json: async () => ({ ok: true, data: sampleRow }) };
+    });
+    (globalThis as unknown as { fetch: unknown }).fetch = spy as unknown as typeof fetch;
+
     const c = document.createElement("div");
     await renderGameManagementCloseDayPage(c, "bingo", "gm-42");
-    expect(c.querySelector("[data-testid='gm-placeholder']")?.textContent).toContain("BIN-623");
+    // Summary rendered
+    expect(c.querySelector("[data-testid='cd-summary']")).not.toBeNull();
+    // Close-day button present
+    const btn = c.querySelector<HTMLButtonElement>('button[data-action="confirm-close-day"]');
+    expect(btn).not.toBeNull();
+    expect(btn?.disabled).toBe(false);
   });
 });
 

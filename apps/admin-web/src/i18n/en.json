@@ -2728,5 +2728,27 @@
   "pt_err_scanned_required": "Scanned ticket ID is required.",
   "pt_err_reason_required": "Reason is required for rejection.",
 
-  "optional": "optional"
+  "optional": "optional",
+
+  "slug": "Slug",
+  "filename": "Filename",
+  "slug_auto_generated_hint": "Leave empty to auto-generate from name.",
+  "pattern_ids_comma_separated_hint": "Comma-separated pattern IDs (e.g. pid1,pid2).",
+  "pattern_mask_empty_error": "Pattern cannot be empty — pick at least one cell on the grid.",
+  "load_to_game": "Load as game",
+  "saved_game_loaded": "Saved game loaded — fill in details and click Save.",
+  "saved_game_add_via_gm_hint": "New templates are created by saving a game from Game Management.",
+  "saved_game_config_opaque_hint": "Config fields (prices, patterns, halls, etc.) are stored opaque and accessed via Load as game.",
+  "winners_count": "Winners",
+  "payouts_total": "Payouts total",
+  "jackpots_total": "Jackpots total",
+  "captured_at": "Captured at",
+  "already_closed": "The day is already closed",
+  "close_day_confirm_warning": "Closing a day is a regulatory action — snapshot values are locked. Verify the numbers below before proceeding.",
+  "close_day_confirm_prompt": "Are you sure you want to close the day? This action cannot be undone.",
+  "close_day_success": "Day closed and audit-logged.",
+  "game_type_deleted": "Game type deleted",
+  "sub_game_deleted": "Sub game deleted",
+  "pattern_deleted": "Pattern deleted",
+  "saved_game_deleted": "Saved game deleted"
 }

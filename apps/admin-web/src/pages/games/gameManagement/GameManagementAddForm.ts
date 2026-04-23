@@ -811,8 +811,8 @@ function writeResultToMessage(res: Exclude<WriteResult, { ok: true }>): string {
   if (res.reason === "NOT_FOUND") {
     return t("no_data_available");
   }
-  if (res.reason === "BACKEND_MISSING") {
-    return `${t("gm_submit_error_prefix")}: ${res.issue}`;
+  if (res.reason === "ALREADY_CLOSED") {
+    return t("already_closed");
   }
   // BACKEND_ERROR — bruk backend-meldingen hvis den finnes.
   return res.message || t("gm_unknown_error");

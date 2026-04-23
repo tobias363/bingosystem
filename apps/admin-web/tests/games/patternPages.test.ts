@@ -39,35 +39,107 @@ function gameRow(slug: string, settings: Record<string, unknown> = {}): unknown 
   };
 }
 
+/**
+ * Mock-fetch that answers both the new BIN-620 `/api/admin/game-types/*`
+ * endpoints and the legacy `/api/admin/games` fallback. Pattern pages call
+ * `fetchGameType` which hits the new endpoint first.
+ */
+function mockGameTypeFetch(slugs: string[]): typeof fetch {
+  const slugToGameType = (slug: string) => {
+    const slugToType: Record<string, string> = {
+      bingo: "game_1",
+      rocket: "game_2",
+      monsterbingo: "game_3",
+      spillorama: "game_5",
+    };
+    const type = slugToType[slug] ?? slug;
+    const isPattern = type === "game_1" || type === "game_3";
+    return {
+      id: slug,
+      typeSlug: slug,
+      name: slug === "bingo" ? "Game 1" : slug === "monsterbingo" ? "Game 3" : slug,
+      photo: `${slug}.png`,
+      pattern: isPattern,
+      gridRows: slug === "rocket" ? 3 : 5,
+      gridColumns: slug === "rocket" ? 3 : 5,
+      rangeMin: 1,
+      rangeMax: 75,
+      totalNoTickets: null,
+      userMaxTickets: null,
+      luckyNumbers: [],
+      status: "active",
+      extra: {},
+      createdBy: null,
+      createdAt: "",
+      updatedAt: "",
+    };
+  };
+
+  return (async (url: string | URL) => {
+    const urlStr = String(url);
+    // Detail endpoint: /api/admin/game-types/:id
+    const detailMatch = urlStr.match(/^\/api\/admin\/game-types\/([^?]+)/);
+    if (detailMatch) {
+      const requestedSlug = decodeURIComponent(detailMatch[1]!);
+      if (slugs.includes(requestedSlug)) {
+        return okJson(slugToGameType(requestedSlug));
+      }
+      return new Response(
+        JSON.stringify({ ok: false, error: { code: "NOT_FOUND", message: "missing" } }),
+        { status: 404 }
+      );
+    }
+    // List endpoint
+    if (urlStr.startsWith("/api/admin/game-types")) {
+      return okJson({ gameTypes: slugs.map(slugToGameType), count: slugs.length });
+    }
+    // Pattern detail → 404 by default (no fixture)
+    if (urlStr.match(/^\/api\/admin\/patterns\/[^?]+/)) {
+      return new Response(
+        JSON.stringify({ ok: false, error: { code: "NOT_FOUND", message: "missing" } }),
+        { status: 404 }
+      );
+    }
+    // Pattern list → empty
+    if (urlStr.startsWith("/api/admin/patterns")) {
+      return okJson({ patterns: [], count: 0 });
+    }
+    // Legacy fallback
+    if (urlStr.startsWith("/api/admin/games")) {
+      return okJson(slugs.map((s) => gameRow(s)));
+    }
+    return okJson([]);
+  }) as typeof fetch;
+}
+
 describe("PatternListPage", () => {
   const originalFetch = globalThis.fetch;
   beforeEach(() => {
     initI18n();
-    globalThis.fetch = (async () => okJson([gameRow("bingo")])) as typeof fetch;
+    globalThis.fetch = mockGameTypeFetch(["bingo"]);
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
   });
 
-  it("renders title + breadcrumb + pending banner (BIN-627)", async () => {
+  it("renders title + breadcrumb + DataTable host", async () => {
     const c = document.createElement("div");
     await renderPatternListPage(c, "bingo");
     expect(c.querySelector(".content-header h1")?.textContent).toBeTruthy();
     expect(c.querySelector(".breadcrumb")).not.toBeNull();
-    const banner = c.querySelector(".panel-body .alert.alert-warning");
-    expect(banner?.textContent).toContain("BIN-627");
+    expect(c.querySelector("#pattern-list-table")).not.toBeNull();
   });
 
-  it("renders a disabled Add button when game is Game 1 (unlimited)", async () => {
+  it("renders an enabled Add button when game is Game 1 (unlimited)", async () => {
     const c = document.createElement("div");
     await renderPatternListPage(c, "bingo");
-    const addBtn = c.querySelector(".pull-right button[disabled]");
+    const addBtn = c.querySelector<HTMLAnchorElement>('.pull-right a[data-action="add-pattern"]');
     expect(addBtn).not.toBeNull();
-    expect(addBtn?.getAttribute("title")).toContain("BIN-627");
+    expect(addBtn?.getAttribute("href")).toContain("bingo/add");
   });
 
   it("shows 'not found' error when gameType is unknown", async () => {
-    globalThis.fetch = (async () => okJson([gameRow("bingo")])) as typeof fetch;
+    globalThis.fetch = mockGameTypeFetch(["bingo"]);
     const c = document.createElement("div");
     await renderPatternListPage(c, "nonexistent");
     const alert = c.querySelector(".alert.alert-danger");
@@ -79,7 +151,7 @@ describe("PatternAddPage — 5x5 bitmask grid interaction", () => {
   const originalFetch = globalThis.fetch;
   beforeEach(() => {
     initI18n();
-    globalThis.fetch = (async () => okJson([gameRow("bingo")])) as typeof fetch;
+    globalThis.fetch = mockGameTypeFetch(["bingo"]);
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -99,16 +171,16 @@ describe("PatternAddPage — 5x5 bitmask grid interaction", () => {
     expect(onCells.length).toBe(0);
   });
 
-  it("renders disabled Submit button + BIN-627 banner", async () => {
+  it("renders an enabled Submit button (BIN-627 live)", async () => {
     const c = document.createElement("div");
     await renderPatternAddPage(c, "bingo");
-    const submit = c.querySelector<HTMLButtonElement>('button[type="submit"][disabled]');
+    const submit = c.querySelector<HTMLButtonElement>('button[type="submit"][data-action="save-pattern"]');
     expect(submit).not.toBeNull();
-    expect(c.textContent).toContain("BIN-627");
+    expect(submit?.disabled).toBe(false);
   });
 
-  it("renders the BIN-627 max-patterns info block for Game 3", async () => {
-    globalThis.fetch = (async () => okJson([gameRow("monsterbingo")])) as typeof fetch;
+  it("renders the max-patterns info block for Game 3", async () => {
+    globalThis.fetch = mockGameTypeFetch(["monsterbingo"]);
     const c = document.createElement("div");
     await renderPatternAddPage(c, "monsterbingo");
     const infos = c.querySelectorAll(".alert.alert-info");
@@ -170,7 +242,7 @@ describe("PatternEditPage (BIN-627 placeholder)", () => {
   const originalFetch = globalThis.fetch;
   beforeEach(() => {
     initI18n();
-    globalThis.fetch = (async () => okJson([gameRow("bingo")])) as typeof fetch;
+    globalThis.fetch = mockGameTypeFetch(["bingo"]);
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -181,7 +253,9 @@ describe("PatternEditPage (BIN-627 placeholder)", () => {
     await renderPatternEditPage(c, "bingo", "any-id");
     const cells = c.querySelectorAll(".pattern-cell");
     expect(cells.length).toBe(25);
-    expect(c.textContent).toContain("BIN-627");
+    // Should have enabled form (BIN-627 live)
+    const submit = c.querySelector<HTMLButtonElement>('button[type="submit"][data-action="save-pattern"]');
+    expect(submit).not.toBeNull();
   });
 });
 
@@ -189,17 +263,17 @@ describe("PatternViewPage", () => {
   const originalFetch = globalThis.fetch;
   beforeEach(() => {
     initI18n();
-    globalThis.fetch = (async () => okJson([gameRow("bingo")])) as typeof fetch;
+    globalThis.fetch = mockGameTypeFetch(["bingo"]);
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
   });
 
-  it("shows pending-banner when backend yields null", async () => {
+  it("shows not-found banner when backend yields null", async () => {
     const c = document.createElement("div");
     await renderPatternViewPage(c, "bingo", "any-id");
-    const banner = c.querySelector(".alert.alert-warning");
-    expect(banner?.textContent).toContain("BIN-627");
+    const banner = c.querySelector('[data-testid="pattern-not-found"]');
+    expect(banner).not.toBeNull();
   });
 
   it("Cancel-button navigates back to the list", async () => {

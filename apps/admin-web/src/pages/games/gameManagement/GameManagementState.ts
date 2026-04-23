@@ -1,11 +1,11 @@
 // GameManagement state — legacy/unity-backend/App/Views/GameManagement/* (9 267 lines across 10 files).
 //
-// BIN-684 wire-up (bolk 1): erstatter BIN-622 placeholders med live
-// apiRequest-calls mot `/api/admin/game-management/*`. Se
-// `apps/admin-web/src/api/admin-game-management.ts` for kontrakt.
+// BIN-684 wire-up: erstatter placeholders med live apiRequest-calls mot
+//   /api/admin/game-management/*  (BIN-622 — CRUD)
+//   /api/admin/games/:id/close-day-summary + /close-day  (BIN-623 — dagslukking)
+// Se `apps/admin-web/src/api/admin-game-management.ts` for kontrakt.
 //
-// Ikke-merget ennå — fortsatt placeholders:
-//   - BIN-623 closeDay endpoint → `closeDay()` returnerer BACKEND_MISSING
+// Fortsatt mangler backend-rute:
 //   - tickets-per-game endpoint → `fetchGameTickets()` returnerer []
 //     (legacy hadde 4-tabell join; backend har ingen rute ennå — se GM
 //      Detail tickets-side for placeholder-banner.)
@@ -18,7 +18,11 @@ import {
   updateGameManagement,
   deleteGameManagement as apiDeleteGameManagement,
   repeatGameManagement,
+  closeDay as apiCloseDay,
+  getCloseDaySummary as apiGetCloseDaySummary,
   type AdminGameManagement,
+  type CloseDaySummary,
+  type CloseDayEntry,
   type GameManagementStatus,
   type GameManagementTicketType,
 } from "../../../api/admin-game-management.js";
@@ -72,7 +76,7 @@ export interface RepeatGamePayload {
   name?: string;
 }
 
-/** Close-day payload — BIN-623 (ikke levert ennå). */
+/** Close-day payload — BIN-623 live. */
 export interface CloseDayPayload {
   gameTypeId: string;
   gameId: string;
@@ -84,15 +88,26 @@ export interface CloseDayPayload {
  * Feil-varianter:
  *   - PERMISSION_DENIED (HTTP 403)  — admin mangler GAME_MGMT_WRITE
  *   - NOT_FOUND (HTTP 404)          — spill finnes ikke
+ *   - ALREADY_CLOSED (HTTP 409)     — dag allerede lukket (close-day idempotency)
  *   - BACKEND_ERROR (HTTP 500-ish)  — transient / retry
- *   - BACKEND_MISSING (BIN-623)     — closeDay-endpoint ikke levert
  */
 export type WriteResult =
   | { ok: true; row: GameManagementRow }
   | { ok: false; reason: "PERMISSION_DENIED"; message: string }
   | { ok: false; reason: "NOT_FOUND"; message: string }
-  | { ok: false; reason: "BACKEND_ERROR"; message: string }
-  | { ok: false; reason: "BACKEND_MISSING"; issue: "BIN-623" };
+  | { ok: false; reason: "ALREADY_CLOSED"; message: string }
+  | { ok: false; reason: "BACKEND_ERROR"; message: string };
+
+/** Close-day-specific result including the closed entry on success. */
+export type CloseDayResult =
+  | { ok: true; entry: CloseDayEntry }
+  | { ok: false; reason: "PERMISSION_DENIED"; message: string }
+  | { ok: false; reason: "NOT_FOUND"; message: string }
+  | { ok: false; reason: "ALREADY_CLOSED"; message: string }
+  | { ok: false; reason: "BACKEND_ERROR"; message: string };
+
+/** Re-export CloseDaySummary so pages can consume it without reaching into api/*. */
+export type { CloseDaySummary, CloseDayEntry };
 
 /** Map backend-wire-shape til Row-formen UI-en bruker. */
 function toRow(gm: AdminGameManagement): GameManagementRow {
@@ -123,6 +138,26 @@ function apiErrorToWriteResult(err: unknown): WriteResult {
     }
     if (err.status === 404) {
       return { ok: false, reason: "NOT_FOUND", message: err.message };
+    }
+    if (err.status === 409) {
+      return { ok: false, reason: "ALREADY_CLOSED", message: err.message };
+    }
+    return { ok: false, reason: "BACKEND_ERROR", message: err.message };
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return { ok: false, reason: "BACKEND_ERROR", message: msg };
+}
+
+function apiErrorToCloseDayResult(err: unknown): CloseDayResult {
+  if (err instanceof ApiError) {
+    if (err.status === 403) {
+      return { ok: false, reason: "PERMISSION_DENIED", message: err.message };
+    }
+    if (err.status === 404) {
+      return { ok: false, reason: "NOT_FOUND", message: err.message };
+    }
+    if (err.status === 409) {
+      return { ok: false, reason: "ALREADY_CLOSED", message: err.message };
     }
     return { ok: false, reason: "BACKEND_ERROR", message: err.message };
   }
@@ -205,9 +240,27 @@ export async function repeatGame(payload: RepeatGamePayload): Promise<WriteResul
   }
 }
 
-/** BIN-623 closeDay endpoint — IKKE levert ennå. */
-export async function closeDay(_payload: CloseDayPayload): Promise<WriteResult> {
-  return { ok: false, reason: "BACKEND_MISSING", issue: "BIN-623" };
+/** BIN-623 closeDay endpoint — live. */
+export async function closeDay(payload: CloseDayPayload): Promise<CloseDayResult> {
+  try {
+    const entry = await apiCloseDay(payload.gameId, payload.closeDate);
+    return { ok: true, entry };
+  } catch (err) {
+    return apiErrorToCloseDayResult(err);
+  }
+}
+
+/** BIN-623 close-day summary preview — live. */
+export async function fetchCloseDaySummary(
+  gameId: string,
+  closeDate?: string
+): Promise<CloseDaySummary | null> {
+  try {
+    return await apiGetCloseDaySummary(gameId, closeDate);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
 }
 
 /** DELETE /api/admin/game-management/:id — BIN-622 live (soft-delete default). */
