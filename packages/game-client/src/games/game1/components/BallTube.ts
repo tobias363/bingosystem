@@ -2,6 +2,25 @@ import { Container, Sprite, Text, Assets, Texture } from "pixi.js";
 import gsap from "gsap";
 
 /**
+ * Ball PNGs are ~512×512 source downscaled to 81px (tube) / 170px (ring).
+ * Without mipmaps the downscale aliases heavily — users see pixellated
+ * edges. Enable per-source autoGenerate and trilinear filtering so WebGL
+ * picks the right mip level at each draw size.
+ */
+export function enableMipmaps(texture: Texture): void {
+  const src = texture.source as unknown as {
+    autoGenerateMipmaps?: boolean;
+    scaleMode?: string;
+    updateMipmaps?: () => void;
+  };
+  if (src && !src.autoGenerateMipmaps) {
+    src.autoGenerateMipmaps = true;
+    src.scaleMode = "linear";
+    src.updateMipmaps?.();
+  }
+}
+
+/**
  * Vertical stack of drawn bingo balls — new design (2026-04-23) uses PNG
  * sprites over transparent backdrop, with mockup-parity animations:
  *  - Exit: oldest ball sweeps LEFT with rotation + fade when a new draw arrives.
@@ -209,6 +228,7 @@ export class BallTube extends Container {
     const url = getBallAssetPath(number);
     const cachedTexture = Assets.cache.get(url) as Texture | undefined;
     if (cachedTexture) {
+      enableMipmaps(cachedTexture);
       const sprite = new Sprite(cachedTexture);
       sprite.width = BALL_SIZE;
       sprite.height = BALL_SIZE;
@@ -217,6 +237,7 @@ export class BallTube extends Container {
       // Lazy load path — kicks off the fetch, swaps sprite in when ready.
       void Assets.load(url).then((tex: Texture) => {
         if (ball.destroyed) return;
+        enableMipmaps(tex);
         const sprite = new Sprite(tex);
         sprite.width = BALL_SIZE;
         sprite.height = BALL_SIZE;

@@ -1,6 +1,6 @@
 import { Container, Sprite, Text, Assets, Texture } from "pixi.js";
 import gsap from "gsap";
-import { getBallAssetPath } from "./BallTube.js";
+import { getBallAssetPath, enableMipmaps } from "./BallTube.js";
 
 const BALL_SIZE = 170; // mockup .game-number-ring
 
@@ -102,6 +102,7 @@ export class CenterBall extends Container {
       let tex = Assets.cache.get(url) as Texture | undefined;
       if (!tex) tex = (await Assets.load(url)) as Texture;
       if (this.isDestroyed) return;
+      enableMipmaps(tex);
       this.currentTextureUrl = url;
       if (this.ballSprite) {
         this.ballSprite.texture = tex;
