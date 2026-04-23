@@ -108,6 +108,28 @@ export type PotWinRule =
  */
 export type PotType = "jackpott" | "innsatsen" | "generic";
 
+/**
+ * Agent IJ2 — semantikk for `maxAmountCents`:
+ *
+ *   - "pot-balance" (DEFAULT): cap på pot-saldo alene. Pot kan aldri akkumuleres
+ *     over `maxAmountCents`; ordinær premie utbetales separat og påvirkes ikke.
+ *     Dette er nåværende T1/T2/T3-semantikk — bakoverkompatibel for eksisterende
+ *     pot-er uten feltet.
+ *
+ *   - "total": legacy-paritet for Innsatsen. Cap gjelder `ordinaryWinCents + pot`
+ *     samlet. Pot-payout trimmes slik at total ikke overstiger `maxAmountCents`.
+ *     Pot emptes (reset til seed) uansett — trimmet differanse går til huset.
+ *
+ *     Legacy-referanse (GameProcess-old.js:760-764):
+ *       winningAmount = ordinaryWin + innBeforeSales;
+ *       if (winningAmount > 2000) winningAmount = 2000;
+ *
+ * Akkumulering (daily / sale) bruker ALLTID pot-balance som effektiv cap for
+ * saldo-tak i DB (uavhengig av capType) — cap-semantikk gjelder kun på
+ * utbetalingstidspunkt.
+ */
+export type PotCapType = "pot-balance" | "total";
+
 export interface PotConfig {
   /** Reset-sokkel i øre — saldo etter reset/init. */
   seedAmountCents: number;
@@ -158,6 +180,20 @@ export interface PotConfig {
    * Valgfri: ikke satt = ingen minimum pot-størrelse for vinn (T1-semantikk).
    */
   targetAmountCents?: number;
+  /**
+   * Agent IJ2 — semantikk for `maxAmountCents` ved utbetaling:
+   *
+   *   - "pot-balance" (DEFAULT, bakoverkompat): cap på pot-saldo alene.
+   *     Ordinær premie + pot kan kombineres til over cap uten trimming.
+   *   - "total": cap gjelder (ordinaryWinCents + pot-payout) samlet
+   *     — legacy-paritet for Innsatsen (2000 kr totalt for ordinær + pot).
+   *
+   * Krever `maxAmountCents !== null` ved `"total"` — ellers finnes ingen cap å
+   * håndheve. Validering i `validatePotConfig`.
+   *
+   * Ikke satt → "pot-balance" (bakoverkompat).
+   */
+  capType?: PotCapType;
 }
 
 export interface PotRow {
@@ -1197,6 +1233,22 @@ export function validatePotConfig(config: PotConfig): void {
       throw new DomainError(
         "INVALID_CONFIG",
         "targetAmountCents må være >= 0."
+      );
+    }
+  }
+  // Agent IJ2: capType-validering. "total" krever maxAmountCents !== null
+  // fordi det ikke finnes noen cap å håndheve uten et beløp.
+  if (config.capType !== undefined) {
+    if (config.capType !== "pot-balance" && config.capType !== "total") {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "capType må være 'pot-balance' eller 'total'."
+      );
+    }
+    if (config.capType === "total" && config.maxAmountCents === null) {
+      throw new DomainError(
+        "INVALID_CONFIG",
+        "capType='total' krever maxAmountCents !== null (cap-beløp må være satt)."
       );
     }
   }

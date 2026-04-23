@@ -983,3 +983,281 @@ test("PotEvaluator jackpott: audit-payload har resource=game1_pot og resourceId=
   assert.equal(evt.resource, "game1_pot", "T2-shape: resource='game1_pot'");
   assert.equal(evt.resourceId, "ev-audit-shape", "T2-shape: resourceId=tryWin eventId");
 });
+
+// ── Agent IJ2 — total-cap-semantikk (legacy Innsatsen-paritet) ───────────────
+//
+// Legacy-referanse:
+//   winningAmount = ordinaryWin + pot;
+//   if (winningAmount > 2000) winningAmount = 2000;
+//
+// Ny stack implementerer dette via `config.capType = "total"`. Pot er alltid
+// decrementet (reset til seed) av tryWin — trimmet differanse beholdes av
+// huset. Default-verdi er `"pot-balance"` (bakoverkompat) — ordinær + pot
+// kan kombineres over `maxAmountCents` uten trimming.
+
+function makeInnsatsenTotalCapPot(overrides: Partial<PotRow> = {}): PotRow {
+  const base = makePot();
+  return {
+    ...base,
+    config: {
+      ...base.config,
+      maxAmountCents: 2000_00, // 2000 kr total-cap (Innsatsen legacy)
+      capType: "total",
+    },
+    ...overrides,
+  };
+}
+
+test("PotEvaluator IJ2 capType=total: ordinær 500 + pot 2000 > 2000 → pot trimmet til 1500, total 2000", async () => {
+  const pot = makeInnsatsenTotalCapPot({ currentAmountCents: 2000_00 });
+  const tryWinResults = new Map<string, TryWinResult>();
+  tryWinResults.set("innsatsen", {
+    triggered: true,
+    amountCents: 2000_00, // pot-gross fra tryWin
+    reasonCode: null,
+    eventId: "event-trim",
+  });
+  const { service } = makeFakePotService({ pots: [pot], tryWinResults });
+  const { adapter, creditCalls } = makeFakeWalletAdapter();
+  const audit = new AuditLogService(new InMemoryAuditLogStore());
+
+  const results = await evaluateAccumulatingPots({
+    client: dummyClient,
+    potService: service,
+    walletAdapter: adapter,
+    hallId: "hall-a",
+    scheduledGameId: "sg-1",
+    drawSequenceAtWin: 57,
+    firstWinner: defaultWinner(),
+    audit,
+    ordinaryWinCents: 500_00, // 500 kr ordinær
+  });
+
+  assert.equal(results.length, 1);
+  const r = results[0]!;
+  assert.equal(r.triggered, true);
+  assert.equal(r.amountCents, 1500_00, "pot-payout trimmet til 1500 kr (2000-500)");
+  assert.equal(r.potAmountGrossCents, 2000_00, "gross = hele pot-saldoen (2000)");
+  assert.equal(r.houseRetainedCents, 500_00, "excess 500 kr til hus");
+  assert.equal(creditCalls.length, 1);
+  assert.equal(creditCalls[0]!.amount, 1500, "wallet-credit = trimmet beløp");
+});
+
+test("PotEvaluator IJ2 capType=total: ordinær 500 + pot 1000 → total 1500 < cap, ingen trim", async () => {
+  const pot = makeInnsatsenTotalCapPot({ currentAmountCents: 1000_00 });
+  const tryWinResults = new Map<string, TryWinResult>();
+  tryWinResults.set("innsatsen", {
+    triggered: true,
+    amountCents: 1000_00,
+    reasonCode: null,
+    eventId: "event-notrim",
+  });
+  const { service } = makeFakePotService({ pots: [pot], tryWinResults });
+  const { adapter, creditCalls } = makeFakeWalletAdapter();
+  const audit = new AuditLogService(new InMemoryAuditLogStore());
+
+  const results = await evaluateAccumulatingPots({
+    client: dummyClient,
+    potService: service,
+    walletAdapter: adapter,
+    hallId: "hall-a",
+    scheduledGameId: "sg-1",
+    drawSequenceAtWin: 57,
+    firstWinner: defaultWinner(),
+    audit,
+    ordinaryWinCents: 500_00,
+  });
+
+  const r = results[0]!;
+  assert.equal(r.amountCents, 1000_00, "full pot under cap → ingen trim");
+  assert.equal(r.houseRetainedCents, 0);
+  assert.equal(creditCalls[0]!.amount, 1000);
+});
+
+test("PotEvaluator IJ2 capType=pot-balance: ordinær 500 + pot 2500 → pot-credit 2500 (ingen total-trim)", async () => {
+  // Default capType-semantikk: maxAmountCents gjelder pot-saldo alene; ved
+  // utbetaling trimmes IKKE i evaluatoren. Total kan overstige cap-beløpet.
+  const pot = makePot({
+    currentAmountCents: 2500_00,
+    config: {
+      ...makePot().config,
+      maxAmountCents: 2000_00,
+      // capType utelatt → "pot-balance" default
+    },
+  });
+  const tryWinResults = new Map<string, TryWinResult>();
+  tryWinResults.set("innsatsen", {
+    triggered: true,
+    amountCents: 2500_00, // tryWin returnerer full pot; pot-saldo-cap håndheves
+    //                       ved akkumulering, ikke utbetaling
+    reasonCode: null,
+    eventId: "event-pbal",
+  });
+  const { service } = makeFakePotService({ pots: [pot], tryWinResults });
+  const { adapter, creditCalls } = makeFakeWalletAdapter();
+  const audit = new AuditLogService(new InMemoryAuditLogStore());
+
+  const results = await evaluateAccumulatingPots({
+    client: dummyClient,
+    potService: service,
+    walletAdapter: adapter,
+    hallId: "hall-a",
+    scheduledGameId: "sg-1",
+    drawSequenceAtWin: 57,
+    firstWinner: defaultWinner(),
+    audit,
+    ordinaryWinCents: 500_00,
+  });
+
+  const r = results[0]!;
+  assert.equal(r.amountCents, 2500_00, "pot-balance → hele pot betales ut");
+  assert.equal(r.potAmountGrossCents, 2500_00);
+  assert.equal(r.houseRetainedCents, 0);
+  assert.equal(creditCalls[0]!.amount, 2500);
+});
+
+test("PotEvaluator IJ2 capType=pot-balance: ordinær 500 + pot 1000 → pot-credit 1000 (total 1500 < cap, ingen trim)", async () => {
+  // Regression: default-sti uten capType er helt uendret.
+  const pot = makePot({
+    currentAmountCents: 1000_00,
+    config: { ...makePot().config, maxAmountCents: 2000_00 },
+  });
+  const tryWinResults = new Map<string, TryWinResult>();
+  tryWinResults.set("innsatsen", {
+    triggered: true,
+    amountCents: 1000_00,
+    reasonCode: null,
+    eventId: "event-pbal-under",
+  });
+  const { service } = makeFakePotService({ pots: [pot], tryWinResults });
+  const { adapter, creditCalls } = makeFakeWalletAdapter();
+  const audit = new AuditLogService(new InMemoryAuditLogStore());
+
+  const results = await evaluateAccumulatingPots({
+    client: dummyClient,
+    potService: service,
+    walletAdapter: adapter,
+    hallId: "hall-a",
+    scheduledGameId: "sg-1",
+    drawSequenceAtWin: 57,
+    firstWinner: defaultWinner(),
+    audit,
+    ordinaryWinCents: 500_00,
+  });
+
+  const r = results[0]!;
+  assert.equal(r.amountCents, 1000_00);
+  assert.equal(r.houseRetainedCents, 0);
+  assert.equal(creditCalls[0]!.amount, 1000);
+});
+
+test("PotEvaluator IJ2 capType=total: ordinær alene over cap → pot-payout = 0, ingen wallet-credit", async () => {
+  // Kant-tilfelle: hvis ordinær ALLEREDE overstiger maxAmountCents (håndheves
+  // oppstrøms i ordinær-payout-stien), skal pot-payout-delen bli 0. Pot er
+  // fortsatt reset via tryWin — excess beholdes av huset.
+  const pot = makeInnsatsenTotalCapPot({ currentAmountCents: 2000_00 });
+  const tryWinResults = new Map<string, TryWinResult>();
+  tryWinResults.set("innsatsen", {
+    triggered: true,
+    amountCents: 2000_00,
+    reasonCode: null,
+    eventId: "event-ord-over",
+  });
+  const { service } = makeFakePotService({ pots: [pot], tryWinResults });
+  const { adapter, creditCalls } = makeFakeWalletAdapter();
+  const audit = new AuditLogService(new InMemoryAuditLogStore());
+
+  const results = await evaluateAccumulatingPots({
+    client: dummyClient,
+    potService: service,
+    walletAdapter: adapter,
+    hallId: "hall-a",
+    scheduledGameId: "sg-1",
+    drawSequenceAtWin: 57,
+    firstWinner: defaultWinner(),
+    audit,
+    ordinaryWinCents: 2500_00, // allerede over cap
+  });
+
+  const r = results[0]!;
+  assert.equal(r.triggered, true, "pot er fortsatt utløst (reset)");
+  assert.equal(r.amountCents, 0, "pot-payout trimmet til 0");
+  assert.equal(r.potAmountGrossCents, 2000_00);
+  assert.equal(r.houseRetainedCents, 2000_00, "hele pot til hus");
+  assert.equal(
+    creditCalls.length,
+    0,
+    "ingen wallet-credit når payout=0 (wallet-adapter ville ofte avvise 0-beløp)"
+  );
+});
+
+test("PotEvaluator IJ2: default capType ikke satt + ordinaryWinCents ikke satt → full pot-credit (bakoverkompat)", async () => {
+  // Skal matche atferd før IJ2: pot-balance-sti, ingen trim, hele pot
+  // utbetales — akkurat som den tidligere "happy-path"-testen.
+  const pot = makePot();
+  const tryWinResults = new Map<string, TryWinResult>();
+  tryWinResults.set("innsatsen", {
+    triggered: true,
+    amountCents: 2000_00,
+    reasonCode: null,
+    eventId: "event-compat",
+  });
+  const { service } = makeFakePotService({ pots: [pot], tryWinResults });
+  const { adapter, creditCalls } = makeFakeWalletAdapter();
+  const audit = new AuditLogService(new InMemoryAuditLogStore());
+
+  const results = await evaluateAccumulatingPots({
+    client: dummyClient,
+    potService: service,
+    walletAdapter: adapter,
+    hallId: "hall-a",
+    scheduledGameId: "sg-1",
+    drawSequenceAtWin: 57,
+    firstWinner: defaultWinner(),
+    audit,
+    // ingen ordinaryWinCents
+  });
+
+  const r = results[0]!;
+  assert.equal(r.amountCents, 2000_00);
+  assert.equal(r.potAmountGrossCents, 2000_00);
+  assert.equal(r.houseRetainedCents, 0);
+  assert.equal(creditCalls[0]!.amount, 2000);
+});
+
+test("PotEvaluator IJ2 capType=total: audit-details inkluderer potGrossCents, houseRetainedCents, ordinaryWinCents", async () => {
+  const pot = makeInnsatsenTotalCapPot({ currentAmountCents: 2000_00 });
+  const tryWinResults = new Map<string, TryWinResult>();
+  tryWinResults.set("innsatsen", {
+    triggered: true,
+    amountCents: 2000_00,
+    reasonCode: null,
+    eventId: "event-audit",
+  });
+  const { service } = makeFakePotService({ pots: [pot], tryWinResults });
+  const { adapter } = makeFakeWalletAdapter();
+  const auditStore = new InMemoryAuditLogStore();
+  const audit = new AuditLogService(auditStore);
+
+  await evaluateAccumulatingPots({
+    client: dummyClient,
+    potService: service,
+    walletAdapter: adapter,
+    hallId: "hall-a",
+    scheduledGameId: "sg-audit",
+    drawSequenceAtWin: 57,
+    firstWinner: defaultWinner(),
+    audit,
+    ordinaryWinCents: 500_00,
+  });
+
+  await new Promise((r) => setImmediate(r));
+  const events = await auditStore.list({ action: "game1.innsatsen_won" });
+  assert.equal(events.length, 1);
+  const details = events[0]!.details as Record<string, unknown>;
+  assert.equal(details.amountCents, 1500_00, "audit amountCents = trimmet payout");
+  assert.equal(details.potGrossCents, 2000_00);
+  assert.equal(details.houseRetainedCents, 500_00);
+  assert.equal(details.ordinaryWinCents, 500_00);
+  assert.equal(details.capType, "total");
+});

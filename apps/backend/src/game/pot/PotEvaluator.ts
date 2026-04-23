@@ -99,6 +99,17 @@ export interface EvaluateAccumulatingPotsInput {
    * `evaluateAccumulatingPots` én gang per hall med riktig firstWinner.
    */
   firstWinner: PotEvaluatorWinner;
+  /**
+   * Agent IJ2 — ordinær premie (i øre) som firstWinner får fra fase-
+   * utbetalingen (per-winner split av fase-premien + ev. fixed jackpot).
+   * Brukes KUN for pot-er med `config.capType === "total"` for å trimme
+   * pot-payout slik at total (ordinær + pot) ikke overstiger
+   * `config.maxAmountCents`.
+   *
+   * Default 0: bakoverkompatibel med eksisterende callere som ikke
+   * tracker ordinær premie. Pot-er uten capType='total' påvirkes ikke.
+   */
+  ordinaryWinCents?: number;
   audit: AuditLogService;
   /**
    * PR-C2: valgfri tick-service for daglig pot-boost. Når satt, vil jackpott-
@@ -118,7 +129,25 @@ export interface PotEvaluationResult {
   potId: string;
   potType: string;
   triggered: boolean;
+  /**
+   * Beløp kreditert til vinner (i øre). For `capType='total'` kan dette
+   * være mindre enn pot-saldoen fordi (ordinær + pot) er trimmet ned til
+   * `maxAmountCents`. For `capType='pot-balance'` (default) = full pot-saldo.
+   */
   amountCents: number;
+  /**
+   * Agent IJ2 — pot-saldo som ble konsumert fra pot_events (før trim).
+   * Lik `amountCents` for `capType='pot-balance'`, kan være større enn
+   * `amountCents` for `capType='total'` når total-cap har trimmet payout.
+   * Differansen (`potAmountGrossCents - amountCents`) går til huset.
+   */
+  potAmountGrossCents: number;
+  /**
+   * Agent IJ2 — beløp som huset beholder når pot ble trimmet av total-cap.
+   * Alltid 0 for `capType='pot-balance'`. For `capType='total'` =
+   * `potAmountGrossCents - amountCents`.
+   */
+  houseRetainedCents: number;
   reasonCode: string | null;
   walletTxId: string | null;
 }
@@ -138,6 +167,8 @@ export async function evaluateAccumulatingPots(
     return [];
   }
 
+  const ordinaryWinCents = Math.max(0, input.ordinaryWinCents ?? 0);
+
   const results: PotEvaluationResult[] = [];
   for (const pot of pots) {
     const potType = pot.config.potType ?? "generic";
@@ -145,6 +176,7 @@ export async function evaluateAccumulatingPots(
       const res = await evaluateSinglePot({
         pot,
         potType,
+        ordinaryWinCents,
         ...input,
       });
       results.push(res);
@@ -231,6 +263,10 @@ function auditActionFor(potType: string): string {
  * Evaluér én pot og utfør ev. payout. Eksportert fra PR-C2 slik at draw-
  * engine kan kalle den isolert per pot hvis ønsket (nåværende caller bruker
  * `evaluateAccumulatingPots` som iterator).
+ *
+ * Agent IJ2: tar nå `ordinaryWinCents` for pot-er med `capType='total'`.
+ * Default 0 = bakoverkompat for pot-er med `capType='pot-balance'` (ingen
+ * trim).
  */
 export async function evaluateSinglePot(params: {
   pot: PotRow;
@@ -242,10 +278,16 @@ export async function evaluateSinglePot(params: {
   scheduledGameId: string;
   drawSequenceAtWin: number;
   firstWinner: PotEvaluatorWinner;
+  /**
+   * Agent IJ2 — ordinær premie (øre) for firstWinner. Kun brukt når
+   * `pot.config.capType === "total"` for total-cap-trimming. Default 0.
+   */
+  ordinaryWinCents?: number;
   audit: AuditLogService;
   potDailyTickService?: PotDailyAccumulationTickService;
 }): Promise<PotEvaluationResult> {
   const { pot, potType, firstWinner } = params;
+  const ordinaryWinCents = Math.max(0, params.ordinaryWinCents ?? 0);
   const failPolicy = failPolicyFor(potType);
 
   // Phase 5 = Fullt Hus. Alle akkumulerende pot-er i T1-T3-scope binder seg
@@ -311,6 +353,8 @@ export async function evaluateSinglePot(params: {
         potType,
         triggered: false,
         amountCents: 0,
+        potAmountGrossCents: 0,
+        houseRetainedCents: 0,
         reasonCode: "EVALUATION_ERROR",
         walletTxId: null,
       };
@@ -341,64 +385,114 @@ export async function evaluateSinglePot(params: {
       potType,
       triggered: false,
       amountCents: 0,
+      potAmountGrossCents: 0,
+      houseRetainedCents: 0,
       reasonCode: winResult.reasonCode,
       walletTxId: null,
     };
   }
 
+  // Agent IJ2 — legacy total-cap: ordinær + pot ≤ maxAmountCents.
+  //
+  //   Pot er allerede decrementert (reset til seed) av tryWin. Vi trimmer
+  //   KUN det som faktisk krediteres vinners wallet — excess beholdes av
+  //   huset (matcher legacy-semantikk: pot-pool emptes uansett, player får
+  //   capped sum).
+  //
+  //   For `capType='pot-balance'` (default): ingen trim, payout = full pot.
+  const potGrossCents = winResult.amountCents;
+  const capType = pot.config.capType ?? "pot-balance";
+  let payoutCents = potGrossCents;
+  let houseRetainedCents = 0;
+  if (
+    capType === "total" &&
+    pot.config.maxAmountCents !== null &&
+    pot.config.maxAmountCents !== undefined
+  ) {
+    const totalBeforeCap = ordinaryWinCents + potGrossCents;
+    const cappedTotal = Math.min(totalBeforeCap, pot.config.maxAmountCents);
+    // Pot-andel av capped total. Hvis ordinær alene allerede overstiger
+    // cap → pot-payout = 0 (player får KUN ordinær, cap håndheves oppstrøms
+    // i ordinær-payout-stien hvis nødvendig).
+    payoutCents = Math.max(0, cappedTotal - ordinaryWinCents);
+    houseRetainedCents = potGrossCents - payoutCents;
+    if (houseRetainedCents > 0) {
+      log.info(
+        {
+          potId: pot.id,
+          potKey: pot.potKey,
+          potType,
+          capType,
+          potGrossCents,
+          ordinaryWinCents,
+          maxAmountCents: pot.config.maxAmountCents,
+          payoutCents,
+          houseRetainedCents,
+        },
+        "[IJ2] total-cap trimmet pot-payout — excess beholdes av huset"
+      );
+    }
+  }
+
   // Pot utløst — krediter vinner. Idempotency-key per pot + spill
   // forhindrer dobbel credit ved retry.
-  const amountKr = winResult.amountCents / 100;
+  const amountKr = payoutCents / 100;
   const idempotencyKey = idempotencyKeyFor(potType, pot, params.scheduledGameId);
   const description = creditDescriptionFor(potType, pot);
 
   let walletTxId: string | null = null;
-  try {
-    const tx = await params.walletAdapter.credit(
-      firstWinner.walletId,
-      amountKr,
-      description,
-      {
-        idempotencyKey,
-        to: "winnings",
-      }
-    );
-    walletTxId = tx.id;
-  } catch (err) {
-    if (failPolicy === "swallow") {
-      // PR-T2-kontrakt: pot er allerede decremented via tryWin-commit. Ved
-      // credit-feil er det en mismatch mellom pot_events ("win"-rad) og
-      // wallet_transactions (ingen credit-rad). Admin må manuell-refund.
-      log.error(
+  // Agent IJ2: hopp over wallet-credit hvis total-cap trimmet pot-payout
+  // til 0. Pot er fortsatt decrementet (reset til seed) av tryWin og full
+  // excess beholdes av huset. Ingen wallet-credit trengs for 0-beløp
+  // (wallet-adapter vil trolig avvise 0-credit uansett).
+  if (payoutCents > 0) {
+    try {
+      const tx = await params.walletAdapter.credit(
+        firstWinner.walletId,
+        amountKr,
+        description,
         {
-          err,
-          hallId: pot.hallId,
-          scheduledGameId: params.scheduledGameId,
-          winnerUserId: firstWinner.userId,
-          walletId: firstWinner.walletId,
-          amountCents: winResult.amountCents,
-          eventId: winResult.eventId,
-        },
-        "[PR-T2] Jackpott-credit FEILET etter pot-utløsning — krever manuell admin-refund"
-      );
-      // Returner triggered=true for observability, men walletTxId=null viser
-      // at credit feilet.
-      // Fortsett med audit-log under (samme som T2).
-    } else {
-      // Innsatsen/generic: rethrow → draw ruller tilbake.
-      log.error(
-        {
-          err,
-          potId: pot.id,
-          potKey: pot.potKey,
-          potType,
-          amountCents: winResult.amountCents,
-          winnerWalletId: firstWinner.walletId,
           idempotencyKey,
-        },
-        "[PR-T3] wallet.credit feilet for pot — draw ruller tilbake"
+          to: "winnings",
+        }
       );
-      throw err;
+      walletTxId = tx.id;
+    } catch (err) {
+      if (failPolicy === "swallow") {
+        // PR-T2-kontrakt: pot er allerede decremented via tryWin-commit. Ved
+        // credit-feil er det en mismatch mellom pot_events ("win"-rad) og
+        // wallet_transactions (ingen credit-rad). Admin må manuell-refund.
+        log.error(
+          {
+            err,
+            hallId: pot.hallId,
+            scheduledGameId: params.scheduledGameId,
+            winnerUserId: firstWinner.userId,
+            walletId: firstWinner.walletId,
+            amountCents: payoutCents,
+            eventId: winResult.eventId,
+          },
+          "[PR-T2] Jackpott-credit FEILET etter pot-utløsning — krever manuell admin-refund"
+        );
+        // Returner triggered=true for observability, men walletTxId=null viser
+        // at credit feilet.
+        // Fortsett med audit-log under (samme som T2).
+      } else {
+        // Innsatsen/generic: rethrow → draw ruller tilbake.
+        log.error(
+          {
+            err,
+            potId: pot.id,
+            potKey: pot.potKey,
+            potType,
+            amountCents: payoutCents,
+            winnerWalletId: firstWinner.walletId,
+            idempotencyKey,
+          },
+          "[PR-T3] wallet.credit feilet for pot — draw ruller tilbake"
+        );
+        throw err;
+      }
     }
   }
 
@@ -411,13 +505,18 @@ export async function evaluateSinglePot(params: {
   const isJackpott = potType === "jackpott";
   const auditResource = isJackpott ? "game1_pot" : "game1_accumulating_pot";
   const auditResourceId = isJackpott ? winResult.eventId : pot.id;
+  // Agent IJ2: `amountCents` i audit = faktisk utbetalt til wallet (trimmet
+  // ved capType='total'). Legg til `potGrossCents` + `houseRetainedCents`
+  // for sporbarhet når pot-saldo og utbetaling divergerer.
   const auditDetails = isJackpott
     ? {
         hallId: pot.hallId,
         scheduledGameId: params.scheduledGameId,
         winnerUserId: firstWinner.userId,
         assignmentId: firstWinner.assignmentId,
-        amountCents: winResult.amountCents,
+        amountCents: payoutCents,
+        potGrossCents,
+        houseRetainedCents,
         drawSequenceAtWin: params.drawSequenceAtWin,
         potKey: pot.potKey,
       }
@@ -427,7 +526,11 @@ export async function evaluateSinglePot(params: {
         hallId: pot.hallId,
         scheduledGameId: params.scheduledGameId,
         drawSequenceAtWin: params.drawSequenceAtWin,
-        amountCents: winResult.amountCents,
+        amountCents: payoutCents,
+        potGrossCents,
+        houseRetainedCents,
+        ordinaryWinCents,
+        capType,
         winnerUserId: firstWinner.userId,
         winnerWalletId: firstWinner.walletId,
         ticketColor: firstWinner.ticketColor,
@@ -457,7 +560,11 @@ export async function evaluateSinglePot(params: {
       potId: pot.id,
       potKey: pot.potKey,
       potType,
-      amountCents: winResult.amountCents,
+      capType,
+      amountCents: payoutCents,
+      potGrossCents,
+      houseRetainedCents,
+      ordinaryWinCents,
       winnerUserId: firstWinner.userId,
       scheduledGameId: params.scheduledGameId,
       drawSequenceAtWin: params.drawSequenceAtWin,
@@ -471,7 +578,9 @@ export async function evaluateSinglePot(params: {
     potId: pot.id,
     potType,
     triggered: true,
-    amountCents: winResult.amountCents,
+    amountCents: payoutCents,
+    potAmountGrossCents: potGrossCents,
+    houseRetainedCents,
     reasonCode: null,
     walletTxId,
   };

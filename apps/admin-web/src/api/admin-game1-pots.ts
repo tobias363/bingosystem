@@ -12,6 +12,13 @@ import { apiRequest } from "./client.js";
 
 export type PotType = "innsatsen" | "jackpott" | "generic";
 
+/**
+ * Agent IJ2 — semantikk for `maxAmountCents`:
+ *   - "pot-balance" (DEFAULT): cap på pot-saldo alene.
+ *   - "total": legacy-cap på (ordinær + pot) samlet (Innsatsen 2000 kr).
+ */
+export type PotCapType = "pot-balance" | "total";
+
 export type PotWinRule =
   | {
       kind: "phase_at_or_before_draw";
@@ -34,6 +41,7 @@ export interface PotConfig {
   potType?: PotType;
   drawThresholdLower?: number;
   targetAmountCents?: number;
+  capType?: PotCapType;
 }
 
 export interface PotRow {
