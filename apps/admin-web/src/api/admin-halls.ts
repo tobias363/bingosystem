@@ -38,6 +38,13 @@ export interface AdminHall {
   hallNumber?: number | null;
   /** Cash-balanse hallen disponerer (Available Balance). Default 0. */
   cashBalance?: number;
+  /**
+   * TV Screen public display token — auto-generert backend-side, unik per hall.
+   * Brukes i TV-URL som bingoverten åpner på hall-skjermen:
+   *   /admin/#/tv/<hallId>/<tvToken>
+   * Optional for bakoverkompatibilitet med eldre test-fixtures; alltid satt av backend.
+   */
+  tvToken?: string;
   createdAt: string;
   updatedAt: string;
 }
