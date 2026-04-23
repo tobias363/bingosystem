@@ -26,7 +26,6 @@ export class CenterBall extends Container {
   private ballSprite: Sprite | null = null;
   private currentTextureUrl: string | null = null;
   private numberText: Text;
-  private drawProgressText: Text;
   private currentNumber: number | null = null;
   private idleTween: gsap.core.Tween | null = null;
   private countdownInterval: ReturnType<typeof setInterval> | null = null;
@@ -55,45 +54,9 @@ export class CenterBall extends Container {
     this.numberText.y = BALL_SIZE / 2 - 1;
     this.addChild(this.numberText);
 
-    // Draw progress ("X/Y") — sits just below the ball so it follows the
-    // idle float animation. Empty until setDrawProgress is called.
-    this.drawProgressText = new Text({
-      text: "",
-      style: {
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
-        fontSize: 15,
-        fill: 0xffffff,
-        fontWeight: "700",
-        align: "center",
-        letterSpacing: 0.5,
-        dropShadow: {
-          color: 0x000000,
-          alpha: 0.8,
-          blur: 4,
-          distance: 1,
-        },
-      },
-    });
-    this.drawProgressText.anchor.set(0.5);
-    this.drawProgressText.x = BALL_SIZE / 2;
-    this.drawProgressText.y = BALL_SIZE + 16;
-    this.addChild(this.drawProgressText);
-
     // Default sprite — red (central colour for idle/countdown), swapped per
     // drawn number by showNumber/setNumber.
     void this.swapTexture("/web/games/assets/game1/design/balls/red.png");
-  }
-
-  /**
-   * Update the "X/Y" draw counter below the ball. Pass 0/0 or either arg
-   * as 0/null to hide the label (e.g. between rounds).
-   */
-  setDrawProgress(drawCount: number, totalDrawCapacity: number): void {
-    if (!totalDrawCapacity || totalDrawCapacity <= 0) {
-      this.drawProgressText.text = "";
-      return;
-    }
-    this.drawProgressText.text = `${drawCount}/${totalDrawCapacity}`;
   }
 
   private async swapTexture(url: string): Promise<void> {

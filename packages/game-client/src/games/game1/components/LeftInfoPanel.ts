@@ -33,7 +33,9 @@ export class LeftInfoPanel {
       gap: "10px",
       paddingTop: "18px",
       minWidth: "120px",
-      marginLeft: "20px",
+      // 170px ring sits in the flex row BEFORE this panel (rendered by Pixi
+      // behind the overlay) — skip past it so the text doesn't collide.
+      marginLeft: "190px",
     });
 
     // Row 1: icon + count

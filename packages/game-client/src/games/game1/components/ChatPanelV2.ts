@@ -24,9 +24,17 @@ export class ChatPanelV2 {
   private body: HTMLDivElement;
   private onToggle: ((collapsed: boolean) => void) | null = null;
 
-  constructor(overlay: HtmlOverlayManager, socket: SpilloramaSocket, roomCode: string) {
+  constructor(
+    overlay: HtmlOverlayManager,
+    socket: SpilloramaSocket,
+    roomCode: string,
+    opts?: { initialCollapsed?: boolean; sideBorder?: "left" | "right" },
+  ) {
     this.socket = socket;
     this.roomCode = roomCode;
+
+    const side = opts?.sideBorder ?? "left";
+    const borderProp = side === "left" ? "borderRight" : "borderLeft";
 
     this.root = overlay.createElement("chat-panel", {
       width: "265px",
@@ -34,7 +42,7 @@ export class ChatPanelV2 {
       display: "flex",
       flexDirection: "column",
       background: "rgba(10,2,2,0.55)",
-      borderLeft: "1px solid rgba(200,70,70,0.4)",
+      [borderProp]: "1px solid rgba(200,70,70,0.4)",
       backdropFilter: "blur(4px)",
       height: "100%",
       transition: "width 0.25s ease-in-out",
@@ -180,6 +188,17 @@ export class ChatPanelV2 {
     this.root.appendChild(this.body);
 
     this.loadHistory();
+
+    if (opts?.initialCollapsed) {
+      // Mirror the collapsed end-state without animating — onToggle handlers
+      // (PlayScreen layout sync) fire during the first setOnToggle call so
+      // Pixi offsets apply from frame 1.
+      this.collapsed = true;
+      this.body.style.display = "none";
+      this.body.style.opacity = "0";
+      this.root.style.width = "48px";
+      this.toggleBtn.innerHTML = `Vis chat <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M14 6l1.41 1.41L10.83 12l4.58 4.59L14 18l-6-6z"/></svg>`;
+    }
   }
 
   subscribeToBridge(
