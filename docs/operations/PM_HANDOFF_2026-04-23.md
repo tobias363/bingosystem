@@ -8,13 +8,19 @@ Skrevet av PM-agent #2 etter takeover fra PM-agent #1 som måtte avslutte uten h
 
 ---
 
-## 1. Master-dokumentet du må lese først
+## 1. Master-dokumentene du må lese først
 
+**Meta-oversikt (hva er i hver wireframe):**
 [`docs/architecture/LEGACY_1_TO_1_MAPPING_2026-04-23.md`](../architecture/LEGACY_1_TO_1_MAPPING_2026-04-23.md)
 
-Dette er kartleggingen av legacy-funksjonalitet (fra 18 wireframe-PDF-er 2023–2025) vs. nåværende kode. Alt annet i denne handoffen refererer tilbake dit. §4 "Prioritert execution-plan" er Fase 1 MVP-listen — **den er vår nåværende to-do**.
+Kartleggingen av legacy-funksjonalitet (fra 15 wireframe-PDF-er 2023–2025) vs. nåværende kode. §4 "Prioritert execution-plan" er Fase 1 MVP-listen — **den er vår nåværende to-do**.
 
-Kjernekonklusjonen fra dokumentet: legacy består av **to sammenvevde systemer** — Admin-panel (~70% bygget) og Agent-/bingovert-portal (~5% bygget før i dag). Uten Agent-portalen kan ikke bingoverten drive en hall. Dette er pilot-hovedblokkeren.
+**Detalj-spec (hva er faktisk på hver skjerm):**
+[`docs/architecture/WIREFRAME_CATALOG.md`](../architecture/WIREFRAME_CATALOG.md)
+
+Komplett innholds-katalog (1760 linjer, 15 seksjoner, 65+ skjermer). Per skjerm: formål, layout, felt-liste, tabell-kolonner, knapper, forretningsregler, popup-flows. Impl-agenter kan bygge 1:1 uten PDF-tilgang. Legg denne referansen i alle agent-prompts når scope krysser en legacy-skjerm.
+
+Kjernekonklusjonen fra mapping-dokumentet: legacy består av **to sammenvevde systemer** — Admin-panel (~70% bygget) og Agent-/bingovert-portal (~5% bygget før i dag). Uten Agent-portalen kan ikke bingoverten drive en hall. Dette er pilot-hovedblokkeren.
 
 ---
 
