@@ -1660,11 +1660,6 @@
     </div>
   </div>
 
-  <!-- ═══ 5. SPILLVETT FAB ══════════════════════════════════════════════ -->
-  <button id="spillvett-fab" class="spillvett-fab" type="button" hidden>Spillvett</button>
-
-  <!-- ═══ DEBUG: Ticket Debug Button ═══ -->
-  <button id="ticket-debug-btn" style="position:fixed;bottom:10px;right:120px;z-index:9999;background:#ff6600;color:#fff;border:none;padding:8px 16px;border-radius:6px;font-weight:bold;cursor:pointer;font-size:12px" onclick="window._showTicketDebug()">🎫 Debug</button>
   <script>
   window._showTicketDebug = function() {
     var jwt = sessionStorage.getItem('spillorama.accessToken') || '';
