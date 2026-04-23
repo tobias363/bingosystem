@@ -35,6 +35,7 @@ import type { PlatformService, PublicAppUser } from "../platform/PlatformService
 import type { AuditLogService } from "../compliance/AuditLogService.js";
 import type {
   Game1PotService,
+  PotCapType,
   PotConfig,
   PotRow,
   PotType,
@@ -95,6 +96,21 @@ function parsePotType(value: unknown): PotType | undefined {
     );
   }
   return v;
+}
+
+/** Agent IJ2 — parse capType ('pot-balance' | 'total'). */
+function parseCapType(value: unknown): PotCapType | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string") {
+    throw new DomainError("INVALID_INPUT", "capType må være en streng.");
+  }
+  if (value !== "pot-balance" && value !== "total") {
+    throw new DomainError(
+      "INVALID_INPUT",
+      "capType må være 'pot-balance' eller 'total'."
+    );
+  }
+  return value;
 }
 
 function parseWinRule(value: unknown): PotWinRule {
@@ -167,6 +183,8 @@ function parseConfig(value: unknown): PotConfig {
   if (value.targetAmountCents !== undefined && value.targetAmountCents !== null) {
     cfg.targetAmountCents = Number(value.targetAmountCents);
   }
+  const capType = parseCapType(value.capType);
+  if (capType !== undefined) cfg.capType = capType;
   return cfg;
 }
 
@@ -301,6 +319,8 @@ export function createAdminGame1PotsRouter(
             winRuleKind: config.winRule.kind,
             drawThresholdLower: config.drawThresholdLower ?? null,
             targetAmountCents: config.targetAmountCents ?? null,
+            capType: config.capType ?? "pot-balance",
+            maxAmountCents: config.maxAmountCents,
           },
           ipAddress: clientIp(req),
           userAgent: userAgent(req),

@@ -63,7 +63,11 @@ import type { Game1PayoutService, Game1WinningAssignment } from "./Game1PayoutSe
 import type { Game1JackpotService, Game1JackpotConfig } from "./Game1JackpotService.js";
 import type { Game1PotService } from "./pot/Game1PotService.js";
 import type { WalletAdapter } from "../adapters/WalletAdapter.js";
-import { runAccumulatingPotEvaluation } from "./Game1DrawEnginePotEvaluator.js";
+import {
+  runAccumulatingPotEvaluation,
+  computeOrdinaryWinCentsByHallPerColor,
+  computeOrdinaryWinCentsByHallFlat,
+} from "./Game1DrawEnginePotEvaluator.js";
 import type { AdminGame1Broadcaster } from "./AdminGame1Broadcaster.js";
 import type { Game1PlayerBroadcaster } from "./Game1PlayerBroadcaster.js";
 import type { Game1MiniGameOrchestrator } from "./minigames/Game1MiniGameOrchestrator.js";
@@ -1821,6 +1825,13 @@ export class Game1DrawEngineService {
       resolveJackpotConfig(ticketConfigJson) ??
       resolveJackpotConfigFromGameConfig(gameConfigJson);
 
+    // Agent IJ2 — beregn ordinær premie for firstWinner-per-hall, slik at
+    // pot-er med `capType='total'` kan trimme pot-payout etter legacy-
+    // semantikken (ordinær + pot ≤ maxAmountCents). Må gjøres med samme
+    // split-logikk som payout-stien. Variabelen populeres i begge gren-ene
+    // under og sendes inn til pot-evaluator etterpå.
+    let ordinaryWinCentsByHall: Map<string, number> | undefined;
+
     if (variantConfig && variantConfig.patternsByColor) {
       // Per-farge-path: gruppér vinnere per ticketColor og utbetal hver
       // gruppe uavhengig. Dette er Option X (PM-vedtak 2026-04-21).
@@ -1834,6 +1845,38 @@ export class Game1DrawEngineService {
         variantConfig,
         jackpotCfg
       );
+
+      if (currentPhase === TOTAL_PHASES) {
+        ordinaryWinCentsByHall = computeOrdinaryWinCentsByHallPerColor({
+          winners,
+          phase: currentPhase,
+          drawSequenceAtWin,
+          potCents,
+          patternsForColor: (color) => {
+            const engineName = resolveEngineColorName(color) ?? color;
+            const patterns = resolvePatternsForColor(
+              variantConfig!,
+              engineName,
+              () => {}
+            );
+            const pp = patterns[currentPhase - 1];
+            if (!pp) return null;
+            return {
+              totalPhasePrizeCents: patternPrizeToCents(pp, potCents),
+            };
+          },
+          jackpotForColor: (color) => {
+            if (!this.jackpotService || !jackpotCfg) return 0;
+            const j = this.jackpotService.evaluate({
+              phase: currentPhase,
+              drawSequenceAtWin,
+              ticketColor: color,
+              jackpotConfig: jackpotCfg,
+            });
+            return j.triggered ? j.amountCents : 0;
+          },
+        });
+      }
     } else {
       // Flat-path (bakoverkompat): én global pott fordelt likt. Jackpot-
       // routing bruker hver vinners egen farge (Bug 2-fix).
@@ -1852,6 +1895,23 @@ export class Game1DrawEngineService {
         totalPhasePrizeCents,
         jackpotCfg
       );
+
+      if (currentPhase === TOTAL_PHASES) {
+        ordinaryWinCentsByHall = computeOrdinaryWinCentsByHallFlat({
+          winners,
+          totalPhasePrizeCents,
+          jackpotForColor: (color) => {
+            if (!this.jackpotService || !jackpotCfg) return 0;
+            const j = this.jackpotService.evaluate({
+              phase: currentPhase,
+              drawSequenceAtWin,
+              ticketColor: color,
+              jackpotConfig: jackpotCfg,
+            });
+            return j.triggered ? j.amountCents : 0;
+          },
+        });
+      }
     }
 
     // PR-C2 Spor 4: evaluér akkumulerende pot-er (Innsatsen + Jackpott)
@@ -1859,6 +1919,10 @@ export class Game1DrawEngineService {
     // ingen av pot-typene utløses før phase 5. Implementasjon ekstrahert
     // til `Game1DrawEnginePotEvaluator.ts` (PR-S4). Fail-closed-semantikk
     // og multi-hall-iterasjon er uendret.
+    //
+    // Agent IJ2: `ordinaryWinCentsByHall` sendes inn for total-cap-
+    // semantikk (Innsatsen legacy). Pot-er med capType='pot-balance'
+    // påvirkes ikke av denne verdien.
     if (currentPhase === TOTAL_PHASES && this.potService && winners.length > 0) {
       await runAccumulatingPotEvaluation({
         client,
@@ -1869,6 +1933,7 @@ export class Game1DrawEngineService {
         scheduledGameId,
         drawSequenceAtWin,
         winners,
+        ordinaryWinCentsByHall,
       });
     }
 

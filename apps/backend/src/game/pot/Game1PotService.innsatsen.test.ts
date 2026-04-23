@@ -182,6 +182,53 @@ test("validatePotConfig: ugyldig potType → INVALID_CONFIG", () => {
   assert.throws(() => validatePotConfig(bad), DomainError);
 });
 
+// Agent IJ2 — capType-semantikk (legacy total-cap for Innsatsen).
+
+test("validatePotConfig IJ2: capType='total' med maxAmountCents satt passerer", () => {
+  validatePotConfig(
+    innsatsenConfig({ capType: "total", maxAmountCents: 2000_00 })
+  );
+});
+
+test("validatePotConfig IJ2: capType='total' uten maxAmountCents → INVALID_CONFIG", () => {
+  assert.throws(
+    () =>
+      validatePotConfig(
+        innsatsenConfig({ capType: "total", maxAmountCents: null })
+      ),
+    (err: unknown) =>
+      err instanceof DomainError &&
+      err.code === "INVALID_CONFIG" &&
+      /maxAmountCents/.test(err.message)
+  );
+});
+
+test("validatePotConfig IJ2: capType='pot-balance' uten maxAmountCents (null) passerer (bakoverkompat)", () => {
+  validatePotConfig(
+    innsatsenConfig({ capType: "pot-balance", maxAmountCents: null })
+  );
+});
+
+test("validatePotConfig IJ2: capType uten verdi default (undefined) passerer (bakoverkompat)", () => {
+  const cfg: PotConfig = { ...innsatsenConfig() };
+  delete cfg.capType;
+  validatePotConfig(cfg);
+});
+
+test("validatePotConfig IJ2: ugyldig capType-verdi → INVALID_CONFIG", () => {
+  assert.throws(
+    () =>
+      validatePotConfig(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        innsatsenConfig({ capType: "bogus" as any })
+      ),
+    (err: unknown) =>
+      err instanceof DomainError &&
+      err.code === "INVALID_CONFIG" &&
+      /capType/.test(err.message)
+  );
+});
+
 test("validatePotConfig: potType='generic' er lovlig", () => {
   validatePotConfig(
     innsatsenConfig({ potType: "generic", salePercentBps: 0 })

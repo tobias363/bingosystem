@@ -42,6 +42,135 @@ export interface RunAccumulatingPotEvaluationParams {
   scheduledGameId: string;
   drawSequenceAtWin: number;
   winners: ReadonlyArray<Game1WinningAssignment & { userId: string }>;
+  /**
+   * Agent IJ2 — ordinær premie per hall (øre) for firstWinner-of-hall.
+   * Trengs for pot-er med `capType='total'` (Innsatsen legacy-paritet).
+   * Hvis ikke satt → 0 brukes (bakoverkompat; pot-er med capType=pot-balance
+   * påvirkes ikke).
+   *
+   * Nøkkel = hallId, verdi = ordinær prize (phase-split + ev. fixed jackpot)
+   * som tilfaller firstWinner i den hall-en. Draw-engine må beregne dette med
+   * samme split-logikk som `Game1PayoutService.payoutPhase` for å matche
+   * wallet-credit-beløpet som faktisk er utbetalt til firstWinner.
+   */
+  ordinaryWinCentsByHall?: ReadonlyMap<string, number>;
+}
+
+/**
+ * Agent IJ2 — beregn ordinær premie (i øre) for hver hall's firstWinner.
+ * Bruker samme split-logikk som `Game1PayoutService.payoutPhase` for å
+ * matche wallet-credit-beløpet som utbetales til firstWinner før pot-
+ * evaluering. Pot-er med `capType='total'` bruker dette for å trimme
+ * pot-payout slik at ordinær + pot ≤ maxAmountCents.
+ *
+ * `ordinaryWinCents` for firstWinner(hall) =
+ *   prizePerWinner(hall-group) + jackpotPerWinner(hall-group)
+ *
+ * Hvor `hall-group` er samme gruppering som caller bruker til payoutPhase:
+ *   - per-color-path: gruppe = ticketColor → totalPhasePrizeCents(color) /
+ *     groupWinners.length + jackpotAmountCents(color)
+ *   - flat-path: alle winners deler én pott → totalPhasePrizeCents /
+ *     winners.length + per-winner jackpot (firstWinner's farge)
+ *
+ * Returnerer en Map keyed på hallId. Halls uten vinner får ikke en entry.
+ *
+ * Fail-safe: hvis variantConfig / jackpot-oppslag kaster → fall tilbake til
+ * 0 for den hallen (pot-evaluator bruker 0 = ingen trim, som er
+ * sikreste fallback hvis cap-info er ufullstendig).
+ */
+export function computeOrdinaryWinCentsByHallPerColor(args: {
+  winners: ReadonlyArray<Game1WinningAssignment & { userId: string }>;
+  phase: number;
+  drawSequenceAtWin: number;
+  potCents: number;
+  /** Patterns pr engine-color-navn; samme kilde som `payoutPerColorGroups`. */
+  patternsForColor: (color: string) => {
+    totalPhasePrizeCents: number;
+  } | null;
+  /** Jackpot pr ticketColor; tom hvis ingen jackpot eller ikke Fullt Hus. */
+  jackpotForColor: (color: string) => number;
+}): Map<string, number> {
+  const { winners } = args;
+  if (winners.length === 0) return new Map();
+
+  // Gruppe-key for split = ticketColor (matcher payoutPerColorGroups).
+  const groupSizeByColor = new Map<string, number>();
+  for (const w of winners) {
+    groupSizeByColor.set(
+      w.ticketColor,
+      (groupSizeByColor.get(w.ticketColor) ?? 0) + 1
+    );
+  }
+
+  // firstWinner per hall — array-orden (matcher PotEvaluator).
+  const firstWinnerPerHall = new Map<
+    string,
+    Game1WinningAssignment & { userId: string }
+  >();
+  for (const w of winners) {
+    if (!firstWinnerPerHall.has(w.hallId)) {
+      firstWinnerPerHall.set(w.hallId, w);
+    }
+  }
+
+  const result = new Map<string, number>();
+  for (const [hallId, firstWinner] of firstWinnerPerHall) {
+    const color = firstWinner.ticketColor;
+    const groupSize = groupSizeByColor.get(color) ?? 1;
+    let ordinary = 0;
+    try {
+      const patterns = args.patternsForColor(color);
+      if (patterns) {
+        // Floor-split (matcher Game1PayoutService.payoutPhase).
+        const perWinner = Math.floor(patterns.totalPhasePrizeCents / groupSize);
+        ordinary += Math.max(0, perWinner);
+      }
+      ordinary += Math.max(0, args.jackpotForColor(color));
+    } catch {
+      // Fail-safe: 0 = bakoverkompat (pot-evaluator bruker som ingen trim).
+      ordinary = 0;
+    }
+    result.set(hallId, ordinary);
+  }
+  return result;
+}
+
+/**
+ * Agent IJ2 — flat-path-variant: alle winners deler én pott uansett farge.
+ * firstWinner's ordinær premie = floor(totalPhasePrize / winners.length) +
+ * firstWinner's per-farge-jackpot.
+ */
+export function computeOrdinaryWinCentsByHallFlat(args: {
+  winners: ReadonlyArray<Game1WinningAssignment & { userId: string }>;
+  totalPhasePrizeCents: number;
+  /** Jackpot pr ticketColor — 0 hvis ikke Fullt Hus. */
+  jackpotForColor: (color: string) => number;
+}): Map<string, number> {
+  const { winners, totalPhasePrizeCents } = args;
+  if (winners.length === 0) return new Map();
+  const perWinner = Math.floor(totalPhasePrizeCents / winners.length);
+
+  const firstWinnerPerHall = new Map<
+    string,
+    Game1WinningAssignment & { userId: string }
+  >();
+  for (const w of winners) {
+    if (!firstWinnerPerHall.has(w.hallId)) {
+      firstWinnerPerHall.set(w.hallId, w);
+    }
+  }
+
+  const result = new Map<string, number>();
+  for (const [hallId, firstWinner] of firstWinnerPerHall) {
+    let ordinary = Math.max(0, perWinner);
+    try {
+      ordinary += Math.max(0, args.jackpotForColor(firstWinner.ticketColor));
+    } catch {
+      // Fail-safe: uten jackpot-data, bruk kun ordinær split.
+    }
+    result.set(hallId, ordinary);
+  }
+  return result;
 }
 
 /**
@@ -88,6 +217,8 @@ export async function runAccumulatingPotEvaluation(
   }
 
   for (const [hallId, firstWinner] of firstWinnerPerHall) {
+    const ordinaryWinCents =
+      params.ordinaryWinCentsByHall?.get(hallId) ?? 0;
     try {
       await evaluateAccumulatingPots({
         client,
@@ -97,6 +228,7 @@ export async function runAccumulatingPotEvaluation(
         scheduledGameId,
         drawSequenceAtWin,
         firstWinner,
+        ordinaryWinCents,
         audit,
         potDailyTickService: potDailyTickService ?? undefined,
       });
