@@ -269,10 +269,55 @@ async function setupColorDraft(): Promise<void> {
 // Button-dispatch
 // ─────────────────────────────────────────────────────────────────
 
+/**
+ * Every overlay starts with `this.visible = false` from its constructor and
+ * only becomes visible inside `show(triggerPayload)`. In the real game the
+ * router always calls `show()` before anything else, but in the preview a
+ * user can click "Vis resultat", "Simuler klikk", or "Simuler choice-error"
+ * directly — so we lazily call `show()` with the matching trigger-payload
+ * first if the overlay hasn't been shown yet (or auto-dismissed since last
+ * show). Without this, `animateResult()` / `showChoiceError()` run on a
+ * Container whose `.visible` is still `false` and the canvas appears empty.
+ */
+function ensureShown(
+  overlayKey: OverlayKey,
+  overlay:
+    | WheelOverlay
+    | TreasureChestOverlay
+    | OddsenOverlay
+    | ColorDraftOverlay,
+  log: HTMLElement,
+): void {
+  if (overlay.visible) return;
+  switch (overlayKey) {
+    case "wheel":
+      (overlay as WheelOverlay).show(wheelTriggerPayload());
+      break;
+    case "chest":
+      (overlay as TreasureChestOverlay).show(chestTriggerPayload());
+      break;
+    case "oddsen":
+      (overlay as OddsenOverlay).show(oddsenTriggerPayload());
+      break;
+    case "colordraft":
+      (overlay as ColorDraftOverlay).show(colordraftTriggerPayload());
+      break;
+  }
+  logLine(log, "(auto-show() først — overlay var skjult)");
+}
+
 function handleAction(overlayKey: OverlayKey, action: string): void {
   const h = handles.get(overlayKey);
   if (!h) return;
   const log = h.log;
+
+  // For every action except "trigger" (which calls show() itself) and "hide"
+  // (which explicitly hides), force the overlay to be visible first. This
+  // guarantees the canvas renders even if the user clicks a post-trigger
+  // action button standalone.
+  if (action !== "trigger" && action !== "hide") {
+    ensureShown(overlayKey, h.instance, log);
+  }
 
   try {
     switch (overlayKey) {
