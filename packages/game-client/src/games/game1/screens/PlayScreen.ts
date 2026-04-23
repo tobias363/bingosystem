@@ -133,7 +133,11 @@ export class PlayScreen extends Container {
 
     this.centerBall = new CenterBall(pauseAwareBridge);
     this.centerBall.x = TUBE_COLUMN_WIDTH - 10;
-    this.centerBall.y = 40;
+    // y=90 keeps the top of the ring (BALL_SIZE=170) clear of the 80px
+    // web-shell topbar. setBaseY anchors the idle-float so the yoyo
+    // animation doesn't drift upward when re-triggered.
+    this.centerBall.y = 90;
+    this.centerBall.setBaseY(90);
     this.addChild(this.centerBall);
     this.centerBall.showWaiting();
 

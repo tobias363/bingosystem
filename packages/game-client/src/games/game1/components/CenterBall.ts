@@ -33,6 +33,12 @@ export class CenterBall extends Container {
   private countdownRemainingMs = 0;
   private bridge: PauseAwareBridge | null = null;
   private isDestroyed = false;
+  /**
+   * Base Y position set by PlayScreen. The idle-float tween uses this as
+   * the anchor (yoyo's between baseY and baseY-4), so re-triggering the
+   * animation mid-yoyo doesn't drift the ball upward over time.
+   */
+  private baseY: number | null = null;
 
   constructor(bridge?: PauseAwareBridge) {
     super();
@@ -177,15 +183,37 @@ export class CenterBall extends Container {
     }
   }
 
+  /**
+   * Anchor the idle-float animation to an explicit base Y. Prevents the
+   * yoyo tween from "drifting" upward when re-triggered mid-animation
+   * (every showNumber / showWaiting / startCountdown restart).
+   */
+  setBaseY(y: number): void {
+    this.baseY = y;
+    this.y = y;
+    if (this.idleTween) {
+      this.idleTween.kill();
+      this.idleTween = null;
+      this.startIdleFloat();
+    }
+  }
+
   private startIdleFloat(): void {
     this.idleTween?.kill();
-    this.idleTween = gsap.to(this, {
-      y: this.y - 4,
-      duration: 2.4,
-      ease: "sine.inOut",
-      yoyo: true,
-      repeat: -1,
-    });
+    // Cache baseY on first run if PlayScreen hasn't called setBaseY yet.
+    if (this.baseY === null) this.baseY = this.y;
+    this.y = this.baseY;
+    this.idleTween = gsap.fromTo(
+      this,
+      { y: this.baseY },
+      {
+        y: this.baseY - 4,
+        duration: 2.4,
+        ease: "sine.inOut",
+        yoyo: true,
+        repeat: -1,
+      },
+    );
   }
 
   destroy(options?: Parameters<Container["destroy"]>[0]): void {
