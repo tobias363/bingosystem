@@ -48,6 +48,19 @@ import type {
   LoyaltyPlayerStateRow,
   LoyaltyEventRow,
 } from "./LoyaltyTypes.js";
+import {
+  asIso,
+  asIsoOrNull,
+  assertSchemaName,
+  assertNonEmptyString,
+  assertPositiveInt,
+  assertNonNegativeInt,
+  assertIntOrNull,
+  assertInteger,
+  assertObject,
+  monthKeyFromDate,
+  isUniqueViolation,
+} from "./LoyaltyValidators.js";
 
 // Re-export for backward-compat (eksisterende imports fra denne modulen).
 export type {
@@ -66,107 +79,6 @@ export type {
 } from "./LoyaltyTypes.js";
 
 const logger = rootLogger.child({ module: "loyalty-service" });
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-function asIso(value: Date | string): string {
-  return typeof value === "string" ? value : value.toISOString();
-}
-
-function asIsoOrNull(value: Date | string | null): string | null {
-  return value === null ? null : asIso(value);
-}
-
-function assertSchemaName(schema: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) {
-    throw new DomainError("INVALID_CONFIG", "Ugyldig schema-navn.");
-  }
-  return schema;
-}
-
-function assertNonEmptyString(
-  value: unknown,
-  field: string,
-  max = 200
-): string {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new DomainError("INVALID_INPUT", `${field} er påkrevd.`);
-  }
-  const trimmed = value.trim();
-  if (trimmed.length > max) {
-    throw new DomainError(
-      "INVALID_INPUT",
-      `${field} kan maksimalt være ${max} tegn.`
-    );
-  }
-  return trimmed;
-}
-
-function assertPositiveInt(value: unknown, field: string): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
-    throw new DomainError(
-      "INVALID_INPUT",
-      `${field} må være et positivt heltall.`
-    );
-  }
-  return n;
-}
-
-function assertNonNegativeInt(value: unknown, field: string): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
-    throw new DomainError(
-      "INVALID_INPUT",
-      `${field} må være et ikke-negativt heltall.`
-    );
-  }
-  return n;
-}
-
-function assertIntOrNull(value: unknown, field: string): number | null {
-  if (value === null || value === undefined) return null;
-  const n = Number(value);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
-    throw new DomainError(
-      "INVALID_INPUT",
-      `${field} må være et ikke-negativt heltall eller null.`
-    );
-  }
-  return n;
-}
-
-function assertInteger(value: unknown, field: string): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || !Number.isInteger(n)) {
-    throw new DomainError("INVALID_INPUT", `${field} må være et heltall.`);
-  }
-  return n;
-}
-
-function assertObject(
-  value: unknown,
-  field: string
-): Record<string, unknown> {
-  if (value === undefined || value === null) return {};
-  if (typeof value !== "object" || Array.isArray(value)) {
-    throw new DomainError("INVALID_INPUT", `${field} må være et objekt.`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function monthKeyFromDate(date: Date): string {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  if (err && typeof err === "object" && "code" in err) {
-    return (err as { code: unknown }).code === "23505";
-  }
-  return false;
-}
 
 // ── Service ────────────────────────────────────────────────────────────────
 
