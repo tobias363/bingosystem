@@ -190,6 +190,56 @@ export function extractActiveMiniGameTypes(
   return out;
 }
 
+/**
+ * Round-robin valg av neste mini-game-type. Implementerer canonical-spec-
+ * regelen `wheel → chest → colordraft → oddsen → wheel …` (se
+ * docs/engineering/game1-canonical-spec.md §miniGameRotation).
+ *
+ *   - Caller passer inn typen som ble brukt sist (eller null hvis ingen).
+ *   - Vi roterer i den rekkefølgen `activeTypes` ligger i (admin har valgt
+ *     en delmengde i `gameConfigJson.spill1.miniGames`).
+ *
+ * Edge-case: typen som ble brukt sist er ikke lenger aktiv (admin endret
+ * config midt i spillet). Da faller vi tilbake til den aktive typen som
+ * ligger "nærmest" forrige posisjon i den kanoniske rekkefølgen
+ * `MINI_GAME_TYPES` — vi går framover derfra og plukker den første
+ * aktive typen vi finner. Slik bevarer vi rotasjons-progresjonen i
+ * stedet for å starte forfra.
+ *
+ * `activeTypes.length` MÅ være > 0 (caller ansvar — funksjonen kaster
+ * ellers).
+ */
+export function pickNextMiniGameType(
+  lastType: MiniGameType | null,
+  activeTypes: readonly MiniGameType[],
+): MiniGameType {
+  if (activeTypes.length === 0) {
+    throw new DomainError(
+      "MINIGAME_NO_ACTIVE_TYPES",
+      "pickNextMiniGameType krever minst én aktiv type.",
+    );
+  }
+  if (lastType === null) {
+    return activeTypes[0]!;
+  }
+  const activeIdx = activeTypes.indexOf(lastType);
+  if (activeIdx >= 0) {
+    return activeTypes[(activeIdx + 1) % activeTypes.length]!;
+  }
+  // Sist brukte type er ikke lenger aktiv — finn nærmeste aktive type
+  // ved å gå framover fra forrige kanoniske posisjon.
+  const canonicalIdx = MINI_GAME_TYPES.indexOf(lastType);
+  for (let step = 1; step <= MINI_GAME_TYPES.length; step += 1) {
+    const candidate =
+      MINI_GAME_TYPES[(canonicalIdx + step) % MINI_GAME_TYPES.length]!;
+    if (activeTypes.includes(candidate)) {
+      return candidate;
+    }
+  }
+  // Uoppnåelig: activeTypes.length > 0 garanterer at vi finner en match.
+  return activeTypes[0]!;
+}
+
 /** Svak validering av schema-navn (SQL-injection-defens). */
 function assertSchemaName(schema: string): string {
   if (!/^[a-z_][a-z0-9_]*$/i.test(schema)) {
@@ -251,6 +301,10 @@ export class Game1MiniGameOrchestrator {
     return `"${this.schema}"."app_mini_games_config"`;
   }
 
+  private scheduledGamesTable(): string {
+    return `"${this.schema}"."app_game1_scheduled_games"`;
+  }
+
   /**
    * Trigg mini-game hvis admin har konfigurert det. Fire-and-forget:
    * kastes IKKE selv ved feil. Kalles fra Game1DrawEngineService post-commit.
@@ -263,13 +317,15 @@ export class Game1MiniGameOrchestrator {
       return { triggered: false, resultId: null, miniGameType: null, reason: "NO_MINI_GAMES_CONFIGURED" };
     }
 
-    // Velg neste type i rotasjonen. FIFO per scheduled-game: hent antall
-    // tidligere mini-games trigget for dette spillet og bruk count % N.
-    // (Typisk kun én mini-game per spill, men rotasjon trer inn hvis
-    // Fullt Hus vinnes av flere i samme multi-winner-scenario → M2+.)
-    const nextType = activeTypes[0]!; // M1: alltid første aktive type.
-    // Merk: orchestrator støtter rotasjon senere (basert på
-    // count-of-previous-mini-games) uten framework-endring.
+    // Round-robin per scheduled-game: les sist brukte type fra
+    // app_game1_scheduled_games.last_minigame_type, plukk neste i rotasjonen,
+    // og skriv ny verdi tilbake atomisk (SELECT FOR UPDATE i transaksjon).
+    // Hvis lookup feiler (f.eks. raden mangler i tester) faller vi tilbake
+    // til activeTypes[0] og logger advarsel.
+    const nextType = await this.advanceRotation(
+      input.scheduledGameId,
+      activeTypes,
+    );
 
     const implementation = this.miniGames.get(nextType);
     if (!implementation) {
@@ -542,6 +598,78 @@ export class Game1MiniGameOrchestrator {
   // ── Internal helpers ────────────────────────────────────────────────────────
 
   private lastScheduledGameId: string | null = null;
+
+  /**
+   * Atomisk: les sist brukte mini-game-type fra scheduled-game-raden,
+   * regn ut neste type i round-robin-rotasjonen, og skriv den tilbake.
+   *
+   * Bruker SELECT FOR UPDATE i transaksjon for å unngå race ved samtidige
+   * Fullt Hus-vinnere (multi-winner edge-case). Ved DB-feil eller manglende
+   * scheduled-game-rad faller vi tilbake til activeTypes[0] og logger
+   * advarsel — vi vil ikke at en defekt rotasjons-tabell skal blokkere
+   * mini-game-trigging helt.
+   */
+  private async advanceRotation(
+    scheduledGameId: string,
+    activeTypes: readonly MiniGameType[],
+  ): Promise<MiniGameType> {
+    const fallback = activeTypes[0]!;
+    let client: PoolClient;
+    try {
+      client = await this.pool.connect();
+    } catch (err) {
+      log.warn(
+        { err, scheduledGameId },
+        "advanceRotation: pool.connect feilet — bruker fallback (activeTypes[0])",
+      );
+      return fallback;
+    }
+
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query<{ last_minigame_type: string | null }>(
+        `SELECT last_minigame_type
+           FROM ${this.scheduledGamesTable()}
+          WHERE id = $1
+          FOR UPDATE`,
+        [scheduledGameId],
+      );
+
+      const lastRaw = rows.length > 0 ? rows[0]!.last_minigame_type : null;
+      const lastType =
+        lastRaw && (MINI_GAME_TYPES as readonly string[]).includes(lastRaw)
+          ? (lastRaw as MiniGameType)
+          : null;
+
+      const nextType = pickNextMiniGameType(lastType, activeTypes);
+
+      // UPDATE selv om raden ikke finnes — rowCount=0 er greit, vi har
+      // uansett valgt fallback. Hvis raden finnes lagrer vi ny rotasjons-state.
+      await client.query(
+        `UPDATE ${this.scheduledGamesTable()}
+            SET last_minigame_type = $2,
+                updated_at = now()
+          WHERE id = $1`,
+        [scheduledGameId, nextType],
+      );
+
+      await client.query("COMMIT");
+      return nextType;
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // ignorer rollback-feil
+      }
+      log.warn(
+        { err, scheduledGameId },
+        "advanceRotation feilet — bruker fallback (activeTypes[0])",
+      );
+      return fallback;
+    } finally {
+      client.release();
+    }
+  }
 
   private async fetchConfigSnapshot(
     miniGameType: MiniGameType,

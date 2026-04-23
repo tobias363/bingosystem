@@ -19,6 +19,7 @@ import test from "node:test";
 import {
   Game1MiniGameOrchestrator,
   extractActiveMiniGameTypes,
+  pickNextMiniGameType,
   type MiniGameBroadcaster,
   type MiniGameTriggerBroadcast,
   type MiniGameResultBroadcast,
@@ -834,4 +835,206 @@ test("BIN-690 M1 integration: Fullt Hus → trigger → klient-choice → result
     (err: unknown) =>
       err instanceof DomainError && err.code === "MINIGAME_ALREADY_COMPLETED",
   );
+});
+
+// ── pickNextMiniGameType (round-robin) ───────────────────────────────────────
+
+test("pickNextMiniGameType: null forrige → første aktive type", () => {
+  assert.equal(
+    pickNextMiniGameType(null, ["wheel", "chest", "colordraft", "oddsen"]),
+    "wheel",
+  );
+  assert.equal(pickNextMiniGameType(null, ["chest"]), "chest");
+});
+
+test("pickNextMiniGameType: roterer til neste i activeTypes-rekkefølgen", () => {
+  const active: MiniGameType[] = ["wheel", "chest", "colordraft", "oddsen"];
+  assert.equal(pickNextMiniGameType("wheel", active), "chest");
+  assert.equal(pickNextMiniGameType("chest", active), "colordraft");
+  assert.equal(pickNextMiniGameType("colordraft", active), "oddsen");
+  assert.equal(pickNextMiniGameType("oddsen", active), "wheel");
+});
+
+test("pickNextMiniGameType: fungerer med subset av typer", () => {
+  const active: MiniGameType[] = ["wheel", "chest"];
+  assert.equal(pickNextMiniGameType("wheel", active), "chest");
+  assert.equal(pickNextMiniGameType("chest", active), "wheel");
+});
+
+test("pickNextMiniGameType: én aktiv type → alltid samme type", () => {
+  assert.equal(pickNextMiniGameType("wheel", ["wheel"]), "wheel");
+  assert.equal(pickNextMiniGameType(null, ["chest"]), "chest");
+});
+
+test("pickNextMiniGameType: forrige type ikke lenger aktiv → fall til neste i kanonisk rekkefølge", () => {
+  // last="chest" (kanonisk idx 1), active=["wheel", "colordraft", "oddsen"].
+  // Walk fram fra idx 1: kanonisk[2]=colordraft → finnes i active ✓
+  assert.equal(
+    pickNextMiniGameType("chest", ["wheel", "colordraft", "oddsen"]),
+    "colordraft",
+  );
+  // last="oddsen" (kanonisk idx 3), active=["wheel"].
+  // Walk fram: kanonisk[0]=wheel → finnes i active ✓
+  assert.equal(pickNextMiniGameType("oddsen", ["wheel"]), "wheel");
+  // last="colordraft" (kanonisk idx 2), active=["chest"].
+  // Walk fram: oddsen, wheel, chest → finnes i active ✓
+  assert.equal(pickNextMiniGameType("colordraft", ["chest"]), "chest");
+});
+
+test("pickNextMiniGameType: kaster ved tom activeTypes", () => {
+  assert.throws(
+    () => pickNextMiniGameType(null, []),
+    (err: unknown) =>
+      err instanceof DomainError && err.code === "MINIGAME_NO_ACTIVE_TYPES",
+  );
+});
+
+// ── Round-robin via maybeTriggerFor (DB-persistert state) ────────────────────
+
+/**
+ * Lager en in-memory "scheduled-game-tabell" som speiler
+ * `app_game1_scheduled_games.last_minigame_type`-kolonnen, slik at vi kan
+ * verifisere at orchestrator-en faktisk leser+skriver rotasjons-state via
+ * SELECT FOR UPDATE / UPDATE.
+ */
+function makeRotationPool(initialLastType: string | null = null): {
+  pool: {
+    query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }>;
+    connect: () => Promise<{
+      query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }>;
+      release: () => void;
+    }>;
+  };
+  state: { lastType: string | null };
+} {
+  const state = { lastType: initialLastType };
+  const clientQuery = async (sql: string, params: unknown[] = []) => {
+    if (sql.trim() === "BEGIN" || sql.trim() === "COMMIT" || sql.trim() === "ROLLBACK") {
+      return { rows: [] };
+    }
+    if (
+      sql.includes("SELECT last_minigame_type") &&
+      sql.includes("app_game1_scheduled_games") &&
+      sql.includes("FOR UPDATE")
+    ) {
+      return { rows: [{ last_minigame_type: state.lastType }] };
+    }
+    if (
+      sql.includes("UPDATE") &&
+      sql.includes("app_game1_scheduled_games") &&
+      sql.includes("last_minigame_type")
+    ) {
+      state.lastType = params[1] as string;
+      return { rows: [] };
+    }
+    return { rows: [] };
+  };
+  const pool = {
+    query: async (sql: string, _params: unknown[] = []) => {
+      if (sql.includes("INSERT INTO") && sql.includes("app_game1_mini_game_results")) {
+        return { rows: [] };
+      }
+      if (sql.includes("app_mini_games_config")) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    connect: async () => ({ query: clientQuery, release: () => undefined }),
+  };
+  return { pool, state };
+}
+
+test("BIN-690 round-robin: 4 etterfølgende triggers gir wheel→chest→colordraft→oddsen", async () => {
+  const { pool, state } = makeRotationPool();
+  const { service: auditLog } = makeStubAuditLog();
+  const { adapter: walletAdapter } = makeStubWalletAdapter();
+
+  const orchestrator = new Game1MiniGameOrchestrator({
+    pool: pool as unknown as import("pg").Pool,
+    auditLog,
+    walletAdapter,
+  });
+  // Registrer alle fire — ellers blir reason="IMPLEMENTATION_NOT_REGISTERED".
+  orchestrator.registerMiniGame(makeFakeMiniGame("wheel", 0));
+  orchestrator.registerMiniGame(makeFakeMiniGame("chest", 0));
+  orchestrator.registerMiniGame(makeFakeMiniGame("colordraft", 0));
+  orchestrator.registerMiniGame(makeFakeMiniGame("oddsen", 0));
+
+  const config = {
+    spill1: { miniGames: ["wheel", "chest", "colordraft", "oddsen"] },
+  };
+
+  const triggered: Array<string | null> = [];
+  for (let i = 0; i < 4; i += 1) {
+    const r = await orchestrator.maybeTriggerFor({
+      scheduledGameId: "sg-rotation",
+      winnerUserId: `u-${i}`,
+      winnerWalletId: `w-${i}`,
+      hallId: "h-1",
+      drawSequenceAtWin: 50 + i,
+      gameConfigJson: config,
+    });
+    triggered.push(r.miniGameType);
+  }
+
+  assert.deepEqual(triggered, ["wheel", "chest", "colordraft", "oddsen"]);
+  // Etter siste trigger skal DB ha "oddsen" som last.
+  assert.equal(state.lastType, "oddsen");
+});
+
+test("BIN-690 round-robin: rotasjon wrapper rundt etter siste type", async () => {
+  const { pool } = makeRotationPool("oddsen"); // Start på siste i sykelen
+  const { service: auditLog } = makeStubAuditLog();
+  const { adapter: walletAdapter } = makeStubWalletAdapter();
+
+  const orchestrator = new Game1MiniGameOrchestrator({
+    pool: pool as unknown as import("pg").Pool,
+    auditLog,
+    walletAdapter,
+  });
+  for (const type of ["wheel", "chest", "colordraft", "oddsen"] as const) {
+    orchestrator.registerMiniGame(makeFakeMiniGame(type, 0));
+  }
+
+  const config = {
+    spill1: { miniGames: ["wheel", "chest", "colordraft", "oddsen"] },
+  };
+
+  const r = await orchestrator.maybeTriggerFor({
+    scheduledGameId: "sg-wrap",
+    winnerUserId: "u-1",
+    winnerWalletId: "w-1",
+    hallId: "h-1",
+    drawSequenceAtWin: 60,
+    gameConfigJson: config,
+  });
+  // Etter "oddsen" skal vi tilbake til "wheel".
+  assert.equal(r.miniGameType, "wheel");
+});
+
+test("BIN-690 round-robin: forrige type fjernet fra config → faller til neste kanoniske aktive", async () => {
+  // Start state: last="chest", men admin har endret config så bare wheel og
+  // colordraft er aktive. Forventet: gå framover fra kanonisk-idx(chest)=1
+  // → kanonisk[2]=colordraft som finnes i active.
+  const { pool } = makeRotationPool("chest");
+  const { service: auditLog } = makeStubAuditLog();
+  const { adapter: walletAdapter } = makeStubWalletAdapter();
+
+  const orchestrator = new Game1MiniGameOrchestrator({
+    pool: pool as unknown as import("pg").Pool,
+    auditLog,
+    walletAdapter,
+  });
+  orchestrator.registerMiniGame(makeFakeMiniGame("wheel", 0));
+  orchestrator.registerMiniGame(makeFakeMiniGame("colordraft", 0));
+
+  const r = await orchestrator.maybeTriggerFor({
+    scheduledGameId: "sg-config-changed",
+    winnerUserId: "u-1",
+    winnerWalletId: "w-1",
+    hallId: "h-1",
+    drawSequenceAtWin: 50,
+    gameConfigJson: { spill1: { miniGames: ["wheel", "colordraft"] } },
+  });
+  assert.equal(r.miniGameType, "colordraft");
 });

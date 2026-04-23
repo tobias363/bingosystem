@@ -34,11 +34,13 @@ patterns:
     prizePercent: 70
     order: 2
 miniGames:
-  - wheelOfFortune
-  - treasureChest
-  - mysteryGame   # BIN-505 — backend rotation active; client UI via MysteryGameOverlay
-  - colorDraft    # BIN-506 — backend rotation active; client UI via ColorDraftOverlay
-miniGameRotation: round-robin  # wheel → chest → mystery → colorDraft → wheel …
+  - wheel           # legacy: wheelOfFortune
+  - chest           # legacy: treasureChest
+  - colordraft      # BIN-506 — backend rotation active; client UI via ColorDraftOverlay
+  - oddsen          # BIN-505 — legacy: mysteryGame; client UI via MysteryGameOverlay
+miniGameRotation: round-robin  # wheel → chest → colordraft → oddsen → wheel …
+# Round-robin er state-bærende per scheduled-game: app_game1_scheduled_games.last_minigame_type
+# huskes mellom Fullt Hus-vinnere slik at hver vinner får neste type i sykelen.
 audioVoicePacks:
   - no-male
   - no-female
@@ -166,18 +168,31 @@ Default i `BingoEngine.ts:142`:
 
 ## 6. Mini-games
 
-Server-trigget etter BINGO-claim. `BingoEngine.ts:1297` alternerer:
+Server-trigget etter Fullt Hus i scheduled-games-flyten via
+`Game1MiniGameOrchestrator.maybeTriggerFor()` (sporet
+`apps/backend/src/game/minigames/`). Round-robin per scheduled-game,
+state lagret i `app_game1_scheduled_games.last_minigame_type`:
 
 ```
-drawIndex 0 (first BINGO)  → wheelOfFortune
-drawIndex 1 (second BINGO) → treasureChest
-drawIndex 2                → mysteryGame
-drawIndex 3                → colorDraft
-drawIndex 4                → wheelOfFortune (wraps)
+Fullt Hus #1 i sg-X  → wheel
+Fullt Hus #2 i sg-X  → chest
+Fullt Hus #3 i sg-X  → colordraft
+Fullt Hus #4 i sg-X  → oddsen
+Fullt Hus #5 i sg-X  → wheel (wraps)
 ...
 ```
 
-**4-veis rotasjon aktiv (backend).** Wheel → Chest → Mystery → ColorDraft, implementert i `BingoEngine.MINIGAME_ROTATION` ([BIN-505](https://linear.app/bingosystem/issue/BIN-505) + [BIN-506](https://linear.app/bingosystem/issue/BIN-506)). Klient-UI finnes som stubs (`MysteryGameOverlay.ts`, `ColorDraftOverlay.ts`); full klient-integrasjon spores som egne oppfølgings-issuer.
+**Terminologi:** framework bruker korte navn (`wheel`, `chest`, `colordraft`,
+`oddsen`) som matcher CHECK-listen i `app_game1_mini_game_results.mini_game_type`.
+Legacy-Engine-navnene (`wheelOfFortune`, `treasureChest`, `mysteryGame`,
+`colorDraft`) lever videre i in-memory host-player-room-modus
+(`BingoEngine.MINIGAME_ROTATION`). De to navne-rommene er ekvivalente:
+`mysteryGame` ↔ `oddsen`, `colorDraft` ↔ `colordraft`, etc.
+
+**4-veis rotasjon aktiv (backend).** Wheel → Chest → ColorDraft → Oddsen,
+implementert i `Game1MiniGameOrchestrator` ([BIN-505](https://linear.app/bingosystem/issue/BIN-505) + [BIN-506](https://linear.app/bingosystem/issue/BIN-506)).
+Klient-UI finnes som stubs (`MysteryGameOverlay.ts`, `ColorDraftOverlay.ts`);
+full klient-integrasjon spores som egne oppfølgings-issuer.
 
 **Wheel of Fortune:** 8 segmenter, default prize-tabell i `BingoEngine.ts:1282` (`MINIGAME_PRIZES`). GSAP `rotateZ`-animasjon. Spiller klikker "spin", server velger segment deterministisk.
 
