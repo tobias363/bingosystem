@@ -17,7 +17,6 @@ import {
 } from "../src/auth/Session.js";
 import { agentSidebar } from "../src/shell/sidebarSpec.js";
 import { mountAgentPhysicalTickets } from "../src/pages/agent-portal/AgentPhysicalTicketsPage.js";
-import { mountAgentGames } from "../src/pages/agent-portal/AgentGamesPage.js";
 import { mountAgentCashInOut } from "../src/pages/agent-portal/AgentCashInOutPage.js";
 import { mountAgentUniqueId } from "../src/pages/agent-portal/AgentUniqueIdPage.js";
 import { mountAgentPhysicalCashout } from "../src/pages/agent-portal/AgentPhysicalCashoutPage.js";
@@ -155,11 +154,12 @@ describe("Agent-portal placeholder-sider", () => {
     document.body.innerHTML = '<div id="c"></div>';
   });
 
-  // NB: physical-cashout er ikke lenger en placeholder — P0 pilot-blokker
-  // er implementert i full. Dekkes av egen test-suite (se agentBingoPages.test.ts).
+  // Flere sider har blitt løftet ut av placeholder-lista etter hvert som P0
+  // pilot-blokkere er implementert:
+  //   - /agent/games → nextGamePanel.test.ts (#431)
+  //   - /agent/physical-cashout → agentBingoPages.test.ts (#433)
   const placeholders = [
     { name: "physical-tickets", mount: mountAgentPhysicalTickets, titleKey: "add_physical_tickets" },
-    { name: "games", mount: mountAgentGames, titleKey: "agent_game_management" },
     { name: "cash-in-out", mount: mountAgentCashInOut, titleKey: "agent_cash_in_out_management" },
     { name: "unique-id", mount: mountAgentUniqueId, titleKey: "agent_unique_id_management" },
   ];
