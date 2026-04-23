@@ -72,6 +72,7 @@ import { MiniGameWheelEngine } from "./game/minigames/MiniGameWheelEngine.js";
 import { MiniGameChestEngine } from "./game/minigames/MiniGameChestEngine.js";
 import { MiniGameColordraftEngine } from "./game/minigames/MiniGameColordraftEngine.js";
 import { MiniGameOddsenEngine } from "./game/minigames/MiniGameOddsenEngine.js";
+import { MiniGameMysteryEngine } from "./game/minigames/MiniGameMysteryEngine.js";
 import { Game1TicketPurchasePortAdapter } from "./game/Game1TicketPurchasePortAdapter.js";
 import { createAdminGame1ReadyRouter } from "./routes/adminGame1Ready.js";
 import { createAdminGame1MasterRouter } from "./routes/adminGame1Master.js";
@@ -156,6 +157,7 @@ import { createAdminGameTypesRouter } from "./routes/adminGameTypes.js";
 import { GameTypeService } from "./admin/GameTypeService.js";
 import { createAdminSubGamesRouter } from "./routes/adminSubGames.js";
 import { SubGameService } from "./admin/SubGameService.js";
+import { createAdminGame1PotsRouter } from "./routes/adminGame1Pots.js";
 import { createAdminLeaderboardTiersRouter } from "./routes/adminLeaderboardTiers.js";
 import { LeaderboardTierService } from "./admin/LeaderboardTierService.js";
 import { createAdminLoyaltyRouter } from "./routes/adminLoyalty.js";
@@ -1103,6 +1105,16 @@ const miniGameOddsenEngine = new MiniGameOddsenEngine({
 });
 game1MiniGameOrchestrator.registerMiniGame(miniGameOddsenEngine);
 
+// BIN-MYSTERY M6: registrer Mystery Game-implementasjon. Admin config
+// (game_type='mystery') overstyrer DEFAULT_MYSTERY_CONFIG (prizeListNok =
+// [50, 100, 200, 400, 800, 1500], autoTurnFirstMoveSec=20, otherMoveSec=10).
+// Mystery Game er 5-runders opp/ned-gjetting: server trekker middleNumber
+// + resultNumber (5-sifrede tall) deterministisk fra resultId-seed;
+// spilleren gjetter per-digit om resultDigit er høyere eller lavere enn
+// middleDigit. Matchende sifre → joker (auto-win, max-premie). Klient
+// sender `{ directions: ["up"|"down", ...] }` samlet til handleChoice.
+game1MiniGameOrchestrator.registerMiniGame(new MiniGameMysteryEngine());
+
 game1DrawEngineService.setMiniGameOrchestrator(game1MiniGameOrchestrator);
 // BIN-690 M5: late-bind oddsen-engine til draw-engine slik at
 // Game1DrawEngineService.drawNext kan kalle resolveForGame() ved terskel-draw
@@ -1370,6 +1382,16 @@ app.use(createAdminSubGamesRouter({
   platformService,
   auditLogService,
   subGameService,
+}));
+// Agent IJ — Innsatsen-jackpot: per-hall pot-administrasjon (Game1PotService).
+// 5 endepunkter — list/detail/init/patch-config/reset. HALL_GAME_CONFIG_READ/WRITE.
+// Legacy Innsatsen-potten (dailySchedule.innsatsenSales + subGame.jackpotDraw) er
+// normalisert til app_game1_accumulating_pots — denne ruteren gir admin-UI
+// tilgang til pot-config + manuell reset.
+app.use(createAdminGame1PotsRouter({
+  platformService,
+  auditLogService,
+  potService: game1PotService,
 }));
 // BIN-668: LeaderboardTier CRUD. 5 endepunkter — list/detail/create/patch/
 // delete. Admin-konfigurert plass→premie/poeng-mapping.
