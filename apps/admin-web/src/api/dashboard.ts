@@ -25,15 +25,46 @@ export interface AdminUser {
   isDeleted?: boolean;
 }
 
+/**
+ * Hent agents for dashboard "active agents"-widget.
+ *
+ * PR fix/admin-ux-polish (2026-04-23): tidligere kalt
+ * `/api/admin/users?role=agent`, men backend's `/api/admin/users`
+ * aksepterer kun ADMIN|SUPPORT|HALL_OPERATOR som role (BIN-587 B6).
+ * AGENT er egen ressurs siden BIN-583 B3.1 — /api/admin/agents.
+ * Tidligere feilaktig rute returnerte 400 INVALID_INPUT på hver
+ * dashboard-poll og spammet DevTools-konsollen.
+ *
+ * Vi mapper `Agent { userId, agentStatus, ... }` til det dashboardet
+ * allerede forventer (`AdminUser { id, isActive, ... }`) så widget-koden
+ * ikke trenger å endres.
+ */
+interface DashboardAgentRow {
+  userId: string;
+  email: string;
+  displayName: string;
+  agentStatus: "active" | "inactive";
+}
+
 export async function listAgents(): Promise<AdminUser[]> {
   try {
-    const res = await apiRequest<{ users: AdminUser[]; count: number }>(
-      "/api/admin/users?role=agent",
+    const res = await apiRequest<{ agents: DashboardAgentRow[] }>(
+      "/api/admin/agents",
       { auth: true }
     );
-    return res.users;
+    return (res.agents ?? []).map((a) => ({
+      id: a.userId,
+      email: a.email,
+      displayName: a.displayName,
+      role: "agent",
+      isActive: a.agentStatus === "active",
+      isDeleted: false,
+    }));
   } catch (err) {
     if (err instanceof ApiError && err.status === 403) return [];
+    if (err instanceof ApiError && (err.status === 404 || err.status === 501)) {
+      return [];
+    }
     throw err;
   }
 }
@@ -96,6 +127,11 @@ export async function fetchTopPlayers(limit = 5): Promise<TopPlayerRow[] | null>
       // Endpoint not implemented yet — BIN-A2-API-2.
       return null;
     }
+    // 400 INVALID_INPUT: f.eks. hvis backend-contracten endrer seg eller
+    // hall-scope gir et query-avvik. Dashboardet skal aldri eskalere til
+    // rød error-box for top-players — widget viser "—". Match 403 silent
+    // return og behandle input-errors som "ingen data".
+    if (err instanceof ApiError && err.status === 400) return null;
     if (err instanceof ApiError && err.status === 403) return [];
     throw err;
   }

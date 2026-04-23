@@ -49,7 +49,7 @@ describe("DashboardState — fetchDashboardData", () => {
     globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
       const u = String(url);
       if (u.includes("/api/admin/halls")) return okJson([{ id: "h1", name: "Hall 1", isActive: true }, { id: "h2", name: "Hall 2", isActive: false }]);
-      if (u.includes("/api/admin/users?role=agent")) return okJson({ users: [{ id: "a1", email: "a@x", role: "agent", isActive: true }], count: 1 });
+      if (u.includes("/api/admin/agents")) return okJson({ agents: [{ userId: "a1", email: "a@x", displayName: "Agent 1", agentStatus: "active" }], limit: 100, offset: 0 });
       if (u.includes("/api/admin/hall-groups")) return notImpl();
       if (u.includes("/api/admin/players/top")) return notImpl();
       if (u.includes("/api/admin/payments/requests")) {
@@ -248,7 +248,7 @@ describe("mountDashboard — navigation race-condition", () => {
         return okJsonBody([]);
       }
       if (u.includes("/api/admin/halls")) return okJsonBody([]);
-      if (u.includes("/api/admin/users?role=agent")) return okJsonBody({ users: [], count: 0 });
+      if (u.includes("/api/admin/agents")) return okJsonBody({ agents: [], limit: 100, offset: 0 });
       return new Response(JSON.stringify({ ok: false, error: { code: "NOT_FOUND", message: "" } }), { status: 404 });
     }) as unknown as typeof fetch;
 
@@ -294,7 +294,7 @@ describe("mountDashboard — navigation race-condition", () => {
       const u = String(url);
       if (u.includes("/api/admin/rooms")) return roomsGate;
       if (u.includes("/api/admin/halls")) return okJsonBody([]);
-      if (u.includes("/api/admin/users?role=agent")) return okJsonBody({ users: [], count: 0 });
+      if (u.includes("/api/admin/agents")) return okJsonBody({ agents: [], limit: 100, offset: 0 });
       return new Response(JSON.stringify({ ok: false, error: { code: "NOT_FOUND", message: "" } }), { status: 404 });
     }) as unknown as typeof fetch;
 
