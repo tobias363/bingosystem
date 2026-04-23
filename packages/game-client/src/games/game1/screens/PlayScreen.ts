@@ -568,7 +568,7 @@ export class PlayScreen extends Container {
 
   /** Re-pin the LINE/BINGO claim buttons over the current ticket area. */
   private positionClaimButtons(): void {
-    const ticketAreaLeft = TUBE_COLUMN_WIDTH;
+    const ticketAreaLeft = TUBE_COLUMN_WIDTH + (RING_COLUMN_WIDTH - RING_SIZE) / 2;
     const ticketAreaWidth = this.screenW - ticketAreaLeft - this.chatWidth() - 20;
     const btnY = this.screenH - 55;
     const btnCentreX = ticketAreaLeft + ticketAreaWidth / 2;
@@ -601,10 +601,11 @@ export class PlayScreen extends Container {
   }
 
   private positionTicketGrid(): void {
-    // Tickets occupy the band between the ball tube (left) and the chat
-    // panel (right). Ring (170×170 at y=40) sits above TICKET_TOP=230 so
-    // there's no horizontal conflict with the ticket grid.
-    const left = TUBE_COLUMN_WIDTH;
+    // PM 2026-04-23: "plasser bongene så de kommer på linje med det store
+    // tallet over". Starter tickets ved ringens venstre kant i stedet for
+    // tube-spacer-enden. Ringen sitter sentrert i 200px-kolonnen med
+    // (RING_COLUMN_WIDTH - RING_SIZE)/2 = 15px padding på hver side.
+    const left = TUBE_COLUMN_WIDTH + (RING_COLUMN_WIDTH - RING_SIZE) / 2;
     const top = TICKET_TOP;
     const width = this.screenW - left - this.chatWidth() - 20;
     const height = this.screenH - TICKET_TOP - CLAIM_AREA;
