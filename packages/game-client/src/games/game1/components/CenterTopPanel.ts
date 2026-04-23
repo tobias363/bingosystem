@@ -65,17 +65,17 @@ export class CenterTopPanel {
     // ── Combo panel (left half: grid + prize pills) ────────────────────────
     const combo = document.createElement("div");
     Object.assign(combo.style, {
-      padding: "15px 30px",
+      padding: "15px 26px",
       display: "flex",
       flexDirection: "column",
       justifyContent: "center",
-      width: "460px",
+      width: "376px",
     });
 
     const comboBody = document.createElement("div");
     Object.assign(comboBody.style, {
       display: "flex",
-      gap: "40px",
+      gap: "20px",
       justifyContent: "space-between",
       alignItems: "stretch",
     });
@@ -111,11 +111,10 @@ export class CenterTopPanel {
       display: "flex",
       flexDirection: "column",
       gap: "9px",
-      padding: "14px 35px 5px 35px",
+      padding: "14px 25px 5px 25px",
       borderLeft: "1px solid rgba(255, 120, 50, 0.2)",
       boxShadow: "inset 10px 0 20px rgba(0, 0, 0, 0.15)",
       justifyContent: "flex-start",
-      minWidth: "180px",
     });
 
     // Game name (e.g. "GAME 2: KOMBINERTINNSATS")

@@ -258,8 +258,6 @@ export class PlayScreen extends Container {
       "flex-shrink:0",
       "margin-top:15px",
       "margin-left:20px",
-      "gap:30px",
-      "padding-right:10px",
       "background:radial-gradient(ellipse at top left, rgba(50, 15, 15, 0.45), rgba(15, 0, 0, 0.45))",
       "border:1px solid rgba(255, 120, 50, 0.35)",
       "border-radius:14px",
