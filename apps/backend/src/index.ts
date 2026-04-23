@@ -986,6 +986,11 @@ const game1DrawEngineService = new Game1DrawEngineService({
   // Game1PayoutService (payout-feil → draw rolls back).
   potService: game1PotService,
   walletAdapter,
+  // PR-C1b: wire BingoEngine-referansen slik at drawNext/stopGame kan
+  // rydde in-memory rom ved completion/cancellation (memory-leak fix).
+  // `engine` her er Game3Engine ⊂ BingoEngine, som eksponerer
+  // destroyRoom() arvet fra basen. Fail-closed — se destroyRoomIfPresent.
+  bingoEngine: engine,
 });
 game1MasterControlService.setDrawEngine(game1DrawEngineService);
 // GAME1_SCHEDULE PR 4d.4: inject ticket-purchase-service slik at stopGame()
