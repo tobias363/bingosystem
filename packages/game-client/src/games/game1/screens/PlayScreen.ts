@@ -180,7 +180,7 @@ export class PlayScreen extends Container {
     cloverBtn.style.cssText = [
       `width:${CLOVER_SIZE}px`,
       `height:${CLOVER_SIZE}px`,
-      "background:url(/web/games/assets/game1/design/center-free.png) center/contain no-repeat",
+      "background:url(/web/games/assets/game1/design/lucky-clover.png) center/contain no-repeat",
       "background-color:transparent",
       "border:none",
       "padding:0",
