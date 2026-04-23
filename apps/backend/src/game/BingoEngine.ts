@@ -112,6 +112,32 @@ import type { LoyaltyPointsHookPort } from "../adapters/LoyaltyPointsHookPort.js
 import { NoopLoyaltyPointsHookPort } from "../adapters/LoyaltyPointsHookPort.js";
 import type { SplitRoundingAuditPort } from "../adapters/SplitRoundingAuditPort.js";
 import { NoopSplitRoundingAuditPort } from "../adapters/SplitRoundingAuditPort.js";
+// Extracted helpers (refactor/s1-bingo-engine-split — Forslag A)
+import {
+  activateJackpot as activateJackpotHelper,
+  spinJackpot as spinJackpotHelper,
+  activateMiniGame as activateMiniGameHelper,
+  playMiniGame as playMiniGameHelper,
+  type MiniGamesContext,
+  type MiniGameRotationState,
+} from "./BingoEngineMiniGames.js";
+import {
+  serializeGameForRecovery as serializeGameForRecoveryHelper,
+  writeDrawCheckpoint as writeDrawCheckpointHelper,
+  writeGameEndCheckpoint as writeGameEndCheckpointHelper,
+  writePayoutCheckpointWithRetry as writePayoutCheckpointWithRetryHelper,
+  refundDebitedPlayers as refundDebitedPlayersHelper,
+  restoreRoomFromSnapshot as restoreRoomFromSnapshotHelper,
+  type RecoveryContext,
+} from "./BingoEngineRecovery.js";
+import {
+  evaluateActivePhase as evaluateActivePhaseHelper,
+  evaluateConcurrentPatterns as evaluateConcurrentPatternsHelper,
+  computeCustomPatternPrize as computeCustomPatternPrizeHelper,
+  detectPhaseWinners as detectPhaseWinnersHelper,
+  meetsPhaseRequirement as meetsPhaseRequirementHelper,
+  type EvaluatePhaseCallbacks,
+} from "./BingoEnginePatternEval.js";
 
 export type {
   LossLimits,
@@ -1105,550 +1131,74 @@ export class BingoEngine {
   }
 
   // ── BIN-694: 3-fase norsk 75-ball bingo ──────────────────────────────────
+  //
+  // Pattern-/fase-evaluering er ekstrahert til `BingoEnginePatternEval.ts`
+  // (refactor/s1-bingo-engine-split — Forslag A). Metodene under er tynne
+  // delegate-wrappers som bygger en `EvaluatePhaseCallbacks`-port med
+  // payout/recovery/compliance-callbacks som pattern-eval-modulen trenger.
+  //
+  // `payoutPhaseWinner` beholdes på klassen — koblingen mot prizePolicy +
+  // payoutAudit + ledger + wallet er for tett for en ren ekstraksjon.
+
+  /**
+   * Bygger `EvaluatePhaseCallbacks`-porten som `BingoEnginePatternEval`
+   * trenger for å utføre payout/recovery/compliance-side-effekter uten
+   * å kjenne til engine-interne state (rooms, ledger, persistence).
+   */
+  private buildEvaluatePhaseCallbacks(): EvaluatePhaseCallbacks {
+    return {
+      splitRoundingAudit: this.splitRoundingAudit,
+      loyaltyHook: this.loyaltyHook,
+      getVariantConfig: (roomCode) => this.variantConfigByRoom.get(roomCode),
+      payoutPhaseWinner: (room, game, playerId, pattern, patternResult, prizePerWinner) =>
+        this.payoutPhaseWinner(room, game, playerId, pattern, patternResult, prizePerWinner),
+      finishPlaySessionsForGame: (room, game, endedAtMs) =>
+        this.finishPlaySessionsForGame(room, game, endedAtMs),
+      writeGameEndCheckpoint: (room, game) => this.writeGameEndCheckpoint(room, game),
+    };
+  }
 
   /**
    * BIN-694: Evaluér om aktiv fase er vunnet etter siste ball. Kalles
    * automatisk fra `drawNextNumber` når `patternEvalMode ===
    * "auto-claim-on-draw"`.
    *
-   * Fase-modell (prosjektleder-spec 2026-04-20):
-   *   1. "1 Rad"     → ≥1 hel linje (av 12 mulige per brett)
-   *   2. "2 Rader"   → ≥2 hele linjer
-   *   3. "Fullt Hus" → alle 25 felt merket
-   *
-   * Multi-winner-split: flere spillere som oppfyller samme fase på
-   * samme ball deler premien likt (per spiller, ikke per brett — så en
-   * spiller med 3 vinnende brett regnes som ÉN vinner i splittingen).
-   *
-   * Etter at fasen er vunnet fortsetter metoden rekursivt for å dekke
-   * det sjeldne scenariet der samme ball fullfører to faser (f.eks.
-   * spilleren fikk både 1. og 2. linje på samme ball).
-   *
-   * Runden avsluttes kun når Fullt Hus-fasen er vunnet (eller via
-   * MAX_DRAWS_REACHED / DRAW_BAG_EMPTY i drawNextNumber).
+   * Implementasjon ekstrahert til {@link BingoEnginePatternEval.evaluateActivePhase}.
    */
   private async evaluateActivePhase(room: RoomState, game: GameState): Promise<void> {
-    if (!game.patternResults || game.status !== "RUNNING") return;
-
-    // PR-P5 (Extra-variant): custom concurrent patterns har egen evaluator.
-    // Hvis variantConfig.customPatterns er satt og ikke-tom, delegeres til
-    // parallell-evaluator. Validator i startGame avviser kombinasjon med
-    // patternsByColor (CUSTOM_AND_STANDARD_EXCLUSIVE), så her kan vi stole
-    // på at én mode gjelder av gangen.
-    const variantConfigForCustomCheck = this.variantConfigByRoom.get(room.code);
-    const hasCustomPatterns =
-      Array.isArray(variantConfigForCustomCheck?.customPatterns) &&
-      variantConfigForCustomCheck!.customPatterns!.length > 0;
-    if (hasCustomPatterns) {
-      await this.evaluateConcurrentPatterns(room, game);
-      return;
-    }
-
-    // Find next unwon phase in `order` (patternResults preserves config order).
-    const activeResult = game.patternResults.find((r) => !r.isWon);
-    if (!activeResult) return;
-
-    const activePattern = game.patterns?.find((p) => p.id === activeResult.patternId);
-    if (!activePattern) return;
-
-    // BIN-694: Auto-claim bruker `game.drawnNumbers` som vinner-grunnlag,
-    // IKKE `game.marks` — marks er for klient-side UI (manuell merking
-    // via socket `ticket:mark`), men server-side evaluation skal være
-    // basert på hva som faktisk er trukket. Dette gjør også at spillere
-    // som ikke aktivt trykker "merk" fortsatt kan vinne.
-    const drawnSet = new Set(game.drawnNumbers);
-
-    // PR B (variantConfig-admin-kobling): per-farge-matrise.
-    // Hvis `variantConfig.patternsByColor` er satt, kjøres per-farge-pathen
-    // der hver farge har egen premie-matrise og multi-winner-split skjer
-    // innen én farges vinnere (PM-vedtak "Option X"). Ellers faller vi
-    // tilbake til dagens flat-path.
-    const variantConfig = this.variantConfigByRoom.get(room.code);
-    const hasPerColorMatrix = Boolean(variantConfig?.patternsByColor);
-
-    // Fase-index = posisjon i canonical pattern-array (mapperen garanterer
-    // samme rekkefølge på tvers av farger, så index identifiserer fasen).
-    const phaseIndex = game.patterns ? game.patterns.indexOf(activePattern) : 0;
-
-    // Detect winners. For flat-path: uniqueset per player. For per-color:
-    // Map<color, Set<playerId>> — en spiller kan vinne i flere farger hvis
-    // de har brett i flere farger som alle oppfyller fasen.
-    const winnerGroups = this.detectPhaseWinners(
-      game, drawnSet, activePattern, variantConfig, hasPerColorMatrix, phaseIndex, room.code,
-    );
-
-    if (winnerGroups.totalUniqueWinners === 0) return;
-
-    // Pay out per color-group. For flat-path, the groups map has a single
-    // entry under `FLAT_GROUP_KEY`. For per-color, multiple entries.
-    let firstPayoutAmount = 0;
-    let firstWinnerId = "";
-    const allWinnerIds: string[] = [];
-
-    // BIN-687 / PR-P2: cache for multiplier-chain phase-1 base price per
-    // color. Computed on-demand when first phase > 1 pattern is payouts.
-    // Key = groupKey (FLAT_GROUP_KEY for flat-path, color-name for per-color).
-    // Value = phase-1 base prize in kr AFTER minPrize-floor applied — so
-    // multiplier-chain-phase-N cascade bygger på gulv-justert base (samsvar
-    // med papir-regelen: "Rad 2 min 50 kr" gjelder også når fase 1 ble
-    // gulv-justert).
-    const phase1BaseCache = new Map<string, number>();
-    const computePhase1Base = (
-      groupKey: string,
-      patterns: readonly PatternConfig[] | null
-    ): number => {
-      const cached = phase1BaseCache.get(groupKey);
-      if (cached !== undefined) return cached;
-      // Flat-path (patterns=null): bruk game.patterns[0] som fase-1-kilde.
-      // Per-color: bruk patterns[0] fra fargens matrise.
-      const phase1 = patterns
-        ? patterns[0]
-        : (game.patterns?.[0] ?? null);
-      if (!phase1) {
-        phase1BaseCache.set(groupKey, 0);
-        return 0;
-      }
-      const rawPhase1 = Math.floor(
-        game.prizePool * (phase1.prizePercent ?? 0) / 100
-      );
-      const base = Math.max(rawPhase1, phase1.minPrize ?? 0);
-      phase1BaseCache.set(groupKey, base);
-      return base;
-    };
-
-    for (const [groupKey, group] of winnerGroups.byColor) {
-      const winnerIds = [...group.playerIds];
-      if (winnerIds.length === 0) continue;
-
-      // Resolve prize for this color. flat-path bruker activePattern direkte.
-      const prizeSource: {
-        winningType?:
-          | "percent"
-          | "fixed"
-          | "multiplier-chain"
-          | "column-specific"
-          | "ball-value-multiplier";
-        prize1?: number;
-        prizePercent: number;
-        name: string;
-        phase1Multiplier?: number;
-        minPrize?: number;
-        columnPrizesNok?: { B: number; I: number; N: number; G: number; O: number };
-        claimType?: "LINE" | "BINGO";
-        baseFullHousePrizeNok?: number;
-        ballValueMultiplier?: number;
-      } =
-        hasPerColorMatrix && group.patternForColor
-          ? group.patternForColor
-          : activePattern;
-
-      // BIN-687 / PR-P2: resolve color-specific phase-1 base for
-      // multiplier-chain lookups. For flat-path, patterns=null → cache
-      // uses game.patterns[0]; for per-color, patterns from
-      // resolvePatternsForColor for denne fargen.
-      const colorPatternsForPhase1 = hasPerColorMatrix
-        ? resolvePatternsForColor(
-            this.variantConfigByRoom.get(room.code)!,
-            groupKey === FLAT_GROUP_KEY ? "" : groupKey
-          )
-        : null;
-
-      let totalPhasePrize: number;
-      if (prizeSource.winningType === "fixed") {
-        totalPhasePrize = Math.max(0, prizeSource.prize1 ?? 0);
-      } else if (prizeSource.winningType === "multiplier-chain") {
-        // Fase 1 identifiseres ved fravær av phase1Multiplier-felt (undefined).
-        // I så fall bruker vi percent + gulv. For fase N > 1: phase1Base ×
-        // multiplier med egen gulv. Admin-valideringen i Spill1Config avviser
-        // phase1Multiplier === 0 så engine slipper å håndtere edge-casen.
-        const isPhase1 = prizeSource.phase1Multiplier === undefined;
-        const basePrize = isPhase1
-          ? Math.floor(game.prizePool * (prizeSource.prizePercent ?? 0) / 100)
-          : Math.floor(
-              computePhase1Base(groupKey, colorPatternsForPhase1) *
-                prizeSource.phase1Multiplier!
-            );
-        totalPhasePrize = Math.max(basePrize, prizeSource.minPrize ?? 0);
-      } else if (prizeSource.winningType === "column-specific") {
-        // PR-P3 (Super-NILS): Fullt-Hus-premie avgjøres av kolonne (B/I/N/G/O)
-        // for siste trukne ball — dvs. ballen som fullførte bingoen. Admin-
-        // valideringen avviser column-specific på ikke-full-house-patterns,
-        // men engine dobbeltsjekker for defense-in-depth.
-        if (prizeSource.claimType !== "BINGO" && activePattern.claimType !== "BINGO") {
-          throw new DomainError(
-            "COLUMN_PRIZE_INVALID_PATTERN",
-            "column-specific winning type kan kun brukes på Fullt Hus-patterns.",
-          );
-        }
-        if (!prizeSource.columnPrizesNok) {
-          throw new DomainError(
-            "COLUMN_PRIZE_MISSING",
-            "columnPrizesNok mangler for column-specific-pattern.",
-          );
-        }
-        const lastBall = game.drawnNumbers[game.drawnNumbers.length - 1];
-        const col = ballToColumn(lastBall);
-        if (!col) {
-          throw new DomainError(
-            "COLUMN_PRIZE_MISSING",
-            `Siste ball ${lastBall} mapper ikke til B/I/N/G/O (krever 75-ball).`,
-          );
-        }
-        const prizeForCol = prizeSource.columnPrizesNok[col];
-        if (typeof prizeForCol !== "number" || !Number.isFinite(prizeForCol)) {
-          throw new DomainError(
-            "COLUMN_PRIZE_MISSING",
-            `columnPrizesNok.${col} mangler eller er ikke et tall.`,
-          );
-        }
-        totalPhasePrize = Math.max(0, prizeForCol);
-      } else if (prizeSource.winningType === "ball-value-multiplier") {
-        // PR-P4 (Ball × 10): Fullt-Hus-premie = base + lastBall × multiplier.
-        // Bruker rå ball-verdi (ikke kolonne-mapping som P3). Admin-validator
-        // avviser på ikke-full-house-pattern; engine dobbeltsjekker for
-        // defense-in-depth og fail-closed ved manglende felt.
-        if (
-          prizeSource.claimType !== "BINGO" &&
-          activePattern.claimType !== "BINGO"
-        ) {
-          throw new DomainError(
-            "BALL_VALUE_INVALID_PATTERN",
-            "ball-value-multiplier kan kun brukes på Fullt Hus-patterns.",
-          );
-        }
-        const base = prizeSource.baseFullHousePrizeNok;
-        const mult = prizeSource.ballValueMultiplier;
-        if (
-          typeof base !== "number" ||
-          !Number.isFinite(base) ||
-          base < 0 ||
-          typeof mult !== "number" ||
-          !Number.isFinite(mult) ||
-          mult <= 0
-        ) {
-          throw new DomainError(
-            "BALL_VALUE_FIELDS_MISSING",
-            "ball-value-multiplier krever baseFullHousePrizeNok ≥ 0 og ballValueMultiplier > 0.",
-          );
-        }
-        const lastBall = game.drawnNumbers[game.drawnNumbers.length - 1];
-        if (
-          typeof lastBall !== "number" ||
-          !Number.isFinite(lastBall) ||
-          lastBall < 1
-        ) {
-          throw new DomainError(
-            "BALL_VALUE_FIELDS_MISSING",
-            "Ingen gyldig siste-ball tilgjengelig for ball-value-beregning.",
-          );
-        }
-        totalPhasePrize = Math.max(0, base + lastBall * mult);
-      } else {
-        totalPhasePrize = Math.floor(
-          game.prizePool * (prizeSource.prizePercent ?? 0) / 100
-        );
-      }
-      // Floor division — any remainder stays with the house (house-rounding).
-      const prizePerWinner = Math.floor(totalPhasePrize / winnerIds.length);
-
-      // GAME1_SCHEDULE PR 5 (§3.7): audit rest-øre som huset beholder
-      // per farge-gruppe. Formel: totalPhasePrize - winnerCount × prizePerWinner.
-      const houseRetainedRest = totalPhasePrize - (winnerIds.length * prizePerWinner);
-      if (houseRetainedRest > 0) {
-        try {
-          await this.splitRoundingAudit.onSplitRoundingHouseRetained({
-            amount: houseRetainedRest,
-            winnerCount: winnerIds.length,
-            totalPhasePrize,
-            prizePerWinner,
-            patternName: prizeSource.name,
-            roomCode: room.code,
-            gameId: game.id,
-            hallId: room.hallId,
-          });
-        } catch (err) {
-          logger.warn(
-            { err, gameId: game.id, roomCode: room.code, amount: houseRetainedRest, color: groupKey },
-            "split-rounding audit hook failed — engine fortsetter uansett"
-          );
-        }
-      }
-
-      // Build a per-color PatternDefinition so payoutPhaseWinner can
-      // reference the correct pattern.name + winningType + prize1 for
-      // audit/ledger purposes. Uses activePattern.id so patternResults
-      // stays addressable by its original patternId.
-      const colorPattern: PatternDefinition = hasPerColorMatrix && group.patternForColor
-        ? {
-            ...activePattern,
-            name: group.patternForColor.name,
-            claimType: group.patternForColor.claimType,
-            prizePercent: group.patternForColor.prizePercent,
-            ...(typeof group.patternForColor.prize1 === "number" ? { prize1: group.patternForColor.prize1 } : {}),
-            ...(group.patternForColor.winningType ? { winningType: group.patternForColor.winningType } : {}),
-          }
-        : activePattern;
-
-      // Pay out each winner before marking the phase won — so a wallet
-      // failure for one winner doesn't leave the phase half-committed.
-      for (const playerId of winnerIds) {
-        await this.payoutPhaseWinner(
-          room, game, playerId, colorPattern, activeResult, prizePerWinner,
-        );
-      }
-
-      // GAME1_SCHEDULE PR 5: Loyalty game.win hook per vinner (fire-and-forget).
-      if (prizePerWinner > 0) {
-        for (const playerId of winnerIds) {
-          try {
-            await this.loyaltyHook.onLoyaltyEvent({
-              kind: "game.win",
-              userId: playerId,
-              amount: prizePerWinner,
-              patternName: colorPattern.name,
-              roomCode: room.code,
-              gameId: game.id,
-              hallId: room.hallId,
-            });
-          } catch (err) {
-            logger.warn(
-              { err, gameId: game.id, playerId },
-              "loyalty game.win hook failed — engine fortsetter uansett"
-            );
-          }
-        }
-      }
-
-      // Track first payout for backward-compat patternResult fields.
-      if (firstWinnerId === "" && winnerIds.length > 0) {
-        firstWinnerId = winnerIds[0]!;
-        firstPayoutAmount = prizePerWinner;
-      }
-      // Aggregate winners — deduplicate hvis samme spiller vant i flere farger.
-      for (const pid of winnerIds) {
-        if (!allWinnerIds.includes(pid)) allWinnerIds.push(pid);
-      }
-    }
-
-    // Mark phase as won. For multi-winner the `winnerId` is set to the
-    // first winner (backward compat with single-winner test assertions);
-    // the full list lives in `winnerIds` (BIN-696) + per-winner
-    // ClaimRecords on game.claims.
-    activeResult.isWon = true;
-    activeResult.wonAtDraw = game.drawnNumbers.length;
-    activeResult.winnerId = firstWinnerId;
-    activeResult.winnerIds = [...allWinnerIds];
-    activeResult.payoutAmount = firstPayoutAmount;
-
-    // End round when Fullt Hus is won.
-    if (activePattern.claimType === "BINGO") {
-      const endedAtMs = Date.now();
-      game.status = "ENDED";
-      game.bingoWinnerId = firstWinnerId;
-      game.endedAt = new Date(endedAtMs).toISOString();
-      game.endedReason = "BINGO_CLAIMED";
-      await this.finishPlaySessionsForGame(room, game, endedAtMs);
-      await this.writeGameEndCheckpoint(room, game);
-      return;
-    }
-
-    // Phase 1 → mark lineWinnerId for backward-compat with existing readers.
-    if (activePattern.claimType === "LINE" && !game.lineWinnerId) {
-      game.lineWinnerId = firstWinnerId;
-    }
-
-    // Rare: same ball won two phases simultaneously — recurse.
-    await this.evaluateActivePhase(room, game);
+    await evaluateActivePhaseHelper(this.buildEvaluatePhaseCallbacks(), room, game);
   }
 
   /**
    * PR-P5 (Extra-variant): concurrent pattern-evaluator.
    *
-   * Semantikken er fundamentalt annerledes enn `evaluateActivePhase`:
-   *   - Sekvensiell flyt: første unwon pattern per draw; neste trinn
-   *     aktiveres når forrige er vunnet.
-   *   - Concurrent flyt: ALLE unwon customPatterns evalueres parallelt
-   *     per draw. Ett bong kan samtidig oppfylle flere patterns og
-   *     få betalt på alle.
-   *
-   * Payout-rekkefølge matcher `customPatterns.config`-rekkefølge slik at
-   * `pattern:won`-events emittes stabilt (Agent 4-kontrakten bevares —
-   * én event per vunnet pattern, sekvensielt innenfor draw).
-   *
-   * Idempotency: hvert pattern har egen `patternResults[i].isWon`-flag.
-   * Allerede-vunne patterns hoppes over ved re-evaluering. Payout er
-   * dermed idempotent mot samme draw (eksisterende pattern-level guard).
-   *
-   * Game avsluttes kun når ALLE customPatterns er vunnet (alle
-   * `isWon === true`), ELLER når full-house-pattern (mask === 0x1FFFFFF)
-   * vinnes.
+   * Implementasjon ekstrahert til {@link BingoEnginePatternEval.evaluateConcurrentPatterns}.
    */
   private async evaluateConcurrentPatterns(
     room: RoomState,
     game: GameState,
   ): Promise<void> {
-    if (!game.patternResults || game.status !== "RUNNING") return;
-    const drawnSet = new Set(game.drawnNumbers);
-
-    // Iterer alle unwon patterns i config-rekkefølge.
-    for (const result of game.patternResults) {
-      if (result.isWon) continue;
-      const pattern = game.patterns?.find((p) => p.id === result.patternId);
-      if (!pattern || !pattern.mask) continue;
-
-      // Finn vinnere for DENNE patternen. Concurrent semantikk:
-      // flat-path (uten per-farge-matrise — som er garantert fravær siden
-      // startGame-validator avviser kombinasjon). Én spiller = én vinner-slot
-      // per pattern (uavhengig av antall bong).
-      const winnerIds: string[] = [];
-      const uniqueWinners = new Set<string>();
-      const patternMask = pattern.mask;
-      if (typeof patternMask !== "number") continue;
-      for (const [playerId, tickets] of game.tickets) {
-        if (uniqueWinners.has(playerId)) continue;
-        const playerMarksAll = game.marks.get(playerId);
-        for (let ticketIdx = 0; ticketIdx < tickets.length; ticketIdx += 1) {
-          const ticket = tickets[ticketIdx];
-          const playerMarks = playerMarksAll?.[ticketIdx];
-          const marksSet: Set<number> =
-            playerMarks && playerMarks.size > 0
-              ? playerMarks
-              : drawnSet;
-          const ticketMask = patternMatcherBuildTicketMask(ticket, marksSet);
-          if (patternMatcherMatches(ticketMask, patternMask)) {
-            uniqueWinners.add(playerId);
-            winnerIds.push(playerId);
-            break;
-          }
-        }
-      }
-
-      if (winnerIds.length === 0) continue;
-
-      // Beregn payout per pattern. Gjenbruker eksisterende winning-types
-      // (fixed/percent/multiplier-chain/column-specific/ball-value-multiplier)
-      // via samme utregning som evaluateActivePhase. Custom patterns har
-      // ikke per-farge-matrise i P5 (mutually exclusive), så flat-path.
-      const lastBall = game.drawnNumbers[game.drawnNumbers.length - 1];
-      const totalPhasePrize = this.computeCustomPatternPrize(
-        pattern,
-        game.prizePool,
-        lastBall,
-      );
-      const prizePerWinner = Math.floor(totalPhasePrize / winnerIds.length);
-
-      const houseRetainedRest = totalPhasePrize - (winnerIds.length * prizePerWinner);
-      if (houseRetainedRest > 0) {
-        try {
-          await this.splitRoundingAudit.onSplitRoundingHouseRetained({
-            amount: houseRetainedRest,
-            winnerCount: winnerIds.length,
-            totalPhasePrize,
-            prizePerWinner,
-            patternName: pattern.name,
-            roomCode: room.code,
-            gameId: game.id,
-            hallId: room.hallId,
-          });
-        } catch (err) {
-          logger.warn(
-            { err, gameId: game.id, roomCode: room.code, amount: houseRetainedRest },
-            "split-rounding audit hook failed — engine fortsetter uansett",
-          );
-        }
-      }
-
-      // Payout per vinner. Idempotency: payoutPhaseWinner har allerede
-      // duplicate-guard via patternResult.isWon + claim-id sammensetning.
-      // PR-P5 idempotency-key: custom-pattern-{gameId}-{patternId}-{playerId}
-      // inngår i claim.id via patternId-del av ledger-key.
-      for (const playerId of winnerIds) {
-        await this.payoutPhaseWinner(
-          room, game, playerId, pattern, result, prizePerWinner,
-        );
-      }
-
-      // Mark pattern som vunnet + broadcast-kompatibelt snapshot.
-      result.isWon = true;
-      result.winnerIds = [...winnerIds];
-      result.winnerId = winnerIds[0];
-      result.winnerCount = winnerIds.length;
-      result.wonAtDraw = game.drawnNumbers.length;
-      result.payoutAmount = prizePerWinner;
-    }
-
-    // Spillet avsluttes når alle customPatterns er vunnet. Full-house-
-    // pattern (mask === 0x1FFFFFF) kan også trigge tidlig avslutning, men
-    // scope-bekreftelsen sa "alle unwon = ferdig" — enkleste semantikken.
-    const allDone = game.patternResults.every((r) => r.isWon);
-    if (allDone) {
-      const endedAtMs = Date.now();
-      game.status = "ENDED";
-      game.endedAt = new Date(endedAtMs).toISOString();
-      game.endedReason = "BINGO_CLAIMED";
-      await this.finishPlaySessionsForGame(room, game, endedAtMs);
-      await this.writeGameEndCheckpoint(room, game);
-    }
+    await evaluateConcurrentPatternsHelper(this.buildEvaluatePhaseCallbacks(), room, game);
   }
 
   /**
-   * PR-P5: compute prize for custom pattern. Gjenbruker winning-type-
-   * logikken fra evaluateActivePhase i forenklet flat-path form (ingen
-   * per-farge-matrise for custom).
+   * PR-P5: compute prize for custom pattern.
+   *
+   * Implementasjon ekstrahert til {@link BingoEnginePatternEval.computeCustomPatternPrize}.
    */
   private computeCustomPatternPrize(
     pattern: PatternDefinition,
     prizePool: number,
     lastBall: number | undefined,
   ): number {
-    if (pattern.winningType === "fixed") {
-      return Math.max(0, pattern.prize1 ?? 0);
-    }
-    if (pattern.winningType === "column-specific") {
-      if (!pattern.columnPrizesNok || typeof lastBall !== "number") {
-        throw new DomainError(
-          "COLUMN_PRIZE_MISSING",
-          "columnPrizesNok mangler eller lastBall udefinert.",
-        );
-      }
-      const col = ballToColumn(lastBall);
-      if (!col) throw new DomainError("COLUMN_PRIZE_MISSING", `Ball ${lastBall} utenfor B/I/N/G/O.`);
-      return Math.max(0, pattern.columnPrizesNok[col]);
-    }
-    if (pattern.winningType === "ball-value-multiplier") {
-      const base = pattern.baseFullHousePrizeNok;
-      const mult = pattern.ballValueMultiplier;
-      if (
-        typeof base !== "number" || base < 0 ||
-        typeof mult !== "number" || mult <= 0 ||
-        typeof lastBall !== "number"
-      ) {
-        throw new DomainError(
-          "BALL_VALUE_FIELDS_MISSING",
-          "base/multiplier/lastBall mangler for ball-value.",
-        );
-      }
-      return Math.max(0, base + lastBall * mult);
-    }
-    // multiplier-chain i concurrent-path er ikke meningsfylt (fase-1-basis
-    // er en sekvens-konsept). Fall tilbake til percent-beregning.
-    return Math.floor(prizePool * (pattern.prizePercent ?? 0) / 100);
+    return computeCustomPatternPrizeHelper(pattern, prizePool, lastBall);
   }
 
   /**
    * PR B: Detekter fase-vinnere, gruppert per farge når
-   * `patternsByColor` er satt. Flat-path returnerer én gruppe under
-   * nøkkelen `FLAT_GROUP_KEY`.
+   * `patternsByColor` er satt.
    *
-   * Per-farge-semantikk (PM-vedtak "Option X"):
-   *   - En (spiller, farge)-kombinasjon er en unik winner-slot.
-   *   - En spiller med brett i flere farger, der flere farger oppfyller
-   *     fasen, vinner i hver farge — får betalt én gang per farge.
-   *   - Multi-winner-split skjer innen én farges vinnere.
-   *
-   * Flat-path-semantikk (uendret fra før):
-   *   - En spiller vinner fasen én gang uansett antall brett.
-   *   - Alle vinnere deler én pott likt.
+   * Implementasjon ekstrahert til {@link BingoEnginePatternEval.detectPhaseWinners}.
    */
   private detectPhaseWinners(
     game: GameState,
@@ -1662,94 +1212,22 @@ export class BingoEngine {
     totalUniqueWinners: number;
     byColor: Map<string, { playerIds: Set<string>; patternForColor: PatternConfig | null }>;
   } {
-    const byColor = new Map<string, { playerIds: Set<string>; patternForColor: PatternConfig | null }>();
-    const uniquePlayers = new Set<string>();
-
-    if (!hasPerColorMatrix || !variantConfig) {
-      // Flat-path: én gruppe, uniqueset per player (ignorér farge).
-      const flatIds = new Set<string>();
-      for (const [playerId, tickets] of game.tickets) {
-        for (let i = 0; i < tickets.length; i += 1) {
-          if (this.meetsPhaseRequirement(activePattern, tickets[i], drawnSet)) {
-            flatIds.add(playerId);
-            break;
-          }
-        }
-      }
-      if (flatIds.size > 0) {
-        byColor.set(FLAT_GROUP_KEY, { playerIds: flatIds, patternForColor: null });
-      }
-      return { totalUniqueWinners: flatIds.size, byColor };
-    }
-
-    // Per-color path: iterate alle brett, grupper per (farge, spiller).
-    for (const [playerId, tickets] of game.tickets) {
-      for (const ticket of tickets) {
-        if (!this.meetsPhaseRequirement(activePattern, ticket, drawnSet)) continue;
-        const colorKey = ticket.color ?? UNCOLORED_KEY;
-        let group = byColor.get(colorKey);
-        if (!group) {
-          // Resolve matrise for denne fargen. Warning når __default__ slår
-          // inn for en farge som finnes i ticketTypes (konfig-gap).
-          const patterns = resolvePatternsForColor(variantConfig, ticket.color, (missingColor) => {
-            logger.warn(
-              { color: missingColor, roomCode, gameId: game.id },
-              "patternsByColor missing entry for ticket color — using __default__ matrix"
-            );
-          });
-          const patternForColor = patterns[phaseIndex] ?? null;
-          group = { playerIds: new Set(), patternForColor };
-          byColor.set(colorKey, group);
-        }
-        group.playerIds.add(playerId);
-        uniquePlayers.add(playerId);
-      }
-    }
-
-    return { totalUniqueWinners: uniquePlayers.size, byColor };
+    return detectPhaseWinnersHelper(
+      game, drawnSet, activePattern, variantConfig, hasPerColorMatrix, phaseIndex, roomCode,
+    );
   }
 
   /**
    * BIN-694: Evaluér om et brett oppfyller aktiv fase sitt krav.
    *
-   * Fase-modell (norsk 75-ball, avklart 2026-04-20):
-   *   - "1 Rad" (fase 1): ≥1 horisontal rad ELLER ≥1 vertikal kolonne
-   *   - "2 Rader" (fase 2): ≥2 hele vertikale kolonner
-   *   - "3 Rader" (fase 3): ≥3 hele vertikale kolonner
-   *   - "4 Rader" (fase 4): ≥4 hele vertikale kolonner
-   *   - "Fullt Hus" (fase 5): alle 25 felt merket
-   *
-   * Klassifisering og kandidat-masker ligger i
-   * `@spillorama/shared-types/spill1-patterns` og deles med klient
-   * `PatternMasks.ts` (samme kilde = ingen drift-risiko).
-   *
-   * Ukjente pattern-navn (jubilee "Stjerne", Spill 3 "Bilde"/"Ramme",
-   * Databingo60 line-pattern) faller tilbake til `claimType`-basert
-   * sjekk: LINE = ≥1 linje, BINGO = fullt hus.
+   * Implementasjon ekstrahert til {@link BingoEnginePatternEval.meetsPhaseRequirement}.
    */
   private meetsPhaseRequirement(
     pattern: PatternDefinition,
     ticket: Ticket,
     drawnSet: Set<number>,
   ): boolean {
-    if (pattern.claimType === "BINGO") {
-      return hasFullBingo(ticket, drawnSet);
-    }
-    const phase = classifyPhaseFromPatternName(pattern.name);
-    if (phase === null) {
-      return (
-        countCompleteRows(ticket, drawnSet) >= 1 ||
-        countCompleteColumns(ticket, drawnSet) >= 1
-      );
-    }
-    const ticketMask = buildTicketMask5x5(ticket, drawnSet);
-    if (ticketMask === null) {
-      return (
-        countCompleteRows(ticket, drawnSet) >= 1 ||
-        countCompleteColumns(ticket, drawnSet) >= 1
-      );
-    }
-    return ticketMaskMeetsPhase(ticketMask, phase);
+    return meetsPhaseRequirementHelper(pattern, ticket, drawnSet);
   }
 
   /**
@@ -2485,34 +1963,22 @@ export class BingoEngine {
 
   // ── Jackpot (Game 5 Free Spin) ──────────────────────────────────────────
 
-  /** Default prize segments for the jackpot wheel (in kr). */
-  private static readonly JACKPOT_PRIZES = [5, 10, 15, 20, 25, 50, 10, 15];
-
   /**
    * Activate jackpot mini-game for a player (called after BINGO win in Game 5).
    * Returns the jackpot state, or null if not applicable.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineMiniGames.activateJackpot}
+   * i refactor/s1-bingo-engine-split (Forslag A).
    */
   activateJackpot(roomCode: string, playerId: string): JackpotState | null {
-    const room = this.requireRoom(roomCode);
-    const game = room.currentGame;
-    if (!game) return null;
-    if (game.jackpot) return game.jackpot; // Already activated
-
-    const jackpot: JackpotState = {
-      playerId,
-      prizeList: [...BingoEngine.JACKPOT_PRIZES],
-      totalSpins: 1,
-      playedSpins: 0,
-      spinHistory: [],
-      isComplete: false,
-    };
-    game.jackpot = jackpot;
-    return jackpot;
+    return activateJackpotHelper(this.getMiniGamesContext(), roomCode, playerId);
   }
 
   /**
    * Process a jackpot spin. Server picks a random segment.
    * Returns the spin result with prize amount.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineMiniGames.spinJackpot}.
    */
   async spinJackpot(roomCode: string, playerId: string): Promise<{
     segmentIndex: number;
@@ -2522,138 +1988,39 @@ export class BingoEngine {
     isComplete: boolean;
     spinHistory: JackpotState["spinHistory"];
   }> {
-    const room = this.requireRoom(roomCode);
-    const game = room.currentGame;
-    if (!game || !game.jackpot) {
-      throw new DomainError("NO_JACKPOT", "Ingen aktiv jackpot.");
-    }
-    const jackpot = game.jackpot;
-    if (jackpot.playerId !== playerId) {
-      throw new DomainError("NOT_JACKPOT_PLAYER", "Jackpot tilhører en annen spiller.");
-    }
-    if (jackpot.isComplete) {
-      throw new DomainError("JACKPOT_COMPLETE", "Jackpot er allerede fullført.");
-    }
-    if (jackpot.playedSpins >= jackpot.totalSpins) {
-      throw new DomainError("NO_SPINS_LEFT", "Ingen spinn igjen.");
-    }
-
-    // Server-authoritative random segment
-    const segmentIndex = Math.floor(Math.random() * jackpot.prizeList.length);
-    const prizeAmount = jackpot.prizeList[segmentIndex];
-    jackpot.playedSpins += 1;
-
-    jackpot.spinHistory.push({
-      spinNumber: jackpot.playedSpins,
-      segmentIndex,
-      prizeAmount,
-    });
-
-    if (jackpot.playedSpins >= jackpot.totalSpins) {
-      jackpot.isComplete = true;
-    }
-
-    // Credit prize to player balance
-    if (prizeAmount > 0) {
-      const player = this.requirePlayer(room, playerId);
-      const gameType = "DATABINGO" as const;
-      const channel = "INTERNET" as const;
-      const houseAccountId = this.ledger.makeHouseAccountId(room.hallId, gameType, channel);
-
-      // PR-W3 wallet-split: payout er gevinst → krediter winnings-siden.
-      const transfer = await this.walletAdapter.transfer(
-        houseAccountId,
-        player.walletId,
-        prizeAmount,
-        `Jackpot prize ${room.code}`,
-        {
-          idempotencyKey: `jackpot-${game.id}-spin-${jackpot.playedSpins}`,
-          targetSide: "winnings",
-        },
-      );
-      player.balance += prizeAmount;
-
-      await this.compliance.recordLossEntry(player.walletId, room.hallId, {
-        type: "PAYOUT",
-        amount: prizeAmount,
-        createdAtMs: Date.now(),
-      });
-      await this.ledger.recordComplianceLedgerEvent({
-        hallId: room.hallId,
-        gameType,
-        channel,
-        eventType: "PRIZE",
-        amount: prizeAmount,
-        roomCode: room.code,
-        gameId: game.id,
-        claimId: `jackpot-${game.id}-spin-${jackpot.playedSpins}`,
-        playerId,
-        walletId: player.walletId,
-        sourceAccountId: transfer.fromTx.accountId,
-        targetAccountId: transfer.toTx.accountId,
-        policyVersion: "jackpot-v1",
-      });
-    }
-
-    return {
-      segmentIndex,
-      prizeAmount,
-      playedSpins: jackpot.playedSpins,
-      totalSpins: jackpot.totalSpins,
-      isComplete: jackpot.isComplete,
-      spinHistory: jackpot.spinHistory,
-    };
+    return spinJackpotHelper(this.getMiniGamesContext(), roomCode, playerId);
   }
 
   // ── Mini-games (Game 1 — Wheel of Fortune / Treasure Chest) ─────────────
 
-  /** Default prize segments for Game 1 mini-games (in kr). */
-  private static readonly MINIGAME_PRIZES = [5, 10, 15, 20, 25, 50, 10, 15];
-
   /**
-   * BIN-505/506: 4-way rotation order for Game 1 mini-games. Legacy ran the
-   * same rotation per hall (wheel → chest → mystery → colorDraft), reading
-   * prize lists from the admin-configured `otherGame` collection. We keep the
-   * rotation but default every type to MINIGAME_PRIZES until per-type admin
-   * config lands (follow-up issue).
+   * Mini-game rotation counter-state. Bor i en container så
+   * {@link BingoEngineMiniGames.activateMiniGame} kan mutere feltet uten at
+   * engine eksponerer en public setter.
    */
-  private static readonly MINIGAME_ROTATION: readonly MiniGameType[] = [
-    "wheelOfFortune",
-    "treasureChest",
-    "mysteryGame",
-    "colorDraft",
-  ];
-
-  /** Mini-game rotation counter — indexes into MINIGAME_ROTATION. */
-  private miniGameCounter = 0;
+  private readonly miniGameRotation: MiniGameRotationState = { counter: 0 };
 
   /**
    * Activate a mini-game for a player (called after BINGO win in Game 1).
    * Rotates wheelOfFortune → treasureChest → mysteryGame → colorDraft.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineMiniGames.activateMiniGame}.
    */
   activateMiniGame(roomCode: string, playerId: string): MiniGameState | null {
-    const room = this.requireRoom(roomCode);
-    const game = room.currentGame;
-    if (!game) return null;
-    if (game.miniGame) return game.miniGame; // Already activated
-
-    const rotation = BingoEngine.MINIGAME_ROTATION;
-    const type: MiniGameType = rotation[this.miniGameCounter % rotation.length];
-    this.miniGameCounter += 1;
-
-    const miniGame: MiniGameState = {
+    return activateMiniGameHelper(
+      this.getMiniGamesContext(),
+      this.miniGameRotation,
+      roomCode,
       playerId,
-      type,
-      prizeList: [...BingoEngine.MINIGAME_PRIZES],
-      isPlayed: false,
-    };
-    game.miniGame = miniGame;
-    return miniGame;
+    );
   }
 
   /**
    * Play the mini-game. Server picks the winning segment/chest.
-   * For treasureChest, selectedIndex is the player's pick (cosmetic only — prize is server-determined).
+   * For treasureChest, selectedIndex is the player's pick (cosmetic only —
+   * prize is server-determined).
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineMiniGames.playMiniGame}.
    */
   async playMiniGame(roomCode: string, playerId: string, _selectedIndex?: number): Promise<{
     type: MiniGameType;
@@ -2661,69 +2028,27 @@ export class BingoEngine {
     prizeAmount: number;
     prizeList: number[];
   }> {
-    const room = this.requireRoom(roomCode);
-    const game = room.currentGame;
-    if (!game || !game.miniGame) {
-      throw new DomainError("NO_MINIGAME", "Ingen aktiv mini-game.");
-    }
-    const miniGame = game.miniGame;
-    if (miniGame.playerId !== playerId) {
-      throw new DomainError("NOT_MINIGAME_PLAYER", "Mini-game tilhører en annen spiller.");
-    }
-    if (miniGame.isPlayed) {
-      throw new DomainError("MINIGAME_PLAYED", "Mini-game er allerede spilt.");
-    }
+    return playMiniGameHelper(
+      this.getMiniGamesContext(),
+      roomCode,
+      playerId,
+      _selectedIndex,
+    );
+  }
 
-    // Server-authoritative random segment
-    const segmentIndex = Math.floor(Math.random() * miniGame.prizeList.length);
-    const prizeAmount = miniGame.prizeList[segmentIndex];
-    miniGame.isPlayed = true;
-    miniGame.result = { segmentIndex, prizeAmount };
-
-    // Credit prize to player balance
-    if (prizeAmount > 0) {
-      const player = this.requirePlayer(room, playerId);
-      const gameType = "DATABINGO" as const;
-      const channel = "INTERNET" as const;
-      const houseAccountId = this.ledger.makeHouseAccountId(room.hallId, gameType, channel);
-
-      // PR-W3 wallet-split: payout er gevinst → krediter winnings-siden.
-      const transfer = await this.walletAdapter.transfer(
-        houseAccountId,
-        player.walletId,
-        prizeAmount,
-        `Mini-game ${miniGame.type} prize ${room.code}`,
-        { idempotencyKey: `minigame-${game.id}-${miniGame.type}`, targetSide: "winnings" },
-      );
-      player.balance += prizeAmount;
-
-      await this.compliance.recordLossEntry(player.walletId, room.hallId, {
-        type: "PAYOUT",
-        amount: prizeAmount,
-        createdAtMs: Date.now(),
-      });
-      await this.ledger.recordComplianceLedgerEvent({
-        hallId: room.hallId,
-        gameType,
-        channel,
-        eventType: "PRIZE",
-        amount: prizeAmount,
-        roomCode: room.code,
-        gameId: game.id,
-        claimId: `minigame-${game.id}-${miniGame.type}`,
-        playerId,
-        walletId: player.walletId,
-        sourceAccountId: transfer.fromTx.accountId,
-        targetAccountId: transfer.toTx.accountId,
-        policyVersion: "minigame-v1",
-      });
-    }
-
+  /**
+   * Bygger narrow port mot mini-game-modulen. Samler de interne adapterne
+   * + `requireRoom`/`requirePlayer` som modulen trenger uten å eksponere
+   * hele engine-state. Instansiert per-kall — billig og holder ingen extra
+   * felt på klassen.
+   */
+  private getMiniGamesContext(): MiniGamesContext {
     return {
-      type: miniGame.type,
-      segmentIndex,
-      prizeAmount,
-      prizeList: miniGame.prizeList,
+      walletAdapter: this.walletAdapter,
+      compliance: this.compliance,
+      ledger: this.ledger,
+      requireRoom: (code) => this.requireRoom(code),
+      requirePlayer: (room, playerId) => this.requirePlayer(room, playerId),
     };
   }
 
@@ -3585,81 +2910,29 @@ export class BingoEngine {
    * Called during startup crash recovery when a game was RUNNING at the time of the last checkpoint.
    * Reconstructs in-memory Maps/Sets from the snapshot's plain-object serialization.
    */
+  /**
+   * BIN-245: Restore a room + in-progress game from a PostgreSQL checkpoint.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineRecovery.restoreRoomFromSnapshot}
+   * i refactor/s1-bingo-engine-split (Forslag A).
+   */
   restoreRoomFromSnapshot(
     roomCode: string,
     hallId: string,
     hostPlayerId: string,
     players: Player[],
     snapshot: GameSnapshot,
-    // BIN-672: required — caller MUST pass a gameSlug from the
-    // persisted game_sessions.game_slug column. No fallback here; an
-    // unknown slug should fail loud (will be thrown by the ticket-gen
-    // chain when display-tickets are requested).
-    gameSlug: string
+    // BIN-672: required — caller MUST pass a gameSlug.
+    gameSlug: string,
   ): void {
-    const code = roomCode.trim().toUpperCase();
-    if (this.rooms.has(code)) {
-      throw new DomainError("ROOM_ALREADY_EXISTS", `Rom ${code} finnes allerede — kan ikke gjenopprette.`);
-    }
-
-    const tickets = new Map<string, Ticket[]>(
-      Object.entries(snapshot.tickets).map(([pid, t]) => [
-        pid,
-        t.map((tk) => ({ grid: tk.grid.map((row) => [...row]) }))
-      ])
-    );
-
-    // BIN-244: snapshot.marks is Record<string, number[][]> — restore to Map<string, Set<number>[]>
-    const marks = new Map<string, Set<number>[]>(
-      Object.entries(snapshot.marks).map(([pid, marksByTicket]) => [
-        pid,
-        marksByTicket.map((nums) => new Set(nums))
-      ])
-    );
-
-    const game: GameState = {
-      id: snapshot.id,
-      status: "RUNNING",
-      entryFee: snapshot.entryFee,
-      ticketsPerPlayer: snapshot.ticketsPerPlayer,
-      prizePool: snapshot.prizePool,
-      remainingPrizePool: snapshot.remainingPrizePool,
-      payoutPercent: snapshot.payoutPercent,
-      maxPayoutBudget: snapshot.maxPayoutBudget,
-      remainingPayoutBudget: snapshot.remainingPayoutBudget,
-      // BIN-243: Restore full ordered draw bag from snapshot
-      drawBag: [...snapshot.drawBag],
-      drawnNumbers: [...snapshot.drawnNumbers],
-      tickets,
-      marks,
-      claims: [...snapshot.claims],
-      lineWinnerId: snapshot.lineWinnerId,
-      bingoWinnerId: snapshot.bingoWinnerId,
-      patterns: snapshot.patterns ? [...snapshot.patterns] : undefined,
-      patternResults: snapshot.patternResults ? [...snapshot.patternResults] : undefined,
-      startedAt: snapshot.startedAt,
-      endedAt: snapshot.endedAt,
-      endedReason: snapshot.endedReason
-    };
-
-    const playersMap = new Map<string, Player>(players.map((p) => [p.id, p]));
-
-    const restoredRoom: RoomState = {
-      code,
+    restoreRoomFromSnapshotHelper(
+      this.getRecoveryContext(),
+      roomCode,
       hallId,
       hostPlayerId,
+      players,
+      snapshot,
       gameSlug,
-      players: playersMap,
-      currentGame: game,
-      gameHistory: [],
-      createdAt: new Date().toISOString()
-    };
-    this.rooms.set(code, restoredRoom);
-    this.syncRoomToStore(restoredRoom); // BIN-251
-
-    logger.warn(
-      { roomCode: code, gameId: snapshot.id, drawn: snapshot.drawnNumbers.length, remaining: snapshot.drawBag.length },
-      "[BIN-245] Room restored from checkpoint"
     );
   }
 
@@ -3682,117 +2955,81 @@ export class BingoEngine {
     };
   }
 
-  /** HOEY-4: Refund buy-ins when game startup fails partway through.
-   *  Returns structured data about any failed refunds for reconciliation. */
+  /**
+   * HOEY-4: Refund buy-ins when game startup fails partway through.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineRecovery.refundDebitedPlayers}.
+   */
   private async refundDebitedPlayers(
-    debitedPlayers: Array<{ player: Player; fromAccountId: string; toAccountId: string; amount: number }>,
+    debitedPlayers: Array<{
+      player: Player;
+      fromAccountId: string;
+      toAccountId: string;
+      amount: number;
+    }>,
     houseAccountId: string,
     roomCode: string,
-    gameId: string
-  ): Promise<{ failedRefunds: Array<{ playerId: string; walletId: string; amount: number; error: string }> }> {
-    const failedRefunds: Array<{ playerId: string; walletId: string; amount: number; error: string }> = [];
-    for (const { player, amount } of debitedPlayers) {
-      try {
-        await this.walletAdapter.transfer(
-          houseAccountId,
-          player.walletId,
-          amount,
-          `Refund: game start failed ${roomCode}`,
-          { idempotencyKey: `refund-${gameId}-${player.id}` }
-        );
-        player.balance += amount;
-      } catch (refundErr) {
-        failedRefunds.push({
-          playerId: player.id,
-          walletId: player.walletId,
-          amount,
-          error: String(refundErr)
-        });
-        logger.error(
-          { err: refundErr, playerId: player.id, walletId: player.walletId, gameId, roomCode },
-          "CRITICAL: Failed to refund buy-in after game start failure — requires manual reconciliation"
-        );
-      }
-    }
-    if (failedRefunds.length > 0) {
-      logger.error(
-        { failedRefunds, gameId, roomCode, totalFailedAmount: failedRefunds.reduce((s, r) => s + r.amount, 0) },
-        `RECONCILIATION: ${failedRefunds.length} refund(s) failed for game ${gameId} — players owe money`
-      );
-    }
-    return { failedRefunds };
+    gameId: string,
+  ): Promise<{
+    failedRefunds: Array<{
+      playerId: string;
+      walletId: string;
+      amount: number;
+      error: string;
+    }>;
+  }> {
+    return refundDebitedPlayersHelper(
+      this.walletAdapter,
+      debitedPlayers,
+      houseAccountId,
+      roomCode,
+      gameId,
+    );
   }
 
-  /** HOEY-3: Write a DRAW checkpoint after each ball draw. */
+  /**
+   * HOEY-3: Write a DRAW checkpoint after each ball draw.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineRecovery.writeDrawCheckpoint}.
+   */
   private async writeDrawCheckpoint(room: RoomState, game: GameState): Promise<void> {
-    if (!this.bingoAdapter.onCheckpoint) return;
-    try {
-      await this.bingoAdapter.onCheckpoint({
-        roomCode: room.code,
-        gameId: game.id,
-        reason: "DRAW",
-        snapshot: this.serializeGameForRecovery(game),
-        players: [...room.players.values()],
-        hallId: room.hallId
-      });
-    } catch (err) {
-      logger.error({ err, gameId: game.id, drawCount: game.drawnNumbers.length }, "CRITICAL: Checkpoint failed after draw");
-    }
-    // HOEY-7: Persist room state to backing store after draw
-    await this.rooms.persist(room.code);
+    return writeDrawCheckpointHelper(this.getRecoveryContext(), room, game);
   }
 
-  /** HOEY-6: Write a GAME_END checkpoint for any termination path. */
-  // BIN-615 / PR-C2: protected so Game2Engine can finalize on auto-claim-end.
+  /**
+   * HOEY-6: Write a GAME_END checkpoint for any termination path.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineRecovery.writeGameEndCheckpoint}.
+   * BIN-615 / PR-C2: protected så Game2Engine kan finalisere auto-claim-end.
+   */
   protected async writeGameEndCheckpoint(room: RoomState, game: GameState): Promise<void> {
-    if (!this.bingoAdapter.onCheckpoint) return;
-    try {
-      await this.bingoAdapter.onCheckpoint({
-        roomCode: room.code,
-        gameId: game.id,
-        reason: "GAME_END",
-        snapshot: this.serializeGameForRecovery(game),
-        players: [...room.players.values()],
-        hallId: room.hallId
-      });
-    } catch (err) {
-      logger.error({ err, gameId: game.id, endedReason: game.endedReason }, "CRITICAL: Checkpoint failed at game end");
-    }
-    // HOEY-7: Persist room state to backing store after game end
-    await this.rooms.persist(room.code);
+    return writeGameEndCheckpointHelper(this.getRecoveryContext(), room, game);
   }
 
-  /** Write payout checkpoint with one retry. Logs CRITICAL on final failure but does not throw. */
-  // BIN-615 / PR-C2: protected so Game2Engine can checkpoint after jackpot payouts.
+  /**
+   * Write payout checkpoint with one retry. Logs CRITICAL on final failure
+   * but does not throw.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineRecovery.writePayoutCheckpointWithRetry}.
+   * BIN-615 / PR-C2: protected så Game2Engine kan checkpoint etter jackpot-payouts.
+   */
   protected async writePayoutCheckpointWithRetry(
     room: RoomState,
     game: GameState,
     claimId: string,
     payoutAmount: number,
     transactionIds: string[],
-    prizeType: "LINE" | "BINGO"
+    prizeType: "LINE" | "BINGO",
   ): Promise<void> {
-    const payload = {
-      roomCode: room.code,
-      gameId: game.id,
-      reason: "PAYOUT" as const,
+    return writePayoutCheckpointWithRetryHelper(
+      this.getRecoveryContext(),
+      room,
+      game,
       claimId,
       payoutAmount,
       transactionIds,
-      snapshot: this.serializeGameForRecovery(game),
-      players: [...room.players.values()],
-      hallId: room.hallId
-    };
-    try {
-      await this.bingoAdapter.onCheckpoint!(payload);
-    } catch (firstErr) {
-      logger.warn({ err: firstErr, claimId, gameId: game.id }, `Checkpoint failed after ${prizeType} payout — retrying once`);
-      try {
-        await this.bingoAdapter.onCheckpoint!(payload);
-      } catch (retryErr) {
-        logger.error({ err: retryErr, claimId, gameId: game.id }, `CRITICAL: Checkpoint failed after ${prizeType} payout (retry exhausted)`);
-      }
-    }
+      prizeType,
+    );
   }
 
   private serializeGame(game: GameState): GameSnapshot {
@@ -3839,17 +3076,27 @@ export class BingoEngine {
     };
   }
 
-  /** KRITISK-5/6: Full engine state for checkpoint recovery (preserves drawBag + per-ticket marks). */
+  /**
+   * KRITISK-5/6: Full engine state for checkpoint recovery.
+   *
+   * Implementasjon ekstrahert til {@link BingoEngineRecovery.serializeGameForRecovery}.
+   */
   private serializeGameForRecovery(game: GameState): RecoverableGameSnapshot {
-    const base = this.serializeGame(game);
-    const structuredMarks: Record<string, number[][]> = {};
-    for (const [playerId, sets] of game.marks) {
-      structuredMarks[playerId] = sets.map(s => [...s]);
-    }
+    return serializeGameForRecoveryHelper((g) => this.serializeGame(g), game);
+  }
+
+  /**
+   * Bygger narrow port mot recovery-modulen. Samler `rooms`, adapterne
+   * + callbacks til private helpers (`syncRoomToStore`, `serializeGame`)
+   * som modulen trenger uten å eksponere dem som public getters.
+   */
+  private getRecoveryContext(): RecoveryContext {
     return {
-      ...base,
-      drawBag: [...game.drawBag],
-      structuredMarks,
+      bingoAdapter: this.bingoAdapter,
+      walletAdapter: this.walletAdapter,
+      rooms: this.rooms,
+      syncRoomToStore: (room) => this.syncRoomToStore(room),
+      serializeGame: (game) => this.serializeGame(game),
     };
   }
 }
