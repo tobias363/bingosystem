@@ -192,6 +192,8 @@ import { CmsService } from "./admin/CmsService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
 import { createAdminReportsSubgameDrillDownRouter } from "./routes/adminReportsSubgameDrillDown.js";
 import { createAdminReportsGame1ManagementRouter } from "./routes/adminReportsGame1Management.js";
+import { createAdminReportsHallSpecificRouter } from "./routes/adminReportsHallSpecific.js";
+import { createAgentReportsPastWinningRouter } from "./routes/agentReportsPastWinning.js";
 import { createAdminReportsRedFlagPlayersRouter } from "./routes/adminReportsRedFlagPlayers.js";
 import { createAdminPlayersTopRouter } from "./routes/adminPlayersTop.js";
 import { createAdminVouchersRouter } from "./routes/adminVouchers.js";
@@ -1866,6 +1868,21 @@ app.use(createAdminReportsGame1ManagementRouter({
   platformService,
   engine,
   hallGroupService,
+}));
+// BIN-17.36: "Hall Specific Report" (admin) — per-hall aggregat med
+// Elvis Replacement (PM-låst Appendix B) + Game 1-5 OMS/UTD/Payout%/RES.
+app.use(createAdminReportsHallSpecificRouter({
+  platformService,
+  engine,
+  hallGroupService,
+  agentService,
+}));
+// BIN-17.32: "Past Game Winning History" (agent) — vinner-historikk per hall.
+app.use(createAgentReportsPastWinningRouter({
+  platformService,
+  agentService,
+  agentShiftService,
+  staticTicketService,
 }));
 // BIN-651: red-flag players report (AML + regulatorisk AuditLog on view).
 // Paginert liste over red-flaggede spillere med flag-årsak + siste aktivitet.

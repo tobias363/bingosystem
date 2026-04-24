@@ -1607,6 +1607,10 @@ export class BingoEngine {
       gameId: room.currentGame?.id,
       playerId: player.id,
       walletId: player.walletId,
+      // BIN-17.36: mark this STAKE-entry as a replacement fee (Elvis / swap
+      // mellom runder) so the Hall Specific Report kan sum "Elvis Replacement
+      // Amount" separately. Vanlig buy-in STAKE har ikke denne flaggen.
+      metadata: { isReplacement: true },
     });
     return { debitedAmount: debit };
   }
