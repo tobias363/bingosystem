@@ -1,15 +1,19 @@
 /**
  * @vitest-environment happy-dom
  *
- * Game1BuyPopup tester — dekker D1 (30-brett-grense med vekting) og D2 (X-slett per rad).
+ * Game1BuyPopup tester — 30-brett-grense (D1) med Bong-portet UI (2026-04-24).
  *
  * Unity-referanser:
  *   - `BingoTemplates.cs:86` — `maxPurchaseTicket = 30`
  *   - `Game1PurchaseTicket.cs:67-93`, `:69` — `alreadyPurchased` fratrekk
  *   - `PrefabGame1TicketPurchaseSubType.cs:48-58,76` — `AllowMorePurchase` (plus-disable)
- *   - `Game1ViewPurchaseElvisTicket.cs:17,49-76` — deleteBtn-pattern (tilpasset)
  *
  * Backend-grense håndheves i `apps/backend/src/sockets/gameEvents.ts:533-547`.
+ *
+ * NB: X-knapp-per-rad-tester (D2) droppet når popupen ble portert til
+ * Bong.jsx-design 2026-04-24 — stepper-minus-knappen dekker samme funksjon
+ * (trykk ned til 0). Separat clear-feature kan reintroduseres senere om
+ * behovet dukker opp.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -26,7 +30,6 @@ const TYPES = [
 ];
 
 function makePopup(): { popup: Game1BuyPopup; container: HTMLElement } {
-  // happy-dom gir oss document; stub ResizeObserver (brukes av HtmlOverlayManager).
   if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === "undefined") {
     (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
       observe(): void {}
@@ -41,52 +44,49 @@ function makePopup(): { popup: Game1BuyPopup; container: HTMLElement } {
   return { popup, container };
 }
 
-/** Finn kort for gitt type-navn (første <div> med matchende tekst i container). */
+/**
+ * DOM-struktur (Bong-port 2026-04-24):
+ *   overlayRoot > backdrop > card
+ *   card.children: [0] header, [1] typesContainer, [2] sep, [3] statusMsg,
+ *                  [4] totalRow, [5] buyBtn, [6] cancelBtn
+ *   typesContainer.children[i] = row (én per billett-type)
+ *   row.children: [0] left (brett-ikon + info), [1] stepper
+ *   stepper.children: [minus, qtyLabel, plus]
+ */
+function getCard(container: HTMLElement): HTMLElement {
+  const overlay = container.querySelector(".g1-overlay-root") as HTMLElement;
+  const backdrop = overlay.children[overlay.children.length - 1] as HTMLElement;
+  return backdrop.firstElementChild as HTMLElement;
+}
+
 function findTypeCard(container: HTMLElement, typeIndex: number): HTMLElement {
-  const grid = container.querySelector(".g1-overlay-root") as HTMLElement;
-  // typesContainer er første grid child inne i popup-card
-  const backdrop = grid.children[grid.children.length - 1] as HTMLElement;
-  const card = backdrop.firstElementChild as HTMLElement;
-  const typesContainer = card.children[1] as HTMLElement; // [0]=title, [1]=grid
+  const card = getCard(container);
+  const typesContainer = card.children[1] as HTMLElement;
   return typesContainer.children[typeIndex] as HTMLElement;
 }
 
-function getPlusBtn(cardEl: HTMLElement): HTMLButtonElement {
-  const qtyRow = cardEl.lastElementChild as HTMLElement;
-  // qtyRow children: [minus, qtyLabel, plus]
-  return qtyRow.children[2] as HTMLButtonElement;
+function getStepper(rowEl: HTMLElement): HTMLElement {
+  return rowEl.children[1] as HTMLElement;
 }
 
-function getMinusBtn(cardEl: HTMLElement): HTMLButtonElement {
-  const qtyRow = cardEl.lastElementChild as HTMLElement;
-  return qtyRow.children[0] as HTMLButtonElement;
+function getPlusBtn(rowEl: HTMLElement): HTMLButtonElement {
+  return getStepper(rowEl).children[2] as HTMLButtonElement;
 }
 
-function getQtyLabel(cardEl: HTMLElement): HTMLSpanElement {
-  const qtyRow = cardEl.lastElementChild as HTMLElement;
-  return qtyRow.children[1] as HTMLSpanElement;
+function getMinusBtn(rowEl: HTMLElement): HTMLButtonElement {
+  return getStepper(rowEl).children[0] as HTMLButtonElement;
 }
 
-function getClearBtn(cardEl: HTMLElement): HTMLButtonElement {
-  // X-knappen er første child (position:absolute top-right)
-  return cardEl.firstElementChild as HTMLButtonElement;
+function getQtyLabel(rowEl: HTMLElement): HTMLSpanElement {
+  return getStepper(rowEl).children[1] as HTMLSpanElement;
 }
 
 function getBuyBtn(container: HTMLElement): HTMLButtonElement {
-  // Buy-knappen er første button i btnRow (siste child i card)
-  const root = container.querySelector(".g1-overlay-root") as HTMLElement;
-  const backdrop = root.children[root.children.length - 1] as HTMLElement;
-  const card = backdrop.firstElementChild as HTMLElement;
-  const btnRow = card.lastElementChild as HTMLElement;
-  return btnRow.children[0] as HTMLButtonElement;
+  return getCard(container).children[5] as HTMLButtonElement;
 }
 
 function getStatusMsg(container: HTMLElement): HTMLElement {
-  const root = container.querySelector(".g1-overlay-root") as HTMLElement;
-  const backdrop = root.children[root.children.length - 1] as HTMLElement;
-  const card = backdrop.firstElementChild as HTMLElement;
-  // card children: [title, typesContainer, sep, totalLabel, statusMsg, btnRow]
-  return card.children[4] as HTMLElement;
+  return getCard(container).children[3] as HTMLElement;
 }
 
 // ── Test-suites ──────────────────────────────────────────────────────────
@@ -105,7 +105,6 @@ describe("Game1BuyPopup — 30-brett-grense (D1)", () => {
     const largeCard = findTypeCard(container, 1); // elvis (ticketCount=3)
     const largePlus = getPlusBtn(largeCard);
 
-    // Klikk 10 ganger → 10 × 3 = 30 vektede brett
     for (let i = 0; i < 10; i++) {
       largePlus.click();
     }
@@ -114,7 +113,6 @@ describe("Game1BuyPopup — 30-brett-grense (D1)", () => {
     expect(largePlus.disabled).toBe(true);
     expect(largePlus.style.opacity).toBe("0.35");
 
-    // Også small plus skal disables (ingen plass til 1 mer)
     const smallCard = findTypeCard(container, 0);
     const smallPlus = getPlusBtn(smallCard);
     expect(smallPlus.disabled).toBe(true);
@@ -134,10 +132,9 @@ describe("Game1BuyPopup — 30-brett-grense (D1)", () => {
     expect(getPlusBtn(largeCard).disabled).toBe(true);
     expect(getPlusBtn(smallCard).disabled).toBe(true);
 
-    // Statusmelding "Maks 30 brett valgt" (grønn)
     const status = getStatusMsg(container);
     expect(status.textContent).toBe("Maks 30 brett valgt");
-    expect(status.style.color).toBe("#81c784"); // grønn success-farge
+    expect(status.style.color).toBe("#81c784"); // grønn success
   });
 
   it("Test 3: Etter minus re-enables plus-knappene", () => {
@@ -153,7 +150,6 @@ describe("Game1BuyPopup — 30-brett-grense (D1)", () => {
     expect(largePlus.disabled).toBe(false);
     expect(largePlus.style.opacity).toBe("1");
 
-    // Small plus burde også re-enables (ticketCount=1 ≤ remaining=3)
     const smallPlus = getPlusBtn(findTypeCard(container, 0));
     expect(smallPlus.disabled).toBe(false);
   });
@@ -187,7 +183,7 @@ describe("Game1BuyPopup — 30-brett-grense (D1)", () => {
   });
 });
 
-describe("Game1BuyPopup — X-slett per rad (D2)", () => {
+describe("Game1BuyPopup — Bong-portet UI-atferd (2026-04-24)", () => {
   let popup: Game1BuyPopup;
   let container: HTMLElement;
 
@@ -196,56 +192,59 @@ describe("Game1BuyPopup — X-slett per rad (D2)", () => {
     ({ popup, container } = makePopup());
   });
 
-  it("Test 4: X-knapp nullstiller qty og updaterer total", () => {
+  it("Stepper-minus går ned til 0 og oppdaterer total", () => {
     popup.showWithTypes(ENTRY_FEE, TYPES, 0);
     const largeCard = findTypeCard(container, 1);
     const plus = getPlusBtn(largeCard);
-    const clearBtn = getClearBtn(largeCard);
+    const minus = getMinusBtn(largeCard);
 
     plus.click();
     plus.click();
     expect(popup.getTotalTicketCount()).toBe(6); // 2 × ticketCount 3
-    expect(clearBtn.style.display).toBe("block");
 
-    clearBtn.click();
-
+    minus.click();
+    minus.click();
     expect(popup.getTotalTicketCount()).toBe(0);
     expect(getQtyLabel(largeCard).textContent).toBe("0");
-    // X-knapp skjules når qty=0
-    expect(clearBtn.style.display).toBe("none");
   });
 
-  it("X-knapp er skjult ved qty=0 initielt", () => {
+  it("Stepper-minus på 0 er no-op (går ikke under 0)", () => {
     popup.showWithTypes(ENTRY_FEE, TYPES, 0);
     const smallCard = findTypeCard(container, 0);
-    const clear = getClearBtn(smallCard);
-    expect(clear.style.display).toBe("none");
+    const minus = getMinusBtn(smallCard);
+
+    minus.click();
+    minus.click();
+    expect(popup.getTotalTicketCount()).toBe(0);
+    expect(getQtyLabel(smallCard).textContent).toBe("0");
   });
 
-  it("X-knapp blir synlig når qty øker over 0", () => {
+  it("Aktiv rad får gyllen glød (bakgrunn + inset shadow)", () => {
     popup.showWithTypes(ENTRY_FEE, TYPES, 0);
     const smallCard = findTypeCard(container, 0);
-    const clear = getClearBtn(smallCard);
-
-    expect(clear.style.display).toBe("none");
     getPlusBtn(smallCard).click();
-    expect(clear.style.display).toBe("block");
+
+    // Rad har gyllen bg + inset shadow når qty > 0 (happy-dom beholder
+    // original CSS-string uten whitespace-normalisering).
+    expect(smallCard.style.background).toMatch(/rgba\(245,\s*184,\s*65/);
+    expect(smallCard.style.boxShadow).toMatch(/rgba\(245,\s*184,\s*65/);
   });
 
-  it("X-knapp påvirker ikke andre rader", () => {
+  it("Buy-knapp viser 'Kjøp X brett · Y kr' når brett er valgt", () => {
     popup.showWithTypes(ENTRY_FEE, TYPES, 0);
     const smallCard = findTypeCard(container, 0);
-    const largeCard = findTypeCard(container, 1);
-
     getPlusBtn(smallCard).click();
-    getPlusBtn(smallCard).click();
-    getPlusBtn(largeCard).click(); // 2 small + 1 large = 2 + 3 = 5
+    getPlusBtn(smallCard).click(); // 2 × 10 kr = 20 kr, 2 brett
 
-    expect(popup.getTotalTicketCount()).toBe(5);
+    const buyBtn = getBuyBtn(container);
+    expect(buyBtn.textContent).toBe("Kjøp 2 brett · 20 kr");
+    expect(buyBtn.disabled).toBe(false);
+  });
 
-    getClearBtn(smallCard).click(); // bare small nullstilles
-
-    expect(popup.getTotalTicketCount()).toBe(3); // bare large igjen
-    expect(getQtyLabel(largeCard).textContent).toBe("1");
+  it("Buy-knapp viser 'Velg brett for å kjøpe' når 0 valgt", () => {
+    popup.showWithTypes(ENTRY_FEE, TYPES, 0);
+    const buyBtn = getBuyBtn(container);
+    expect(buyBtn.textContent).toBe("Velg brett for å kjøpe");
+    expect(buyBtn.disabled).toBe(true);
   });
 });

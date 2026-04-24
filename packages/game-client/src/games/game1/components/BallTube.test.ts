@@ -147,10 +147,14 @@ describe("BallTube.getMoveAnimationTime — Unity-parity move-time", () => {
  */
 describe("BallTube.clear — tween cleanup covers evicted balls (render-crash regression)", () => {
   it("kills tweens on every ballContainer child, including ones popped off this.balls", () => {
-    // 2026-04-23 redesign: ball size shrunk from 90/100 to 81/85, so a 600-px
-    // tube now fits 6 balls. Use a height that still produces showcase=5 so
-    // a 6-ball fill triggers the eviction path this test guards.
-    const tube = new BallTube(450);
+    // Tube-høyde må gi showcaseCount=5 så 6. ball trigger eviction (= scenariet
+    // denne regresjonen guard'er). Med BALL_SIZE=70, BALL_GAP=0, PAD_TOP=4:
+    //   showcase = floor((h - 4) / 70)
+    //   h=400 → floor(396/70) = 5 ✓
+    // Tidligere brukt 450 gav showcase=6 etter 2026-04-23-redesign (BALL_SIZE
+    // skrumpet videre fra 81→70 + BALL_GAP 4→0) — ingen eviction, test falsk
+    // negativ. 400 håndterer nåværende + fremtidige mindre endringer (margin).
+    const tube = new BallTube(400);
     for (let n = 1; n <= 6; n++) {
       tube.addBall(n);
     }
