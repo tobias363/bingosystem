@@ -546,6 +546,31 @@ export class BingoEngine {
     };
   }
 
+  /**
+   * K1 compliance-fix: eksponer ComplianceLedger som narrow port
+   * (recordComplianceLedgerEvent-only) slik at Game1TicketPurchaseService
+   * og Game1PayoutService kan skrive STAKE/PRIZE-entries uten å ta
+   * direkte avhengighet til ComplianceLedger-klassen. Samme port-pattern
+   * som `getComplianceLossPort`.
+   *
+   * Regulatorisk: caller MÅ sende `hallId = kjøpe-hallen` (ikke master-
+   * hallen), jf. §71 per-hall-rapportering. Porten er "dum" og stoler på
+   * at caller har valgt riktig hall.
+   *
+   * Wiring: `index.ts` kaller `engine.getComplianceLedgerPort()` og
+   * sender resultatet inn i Game1TicketPurchaseService- og
+   * Game1PayoutService-konstruktøren. Tester kan bruke
+   * `NoopComplianceLedgerPort` eller spy-mock.
+   */
+  getComplianceLedgerPort(): import("../adapters/ComplianceLedgerPort.js").ComplianceLedgerPort {
+    const ledger = this.ledger;
+    return {
+      async recordComplianceLedgerEvent(input): Promise<void> {
+        await ledger.recordComplianceLedgerEvent(input);
+      },
+    };
+  }
+
   async createRoom(input: CreateRoomInput): Promise<{ roomCode: string; playerId: string }> {
     const hallId = this.assertHallId(input.hallId);
     const playerId = randomUUID();

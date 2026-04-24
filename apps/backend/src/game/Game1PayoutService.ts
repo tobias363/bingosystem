@@ -39,6 +39,10 @@ import type {
   SplitRoundingHouseRetainedEvent,
 } from "../adapters/SplitRoundingAuditPort.js";
 import { NoopSplitRoundingAuditPort } from "../adapters/SplitRoundingAuditPort.js";
+import {
+  NoopComplianceLedgerPort,
+  type ComplianceLedgerPort,
+} from "../adapters/ComplianceLedgerPort.js";
 import type { AuditLogService } from "../compliance/AuditLogService.js";
 import { DomainError } from "./BingoEngine.js";
 import { IdempotencyKeys } from "./idempotency.js";
@@ -105,6 +109,25 @@ export interface Game1PayoutServiceOptions {
   schema?: string;
   loyaltyHook?: LoyaltyPointsHookPort;
   splitRoundingAudit?: SplitRoundingAuditPort;
+  /**
+   * K1 compliance-fix: port for å logge PRIZE-entries til ComplianceLedger
+   * per vinner. hallId bindes til VINNERENS kjøpe-hall (winner.hallId —
+   * hentet fra app_game1_ticket_purchases.hall_id), ikke master-hallen.
+   * Default no-op — wires i index.ts via `engine.getComplianceLedgerPort()`.
+   *
+   * Soft-fail: port-feil ruller ikke tilbake payout (payout er allerede
+   * committed via wallet.credit; PRIZE-entry er audit-logging).
+   */
+  complianceLedgerPort?: ComplianceLedgerPort;
+  /**
+   * K1 compliance-fix: channel for Game1 PRIZE-entries. digital_wallet-
+   * vinnere får INTERNET, agent-purchase-vinnere får HALL. Default =
+   * INTERNET (tidligere default i BingoEngine før K1 var også INTERNET).
+   *
+   * Per-vinner-ovrstyring gjøres via Game1WinningAssignment.channel hvis
+   * satt; fallback er dette service-nivå defaultet.
+   */
+  defaultLedgerChannel?: "HALL" | "INTERNET";
 }
 
 // ── Service ─────────────────────────────────────────────────────────────────
@@ -115,6 +138,13 @@ export class Game1PayoutService {
   private readonly schema: string;
   private readonly loyaltyHook: LoyaltyPointsHookPort;
   private readonly splitRoundingAudit: SplitRoundingAuditPort;
+  /**
+   * K1 compliance-fix: port for PRIZE-entries. Default no-op — wires i
+   * index.ts til engine.getComplianceLedgerPort().
+   */
+  private readonly complianceLedgerPort: ComplianceLedgerPort;
+  /** K1 compliance-fix: default channel for PRIZE-entries. */
+  private readonly defaultLedgerChannel: "HALL" | "INTERNET";
 
   constructor(options: Game1PayoutServiceOptions) {
     this.wallet = options.walletAdapter;
@@ -127,6 +157,9 @@ export class Game1PayoutService {
     this.loyaltyHook = options.loyaltyHook ?? new NoopLoyaltyPointsHookPort();
     this.splitRoundingAudit =
       options.splitRoundingAudit ?? new NoopSplitRoundingAuditPort();
+    this.complianceLedgerPort =
+      options.complianceLedgerPort ?? new NoopComplianceLedgerPort();
+    this.defaultLedgerChannel = options.defaultLedgerChannel ?? "INTERNET";
   }
 
   /**
@@ -278,6 +311,91 @@ export class Game1PayoutService {
           jackpotPerWinner > 0 ? jackpotPerWinner : null,
         ]
       );
+
+      // K1 compliance-fix: skriv PRIZE-entry (og EXTRA_PRIZE hvis jackpot)
+      // til ComplianceLedger per §71 pengespillforskriften. REGULATORISK-
+      // KRITISK: hallId = VINNERENS kjøpe-hall (winner.hallId), ikke
+      // master-hallens hall. hallId-verdien kommer fra
+      // app_game1_ticket_purchases.hall_id, som er hallen der vinnerens
+      // bong ble solgt.
+      //
+      // Soft-fail (matcher PR4c-patternet for andre hooks): en compliance-
+      // ledger-feil ruller ALDRI tilbake payout. Wallet-credit +
+      // phase_winners-INSERT er allerede committed; PRIZE-entry er
+      // audit-logging som kan re-kjøres manuelt ved behov.
+      if (prizePerWinnerCents > 0) {
+        try {
+          await this.complianceLedgerPort.recordComplianceLedgerEvent({
+            hallId: winner.hallId,
+            gameType: "DATABINGO",
+            channel: this.defaultLedgerChannel,
+            eventType: "PRIZE",
+            amount: centsToKroner(prizePerWinnerCents),
+            gameId: input.scheduledGameId,
+            roomCode: input.roomCode || undefined,
+            claimId: phaseWinnerId,
+            playerId: winner.userId,
+            walletId: winner.walletId,
+            metadata: {
+              reason: "GAME1_PHASE_PAYOUT",
+              phase: input.phase,
+              phaseName: input.phaseName,
+              assignmentId: winner.assignmentId,
+              ticketColor: winner.ticketColor,
+              winnerCount,
+              drawSequenceAtWin: input.drawSequenceAtWin,
+            },
+          });
+        } catch (err) {
+          log.warn(
+            {
+              err,
+              scheduledGameId: input.scheduledGameId,
+              phase: input.phase,
+              assignmentId: winner.assignmentId,
+              hallId: winner.hallId,
+              amount: prizePerWinnerCents,
+            },
+            "[K1] complianceLedger.recordComplianceLedgerEvent PRIZE feilet — payout fortsetter uansett"
+          );
+        }
+      }
+
+      if (jackpotPerWinner > 0) {
+        try {
+          await this.complianceLedgerPort.recordComplianceLedgerEvent({
+            hallId: winner.hallId,
+            gameType: "DATABINGO",
+            channel: this.defaultLedgerChannel,
+            eventType: "EXTRA_PRIZE",
+            amount: centsToKroner(jackpotPerWinner),
+            gameId: input.scheduledGameId,
+            roomCode: input.roomCode || undefined,
+            claimId: phaseWinnerId,
+            playerId: winner.userId,
+            walletId: winner.walletId,
+            metadata: {
+              reason: "GAME1_JACKPOT",
+              phase: input.phase,
+              phaseName: input.phaseName,
+              assignmentId: winner.assignmentId,
+              ticketColor: winner.ticketColor,
+            },
+          });
+        } catch (err) {
+          log.warn(
+            {
+              err,
+              scheduledGameId: input.scheduledGameId,
+              phase: input.phase,
+              assignmentId: winner.assignmentId,
+              hallId: winner.hallId,
+              amount: jackpotPerWinner,
+            },
+            "[K1] complianceLedger.recordComplianceLedgerEvent EXTRA_PRIZE feilet — payout fortsetter uansett"
+          );
+        }
+      }
 
       // Loyalty-hook (fire-and-forget).
       if (prizePerWinnerCents > 0) {

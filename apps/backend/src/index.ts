@@ -1002,6 +1002,11 @@ const game1TicketPurchaseService = new Game1TicketPurchaseService({
   // Soft-fail — pot-feil ruller ikke tilbake purchase. Hele kjøpssum teller
   // mot pot (pot er intern akkumulering, ikke loss-ledger-entry).
   potSalesHook: engine.getPotSalesHookPort(game1PotService),
+  // K1 compliance-fix: skriv STAKE-entry per kjøp bundet til kjøpe-hallens
+  // (input.hallId) house-account. §71 pengespillforskriften krever per-hall-
+  // rapport. Eksisterende entries før denne PR manglet — ingen retro-
+  // rebalansering. Se Game1TicketPurchaseService K1-kommentar for detaljer.
+  complianceLedgerPort: engine.getComplianceLedgerPort(),
 });
 // GAME1_SCHEDULE PR 4a: bind forward-ref slik at `ticketPurchasePort` (opprettet
 // tidligere pga. agent-service dependency) kan delegere til den nye servicen.
@@ -1024,6 +1029,11 @@ const game1PayoutService = new Game1PayoutService({
   auditLogService,
   schema: pgSchema,
   loyaltyHook: loyaltyHookAdapter,
+  // K1 compliance-fix: skriv PRIZE-entry per vinner bundet til VINNERENS
+  // kjøpe-hall (winner.hallId — hentet fra app_game1_ticket_purchases.
+  // hall_id), ikke master-hallens hall. §71-rapport blir riktig per hall
+  // for multi-hall-runder. Soft-fail (payout fortsetter ved ledger-feil).
+  complianceLedgerPort: engine.getComplianceLedgerPort(),
 });
 const game1JackpotService = new Game1JackpotService();
 
