@@ -1,7 +1,7 @@
 import type { PatternDefinition, Ticket } from "@spillorama/shared-types/game";
 import { getTicketThemeByName, type TicketColorTheme } from "../colors/TicketColorThemes.js";
 import { getElvisImageUrl, getElvisLabel, isElvisColor } from "../colors/ElvisAssetPaths.js";
-import { remainingForPattern } from "../logic/PatternMasks.js";
+import { remainingForPattern, oneToGoCellsForPattern } from "../logic/PatternMasks.js";
 
 /**
  * HTML-based bingo ticket. Replaces the Pixi TicketCard pipeline for Game 1.
@@ -90,6 +90,28 @@ function ensureBongStyles(): void {
 .bong-otg-pulse {
   animation: bong-otg-badge 1.3s ease-in-out infinite;
 }
+
+/* Per-celle "one to go"-puls — Bong.jsx-port.
+ * Cellen som vil fullføre aktivt pattern hvis markert pulserer med:
+ *  - bakgrunn fra 0.55 → 0.95 alpha (hvit translucent → hvit solid)
+ *  - scale 1 → 1.04
+ *  - ekspanderende ring-skygge som fader ut
+ *  - 2px mørk-rød outline (matcher marked-farge) */
+@keyframes bong-pulse-cell {
+  0%, 100% { background: rgba(255,255,255,0.55); transform: scale(1); }
+  50%      { background: rgba(255,255,255,0.95); transform: scale(1.04); }
+}
+@keyframes bong-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(122,26,26,0.65), 0 0 0 0 rgba(122,26,26,0.35); }
+  70%  { box-shadow: 0 0 0 6px rgba(122,26,26,0), 0 0 0 10px rgba(122,26,26,0); }
+  100% { box-shadow: 0 0 0 0 rgba(122,26,26,0), 0 0 0 0 rgba(122,26,26,0); }
+}
+.bong-pulse {
+  animation: bong-pulse-cell 1.3s ease-in-out infinite, bong-pulse-ring 1.3s ease-in-out infinite;
+  outline: 2px solid #7a1a1a;
+  z-index: 1;
+  position: relative;
+}
 `;
   document.head.appendChild(s);
 }
@@ -112,6 +134,10 @@ export class BingoTicketHtml {
   /** Fase-aktivt pattern — styrer "igjen"-teller ("X igjen til 1 Rad"). Null
    *  = whole-card-telling (pre-round / ukjent pattern). */
   private activePattern: PatternDefinition | null = null;
+  /** Cell-indices (0-24) som har `bong-pulse`-klasse — cellene som ville
+   *  fullføre aktivt pattern hvis de ble markert. Speilet brukes for å
+   *  idempotent rydde/legge til klassen uten unødvendige DOM-writes. */
+  private currentPulseCells = new Set<number>();
   /** Dimensions reported to parent (TicketGridHtml uses these for layout-card math). */
   readonly cardWidth = 240;
   readonly cardHeight = 300;
@@ -597,6 +623,26 @@ export class BingoTicketHtml {
       this.toGoEl.style.textTransform = "none";
       this.toGoEl.classList.remove("bong-otg-pulse");
     };
+
+    // Per-celle "one to go"-puls. For aktiv pattern: finn celler som vil
+    // fullføre en kandidat-maske hvis markert, legg til `bong-pulse`-klasse.
+    // Idempotent via `currentPulseCells` for å unngå unødvendig DOM-writes.
+    const nextPulse = new Set<number>();
+    if (this.activePattern) {
+      const cells = oneToGoCellsForPattern(
+        this.ticket.grid,
+        this.marks,
+        this.activePattern.name,
+      );
+      if (cells) cells.forEach((i) => nextPulse.add(i));
+    }
+    for (const idx of this.currentPulseCells) {
+      if (!nextPulse.has(idx)) this.cellNodes[idx]?.classList.remove("bong-pulse");
+    }
+    for (const idx of nextPulse) {
+      if (!this.currentPulseCells.has(idx)) this.cellNodes[idx]?.classList.add("bong-pulse");
+    }
+    this.currentPulseCells = nextPulse;
 
     if (this.activePattern) {
       const phaseRemaining = remainingForPattern(

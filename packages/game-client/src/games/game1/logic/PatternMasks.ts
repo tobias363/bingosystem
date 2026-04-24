@@ -72,6 +72,42 @@ export function remainingForPattern(
 }
 
 /**
+ * Finn bit-indeksene for cellene som er "one-to-go" — celler som, hvis
+ * de ble merket, ville fullføre en kandidat-maske for pattern-fasen.
+ *
+ * Brukes til å highlight'e nærmeste vinn-celle per bong med pulse-effekt
+ * (Bong.jsx `bong-pulse`). Kan returnere flere celler hvis flere kandidat-
+ * masker har nøyaktig 1 manglende bit (f.eks. fase 1 hvor flere rader
+ * samtidig har 4/5 markert).
+ *
+ * Returnerer:
+ *   - tom liste = ingen celler er one-to-go (enten for få marks eller
+ *     allerede vunnet)
+ *   - null = ukjent pattern-navn
+ */
+export function oneToGoCellsForPattern(
+  grid: ReadonlyArray<ReadonlyArray<number>>,
+  marks: ReadonlySet<number>,
+  patternName: string,
+): number[] | null {
+  const phase = classifyPhaseFromPatternName(patternName);
+  if (phase === null) return null;
+  const ticketMask = buildTicketMaskFromGrid(grid, marks);
+  if (ticketMask === 0) return [];
+  const candidates = PHASE_MASKS[phase];
+  const hits = new Set<number>();
+  for (const mask of candidates) {
+    const missing = mask & ~ticketMask;
+    if (missing === 0) continue;
+    // Popcount = 1 → nøyaktig én bit mangler, det er en one-to-go-celle.
+    if ((missing & (missing - 1)) === 0) {
+      hits.add(Math.log2(missing));
+    }
+  }
+  return Array.from(hits).sort((a, b) => a - b);
+}
+
+/**
  * Finn første fase som ikke er vunnet (sortert etter `order`). Returnerer
  * null når alle faser er vunnet eller lista er tom.
  */

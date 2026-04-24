@@ -80,7 +80,8 @@ export class PatternMiniGrid {
 
   /**
    * Sett hvilken fase/design som skal vises.
-   * @param design  0=custom mask, 1=fase 1 (rad/kolonne), 2/3/4=fase 2-4 (N kolonner)
+   * @param design  0=custom mask, 1=fase 1 (rad/kolonne), 2-4=fase 2-4 (N kolonner),
+   *                5=Fullt Hus (alle 25 celler markert statisk)
    * @param patternDataList  kun for design 0 — 25-cellers bitmaske (1=fill)
    */
   setDesign(design: number, patternDataList?: number[]): void {
@@ -94,7 +95,23 @@ export class PatternMiniGrid {
       this.startPhaseCycleAnimation(design);
       return;
     }
+    if (design === 5) {
+      this.showFullHouse();
+      return;
+    }
     this.clearAll();
+  }
+
+  /** Fullt Hus: alle 24 ikke-center-celler markert statisk med pulse. */
+  private showFullHouse(): void {
+    const allHits = new Set<number>();
+    for (let i = 0; i < CELL_COUNT; i++) {
+      if (i === CENTER_INDEX) continue;
+      allHits.add(i);
+      this.applyCellState(this.cells[i], true);
+      this.pulseCell(this.cells[i]);
+    }
+    this.currentHitIndices = allHits;
   }
 
   /** Design 0: statisk highlight fra 25-cellers patternDataList. */
