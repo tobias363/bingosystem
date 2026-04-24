@@ -635,3 +635,121 @@ Gap #1-3 (auto-pause + ready-reset + per-agent ready) bør prioriteres som én s
 - `docs/architecture/LEGACY_TV_DESIGN_SPEC_2026-04-24.md`
 - `docs/architecture/WIREFRAME_CATALOG.md`
 - `docs/architecture/SPILLKATALOG.md`
+
+---
+
+## Appendix B — PM-låste svar på de 10 åpne spørsmålene (2026-04-24)
+
+Tobias (PM) har gjennomgått §7 og låst produktvalgene nedenfor. Disse
+svarene er kanoniske — implementasjons-PR-er skal referere til dette
+appendikset, ikke §7.
+
+### B.1 Pause-varighet (§7.1)
+
+**LÅST: uendelig pause.** Bingovert må fysisk trykke Resume for å
+fortsette. Ingen timeout-basert auto-resume. Konsistent med legacy
+`stopGame`-semantikk.
+
+### B.2 Per-agent ready (§7.2)
+
+**LÅST: behold P0.** Wireframe krever eksplisitt
+_"Agents not ready yet: Agent 1, 2, 4"_-popup
+(kilde: `LEGACY_1_TO_1_MAPPING:149`). Dette er pilot-krav, ikke utsettbart.
+
+### B.3 `transferHallAccess`-semantikk (§7.3)
+
+**LÅST: legacy 1:1 (agent-initiert, 60s TTL).** Ingen admin-godkjenning-
+mellomtrinn. Master i hall A sender tilbud → target-hall B aksepterer
+direkte. Kilde: `RESEARCH_HALL_SPILL1_BINDING:74-76`.
+
+### B.4 Wireframe PDF 11 + 15 (§7.4)
+
+**LÅST: ikke relevant — allerede destillert.** `WIREFRAME_CATALOG.md`
+dekker PDF 11 (Agent V2.0) og PDF 15 (Agent V1.0 Latest). Ingen ekstra
+PDF-gjennomgang nødvendig.
+
+### B.5 Hall-status farge-kode (§7.5)
+
+**LÅST: 3 farger med presis semantikk.**
+
+| Farge | Tilstand | Effekt |
+|-------|----------|--------|
+| 🔴 Rød | `playerCount == 0` | Ekskludert automatisk fra neste trekning |
+| 🟠 Oransje | Spillere finnes, men `finalScanDone=false` ELLER `readyConfirmed=false` | Blokkerer Start-knapp |
+| 🟢 Grønn | Alle spillere telt, final-scan gjort, agent har trykket Klar | Klar for start |
+
+**Start-regel:** master kan bare starte når alle haller er enten 🔴
+eller 🟢. Oransje blokkerer. Røde haller kan eksplisitt ekskluderes via
+`confirmExcludeRedHalls`-parameter i `startGame`.
+
+### B.6 Refund-policy ved `stopGame` (§7.6)
+
+**LÅST: `"No refunds after game starts"` — hard policy.** Kilde:
+`WIREFRAME_CATALOG:378`. Gap #23 i §5 er over-spec — ingen mid-fase
+refund skal implementeres. `stopGame` avbryter runden uten å refundere
+betalte payouts. Tidligere-fase-vinnere beholder sine gevinster.
+
+### B.7 Legacy `StartGame`-socket-event (§7.7)
+
+**LÅST: ingen Unity-paritet.** Unity-klienten er pensjonert.
+Web-shell + TS-backend er kanonisk. Gap #9 + #14 nedprioriteres til
+post-pilot documentation only.
+
+### B.8 `isPaused` sidestate (§7.8)
+
+**LÅST: teknisk beslutning delegert til implementerende agent.**
+Product-kravet er: agent må kunne manuelt stoppe + starte spillet, og
+auto-stop ved LINE-vinn. Om det løses med `status='paused'` eller
+`status='running' + isPaused=true` er intern.
+
+### B.9 Jackpot daglig akkumulering (§7.9)
+
+**LÅST: legacy 1:1.** Starter 2000 kr, +4000/dag, max 30.000. Draw-
+thresholds 50→55→56→57. Implementeres via cron (daglig akkumulerings-
+tick). Kilde: `SPILL1_FULL_VARIANT_CATALOG:70`.
+
+### B.10 `transferHallAccess` TTL (§7.10)
+
+**LÅST: 60s.** Legacy-default beholdes.
+
+---
+
+## Appendix C — Hall-ready scan-flyt (presisert av Tobias 2026-04-24)
+
+Etter B.5 er farge-logikken avhengig av eksakt bong-registrering, ikke
+estimat. Flyten er:
+
+1. **Start-scan** (før salg): agent skanner første bong øverst i
+   bunken. Systemet lagrer `start_ticket_id`.
+2. **Agent selger bonger** (runden pågår).
+3. **Slutt-scan** (etter salg): agent skanner den nye øverste bongen.
+   Systemet lagrer `final_scan_ticket_id` og regner
+   `sold_range = [start_ticket_id, final_scan_ticket_id - 1]`.
+4. **Klar-bekreftelse**: agent trykker "Klar" → `readyConfirmed=true`.
+5. Hall går 🟠 → 🟢.
+
+**Viktige implikasjoner:**
+
+- Ingen manuell override nødvendig — alt er faktisk regnskap.
+- Digital-only haller (ingen fysiske bonger) får `finalScanDone=true`
+  automatisk og kan gå grønn på `readyConfirmed` alene.
+- Mellom faser (B.8 auto-pause): bare `readyConfirmed` nullstilles.
+  Scan-data beholdes — ingen ny-scan nødvendig mellom LINE og BINGO.
+
+Implementert i `feat/game1-hall-status-color-scan-flow` (Task HS).
+
+---
+
+## Appendix D — Implementasjons-status (kontinuerlig)
+
+Oppdateres av PM når hver Bølge 1-task åpnes som PR.
+
+| Task | Branch / PR | Status |
+|------|-------------|--------|
+| 1.1 Auto-pause ved phase-won | `feat/game1-auto-pause-phase-won` | 🟡 Agent jobber |
+| 1.2 Reset ready mellom faser | `feat/game1-reset-ready-between-phases` | 🟡 Agent jobber |
+| HS Hall-status farge + scan-flyt | `feat/game1-hall-status-color-scan-flow` | 🟡 Agent jobber |
+| 1.4 Foren agent-portal + master-konsoll | — | ⏳ Ikke startet |
+| 1.5 "Agents not ready"-popup + override | — | ⏳ Ikke startet |
+| 1.6 `transferHallAccess` master-overføring | — | ⏳ Ikke startet |
+| 1.7 TV ready-status + phase-won-banner | — | ⏳ Ikke startet |
