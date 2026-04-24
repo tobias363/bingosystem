@@ -38,10 +38,16 @@
 -- `CREATE TABLE IF NOT EXISTS`.
 
 -- Up migration
+--
+-- NB: `user_id` er TEXT (ikke UUID) for å matche `app_users.id` som er
+-- TEXT PRIMARY KEY (se 20260413000001_initial_schema.sql linje 61). FK-er
+-- mot app_users MÅ bruke samme datatype — UUID-deklarasjon her ga
+-- "foreign key constraint cannot be implemented" på fresh DB. `id`-kolonnen
+-- beholder UUID siden den er intern primærnøkkel uten FK utover.
 
 CREATE TABLE IF NOT EXISTS app_user_devices (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id         UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  user_id         TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
   firebase_token  TEXT NOT NULL,
   device_type     TEXT NOT NULL CHECK (device_type IN ('ios', 'android', 'web')),
   device_label    TEXT NULL,
@@ -71,7 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_app_user_devices_last_seen
 
 CREATE TABLE IF NOT EXISTS app_notifications (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id          UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  user_id          TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
   type             TEXT NOT NULL,
   title            TEXT NOT NULL,
   body             TEXT NOT NULL,

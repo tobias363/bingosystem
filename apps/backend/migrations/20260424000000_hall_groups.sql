@@ -28,6 +28,16 @@
 --
 -- Up
 
+-- NB: `app_hall_groups` ble først opprettet av migrasjon
+-- 20260416000001_multi_hall_linked_draws.sql (BIN-515) med et MINDRE skjema
+-- (id, name, public_code, tv_broadcast_id, status, created_at, archived_at,
+-- updated_at). BIN-665 utvider tabellen til full HallGroup-katalog. Siden
+-- `CREATE TABLE IF NOT EXISTS` skip-er tabellen hvis den finnes, må vi gjøre
+-- `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for de nye kolonnene slik at
+-- migrasjonen er idempotent uavhengig av kjøre-rekkefølge (fresh DB vs.
+-- DB hvor BIN-515 har kjørt først). BIN-665's `deleted_at` er kanonisk
+-- soft-delete-markør (service-laget leser kun denne — `archived_at` fra
+-- BIN-515 beholdes som ubrukt kolonne for backward-compat).
 CREATE TABLE IF NOT EXISTS app_hall_groups (
   id                  TEXT PRIMARY KEY,
   -- Legacy-format (f.eks. "GH_20220919_032458") — bevart for bakover-
@@ -49,6 +59,53 @@ CREATE TABLE IF NOT EXISTS app_hall_groups (
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at          TIMESTAMPTZ NULL
 );
+
+-- Idempotent kolonne-tillegg hvis tabellen allerede fantes fra BIN-515.
+-- (Ingen DEFAULT-verdier som endrer eksisterende rader — BIN-515 la ikke
+-- inn data, så dette er trygt.)
+ALTER TABLE app_hall_groups
+  ADD COLUMN IF NOT EXISTS legacy_group_hall_id TEXT NULL;
+ALTER TABLE app_hall_groups
+  ADD COLUMN IF NOT EXISTS tv_id INTEGER NULL;
+ALTER TABLE app_hall_groups
+  ADD COLUMN IF NOT EXISTS products_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE app_hall_groups
+  ADD COLUMN IF NOT EXISTS extra_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE app_hall_groups
+  ADD COLUMN IF NOT EXISTS created_by TEXT NULL REFERENCES app_users(id) ON DELETE SET NULL;
+ALTER TABLE app_hall_groups
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE app_hall_groups
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ NULL;
+
+-- Harmoniser status CHECK + default hvis BIN-515 ran først. BIN-515 brukte
+-- store bokstaver ('ACTIVE'/'ARCHIVED') mens HallGroupService.ts (BIN-665)
+-- bruker 'active'/'inactive'. Lower-case er kanonisk — drop gammel CHECK
+-- og sett riktig default. Eventuelle rader med 'ACTIVE' konverteres til
+-- 'active' før vi legger tilbake CHECK-constraint.
+ALTER TABLE app_hall_groups
+  DROP CONSTRAINT IF EXISTS app_hall_groups_status_check;
+UPDATE app_hall_groups SET status = 'active'   WHERE status = 'ACTIVE';
+UPDATE app_hall_groups SET status = 'inactive' WHERE status = 'ARCHIVED';
+ALTER TABLE app_hall_groups
+  ALTER COLUMN status SET DEFAULT 'active';
+ALTER TABLE app_hall_groups
+  ADD CONSTRAINT app_hall_groups_status_check
+  CHECK (status IN ('active', 'inactive'));
+
+-- BIN-515 la til `public_code TEXT UNIQUE NOT NULL` som HallGroupService
+-- (BIN-665) ikke skriver til. Drop NOT NULL slik at INSERT via service-laget
+-- ikke feiler. Kolonnen beholdes for backward-compat (ingen kode leser
+-- den i dag). Samme for tv_broadcast_id som har UNIQUE constraint.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'app_hall_groups' AND column_name = 'public_code'
+  ) THEN
+    EXECUTE 'ALTER TABLE app_hall_groups ALTER COLUMN public_code DROP NOT NULL';
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_app_hall_groups_status
   ON app_hall_groups(status)

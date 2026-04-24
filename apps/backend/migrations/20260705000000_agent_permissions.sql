@@ -33,9 +33,15 @@
 -- IF NOT EXISTS.
 
 -- Up migration
+--
+-- NB: `agent_user_id` og `updated_by` er TEXT (ikke UUID) for å matche
+-- `app_users.id` som er TEXT PRIMARY KEY (se 20260413000001_initial_schema.sql
+-- linje 61). FK-er mot app_users MÅ bruke samme datatype — UUID-deklarasjon
+-- her ga "foreign key constraint cannot be implemented" på fresh DB. `id`-
+-- kolonnen beholder UUID siden den er intern primærnøkkel uten FK utover.
 CREATE TABLE IF NOT EXISTS app_agent_permissions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  agent_user_id UUID NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  agent_user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
   module TEXT NOT NULL CHECK (module IN (
     'player',
     'schedule',
@@ -60,7 +66,7 @@ CREATE TABLE IF NOT EXISTS app_agent_permissions (
   -- Player Management only — ikke relevant for andre moduler (lagres 'false').
   can_block_unblock BOOLEAN NOT NULL DEFAULT false,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_by UUID REFERENCES app_users(id) ON DELETE SET NULL,
+  updated_by TEXT REFERENCES app_users(id) ON DELETE SET NULL,
   CONSTRAINT uq_app_agent_permissions_agent_module UNIQUE (agent_user_id, module)
 );
 
