@@ -17,6 +17,19 @@ export interface TvPatternRow {
   highlighted: boolean;
 }
 
+/**
+ * Task 1.7 (2026-04-24): farge-semantikk for deltakende haller på TV-stripe.
+ * Matcher master-konsollens badge-koder (Appendix B.5 i audit-rapporten).
+ */
+export type TvHallColor = "red" | "orange" | "green";
+
+export interface TvParticipatingHall {
+  hallId: string;
+  hallName: string;
+  color: TvHallColor;
+  playerCount: number;
+}
+
 export interface TvGameState {
   hall: { id: string; name: string };
   currentGame: {
@@ -42,6 +55,12 @@ export interface TvGameState {
     secondsRemaining: number;
   } | null;
   status: "drawing" | "waiting" | "ended";
+  /**
+   * Task 1.7 (2026-04-24): deltakende haller med fargekode + spillerantall.
+   * Tom array når HS-PR ikke er merget (backend faller tilbake til tomt).
+   * TV rendrer badge-stripe kun når lengde > 0.
+   */
+  participatingHalls: TvParticipatingHall[];
 }
 
 export interface TvWinnerRow {

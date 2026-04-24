@@ -1354,9 +1354,32 @@ app.use(async (req, res, next) => {
 // TV Screen + Winners public display. Ingen auth-middleware — kun
 // tvToken-sjekk i route-handler. Mountes før alle auth-gated routere
 // slik at CORS + body-parser er på, men ingen JWT-krav gjelder.
+//
+// Task 1.7: injiser hall-status-port for `participatingHalls`-badge-stripe.
+// Adapteren duck-types `getHallStatusForGame` på `Game1HallReadyService` —
+// metoden introduseres av HS-PR #451. Inntil HS-PR er merget er feature-
+// detection'en false og servicen returnerer tom array (klient viser da
+// ingen badge-stripe, øvrig TV-rendering uendret).
 const tvScreenService = new TvScreenService({
   pool: platformService.getPool(),
   schema: pgSchema,
+  hallStatusPort: {
+    async getHallStatusForGame(gameId: string) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const svc = game1HallReadyService as unknown as {
+        getHallStatusForGame?: (gameId: string) => Promise<Array<{
+          hallId: string;
+          playerCount: number;
+          excludedFromGame: boolean;
+          color: "red" | "orange" | "green";
+        }>>;
+      };
+      if (typeof svc.getHallStatusForGame === "function") {
+        return svc.getHallStatusForGame(gameId);
+      }
+      return [];
+    },
+  },
 });
 app.use(createTvScreenRouter({ platformService, tvScreenService }));
 
@@ -2335,7 +2358,26 @@ io.on("connection", (socket: Socket) => {
 // real-time subscribe. Opprettes etter `io` finnes. Broadcaster-porten
 // injisieres late via setAdminBroadcaster slik at service-laget kan
 // konstrueres tidligere uten å kjenne socket-siden.
-const adminGame1Handle = createAdminGame1Namespace({ io, platformService });
+//
+// Task 1.7: injiser hall-id-oppslagsport slik at phase-won speiles til
+// TV-display-rom. Porten er en tynn adapter over
+// `Game1HallReadyService.getReadyStatusForGame` som returnerer listen av
+// haller for et gitt spill. Fail-open: hvis servicen kaster (HS-tabell
+// mangler), logger adapteren warn og returnerer tom array.
+const adminGame1Handle = createAdminGame1Namespace({
+  io,
+  platformService,
+  participatingHallIdsPort: {
+    async getParticipatingHallIds(gameId: string): Promise<string[]> {
+      try {
+        const statuses = await game1HallReadyService.getReadyStatusForGame(gameId);
+        return statuses.map((s) => s.hallId);
+      } catch {
+        return [];
+      }
+    },
+  },
+});
 game1MasterControlService.setAdminBroadcaster(adminGame1Handle.broadcaster);
 game1DrawEngineService.setAdminBroadcaster(adminGame1Handle.broadcaster);
 

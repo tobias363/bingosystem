@@ -50,6 +50,7 @@ import type {
   AdminGame1AutoPausedEvent,
   AdminGame1ResumedEvent,
 } from "../game/AdminGame1Broadcaster.js";
+import { emitPhaseWonToHallDisplays } from "./adminDisplayEvents.js";
 import { logger as rootLogger } from "../util/logger.js";
 
 const log = rootLogger.child({ module: "admin-game1-namespace" });
@@ -59,9 +60,28 @@ function gameRoomKey(gameId: string): string {
   return `game1:${gameId}`;
 }
 
+/**
+ * Task 1.7: port-grensesnitt for oppslag av deltakende hall-ids per spill.
+ * Brukes av `onPhaseWon` for å fan-out eventet til TV-display-rom i tillegg
+ * til admin-namespace-rommet. Adapteren i `index.ts` binder dette til
+ * `Game1HallReadyService` eller tilsvarende. Hvis ikke satt → fan-out er
+ * disabled (legacy-adferd: kun admin-namespace får phase-won).
+ */
+export interface ParticipatingHallIdsPort {
+  getParticipatingHallIds(gameId: string): Promise<string[]>;
+}
+
 export interface AdminGame1NamespaceDeps {
   io: SocketServer;
   platformService: PlatformService;
+  /**
+   * Task 1.7 (2026-04-24): valgfri hall-id-oppslagsport. Når satt, speiler
+   * `onPhaseWon` eventet til `hall:<hallId>:display`-rom på default namespace
+   * slik at TV-klienter mottar banner-trigger. Fail-open: hvis porten kaster,
+   * logger vi warn og fortsetter uten display-fan-out (admin-UI får eventet
+   * uansett via eget rom).
+   */
+  participatingHallIdsPort?: ParticipatingHallIdsPort;
 }
 
 export interface AdminGame1NamespaceHandle {
@@ -77,7 +97,7 @@ export interface AdminGame1NamespaceHandle {
 export function createAdminGame1Namespace(
   deps: AdminGame1NamespaceDeps
 ): AdminGame1NamespaceHandle {
-  const { io, platformService } = deps;
+  const { io, platformService, participatingHallIdsPort } = deps;
   const namespace = io.of("/admin-game1");
 
   // JWT-handshake-auth: accessToken i socket.handshake.auth.token (eller
@@ -201,16 +221,16 @@ export function createAdminGame1Namespace(
       }
     },
     onPhaseWon(event: AdminGame1PhaseWonEvent): void {
+      const payload: Game1AdminPhaseWonPayload = {
+        gameId: event.gameId,
+        patternName: event.patternName,
+        phase: event.phase,
+        winnerIds: event.winnerIds,
+        winnerCount: event.winnerCount,
+        drawIndex: event.drawIndex,
+        at: event.at,
+      };
       try {
-        const payload: Game1AdminPhaseWonPayload = {
-          gameId: event.gameId,
-          patternName: event.patternName,
-          phase: event.phase,
-          winnerIds: event.winnerIds,
-          winnerCount: event.winnerCount,
-          drawIndex: event.drawIndex,
-          at: event.at,
-        };
         namespace
           .to(gameRoomKey(event.gameId))
           .emit("game1:phase-won", payload);
@@ -219,6 +239,26 @@ export function createAdminGame1Namespace(
           { err, event: "game1:phase-won", gameId: event.gameId },
           "admin broadcast failed — service fortsetter uansett"
         );
+      }
+      // Task 1.7: speil til TV-display-rom (default namespace) slik at
+      // TVen viser banner "BINGO! Rad N". Fan-out-feilene skal aldri
+      // boble opp til service-laget — logg og fortsett.
+      if (participatingHallIdsPort) {
+        void (async () => {
+          try {
+            const hallIds = await participatingHallIdsPort.getParticipatingHallIds(
+              event.gameId
+            );
+            if (hallIds.length > 0) {
+              emitPhaseWonToHallDisplays(io, hallIds, payload);
+            }
+          } catch (err) {
+            log.warn(
+              { err, event: "game1:phase-won", gameId: event.gameId },
+              "TV-display fan-out failed — admin-UI har fått eventet uansett"
+            );
+          }
+        })();
       }
     },
     /**

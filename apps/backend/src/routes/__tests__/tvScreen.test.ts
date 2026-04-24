@@ -114,6 +114,7 @@ const exampleState: TvGameState = {
   nextGame: { name: "Quick Bingo", startAt: "2026-04-23T21:00:00Z" },
   countdownToNextGame: null,
   status: "drawing",
+  participatingHalls: [],
 };
 
 const exampleWinners: TvWinnersSummary = {
