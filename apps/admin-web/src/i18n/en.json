@@ -2493,6 +2493,8 @@
   "game1_master_start": "START",
   "game1_master_pause": "PAUSE",
   "game1_master_resume": "RESUME",
+  "game1_master_auto_pause_banner": "Game paused after phase {phase} — press Resume to continue",
+  "game1_master_manual_pause_banner": "Game manually paused — press Resume to continue",
   "game1_master_stop": "STOP",
   "game1_master_poll_hint": "The console auto-refreshes every 5 seconds.",
   "game1_master_audit_title": "Event log",

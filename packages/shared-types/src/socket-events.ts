@@ -65,6 +65,16 @@ export type { Game1AdminPhaseWonPayload } from "./schemas.js";
 // PT4: admin physical-ticket-won broadcast (fra drawNext + PhysicalTicketPayoutService).
 export { Game1AdminPhysicalTicketWonPayloadSchema } from "./schemas.js";
 export type { Game1AdminPhysicalTicketWonPayload } from "./schemas.js";
+
+// Task 1.1: auto-pause ved phase-won + manuell resume (Gap #1 i MASTER_HALL_DASHBOARD_GAP_2026-04-24.md).
+export {
+  Game1AdminAutoPausedPayloadSchema,
+  Game1AdminResumedPayloadSchema,
+} from "./schemas.js";
+export type {
+  Game1AdminAutoPausedPayload,
+  Game1AdminResumedPayload,
+} from "./schemas.js";
 import type {
   RoomUpdatePayload as RoomUpdatePayloadT,
   DrawNewPayload as DrawNewPayloadT,

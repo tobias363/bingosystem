@@ -2488,6 +2488,8 @@
   "game1_master_start": "START",
   "game1_master_pause": "PAUSE",
   "game1_master_resume": "RESUME",
+  "game1_master_auto_pause_banner": "Spillet er pause etter fase {phase} — trykk Resume for å fortsette",
+  "game1_master_manual_pause_banner": "Spillet er manuelt pauset — trykk Resume for å fortsette",
   "game1_master_stop": "STOPP",
   "game1_master_poll_hint": "Konsollen oppdateres automatisk hvert 5. sekund.",
   "game1_master_audit_title": "Hendelseslogg",

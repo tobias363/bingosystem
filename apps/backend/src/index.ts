@@ -1447,6 +1447,10 @@ app.use(createAdminGame1MasterRouter({
   platformService,
   auditLogService,
   masterControlService: game1MasterControlService,
+  // Task 1.1 (Gap #1): wire draw-engine slik at GET /games/:gameId kan
+  // returnere engineState (paused, paused_at_phase). Master-console
+  // bruker feltene til å vise Resume-knapp + auto-pause-banner.
+  drawEngine: game1DrawEngineService,
   io,
 }));
 // GAME1_SCHEDULE PR 4a: ticket-purchase-router for Game 1. 3 endepunkter —
