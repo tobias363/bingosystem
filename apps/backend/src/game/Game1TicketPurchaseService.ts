@@ -68,6 +68,10 @@ import {
   NoopPotSalesHook,
   type PotSalesHookPort,
 } from "../adapters/PotSalesHookPort.js";
+import {
+  NoopComplianceLedgerPort,
+  type ComplianceLedgerPort,
+} from "../adapters/ComplianceLedgerPort.js";
 
 const log = rootLogger.child({ module: "game1-ticket-purchase-service" });
 
@@ -181,6 +185,16 @@ export interface Game1TicketPurchaseServiceOptions {
    * Se docs/architecture/SPILL1_FULL_VARIANT_CATALOG_2026-04-21.md §Innsatsen.
    */
   potSalesHook?: PotSalesHookPort;
+  /**
+   * K1 compliance-fix: port for å logge STAKE-entries til ComplianceLedger
+   * etter vellykket purchase. hallId MÅ være kjøpe-hallen (ikke master-
+   * hallen) per §71 pengespillforskriften. Default no-op — wires i
+   * index.ts via `engine.getComplianceLedgerPort()`.
+   *
+   * Soft-fail: port-feil ruller ikke tilbake purchase (audit-logging
+   * som kan re-kjøres manuelt ved behov).
+   */
+  complianceLedgerPort?: ComplianceLedgerPort;
 }
 
 // ── Internal row shapes ───────────────────────────────────────────────────────
@@ -229,6 +243,12 @@ export class Game1TicketPurchaseService {
    * Default no-op — wires i index.ts til engine.getPotSalesHookPort(potService).
    */
   private readonly potSalesHook: PotSalesHookPort;
+  /**
+   * K1 compliance-fix: port for STAKE-entries til ComplianceLedger.
+   * Default no-op — wires i index.ts til engine.getComplianceLedgerPort().
+   * hallId bindes alltid til kjøpe-hallen (input.hallId), ikke master-hallen.
+   */
+  private readonly complianceLedgerPort: ComplianceLedgerPort;
 
   constructor(options: Game1TicketPurchaseServiceOptions) {
     this.pool = options.pool;
@@ -243,6 +263,8 @@ export class Game1TicketPurchaseService {
     this.audit = options.auditLogService;
     this.complianceLoss = options.complianceLossPort ?? new NoopComplianceLossPort();
     this.potSalesHook = options.potSalesHook ?? new NoopPotSalesHook();
+    this.complianceLedgerPort =
+      options.complianceLedgerPort ?? new NoopComplianceLedgerPort();
   }
 
   // ── Table helpers ──────────────────────────────────────────────────────────
@@ -446,6 +468,51 @@ export class Game1TicketPurchaseService {
           totalAmountCents,
         },
         "[PR-T3] potSalesHook.onSaleCompleted feilet — purchase fortsetter uansett"
+      );
+    }
+
+    // K1 compliance-fix: skriv STAKE-entry til ComplianceLedger per §71
+    // pengespillforskriften. REGULATORISK-KRITISK: hallId bindes til
+    // KJØPE-HALLEN (input.hallId), ikke master-hallen. Se audit-konsekvens
+    // i commit-message.
+    //
+    // Channel-semantikk:
+    //   - digital_wallet  → INTERNET (spiller-app-kjøp)
+    //   - cash_agent      → HALL (fysisk salg via agent)
+    //   - card_agent      → HALL (fysisk salg via agent, kort-betaling)
+    //
+    // Soft-fail (matcher W5/T3-patternet): en compliance-ledger-feil
+    // ruller ALDRI tilbake en committed purchase. Wallet-debit + INSERT
+    // er allerede permanente; STAKE-entry er audit-logging som kan
+    // re-kjøres manuelt ved behov.
+    try {
+      const channel = ledgerChannelForPaymentMethod(input.paymentMethod);
+      await this.complianceLedgerPort.recordComplianceLedgerEvent({
+        hallId: input.hallId,
+        gameType: "DATABINGO",
+        channel,
+        eventType: "STAKE",
+        amount: centsToAmount(totalAmountCents),
+        gameId: input.scheduledGameId,
+        playerId: input.buyerUserId,
+        walletId: buyerWalletId ?? undefined,
+        metadata: {
+          reason: "GAME1_PURCHASE",
+          purchaseId,
+          paymentMethod: input.paymentMethod,
+          ticketCount: sumTicketCount(input.ticketSpec),
+        },
+      });
+    } catch (err) {
+      log.warn(
+        {
+          err,
+          purchaseId,
+          hallId: input.hallId,
+          totalAmountCents,
+          paymentMethod: input.paymentMethod,
+        },
+        "[K1] complianceLedger.recordComplianceLedgerEvent STAKE feilet — purchase fortsetter uansett"
       );
     }
 
@@ -1041,6 +1108,21 @@ function extractTicketCatalog(raw: unknown): TicketCatalogEntry[] {
 
 function sumTicketCount(spec: Game1TicketSpecEntry[]): number {
   return spec.reduce((n, e) => n + e.count, 0);
+}
+
+/**
+ * K1 compliance-fix: mapper paymentMethod til ComplianceLedger-channel.
+ * - digital_wallet → INTERNET (spiller kjøper via web/app)
+ * - cash_agent     → HALL     (fysisk salg i lokalet via agent)
+ * - card_agent     → HALL     (fysisk salg i lokalet via agent, kort)
+ *
+ * Channel brukes av §71-rapport per hall til å skille online- og lokal-
+ * omsetning. Reglene matcher legacy-oppgjør.
+ */
+function ledgerChannelForPaymentMethod(
+  paymentMethod: Game1PaymentMethod
+): "HALL" | "INTERNET" {
+  return paymentMethod === "digital_wallet" ? "INTERNET" : "HALL";
 }
 
 /**
