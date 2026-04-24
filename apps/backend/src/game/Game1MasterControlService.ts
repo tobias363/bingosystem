@@ -461,28 +461,11 @@ export class Game1MasterControlService {
 
       const readyRows = await this.loadReadySnapshot(client, input.gameId);
 
-      // Task 1.5: compute orange (unready) halls BEFORE status-guard so
-      // `HALLS_NOT_READY` kan returneres med strukturert liste (via
-      // DomainError.details). Orange = not-ready, not-excluded, not master —
-      // master kan ikke være orange (master er alltid klar per definisjon i
-      // state-maskinen; kastes i purchase_open-gren under).
-      const confirmedUnready = new Set(input.confirmUnreadyHalls ?? []);
-      const unreadyHalls = readyRows
-        .filter(
-          (r) =>
-            !r.excluded_from_game &&
-            !r.is_ready &&
-            r.hall_id !== game.master_hall_id
-        )
-        .map((r) => r.hall_id);
-      const uncoveredUnready = unreadyHalls.filter(
-        (h) => !confirmedUnready.has(h)
-      );
-
       // TASK HS: beregn farge-kode per ikke-allerede-ekskludert hall.
       // Kombineres med Task 1.5: confirmUnreadyHalls overrider unready→excluded
       // før orange-blokk-sjekken. Red (0 spillere) krever confirmExcludeRedHalls.
       const masterHallId = game.master_hall_id;
+      const confirmedUnready = new Set(input.confirmUnreadyHalls ?? []);
       const colorById = new Map<string, "red" | "orange" | "green">();
       for (const r of readyRows) {
         if (r.excluded_from_game) continue;
@@ -501,6 +484,26 @@ export class Game1MasterControlService {
       const orangeHallIds = Array.from(colorById.entries())
         .filter(([, color]) => color === "orange")
         .map(([hallId]) => hallId);
+
+      // Task 1.5: compute orange (unready) halls BEFORE status-guard så
+      // `HALLS_NOT_READY` kan returneres med strukturert liste (via
+      // DomainError.details). Orange = not-ready, not-excluded, not master,
+      // OG ikke rød (røde haller har egen RED_HALLS_NOT_CONFIRMED-flyt).
+      // Master kan ikke være orange (kastes som MASTER_HALL_RED/HALLS_NOT_READY
+      // separat lenger ned).
+      const redHallSet = new Set(redHallIds);
+      const unreadyHalls = readyRows
+        .filter(
+          (r) =>
+            !r.excluded_from_game &&
+            !r.is_ready &&
+            r.hall_id !== masterHallId &&
+            !redHallSet.has(r.hall_id)
+        )
+        .map((r) => r.hall_id);
+      const uncoveredUnready = unreadyHalls.filter(
+        (h) => !confirmedUnready.has(h)
+      );
 
       if (game.status === "purchase_open") {
         const nonExcluded = readyRows.filter((r) => !r.excluded_from_game);
