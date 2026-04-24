@@ -18,7 +18,11 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(__dirname, "..", "..");
-const DEFAULT_ROOT = resolve(REPO_ROOT, "apps/backend/public/web");
+// Mirrors apps/backend/src/index.ts → `app.use(express.static(publicDir))`,
+// where publicDir = "apps/backend/public". That makes
+// public/web/games/preview.html available at /web/games/preview.html,
+// matching the `base: "/web/games/"` baked into preview.js by Vite.
+const DEFAULT_ROOT = resolve(REPO_ROOT, "apps/backend/public");
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

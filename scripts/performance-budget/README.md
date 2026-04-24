@@ -19,12 +19,11 @@ without relying on humans to spot them in review.
 
 ## How it works
 
-1. **Static server** (`serve.ts`) — serves `apps/backend/public/web/`
-   on a random loopback port. This is the exact directory the
-   production backend serves, so the HTML/CSS the gate measures is
-   identical to what ships.
+1. **Static server** (`serve.ts`) — serves `apps/backend/public/` on
+   a random loopback port, mirroring `app.use(express.static(publicDir))`
+   in the real backend. The same HTML/CSS/JS ships to production.
 2. **Headless Chromium** (`collect-metrics.ts` via Puppeteer) —
-   navigates to `/games/preview.html`, drives the page into three
+   navigates to `/web/games/preview.html`, drives the page into three
    scenarios, and samples metrics via an IIFE injected at
    new-document time.
 3. **Browser probe** (`browser-probe.ts`) — installs a
@@ -86,16 +85,22 @@ The first run downloads Puppeteer's pinned Chromium (~170 MB) to
 Spill 1 Performance Check
 
 Scenario: spill1_idle
-  backdrop-filter elements: 2 / 3  OK  (Δ 0)
+  backdrop-filter elements: 0 / 2  OK  (Δ 0)
   CSS animations: 0 / 5  OK  (Δ 0)
   infinite CSS animations: 0 / 1  OK  (Δ 0)
-  requestAnimationFrame / sec: 60 / 130  OK  (Δ 0)
-  paint entries / 2s: 3 / 30  OK  (Δ 0)
+  requestAnimationFrame / sec: 210 / 500  OK  (Δ -10)
+  paint entries / 2s: 0 / 30  OK  (Δ 0)
   GSAP active tweens: n/a / —  SKIP
   long-animation-frames: 0 / 2  OK  (Δ 0)
 
 All within budget
 ```
+
+`rafCallsPerSec` hovers around 200-400 on a clean preview because the page
+hosts five independent Pixi.Application instances (one per overlay),
+each running its own ticker. At 60Hz CI that aggregates to ~300; on a
+120Hz dev display the same code reports ~600. The `max` values in
+`baseline.json` carry ~2x headroom to tolerate that spread.
 
 ## Updating the baseline
 

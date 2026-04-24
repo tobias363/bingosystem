@@ -64,11 +64,20 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Build shared-types
+        # game-client's package.json exports "types": "./src/*.ts" but
+        # "import": "./dist/*.js". tsc (moduleResolution: bundler) is
+        # fine with the source, but Vite/Rollup follow the "import"
+        # field and need the compiled dist/ to resolve the subpath
+        # exports (e.g. `@spillorama/shared-types/socket-events`).
+        # See ci.yml + compliance-gate.yml for the same pattern.
+        run: npm --prefix packages/shared-types run build
+
       - name: Build game-client (preview + main)
-        # The perf-budget probe navigates to /games/preview.html which
-        # must be present in apps/backend/public/web/. The build step
-        # also produces the main game-client bundle used by the shell,
-        # so we keep the standard `npm -w` invocation.
+        # The perf-budget probe navigates to /web/games/preview.html
+        # which must be present in apps/backend/public/web/games/. The
+        # build step also produces the main game-client bundle used by
+        # the shell, so we keep the standard `npm -w` invocation.
         run: npm -w @spillorama/game-client run build
 
       - name: Install performance-budget dependencies

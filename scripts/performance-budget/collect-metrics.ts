@@ -125,7 +125,10 @@ async function collectForScenario(
     await page.evaluateOnNewDocument(BROWSER_PROBE_SOURCE);
 
     await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
-    await page.goto(`${baseUrl}/games/preview.html`, { waitUntil: "networkidle0" });
+    // `/web/games/preview.html` matches the backend's express.static mount
+    // ("apps/backend/public" at "/") and the `base: "/web/games/"` baked
+    // into preview.js by Vite. Serve.ts mirrors the same prefix.
+    await page.goto(`${baseUrl}/web/games/preview.html`, { waitUntil: "networkidle0" });
 
     // Wait for Pixi's first canvas to attach before running scenario
     // setup. Without this the click handlers may race initialization.
