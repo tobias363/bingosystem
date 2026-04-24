@@ -1518,6 +1518,8 @@
   "do_you_want_to_withdraw_money_from_username": "Vil du ta ut penger fra brukernavnet?",
   "yes_withdraw_money": "Ja, ta ut penger",
   "the_withdraw_money_action_has_been_cancelled": "Handling for å ta ut penger ble kansellert",
+  "high_value_transaction_aml_note": "Transaksjon over 10 000 NOK. Ekstra bekreftelse kreves og transaksjonen blir AML-loggført.",
+  "high_value_transaction_logged": "AML-logg opprettet for høy-verdi-transaksjon",
   "failed": "Mislykket",
   "add_money_unique_id": "Legg til penger med unik ID",
   "withdraw_money_unique_id": "Ta ut penger med unik ID",
