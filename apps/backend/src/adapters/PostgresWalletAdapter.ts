@@ -1161,4 +1161,46 @@ export class PostgresWalletAdapter implements WalletAdapter {
   private entriesTable(): string {
     return `"${this.schema}"."wallet_entries"`;
   }
+
+  // ── BIN-693 Option B: Wallet-reservasjon ──────────────────────────────────
+  // PR 1 scope: stubs. Full Postgres-impl med app_wallet_reservations-tabell
+  // kommer i PR 2 (krever transaksjonell SQL for reserve/release/commit).
+
+  async getAvailableBalance(accountId: string): Promise<number> {
+    // Ingen reservasjoner persistert ennå → returner full balance.
+    return this.getBalance(accountId);
+  }
+
+  async reserve(): Promise<never> {
+    throw new WalletError(
+      "NOT_IMPLEMENTED",
+      "PostgresWalletAdapter.reserve kommer i BIN-693 PR 2 (app_wallet_reservations SQL-impl).",
+    );
+  }
+
+  async releaseReservation(): Promise<never> {
+    throw new WalletError(
+      "NOT_IMPLEMENTED",
+      "PostgresWalletAdapter.releaseReservation kommer i BIN-693 PR 2.",
+    );
+  }
+
+  async commitReservation(): Promise<never> {
+    throw new WalletError(
+      "NOT_IMPLEMENTED",
+      "PostgresWalletAdapter.commitReservation kommer i BIN-693 PR 2.",
+    );
+  }
+
+  async listActiveReservations(): Promise<never[]> {
+    return [];
+  }
+
+  async listReservationsByRoom(): Promise<never[]> {
+    return [];
+  }
+
+  async expireStaleReservations(): Promise<number> {
+    return 0;
+  }
 }
