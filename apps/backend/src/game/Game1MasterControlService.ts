@@ -103,6 +103,16 @@ export interface StartGameInput {
    * Resume (paused→running) bruker ingen ready-sjekk.
    */
   confirmUnreadyHalls?: string[];
+  /**
+   * TASK HS: eksplisitt bekreftelse fra master om at røde haller
+   * (playerCount === 0) skal ekskluderes fra dagens spill. Rød hall uten
+   * eksplisitt bekreftelse blokkerer start-knappen (samme pattern som
+   * `confirmExcludedHalls` — tvinger admin til å se listen).
+   *
+   * Røde haller i listen settes `excluded_from_game=true` i samme transaksjon
+   * som status-flippen til `running`.
+   */
+  confirmExcludeRedHalls?: string[];
   actor: MasterActor;
   /**
    * MASTER_PLAN §2.3 — Jackpot confirm-popup (Appendix B.9).
@@ -217,6 +227,35 @@ interface HallReadySnapshotRow {
   hall_id: string;
   is_ready: boolean;
   excluded_from_game: boolean;
+  /** TASK HS: utvidet for å kunne beregne per-hall farge + spiller-count. */
+  digital_tickets_sold?: number | null;
+  physical_tickets_sold?: number | null;
+  start_ticket_id?: string | null;
+  final_scan_ticket_id?: string | null;
+}
+
+/**
+ * TASK HS: beregn farge-kode for en hall basert på readySnapshot-rad.
+ * Samme regel som `computeHallStatus` i Game1HallReadyService — kopiert
+ * her for å unngå sirkulær import og for å kunne kjøre mot raw snapshot-
+ * rader i transaksjonen.
+ */
+function deriveSnapshotColor(
+  row: HallReadySnapshotRow
+): "red" | "orange" | "green" {
+  const physical = Number(row.physical_tickets_sold ?? 0);
+  const digital = Number(row.digital_tickets_sold ?? 0);
+  const playerCount = Math.max(0, physical + digital);
+  if (playerCount === 0) return "red";
+
+  const hasPhysicalFlow =
+    (row.start_ticket_id != null && row.start_ticket_id !== "") || physical > 0;
+  const finalScanDone = !hasPhysicalFlow
+    ? true
+    : row.final_scan_ticket_id != null && row.final_scan_ticket_id !== "";
+  const readyConfirmed = Boolean(row.is_ready);
+  if (!finalScanDone || !readyConfirmed) return "orange";
+  return "green";
 }
 
 function parseHallIdsArray(value: unknown): string[] {
@@ -440,6 +479,29 @@ export class Game1MasterControlService {
         (h) => !confirmedUnready.has(h)
       );
 
+      // TASK HS: beregn farge-kode per ikke-allerede-ekskludert hall.
+      // Kombineres med Task 1.5: confirmUnreadyHalls overrider unready→excluded
+      // før orange-blokk-sjekken. Red (0 spillere) krever confirmExcludeRedHalls.
+      const masterHallId = game.master_hall_id;
+      const colorById = new Map<string, "red" | "orange" | "green">();
+      for (const r of readyRows) {
+        if (r.excluded_from_game) continue;
+        // Hvis master har confirmed denne unready-hallen, behandles den som
+        // ekskludert i color-utregningen (vil bli markert excluded_from_game
+        // i overrideExcluded-loopen lenger ned).
+        if (confirmedUnready.has(r.hall_id) && r.hall_id !== masterHallId) {
+          continue;
+        }
+        colorById.set(r.hall_id, deriveSnapshotColor(r));
+      }
+
+      const redHallIds = Array.from(colorById.entries())
+        .filter(([, color]) => color === "red")
+        .map(([hallId]) => hallId);
+      const orangeHallIds = Array.from(colorById.entries())
+        .filter(([, color]) => color === "orange")
+        .map(([hallId]) => hallId);
+
       if (game.status === "purchase_open") {
         const nonExcluded = readyRows.filter((r) => !r.excluded_from_game);
         if (nonExcluded.length === 0) {
@@ -462,14 +524,29 @@ export class Game1MasterControlService {
           );
         }
 
-        // Task 1.5: tilsvar `confirmExcludedHalls` — hvis orange-listen
-        // ikke er fullstendig dekket av `confirmUnreadyHalls`, kast
-        // HALLS_NOT_READY med listen slik at frontend kan vise popup.
+        // Task 1.5: tilsvar `confirmExcludedHalls` — hvis uncoveredUnready
+        // (haller som er unready og IKKE i confirmUnreadyHalls) eksisterer,
+        // kast HALLS_NOT_READY med strukturert details slik at frontend kan
+        // vise popup "Agents not ready yet: …".
         if (uncoveredUnready.length > 0) {
           throw new DomainError(
             "HALLS_NOT_READY",
             `Haller er ikke klare: ${uncoveredUnready.join(", ")}.`,
             { unreadyHalls: uncoveredUnready }
+          );
+        }
+
+        // TASK HS: orange-haller som ikke er unready (dvs. de mangler scan
+        // eller har annen orange-årsak utover is_ready) blokkerer Start.
+        // Denne sjekken kjører ETTER unready-håndteringen ovenfor, så
+        // orangeHallIds her er kun "scan-orange" osv.
+        const scanOrangeHalls = orangeHallIds.filter(
+          (h) => !unreadyHalls.includes(h)
+        );
+        if (scanOrangeHalls.length > 0) {
+          throw new DomainError(
+            "HALLS_NOT_READY",
+            `Ikke alle haller er klare (${scanOrangeHalls.length} mangler registrering). Vent eller ekskluder: ${scanOrangeHalls.join(", ")}.`
           );
         }
       }
@@ -526,14 +603,58 @@ export class Game1MasterControlService {
         );
       }
 
+      // TASK HS: røde haller må bekreftes eksplisitt via confirmExcludeRedHalls.
+      // Master-hallen kan ALDRI ekskluderes — hvis master er rød er det feil-
+      // situasjon (master må fikse sitt eget salg før start).
+      const redUnconfirmed = redHallIds.filter(
+        (h) =>
+          h !== masterHallId &&
+          !(input.confirmExcludeRedHalls ?? []).includes(h)
+      );
+      if (redUnconfirmed.length > 0) {
+        throw new DomainError(
+          "RED_HALLS_NOT_CONFIRMED",
+          `Master må bekrefte ekskludering av røde haller (0 spillere): ${redUnconfirmed.join(", ")}.`
+        );
+      }
+      if (redHallIds.includes(masterHallId)) {
+        throw new DomainError(
+          "MASTER_HALL_RED",
+          "Master-hallen har ingen spillere. Fiks salg i master-hallen før du starter."
+        );
+      }
+
+      // TASK HS: sett excluded_from_game=true for bekreftede røde haller i
+      // samme transaksjon som status-flippen.
+      const redToExclude = redHallIds.filter(
+        (h) =>
+          h !== masterHallId &&
+          (input.confirmExcludeRedHalls ?? []).includes(h)
+      );
+      for (const hallId of redToExclude) {
+        await client.query(
+          `INSERT INTO ${this.hallReadyTable()}
+             (game_id, hall_id, is_ready, excluded_from_game, excluded_reason)
+           VALUES ($1, $2, false, true, 'auto_excluded_red_no_players')
+           ON CONFLICT (game_id, hall_id) DO UPDATE
+             SET excluded_from_game = true,
+                 excluded_reason    = COALESCE(
+                   ${this.hallReadyTable()}.excluded_reason,
+                   'auto_excluded_red_no_players'),
+                 updated_at         = now()`,
+          [input.gameId, hallId]
+        );
+      }
+
       // Re-compute excluded hall-IDs ETTER override-applikering slik at
       // `confirmExcludedHalls`-sjekken inkluderer nyekskluderte. Unngå
       // ekstra DB-round-trip hvis ingen override ble kjørt: da er pre-
       // snapshot (readyRows) fortsatt gyldig.
-      const postRows =
-        overrideExcluded.length > 0
-          ? await this.loadReadySnapshot(client, input.gameId)
-          : readyRows;
+      const needsRefresh =
+        overrideExcluded.length > 0 || redToExclude.length > 0;
+      const postRows = needsRefresh
+        ? await this.loadReadySnapshot(client, input.gameId)
+        : readyRows;
       const excludedHallIds = postRows
         .filter((r) => r.excluded_from_game)
         .map((r) => r.hall_id);
@@ -542,6 +663,9 @@ export class Game1MasterControlService {
         // Task 1.5: override-ekskluderte haller er implisitt bekreftet via
         // `confirmUnreadyHalls`; kaller trenger ikke sende dem dobbelt.
         ...overrideExcluded,
+        // TASK HS: red-ekskluderte haller er implisitt bekreftet via
+        // `confirmExcludeRedHalls`.
+        ...redToExclude,
       ]);
       const unconfirmed = excludedHallIds.filter((h) => !confirmed.has(h));
       if (unconfirmed.length > 0) {
@@ -576,10 +700,12 @@ export class Game1MasterControlService {
         metadata: {
           confirmExcludedHalls: input.confirmExcludedHalls ?? [],
           confirmUnreadyHalls: input.confirmUnreadyHalls ?? [],
+          confirmExcludeRedHalls: input.confirmExcludeRedHalls ?? [],
           excludedHallIds,
           overrideExcluded,
           jackpotConfirmed: input.jackpotConfirmed === true,
           jackpotAmountCents: jackpotAmountCents ?? null,
+          autoExcludedRedHalls: redToExclude,
         },
       });
 
@@ -1358,7 +1484,9 @@ export class Game1MasterControlService {
     gameId: string
   ): Promise<HallReadySnapshotRow[]> {
     const { rows } = await client.query<HallReadySnapshotRow>(
-      `SELECT hall_id, is_ready, excluded_from_game
+      `SELECT hall_id, is_ready, excluded_from_game,
+              digital_tickets_sold, physical_tickets_sold,
+              start_ticket_id, final_scan_ticket_id
          FROM ${this.hallReadyTable()}
          WHERE game_id = $1`,
       [gameId]
