@@ -22,6 +22,7 @@ import { SwedbankPayService } from "./payments/SwedbankPayService.js";
 import { PaymentRequestService } from "./payments/PaymentRequestService.js";
 import { AuthTokenService } from "./auth/AuthTokenService.js";
 import { EmailService } from "./integration/EmailService.js";
+import { EmailQueue } from "./integration/EmailQueue.js";
 import {
   AuditLogService,
   InMemoryAuditLogStore,
@@ -48,6 +49,7 @@ import { createJobScheduler } from "./jobs/JobScheduler.js";
 import { createSwedbankPaymentSyncJob } from "./jobs/swedbankPaymentSync.js";
 import { createBankIdExpiryReminderJob } from "./jobs/bankIdExpiryReminder.js";
 import { createSelfExclusionCleanupJob } from "./jobs/selfExclusionCleanup.js";
+import { createProfilePendingLossLimitFlushJob } from "./jobs/profilePendingLossLimitFlush.js";
 import { createMachineTicketAutoCloseJob } from "./jobs/machineTicketAutoClose.js";
 import { createLoyaltyMonthlyResetJob } from "./jobs/loyaltyMonthlyReset.js";
 import { createGame1ScheduleTickJob } from "./jobs/game1ScheduleTick.js";
@@ -84,6 +86,8 @@ import { createAdminWalletRouter } from "./routes/adminWallet.js";
 import { createPaymentsRouter } from "./routes/payments.js";
 import { createPaymentRequestsRouter } from "./routes/paymentRequests.js";
 import { createPlayersRouter } from "./routes/players.js";
+import { createUserProfileRouter } from "./routes/userProfile.js";
+import { ProfileSettingsService } from "./compliance/ProfileSettingsService.js";
 import { createAdminPlayersRouter } from "./routes/adminPlayers.js";
 import { createAdminAmlRouter } from "./routes/adminAml.js";
 import { AmlService } from "./compliance/AmlService.js";
@@ -678,6 +682,14 @@ const cmsService = new CmsService({
 // DB-backing). Agent 3 vil wire ADMIN-side audit-kall i påfølgende PR.
 const emailService = new EmailService();
 
+// BIN-702: e-post-kø med retry. Moderator-handlinger (KYC-approve/reject
+// osv.) bruker `emailQueue.enqueue()` via `adminPlayers`-routeren slik at
+// en kortvarig SMTP-feil ikke får varselet til å forsvinne. Kjører et
+// enkelt 1s-intervall i prod; i tester wires køen direkte og processNext
+// kalles deterministisk.
+const emailQueue = new EmailQueue({ emailService });
+emailQueue.runLoop();
+
 // Accounting email dispatcher for Withdraw XML-batcher (wireframe 16.20).
 // Bruker eksisterende `app_withdraw_email_allowlist` (via securityService)
 // som regnskaps-CC-liste. PM-beslutning 2026-04-24 — ingen ny tabell.
@@ -704,6 +716,20 @@ const auditLogStore: AuditLogStore = platformConnectionString
     })
   : new InMemoryAuditLogStore();
 const auditLogService = new AuditLogService(auditLogStore);
+
+// BIN-720: Profile Settings API — service (router wires mot slutten av
+// filen, sammen med andre app.use-kall). Tilgjengelig kun når
+// responsibleGamingStore er oppsatt; uten RG-persistence kan pending
+// loss-limit-state ikke serialiseres korrekt.
+const profileSettingsService = responsibleGamingStore
+  ? new ProfileSettingsService({
+      pool: platformService.getPool(),
+      schema: pgSchema,
+      engine,
+      rgPersistence: responsibleGamingStore,
+      auditLogService,
+    })
+  : undefined;
 
 // BIN-583 B3.1: agent-domene (auth + shift + admin-CRUD). Bruker samme
 // Postgres-pool som PlatformService slik at ensureInitialized sikrer
@@ -937,6 +963,18 @@ jobScheduler.register({
     runAtHourLocal: jobRgCleanupRunAtHour,
   }),
 });
+
+// BIN-720: Profile Settings 48h-queue flush. Promoterer pending loss-limit-
+// endringer → active når effectiveFromMs <= now. Polling-intervall 15 min.
+if (profileSettingsService) {
+  jobScheduler.register({
+    name: "profile-pending-loss-limit-flush",
+    description: "Activate pending loss-limit increases when 48h window has passed (BIN-720).",
+    intervalMs: 15 * 60 * 1000,
+    enabled: true,
+    run: createProfilePendingLossLimitFlushJob({ profileSettingsService }),
+  });
+}
 
 // BIN-700: nullstill month_points for alle spillere ved månedskift. Polling-
 // intervall 1 time (default). Idempotent via month_key-sammenligning i
@@ -1252,10 +1290,21 @@ app.use(createPlayersRouter({
   platformService,
   auditLogService,
 }));
+
+// BIN-720: Profile Settings API (PDF 8 + PDF 9 wireframes). Router wires
+// kun når responsibleGamingStore er tilgjengelig (instansen konstrueres
+// lenger opp i filen, sammen med job-registrering for 48h-flush-cron).
+if (profileSettingsService) {
+  app.use(createUserProfileRouter({
+    platformService,
+    profileSettingsService,
+  }));
+}
 app.use(createAdminPlayersRouter({
   platformService,
   auditLogService,
   emailService,
+  emailQueue,
   bankIdAdapter,
   webBaseUrl,
   supportEmail,
