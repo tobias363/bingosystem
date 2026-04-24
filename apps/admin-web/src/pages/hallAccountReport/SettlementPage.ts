@@ -1,24 +1,23 @@
-// PR-A4b (BIN-659) — /report/settlement/:hallId page.
+// PR-A4b (BIN-659) + K1 wire-up + Wireframe Gap #2 — /report/settlement/:hallId page.
 //
-// (1645 lines — daily settlement edit view for Metronia/OKBingo/OpenDay
-// agent integrations).
-//
-// Scope for PR-A4b: LIST of settlements for a hall (date-range filterable),
-// with per-row "View" + "Edit" + "PDF" actions. The inline-edit of every row
-// with 3-agent panels is deferred to a later milestone (settlement detail-
-// view). BIN-588 infra already provides the PDF via GET
-// `/api/admin/shifts/:shiftId/settlement.pdf` — we open in a new tab.
+// Scope: LIST of settlements for a hall (date-range filterable), with per-row
+// View + Edit + PDF + Receipt-download actions. View/Edit opens the full 15-row
+// wireframe-paritet SettlementBreakdownModal (PDF 16.25 / 17.40). Admin edits
+// flow through PUT /api/admin/shifts/:shiftId/settlement (with `reason` audit-
+// field) inside the modal. Download-receipt er 4-action iht wireframe 16.24.
 //
 // Backend:
 //   - GET /api/admin/shifts/settlements?hallId=X&fromDate&toDate&limit
 //   - GET /api/admin/shifts/:shiftId/settlement.pdf (window.open)
-//   - PUT /api/admin/shifts/:shiftId/settlement (edit flow, modal)
+//   - GET /api/admin/shifts/:shiftId/settlement/receipt (window.open — bilag-binær)
+//   - GET /api/admin/shifts/:shiftId/settlement (prefill modal)
+//   - PUT /api/admin/shifts/:shiftId/settlement (edit — 15-row breakdown)
 
 import { DataTable } from "../../components/DataTable.js";
 import { t } from "../../i18n/I18n.js";
 import {
   buildSettlementPdfUrl,
-  editSettlement,
+  buildSettlementReceiptUrl,
   getSettlement,
   listSettlements,
   type AdminSettlement,
@@ -31,6 +30,7 @@ import {
   toIsoDate,
 } from "../reports/shared/reportShell.js";
 import { escapeHtml } from "../games/common/escape.js";
+import { openSettlementBreakdownModal } from "../cash-inout/modals/SettlementBreakdownModal.js";
 
 export async function renderSettlementPage(
   container: HTMLElement,
@@ -43,24 +43,6 @@ export async function renderSettlementPage(
     subtitle: hallId,
     tableHostId,
     extraBelow: `
-      <div id="settlement-edit-modal" class="modal fade" tabindex="-1" role="dialog" aria-hidden="true">
-        <div class="modal-dialog" role="document">
-          <div class="modal-content">
-            <div class="modal-header">
-              <h5 class="modal-title">${escapeHtml(t("edit_settlement"))}</h5>
-            </div>
-            <div class="modal-body" id="settlement-edit-body"></div>
-            <div class="modal-footer">
-              <button type="button" class="btn btn-default" data-action="cancel">
-                ${escapeHtml(t("cancel"))}
-              </button>
-              <button type="button" class="btn btn-primary" data-action="save">
-                ${escapeHtml(t("save"))}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
       <div style="margin-top:12px">
         <a href="#/hallAccountReport" class="btn btn-default btn-sm">${escapeHtml(t("back"))}</a>
       </div>`,
@@ -127,10 +109,19 @@ export async function renderSettlementPage(
         key: "id",
         title: t("actions"),
         align: "center",
-        render: (r) =>
-          `<button type="button" class="btn btn-info btn-xs btn-rounded" data-act="view" data-shift="${escapeHtml(r.shiftId)}" title="${escapeHtml(t("view"))}"><i class="fa fa-eye"></i></button> ` +
-          `<button type="button" class="btn btn-warning btn-xs btn-rounded" data-act="edit" data-shift="${escapeHtml(r.shiftId)}" title="${escapeHtml(t("edit_settlement"))}"><i class="fa fa-pencil"></i></button> ` +
-          `<button type="button" class="btn btn-default btn-xs btn-rounded" data-act="pdf" data-shift="${escapeHtml(r.shiftId)}" title="PDF"><i class="fa fa-file-pdf-o"></i></button>`,
+        render: (r) => {
+          const hasReceipt = Boolean(r.bilagReceipt);
+          const receiptTitle = hasReceipt
+            ? escapeHtml(t("download_receipt") || "Download receipt")
+            : escapeHtml(t("no_receipt_uploaded") || "Ingen bilag lastet opp");
+          const receiptDisabled = hasReceipt ? "" : "disabled";
+          return (
+            `<button type="button" class="btn btn-info btn-xs btn-rounded" data-act="view" data-shift="${escapeHtml(r.shiftId)}" title="${escapeHtml(t("view"))}"><i class="fa fa-eye"></i></button> ` +
+            `<button type="button" class="btn btn-warning btn-xs btn-rounded" data-act="edit" data-shift="${escapeHtml(r.shiftId)}" title="${escapeHtml(t("edit_settlement"))}"><i class="fa fa-pencil"></i></button> ` +
+            `<button type="button" class="btn btn-default btn-xs btn-rounded" data-act="pdf" data-shift="${escapeHtml(r.shiftId)}" title="PDF"><i class="fa fa-file-pdf-o"></i></button> ` +
+            `<button type="button" class="btn btn-success btn-xs btn-rounded" data-act="receipt" data-shift="${escapeHtml(r.shiftId)}" title="${receiptTitle}" ${receiptDisabled}><i class="fa fa-download"></i></button>`
+          );
+        },
       },
     ],
   });
@@ -140,13 +131,19 @@ export async function renderSettlementPage(
       "button[data-act]"
     );
     if (!btn) return;
+    // Disabled-knapper (f.eks. receipt uten bilag) skal ikke utføre aksjon.
+    if (btn.disabled) return;
     const shiftId = btn.dataset.shift ?? "";
     if (!shiftId) return;
     const act = btn.dataset.act;
     if (act === "pdf") {
       window.open(buildSettlementPdfUrl(shiftId), "_blank");
+    } else if (act === "receipt") {
+      // Wireframe Gap #2: download-receipt-action (16.24). Browser håndterer
+      // download-dialog basert på Content-Disposition attachment-header.
+      window.open(buildSettlementReceiptUrl(shiftId), "_blank");
     } else if (act === "view" || act === "edit") {
-      void openSettlementModal(container, shiftId, act === "edit", () => reload());
+      void openFullBreakdownModal(shiftId, act === "edit", () => reload());
     }
   });
 
@@ -171,114 +168,31 @@ export async function renderSettlementPage(
   await reload();
 }
 
-// ── Modal: view + edit single settlement ────────────────────────────────────
+// ── Modal launcher: fetch settlement + open full 15-row breakdown modal ──
 
-async function openSettlementModal(
-  root: HTMLElement,
+async function openFullBreakdownModal(
   shiftId: string,
   editMode: boolean,
   onSaved: () => Promise<void>
 ): Promise<void> {
-  const modal = root.querySelector<HTMLElement>("#settlement-edit-modal");
-  const body = root.querySelector<HTMLElement>("#settlement-edit-body");
-  const cancelBtn = root.querySelector<HTMLButtonElement>(
-    '[data-action="cancel"]'
-  );
-  const saveBtn = root.querySelector<HTMLButtonElement>('[data-action="save"]');
-  if (!modal || !body || !cancelBtn || !saveBtn) return;
-
-  body.innerHTML = `<p>${escapeHtml(t("loading"))}...</p>`;
-  modal.style.display = "block";
-  modal.classList.add("in");
-
-  let data: AdminSettlement | null = null;
+  let settlement: AdminSettlement;
   try {
-    data = await getSettlement(shiftId);
+    settlement = await getSettlement(shiftId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    body.innerHTML = `<div class="alert alert-danger">${escapeHtml(msg)}</div>`;
+    alert(msg);
     return;
   }
-
-  const ro = editMode ? "" : "readonly disabled";
-  body.innerHTML = `
-    <form id="settlement-form">
-      <div class="form-group">
-        <label>${escapeHtml(t("date"))}:</label>
-        <input type="text" class="form-control" value="${escapeHtml(data.businessDate)}" readonly disabled>
-      </div>
-      <div class="form-group">
-        <label>${escapeHtml(t("reported_cash"))}:</label>
-        <input type="number" class="form-control" name="reportedCashCount" value="${data.reportedCashCount}" ${ro}>
-      </div>
-      <div class="form-group">
-        <label>${escapeHtml(t("settlement_to_drop_safe"))}:</label>
-        <input type="number" class="form-control" name="settlementToDropSafe" value="${data.settlementToDropSafe}" ${ro}>
-      </div>
-      <div class="form-group">
-        <label>${escapeHtml(t("withdraw_from_total_balance"))}:</label>
-        <input type="number" class="form-control" name="withdrawFromTotalBalance" value="${data.withdrawFromTotalBalance}" ${ro}>
-      </div>
-      <div class="form-group">
-        <label>${escapeHtml(t("deposit_to_dropsafe"))}:</label>
-        <input type="number" class="form-control" name="totalDropSafe" value="${data.totalDropSafe}" ${ro}>
-      </div>
-      <div class="form-group">
-        <label>${escapeHtml(t("comments"))}:</label>
-        <textarea class="form-control" name="settlementNote" ${ro}>${escapeHtml(data.settlementNote ?? "")}</textarea>
-      </div>
-      ${editMode ? `
-      <div class="form-group">
-        <label>${escapeHtml(t("reason"))} *:</label>
-        <input type="text" class="form-control" name="reason" required>
-      </div>` : ""}
-    </form>
-  `;
-  saveBtn.disabled = !editMode;
-
-  const close = (): void => {
-    modal.style.display = "none";
-    modal.classList.remove("in");
-  };
-
-  const cancelHandler = (): void => close();
-  cancelBtn.addEventListener("click", cancelHandler, { once: true });
-
-  const saveHandler = async (): Promise<void> => {
-    const form = body.querySelector<HTMLFormElement>("#settlement-form");
-    if (!form || !data) return;
-    const fd = new FormData(form);
-    const reason = String(fd.get("reason") ?? "").trim();
-    if (!reason) {
-      alert(t("reason_required"));
-      return;
-    }
-    try {
-      await editSettlement(shiftId, {
-        reason,
-        reportedCashCount: numOrUndef(fd.get("reportedCashCount")),
-        settlementToDropSafe: numOrUndef(fd.get("settlementToDropSafe")),
-        withdrawFromTotalBalance: numOrUndef(fd.get("withdrawFromTotalBalance")),
-        totalDropSafe: numOrUndef(fd.get("totalDropSafe")),
-        settlementNote: (fd.get("settlementNote") as string | null) ?? null,
-      });
-      close();
-      await onSaved();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      body.insertAdjacentHTML(
-        "afterbegin",
-        `<div class="alert alert-danger">${escapeHtml(msg)}</div>`
-      );
-    }
-  };
-  if (editMode) {
-    saveBtn.addEventListener("click", saveHandler, { once: true });
-  }
-}
-
-function numOrUndef(v: FormDataEntryValue | null): number | undefined {
-  if (v == null || v === "") return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
+  openSettlementBreakdownModal({
+    mode: editMode ? "edit" : "view",
+    existingSettlement: settlement,
+    shiftId: settlement.shiftId,
+    agentUserId: settlement.agentUserId,
+    agentName: settlement.agentUserId,
+    hallName: settlement.hallId,
+    businessDate: settlement.businessDate,
+    onSubmitted: () => {
+      void onSaved();
+    },
+  });
 }
