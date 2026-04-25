@@ -398,8 +398,14 @@ export class PlayScreen extends Container {
     //   - RUNNING with live brett → myTickets (markable) + preRoundTickets (preview
     //     for next round, not markable, cancelable via ×). Mid-round additive-arm.
     //   - Otherwise → preRoundTickets (pre-round queue, cancelable).
-    // Cancelable is always true for preRoundTickets — players can drop them until
-    // the next round locks in. myTickets (live) are never cancelable (already paid).
+    //
+    // BIN-CRITICAL fix (2026-04-25): pass `cancelable: true` so pre-round
+    // tickets keep their × even when a round is RUNNING (mid-round additive
+    // arm). TicketGridHtml.rebuild forces `cancelable=false` for the first
+    // `liveTicketCount` slots (already-paid live brett) — so live tickets
+    // stay non-cancelable while the queue for the next round shows ×.
+    // Previous `!running` short-circuited the whole grid and hid the ×
+    // completely whenever a game was active.
     const running = state.gameStatus === "RUNNING";
     const hasLive = running && state.myTickets.length > 0;
     const tickets = hasLive
@@ -407,7 +413,7 @@ export class PlayScreen extends Container {
       : (state.preRoundTickets ?? []);
 
     this.ticketGrid.setTickets(tickets, {
-      cancelable: !running,
+      cancelable: true,
       entryFee: state.entryFee || 10,
       state,
       liveTicketCount: hasLive ? state.myTickets.length : 0,

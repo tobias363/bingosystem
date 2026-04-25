@@ -123,6 +123,25 @@ describe("TicketGridHtml", () => {
     expect(grid.root.querySelector("button[aria-label='Avbestill brett']")).toBeNull();
   });
 
+  it("BIN-CRITICAL: pre-round tickets keep × even when running (mid-round arm)", () => {
+    // Reproduserer regresjonen Tobias rapporterte 2026-04-25: under en aktiv
+    // runde der spilleren hadde armet brett for neste runde (mid-round
+    // additive arm), forsvant ×-knappen helt fordi PlayScreen sendte
+    // `cancelable: !running`. Nå sender vi `cancelable: true` og lar
+    // TicketGridHtml.rebuild forcere live-brett til false per index.
+    const liveTicket = makeTicket(0, "Small Yellow");
+    const preRoundTicket = makeTicket(1, "Small Purple");
+    grid.setTickets([liveTicket, preRoundTicket], {
+      cancelable: true, // PlayScreen now passes this unconditionally
+      entryFee: 10,
+      state: makeState(),
+      liveTicketCount: 1, // Første brett er live, andre er pre-round
+    });
+
+    const cancelBtns = grid.root.querySelectorAll("button[aria-label='Avbestill brett']");
+    expect(cancelBtns.length).toBe(1); // Bare pre-round-brettet får × — live blir tvunget til false
+  });
+
   it("applies drawnNumbers as marks on live tickets (liveTicketCount > 0)", () => {
     // 2026-04-21: Marks only apply to live tickets — pre-round brett (for
     // the next round) stay unmarked even when drawnNumbers is non-empty.
