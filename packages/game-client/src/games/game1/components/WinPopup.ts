@@ -15,6 +15,8 @@
  */
 
 const LUCKY_CLOVER_URL = "/web/games/assets/game1/design/lucky-clover.png";
+/** Auto-close delay for fase 1-4 WinPopup (regel-endring 2026-04-24 rev 3 Tobias: 3s→4s). */
+const AUTO_CLOSE_DELAY_MS = 4000;
 
 function ensureWinPopupStyles(): void {
   if (typeof document === "undefined") return;
@@ -59,6 +61,7 @@ export interface WinPopupOptions {
 export class WinPopup {
   private backdrop: HTMLDivElement | null = null;
   private parent: HTMLElement;
+  private autoCloseTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(parent: HTMLElement) {
     this.parent = parent;
@@ -249,9 +252,20 @@ export class WinPopup {
         wrap.style.transform = "translate(-50%, -50%) scale(1)";
       });
     });
+
+    // Auto-close etter 4s (regel-endring 2026-04-24 rev 3 Tobias). Lukk-
+    // knappen overstyrer ved manuelt klikk.
+    this.autoCloseTimer = setTimeout(() => {
+      this.hide();
+      opts.onClose?.();
+    }, AUTO_CLOSE_DELAY_MS);
   }
 
   hide(): void {
+    if (this.autoCloseTimer !== null) {
+      clearTimeout(this.autoCloseTimer);
+      this.autoCloseTimer = null;
+    }
     if (!this.backdrop) return;
     this.backdrop.remove();
     this.backdrop = null;
@@ -288,6 +302,9 @@ export class WinPopup {
       const dur = 5 + j * 3;
 
       const item = document.createElement("div");
+      // BLINK-FIX (round 3, hazard 4): Fjernet `will-change:transform, opacity`.
+      // Chrome auto-promoterer animerte elementer; `will-change` brukte
+      // unødvendig GPU-minne og bidro til layer-eviction-pressure.
       item.style.cssText = [
         "position:absolute",
         "top:50%",
@@ -298,7 +315,6 @@ export class WinPopup {
         `margin-top:${-size / 2}px`,
         `animation:wp-float ${dur}s ease-in-out ${delay}s infinite`,
         "filter:drop-shadow(0 4px 10px rgba(0,0,0,0.35))",
-        "will-change:transform, opacity",
       ].join(";");
       item.style.setProperty("--sx", `${sx}px`);
       item.style.setProperty("--sy", `${sy}px`);
