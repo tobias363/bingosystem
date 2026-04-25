@@ -202,6 +202,7 @@ import { MiniGamesConfigService } from "./admin/MiniGamesConfigService.js";
 import { createAdminSavedGamesRouter } from "./routes/adminSavedGames.js";
 import { SavedGameService } from "./admin/SavedGameService.js";
 import { createAdminCmsRouter } from "./routes/adminCms.js";
+import { createPublicCmsRouter } from "./routes/publicCms.js";
 import { CmsService } from "./admin/CmsService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
 import { createAdminReportsSubgameDrillDownRouter } from "./routes/adminReportsSubgameDrillDown.js";
@@ -222,6 +223,7 @@ import { createGameEventHandlers } from "./sockets/gameEvents.js";
 import { createGame1ScheduledEventHandlers } from "./sockets/game1ScheduledEvents.js";
 import { createAdminGame1Namespace } from "./sockets/adminGame1Namespace.js";
 import { createGame1PlayerBroadcaster } from "./sockets/game1PlayerBroadcasterAdapter.js";
+import { createMiniGameSocketWire } from "./sockets/miniGameSocketWire.js";
 import { initSentry, setSocketSentryContext, addBreadcrumb, captureError, flushSentry } from "./observability/sentry.js";
 import { errorReporter } from "./middleware/errorReporter.js";
 import { PostgresChatMessageStore, type ChatMessageStore } from "./store/ChatMessageStore.js";
@@ -1771,6 +1773,12 @@ app.use(createAdminCmsRouter({
   auditLogService,
   cmsService,
 }));
+// Public (un-authenticated) CMS endpoints — regulatorisk krav: spillere
+// må kunne lese T&C / FAQ / responsible-gaming UTEN konto. Routeren
+// håndhever publish-status (regulatoriske slugs trenger live-versjon;
+// ikke-regulatoriske trenger ikke-tom innhold) og legger på
+// Cache-Control: public, max-age=300 for å avlaste backenden.
+app.use(createPublicCmsRouter({ cmsService }));
 // BIN-628: admin track-spending aggregat (regulatorisk P2 — pengespill-
 // forskriften §11). Gjenbruker de samme env-var-drevne loss-limitene som
 // BingoEngine er konstruert med (`bingoDailyLossLimit` / `bingoMonthlyLossLimit`)
@@ -2421,11 +2429,24 @@ const registerGame1ScheduledEvents = createGame1ScheduledEventHandlers({
   bindDefaultVariantConfig: (code, slug) => roomState.bindDefaultVariantConfig(code, slug),
 });
 
+// BIN-MYSTERY Gap D: socket-wire for alle 5 M6 mini-games (wheel, chest,
+// colordraft, oddsen, mystery). Før denne wire-up var setBroadcaster aldri
+// kalt → NoopMiniGameBroadcaster i bruk → klient fikk aldri mini_game-events.
+// `mini_game:choice` lyttes også her — uten wire ble klient-valg aldri sendt
+// til orchestrator.handleChoice().
+const miniGameSocketWire = createMiniGameSocketWire({
+  io,
+  orchestrator: game1MiniGameOrchestrator,
+  platformService,
+});
+game1MiniGameOrchestrator.setBroadcaster(miniGameSocketWire.broadcaster);
+
 io.on("connection", (socket: Socket) => {
   registerGameEvents(socket);
   registerAdminDisplayEvents(socket);
   registerAdminHallEvents(socket);
   registerGame1ScheduledEvents(socket);
+  miniGameSocketWire.register(socket);
 });
 
 // GAME1_SCHEDULE PR 4d.3: `/admin-game1`-namespace for master-konsoll
