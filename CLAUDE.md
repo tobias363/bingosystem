@@ -360,17 +360,23 @@ These are decisions baked in by the Spillorama team — not auto-detectable from
 
 See @docs/architecture/SPILLKATALOG.md for the definitive game catalog. Quick mapping:
 
-| Marketing | Code-name | Slug | Category |
-|-----------|-----------|------|----------|
-| Spill 1 | game1 | `bingo` | Hovedspill (75-ball 5×5) |
-| Spill 2 | game2 | `rocket` | Hovedspill (60-ball 3×5) |
-| Spill 3 | game3 | `monsterbingo` | Hovedspill (60-ball 5×5) |
-| Spill 4 | game5 | `spillorama` | Hovedspill (60-ball 3×5 + roulette, "SpinnGo") |
-| Candy | — | `candy` | External iframe (third-party) |
+| Marketing | Code-name | Slug | Category | Trekning |
+|-----------|-----------|------|----------|----------|
+| Spill 1 (Hovedspill 1) | game1 | `bingo` | Hovedspill (75-ball 5×5) | Live |
+| Spill 2 (Hovedspill 2) | game2 | `rocket` | Hovedspill (60-ball 3×5) | Live |
+| Spill 3 (Hovedspill 3) | game3 | `monsterbingo` | Hovedspill (60-ball 5×5) | Live |
+| SpinnGo (Spill 4) | game5 | `spillorama` | **Databingo** (60-ball 3×5 + roulette) | Player-startet |
+| Candy | — | `candy` | External iframe (third-party) | Tredjeparts |
 
 **Game 4 / `game4` / `themebingo` is deprecated (BIN-496). Do not use.**
 
-All Spillorama games are **hovedspill** under pengespillforskriften (max single prize 2500 kr). The platform does **not** operate "databingo" — that's a separate regulatory category.
+Spillorama drives **three live hovedspill** (Spill 1-3) **and one databingo** (SpinnGo, player-started) per pengespillforskriften. Candy is integrated via iframe with shared wallet — third-party, not Spillorama's regulatory responsibility.
+
+**§11 distribution to organizations:**
+- Hovedspill (Spill 1-3): minimum 15%
+- Databingo (SpinnGo): minimum 30%
+
+Earlier docs claimed all four were hovedspill — that was incorrect and corrected 2026-04-25.
 
 ### Persistent memory
 
