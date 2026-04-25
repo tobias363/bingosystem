@@ -26,8 +26,10 @@ function ensurePatternWonStyles(): void {
   100% { transform: scale(1); }
 }
 .prize-pill {
-  background: rgba(120, 20, 20, 0.4);
-  backdrop-filter: blur(6px);
+  /* KRITISK: Ingen backdrop-filter (PR #468) — prize-pill ligger over
+   * Pixi-canvas og tvinger GPU til å re-kjøre blur-shader per frame.
+   * Bruker solid bakgrunn istf rgba+blur for samme visuelle effekt. */
+  background: rgba(30, 12, 12, 0.92);
   border: 1px solid rgba(255, 100, 100, 0.2);
   box-shadow: 0 4px 8px rgba(0,0,0,0.4);
   border-radius: 14px;
