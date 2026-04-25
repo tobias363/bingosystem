@@ -231,6 +231,7 @@ import { createAdminDisplayHandlers } from "./sockets/adminDisplayEvents.js";
 import { createAdminHallHandlers } from "./sockets/adminHallEvents.js";
 import { TvScreenService } from "./game/TvScreenService.js";
 import { createTvScreenRouter } from "./routes/tvScreen.js";
+import { createTvVoiceAssetsRouter } from "./routes/tvVoiceAssets.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -301,6 +302,12 @@ app.use(httpRateLimiter.middleware());
 app.get(["/", "/index.html"], (_req, res) => { res.redirect(302, "/web/"); });
 app.use("/admin", express.static(adminWebDir));
 app.use(express.static(publicDir));
+// TV-voice ball-utrop. express.static-mounten over plukker opp eventuelle
+// override-filer i `apps/backend/public/tv-voices/<voice>/<ball>.<ext>` først;
+// hvis ingen override finnes, fall vi tilbake til de eksisterende voice-pakkene
+// i `packages/game-client/public/assets/game1/audio/`. Se router-modulen for
+// mapping voice1/2/3 → no-male/no-female/en.
+app.use(createTvVoiceAssetsRouter({ projectDir }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
