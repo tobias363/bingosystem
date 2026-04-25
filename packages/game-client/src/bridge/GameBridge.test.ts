@@ -355,8 +355,8 @@ describe("GameBridge", () => {
           playerPendingStakes: { "player-1": 1000 },
         }),
       );
-      expect(bridge.getState().myStake).toBe(80, "Innsats kun aktiv-runde");
-      expect(bridge.getState().myPendingStake).toBe(1000, "Forhåndskjøp = neste runde");
+      expect(bridge.getState().myStake).toBe(80);
+      expect(bridge.getState().myPendingStake).toBe(1000);
     });
 
     it("round-state-isolation: missing playerPendingStakes defaults to 0 (older backend)", () => {
@@ -367,7 +367,7 @@ describe("GameBridge", () => {
         // playerPendingStakes intentionally omitted
       );
       expect(bridge.getState().myStake).toBe(40);
-      expect(bridge.getState().myPendingStake).toBe(0, "default 0 når server mangler feltet");
+      expect(bridge.getState().myPendingStake).toBe(0);
     });
   });
 
