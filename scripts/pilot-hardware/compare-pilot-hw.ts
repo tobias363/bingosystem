@@ -5,7 +5,7 @@
  * scripts/performance-budget/compare.ts, men med pilot-hw-spesifikke
  * felter (fpsMin som min-budget istedenfor max).
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, appendFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -146,7 +146,6 @@ function main(): void {
   console.log(md);
 
   if (process.env.GITHUB_STEP_SUMMARY) {
-    const { appendFileSync } = require('node:fs');
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
   }
 
