@@ -51,8 +51,19 @@ import type { GameEventsDeps } from "./deps.js";
  * Kaster INSUFFICIENT_FUNDS (via adapter) hvis tilgjengelig saldo ikke dekker.
  * Rullback er idempotent — in-memory armed-state oppdateres først etter
  * wallet-reserve er committed.
+ *
+ * BIN-CRITICAL fix (2026-04-25, Tobias): tidligere versjon hadde fem silent
+ * early-returns som skjulte regulatorisk-relevante feil. Konkret scenario:
+ *   - dev-miljøet kjører med `AUTO_ROUND_ENTRY_FEE=0`
+ *   - klient-popup falbacker til `entryFee || 10` og viser "30 kr per Large"
+ *   - server beregner `deltaKr = 30 × 0 = 0` og returnerer uten å reservere
+ *   - `armPlayer(...)` kjøres uansett → 30 brett står armed uten reservasjon
+ *   - bruker mener han har kjøpt 1800 kr på 1000 kr saldo
+ * Fix: hvis entryFee er 0 logges advarsel; hvis entryFee > 0 og noen prereq
+ * mangler kastes INSUFFICIENT_FUNDS slik at `bet:arm` faktisk feiler og
+ * `armPlayer` aldri kjøres for ureservert betting.
  */
-async function reservePreRoundDelta(
+export async function reservePreRoundDelta(
   deps: GameEventsDeps,
   roomCode: string,
   playerId: string,
@@ -60,17 +71,56 @@ async function reservePreRoundDelta(
   newTotalWeighted: number,
 ): Promise<void> {
   const adapter = deps.walletAdapter;
-  if (!adapter?.reserve || !adapter.increaseReservation) return; // test-harness
-  if (!deps.getWalletIdForPlayer || !deps.getReservationId || !deps.setReservationId) return;
+
+  // Test-harness: hvis ingen wallet-adapter er konfigurert i det hele tatt,
+  // er dette ikke prod-kode. Gjelder kun integrationsTester som mocker ut
+  // hele wallet-laget.
+  if (!adapter?.reserve || !adapter.increaseReservation) return;
+
+  // Prod-prereq: deps må være wired up. Hvis ikke, har en deploy gått galt
+  // og fail-closed er den eneste forsvarlige responsen.
+  if (!deps.getWalletIdForPlayer || !deps.getReservationId || !deps.setReservationId) {
+    throw new DomainError(
+      "INSUFFICIENT_FUNDS",
+      "Wallet-tjenesten er ikke tilgjengelig. Prøv igjen senere.",
+    );
+  }
 
   const deltaWeighted = newTotalWeighted - previousWeighted;
-  if (deltaWeighted <= 0) return;
+  if (deltaWeighted <= 0) return; // Ingen nye brett å betale for.
+
   const entryFee = deps.getRoomConfiguredEntryFee(roomCode);
   const deltaKr = deltaWeighted * entryFee;
-  if (deltaKr <= 0) return;
+
+  // Free play: entryFee=0 (eks. dev `AUTO_ROUND_ENTRY_FEE=0`). Logg slik at
+  // det er åpenbart i logger at ingen reservasjon ble laget — auditor kan
+  // grep-e "entryFee=0" og se at det ikke er stilthet å gjemme seg bak.
+  if (deltaKr <= 0) {
+    if (entryFee !== 0) {
+      // entryFee > 0 men deltaKr <= 0 — kan kun skje med floating-point bug.
+      throw new DomainError(
+        "INVALID_INPUT",
+        `Beregnet innsats ${deltaKr} kr er ugyldig (entryFee=${entryFee}, deltaWeighted=${deltaWeighted}).`,
+      );
+    }
+    console.warn(
+      `[wallet-reservation] entryFee=0 for room ${roomCode} — bet:arm uten ` +
+        `reservasjon. Sett AUTO_ROUND_ENTRY_FEE eller room:configure for ekte ` +
+        `pengespill.`,
+    );
+    return;
+  }
 
   const walletId = deps.getWalletIdForPlayer(roomCode, playerId);
-  if (!walletId) return;
+  if (!walletId) {
+    // Spiller har ingen wallet i room snapshot — kan skje hvis player
+    // dropped/rejoined under en pågående arm. Fail-closed: ikke arm uten
+    // wallet-binding. Klient får en klar feil i stedet for stille suksess.
+    throw new DomainError(
+      "INSUFFICIENT_FUNDS",
+      "Fant ikke lommebok for spilleren. Last siden på nytt.",
+    );
+  }
 
   const existingResId = deps.getReservationId(roomCode, playerId);
   if (existingResId) {
