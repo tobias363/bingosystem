@@ -184,6 +184,43 @@ test("recordComplianceLedgerEvent lagrer entry og kan hentes med listComplianceL
   assert.ok(entries[0].createdAt);
 });
 
+/**
+ * FIXED-PRIZE-FIX: HOUSE_DEFICIT er en ny audit-event-type for å spore
+ * at huset finansierer differansen når faste premier overgår pool.
+ * Inngår IKKE i §11-aggregater (gross-turnover/prizesPaid) — kun audit.
+ */
+test("FIXED-PRIZE-FIX: HOUSE_DEFICIT lagrer entry med metadata", async () => {
+  const { ledger } = makeLedger();
+
+  await ledger.recordComplianceLedgerEvent({
+    hallId: "hall-1",
+    gameType: "MAIN_GAME",
+    channel: "INTERNET",
+    eventType: "HOUSE_DEFICIT",
+    amount: 856,
+    roomCode: "XGFLXH",
+    gameId: "g-test",
+    claimId: "c-test",
+    playerId: "p-tobias",
+    walletId: "w-tobias",
+    sourceAccountId: "house-hall-1-main_game-internet",
+    metadata: {
+      reason: "FIXED_PRIZE_HOUSE_GUARANTEE",
+      patternName: "Fullt Hus",
+      winningType: "fixed",
+      payout: 1000,
+      poolBeforePayout: 144,
+    },
+  });
+
+  const entries = ledger.listComplianceLedgerEntries();
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].eventType, "HOUSE_DEFICIT");
+  assert.equal(entries[0].amount, 856);
+  assert.equal(entries[0].metadata?.reason, "FIXED_PRIZE_HOUSE_GUARANTEE");
+  assert.equal(entries[0].metadata?.patternName, "Fullt Hus");
+});
+
 test("generateDailyReport beregner riktig grossTurnover, prizesPaid og net per hall/gameType/channel", async () => {
   const { ledger } = makeLedger();
 
