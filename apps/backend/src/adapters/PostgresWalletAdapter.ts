@@ -4,6 +4,7 @@ import { Pool, type PoolClient } from "pg";
 import { getPoolTuning } from "../util/pgPool.js";
 import { CircuitBreaker, CircuitBreakerOpenError, type CircuitState } from "../util/CircuitBreaker.js";
 import { metrics } from "../util/metrics.js";
+import { withWalletTx } from "../wallet/walletTxRetry.js";
 import type {
   CommitReservationOptions,
   CreateWalletAccountInput,
@@ -275,28 +276,25 @@ export class PostgresWalletAdapter implements WalletAdapter {
     // ikke-system (deposit/winnings >= 0 enforced).
     const isSystem = this.isSystemAccountId(accountId);
 
-    const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
-      const existing = await this.selectAccountForUpdate(client, accountId);
-      if (existing) {
-        if (input?.allowExisting) {
-          await client.query("COMMIT");
-          return this.toWalletAccount(existing);
+      // BIN-762: REPEATABLE READ + retry på 40001/40P01 via withWalletTx.
+      return await withWalletTx(this.pool, async (client) => {
+        const existing = await this.selectAccountForUpdate(client, accountId);
+        if (existing) {
+          if (input?.allowExisting) {
+            return this.toWalletAccount(existing);
+          }
+          throw new WalletError("ACCOUNT_EXISTS", `Wallet ${accountId} finnes allerede.`);
         }
-        throw new WalletError("ACCOUNT_EXISTS", `Wallet ${accountId} finnes allerede.`);
-      }
 
-      await this.insertAccount(client, accountId, isSystem);
-      // System-konti (house-*) skal IKKE få initial-funding via
-      // external_cash. De starter på 0 og fyller seg fra player-stakes
-      // (eller går negativt når faste premier overgår pool).
-      if (!isSystem && initialBalance > 0) {
-        const operationId = randomUUID();
-        const txId = randomUUID();
-        await this.executeLedger(
-          client,
-          {
+        await this.insertAccount(client, accountId, isSystem);
+        // System-konti (house-*) skal IKKE få initial-funding via
+        // external_cash. De starter på 0 og fyller seg fra player-stakes
+        // (eller går negativt når faste premier overgår pool).
+        if (!isSystem && initialBalance > 0) {
+          const operationId = randomUUID();
+          const txId = randomUUID();
+          await this.executeLedger(client, {
             transactions: [
               {
                 id: txId,
@@ -325,18 +323,21 @@ export class PostgresWalletAdapter implements WalletAdapter {
                 accountSide: "deposit"
               }
             ]
-          }
-        );
-      }
+          });
+        }
 
-      const created = await this.selectAccountForUpdate(client, accountId);
-      if (!created) {
-        throw new WalletError("ACCOUNT_NOT_FOUND", `Wallet ${accountId} finnes ikke etter opprettelse.`);
-      }
-      await client.query("COMMIT");
-      return this.toWalletAccount(created);
+        const created = await this.selectAccountForUpdate(client, accountId);
+        if (!created) {
+          throw new WalletError(
+            "ACCOUNT_NOT_FOUND",
+            `Wallet ${accountId} finnes ikke etter opprettelse.`
+          );
+        }
+        return this.toWalletAccount(created);
+      });
     } catch (error) {
-      await client.query("ROLLBACK");
+      // Bevar tidligere `allowExisting + 23505` race-fallback. WalletError og
+      // WALLET_SERIALIZATION_FAILURE propageres uendret via wrapError.
       if (
         input?.allowExisting &&
         input.accountId &&
@@ -348,8 +349,6 @@ export class PostgresWalletAdapter implements WalletAdapter {
         return this.getAccount(accountId);
       }
       throw this.wrapError(error);
-    } finally {
-      client.release();
     }
   }
 
@@ -579,17 +578,135 @@ export class PostgresWalletAdapter implements WalletAdapter {
     await this.ensureAccount(fromId);
     await this.ensureAccount(toId);
 
-    const client = await this.pool.connect();
+    // PR-W3: targetSide styrer hvilken side CREDIT-siden lander på. Hvis
+    // mottaker er systemkonto ignoreres feltet (CHECK-constraint winnings=0).
+    const requestedTarget: WalletAccountSide = options?.targetSide ?? "deposit";
+
     try {
-      await client.query("BEGIN");
-      const result = await this.executeTransferInTx(client, fromId, toId, amount, reason, options);
-      await client.query("COMMIT");
-      return result;
+      // BIN-762: REPEATABLE READ + retry på 40001/40P01 via withWalletTx.
+      return await withWalletTx(this.pool, async (client) => {
+        const operationId = randomUUID();
+        const fromTxId = randomUUID();
+        const toTxId = randomUUID();
+
+        // Les from-account inne i samme FOR UPDATE som executeLedger vil holde,
+        // for å beregne winnings-first splitt atomisk.
+        const fromAccount = await this.selectAccountForUpdate(client, fromId);
+        if (!fromAccount) {
+          throw new WalletError("ACCOUNT_NOT_FOUND", `Wallet ${fromId} finnes ikke.`);
+        }
+        const toAccount = await this.selectAccountForUpdate(client, toId);
+        if (!toAccount) {
+          throw new WalletError("ACCOUNT_NOT_FOUND", `Wallet ${toId} finnes ikke.`);
+        }
+        const fromState: InternalAccountState = {
+          id: fromAccount.id,
+          balance: asMoney(fromAccount.balance),
+          depositBalance: asMoney(fromAccount.deposit_balance),
+          winningsBalance: asMoney(fromAccount.winnings_balance),
+          isSystem: fromAccount.is_system
+        };
+
+        // PR-W3: system-konto som avsender bruker deposit-siden (winnings = 0).
+        // For brukerkonto: winnings-first-split.
+        const fromSplit: WalletTransactionSplit = fromState.isSystem
+          ? { fromDeposit: amount, fromWinnings: 0 }
+          : splitDebitFromAccount(fromState, amount);
+
+        // PR-W3: effektivt target — system-konto som mottaker tvinger deposit
+        // (CHECK-constraint winnings_balance=0 for system).
+        const effectiveTarget: WalletAccountSide = toAccount.is_system
+          ? "deposit"
+          : requestedTarget;
+
+        const toSplit: WalletTransactionSplit =
+          effectiveTarget === "winnings"
+            ? { fromDeposit: 0, fromWinnings: amount }
+            : { fromDeposit: amount, fromWinnings: 0 };
+
+        const entries: LedgerEntryInput[] = [];
+        // DEBIT-siden: avsender
+        if (fromState.isSystem) {
+          // System: alt på deposit (winnings er alltid 0).
+          entries.push({
+            operationId,
+            accountId: fromId,
+            side: "DEBIT",
+            amount,
+            transactionId: fromTxId,
+            accountSide: "deposit"
+          });
+        } else {
+          if (fromSplit.fromWinnings > 0) {
+            entries.push({
+              operationId,
+              accountId: fromId,
+              side: "DEBIT",
+              amount: fromSplit.fromWinnings,
+              transactionId: fromTxId,
+              accountSide: "winnings"
+            });
+          }
+          if (fromSplit.fromDeposit > 0) {
+            entries.push({
+              operationId,
+              accountId: fromId,
+              side: "DEBIT",
+              amount: fromSplit.fromDeposit,
+              transactionId: fromTxId,
+              accountSide: "deposit"
+            });
+          }
+        }
+        // CREDIT-siden: mottaker — alt lander på effectiveTarget.
+        entries.push({
+          operationId,
+          accountId: toId,
+          side: "CREDIT",
+          amount,
+          transactionId: toTxId,
+          accountSide: effectiveTarget
+        });
+
+        const txRows = await this.executeLedger(client, {
+          transactions: [
+            {
+              id: fromTxId,
+              operationId,
+              accountId: fromId,
+              type: "TRANSFER_OUT",
+              amount,
+              reason,
+              relatedAccountId: toId,
+              idempotencyKey: options?.idempotencyKey,
+              split: fromSplit
+            },
+            {
+              id: toTxId,
+              operationId,
+              accountId: toId,
+              type: "TRANSFER_IN",
+              amount,
+              reason,
+              relatedAccountId: fromId,
+              split: toSplit
+            }
+          ],
+          entries
+        });
+
+        const fromTx = txRows.find((tx) => tx.id === fromTxId);
+        const toTx = txRows.find((tx) => tx.id === toTxId);
+        if (!fromTx || !toTx) {
+          throw new WalletError(
+            "INVALID_WALLET_RESPONSE",
+            "Transfer mangler transaksjonsrader."
+          );
+        }
+        return { fromTx, toTx };
+      });
     } catch (error) {
-      await client.query("ROLLBACK");
       throw this.wrapError(error);
-    } finally {
-      client.release();
     }
   }
 
@@ -795,17 +912,16 @@ export class PostgresWalletAdapter implements WalletAdapter {
 
     await this.ensureAccount(input.accountId);
 
-    const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
-      const tx = await this.runSingleAccountMovementOnClient(client, input);
-      await client.query("COMMIT");
-      return tx;
+      // BIN-762: REPEATABLE READ + retry på 40001/40P01 via withWalletTx.
+      // Bruker shared `runSingleAccountMovementOnClient` (CRIT-5/PR #551) slik at
+      // BEGIN/COMMIT/ROLLBACK + isolation + retry håndteres av withWalletTx, mens
+      // selve ledger-skrivingen er felles med `singleAccountMovementWithClient`.
+      return await withWalletTx(this.pool, (client) =>
+        this.runSingleAccountMovementOnClient(client, input)
+      );
     } catch (error) {
-      await client.query("ROLLBACK");
       throw this.wrapError(error);
-    } finally {
-      client.release();
     }
   }
 
@@ -1637,10 +1753,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
     }
     const normalized = this.normalizeAnyAccountId(accountId);
 
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-
+    // BIN-762: REPEATABLE READ + retry på 40001/40P01 via withWalletTx.
+    return await withWalletTx(this.pool, async (client) => {
       // Lås wallet-row for å beregne available_balance atomisk — hindrer
       // race mot parallell reserve/transfer fra samme wallet.
       const account = await this.selectAccountForUpdate(client, normalized);
@@ -1667,7 +1781,6 @@ export class PostgresWalletAdapter implements WalletAdapter {
               `Reservasjon med samme key (${options.idempotencyKey}) har beløp ${row.amount_cents}, ikke ${amount}.`,
             );
           }
-          await client.query("COMMIT");
           return this.mapReservationRow(row);
         }
         // Hvis status != active (released/committed/expired), UNIQUE
@@ -1706,14 +1819,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
                    game_session_id, created_at, released_at, committed_at, expires_at`,
         [id, normalized, amount, options.idempotencyKey, options.roomCode, expiresAt],
       );
-      await client.query("COMMIT");
       return this.mapReservationRow(insert.rows[0]);
-    } catch (err) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async increaseReservation(
@@ -1731,9 +1838,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
     if (!Number.isFinite(extraAmount) || extraAmount <= 0) {
       throw new WalletError("INVALID_INPUT", "extraAmount må være > 0.");
     }
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    // BIN-762: REPEATABLE READ + retry på 40001/40P01 via withWalletTx.
+    return await withWalletTx(this.pool, async (client) => {
       const resRows = await client.query(
         `SELECT id, wallet_id, amount_cents, idempotency_key, status, room_code,
                 game_session_id, created_at, released_at, committed_at, expires_at
@@ -1779,14 +1885,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
                    game_session_id, created_at, released_at, committed_at, expires_at`,
         [extraAmount, reservationId],
       );
-      await client.query("COMMIT");
       return this.mapReservationRow(updated.rows[0]);
-    } catch (err) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async releaseReservation(
@@ -1801,9 +1901,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
     amount?: number,
   ): Promise<WalletReservation> {
     await this.ensureInitialized();
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    // BIN-762: REPEATABLE READ + retry på 40001/40P01 via withWalletTx.
+    return await withWalletTx(this.pool, async (client) => {
       const resRows = await client.query(
         `SELECT id, wallet_id, amount_cents, idempotency_key, status, room_code,
                 game_session_id, created_at, released_at, committed_at, expires_at
@@ -1833,7 +1932,6 @@ export class PostgresWalletAdapter implements WalletAdapter {
                      game_session_id, created_at, released_at, committed_at, expires_at`,
           [reservationId],
         );
-        await client.query("COMMIT");
         return this.mapReservationRow(updated.rows[0]);
       }
 
@@ -1848,14 +1946,8 @@ export class PostgresWalletAdapter implements WalletAdapter {
                    game_session_id, created_at, released_at, committed_at, expires_at`,
         [amount, reservationId],
       );
-      await client.query("COMMIT");
       return this.mapReservationRow(updated.rows[0]);
-    } catch (err) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async commitReservation(
