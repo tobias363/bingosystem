@@ -1298,7 +1298,21 @@ export class BingoEngine {
           targetSide: "winnings",
         },
       );
-      player.balance += payout;
+      // W1-hotfix backport (Tobias 2026-04-26 — PR #553 til ad-hoc-engine):
+      // Refresh in-memory `player.balance` fra wallet (available_balance) i
+      // stedet for optimistisk `+= payout`. Optimistisk-pathen tapte
+      // winnings/deposit-split-informasjonen (alt landet på `total`-aggregatet
+      // i in-memory state), så room:update-snapshot ga klienten feil
+      // gevinst-chip etter 2.+ vinn. Fail-closed: payout er allerede committed,
+      // refresh-feil ruller IKKE tilbake.
+      try {
+        await this.refreshPlayerBalancesForWallet(player.walletId);
+      } catch (refreshErr) {
+        logger.warn(
+          { err: refreshErr, walletId: player.walletId, gameId: game.id, roomCode: room.code },
+          "[W1-HOTFIX adhoc] refreshPlayerBalancesForWallet feilet etter payoutPhaseWinner — payout committed uansett",
+        );
+      }
       game.remainingPrizePool = roundCurrency(Math.max(0, game.remainingPrizePool - payout));
       game.remainingPayoutBudget = roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
       await this.compliance.recordLossEntry(player.walletId, room.hallId, {
@@ -1798,7 +1812,17 @@ export class BingoEngine {
             targetSide: "winnings",
           }
         );
-        player.balance += payout;
+        // W1-hotfix backport (Tobias 2026-04-26 — PR #553 til ad-hoc-engine):
+        // Bytt optimistisk `+= payout` til DB-refresh så room:update-snapshot
+        // får riktig deposit/winnings-split. Se kommentar over (payoutPhaseWinner).
+        try {
+          await this.refreshPlayerBalancesForWallet(player.walletId);
+        } catch (refreshErr) {
+          logger.warn(
+            { err: refreshErr, walletId: player.walletId, gameId: game.id, roomCode: room.code, claimType: "LINE" },
+            "[W1-HOTFIX adhoc] refreshPlayerBalancesForWallet feilet etter LINE-payout — payout committed uansett",
+          );
+        }
         game.remainingPrizePool = roundCurrency(Math.max(0, game.remainingPrizePool - payout));
         game.remainingPayoutBudget = roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
         await this.compliance.recordLossEntry(player.walletId, room.hallId, {
@@ -1903,7 +1927,17 @@ export class BingoEngine {
             targetSide: "winnings",
           }
         );
-        player.balance += payout;
+        // W1-hotfix backport (Tobias 2026-04-26 — PR #553 til ad-hoc-engine):
+        // Bytt optimistisk `+= payout` til DB-refresh så room:update-snapshot
+        // får riktig deposit/winnings-split. Se kommentar over (payoutPhaseWinner).
+        try {
+          await this.refreshPlayerBalancesForWallet(player.walletId);
+        } catch (refreshErr) {
+          logger.warn(
+            { err: refreshErr, walletId: player.walletId, gameId: game.id, roomCode: room.code, claimType: "BINGO" },
+            "[W1-HOTFIX adhoc] refreshPlayerBalancesForWallet feilet etter BINGO-payout — payout committed uansett",
+          );
+        }
         await this.compliance.recordLossEntry(player.walletId, room.hallId, {
           type: "PAYOUT",
           amount: payout,
@@ -2078,6 +2112,11 @@ export class BingoEngine {
       ledger: this.ledger,
       requireRoom: (code) => this.requireRoom(code),
       requirePlayer: (room, playerId) => this.requirePlayer(room, playerId),
+      // W1-hotfix backport (Tobias 2026-04-26 — PR #553 til ad-hoc-engine):
+      // Eksponer refresh-helper til mini-game-modulen så jackpot/mini-game-
+      // payouts kan bytte optimistisk `+= payout` til DB-refresh.
+      refreshPlayerBalancesForWallet: (walletId) =>
+        this.refreshPlayerBalancesForWallet(walletId),
     };
   }
 

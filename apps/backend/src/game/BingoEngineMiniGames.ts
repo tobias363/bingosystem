@@ -29,6 +29,9 @@ import type {
 } from "./types.js";
 import { DomainError } from "./BingoEngine.js";
 import { IdempotencyKeys } from "./idempotency.js";
+import { logger as rootLogger } from "../util/logger.js";
+
+const logger = rootLogger.child({ mod: "BingoEngineMiniGames" });
 
 /** Default prize segments for the jackpot wheel (in kr). */
 export const JACKPOT_PRIZES: readonly number[] = [5, 10, 15, 20, 25, 50, 10, 15];
@@ -60,6 +63,14 @@ export interface MiniGamesContext {
   readonly ledger: ComplianceLedger;
   requireRoom(roomCode: string): RoomState;
   requirePlayer(room: RoomState, playerId: string): Player;
+  /**
+   * W1-hotfix backport (Tobias 2026-04-26 — PR #553 til ad-hoc-engine):
+   * Refresh in-memory `Player.balance` for alle spillere som deler `walletId`
+   * fra wallet-adapter (available_balance). Brukes etter prize-payout for å
+   * unngå optimistisk `+= payout`-divergens som tapte deposit/winnings-split-
+   * informasjonen. Returnerer rom-koder som ble berørt (logging-only).
+   */
+  refreshPlayerBalancesForWallet(walletId: string): Promise<string[]>;
 }
 
 /**
@@ -156,7 +167,17 @@ export async function spinJackpot(
         targetSide: "winnings",
       },
     );
-    player.balance += prizeAmount;
+    // W1-hotfix backport (Tobias 2026-04-26 — PR #553 til ad-hoc-engine):
+    // Bytt optimistisk `+= prizeAmount` til DB-refresh så room:update-snapshot
+    // får riktig deposit/winnings-split.
+    try {
+      await ctx.refreshPlayerBalancesForWallet(player.walletId);
+    } catch (refreshErr) {
+      logger.warn(
+        { err: refreshErr, walletId: player.walletId, gameId: game.id, roomCode: room.code },
+        "[W1-HOTFIX adhoc] refreshPlayerBalancesForWallet feilet etter Jackpot-payout — payout committed uansett",
+      );
+    }
 
     await ctx.compliance.recordLossEntry(player.walletId, room.hallId, {
       type: "PAYOUT",
@@ -286,7 +307,17 @@ export async function playMiniGame(
         targetSide: "winnings",
       },
     );
-    player.balance += prizeAmount;
+    // W1-hotfix backport (Tobias 2026-04-26 — PR #553 til ad-hoc-engine):
+    // Bytt optimistisk `+= prizeAmount` til DB-refresh så room:update-snapshot
+    // får riktig deposit/winnings-split.
+    try {
+      await ctx.refreshPlayerBalancesForWallet(player.walletId);
+    } catch (refreshErr) {
+      logger.warn(
+        { err: refreshErr, walletId: player.walletId, gameId: game.id, roomCode: room.code, miniGameType: miniGame.type },
+        "[W1-HOTFIX adhoc] refreshPlayerBalancesForWallet feilet etter mini-game-payout — payout committed uansett",
+      );
+    }
 
     await ctx.compliance.recordLossEntry(player.walletId, room.hallId, {
       type: "PAYOUT",
