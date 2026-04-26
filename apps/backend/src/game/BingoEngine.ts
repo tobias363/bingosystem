@@ -2653,9 +2653,22 @@ export class BingoEngine {
   }
 
   private async refreshPlayerObjectsFromWallet(players: Player[]): Promise<void> {
+    // Saldo-flash deep-dive (Tobias 2026-04-26): bruk getAvailableBalance så
+    // player.balance reflekterer det samme som header-chip viser. Tidligere
+    // brukte vi getBalance() (gross) — det var lurking #499 §7. Ved game-start
+    // kjørte refresh til gross, så player.balance -= playerBuyIn ga en lokal
+    // verdi som ikke matchet hverken brutto eller available; emit-en med
+    // gross-baseline forårsaket lobby-shellen å gjøre en feil ratio-split-
+    // approximering basert på `availableDeposit` ulikt `depositBalance`.
+    //
+    // refreshPlayerBalancesForWallet (line 2608) bruker allerede
+    // getAvailableBalance — denne endringen gir oss konsistens på tvers av
+    // alle balance-update-paths.
     await Promise.all(
       players.map(async (player) => {
-        player.balance = await this.walletAdapter.getBalance(player.walletId);
+        player.balance = this.walletAdapter.getAvailableBalance
+          ? await this.walletAdapter.getAvailableBalance(player.walletId)
+          : await this.walletAdapter.getBalance(player.walletId);
       })
     );
   }

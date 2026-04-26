@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+/**
+ * @vitest-environment happy-dom
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { GameBridge } from "./GameBridge.js";
 import type { SpilloramaSocketListeners } from "../net/SpilloramaSocket.js";
 import type { RoomSnapshot, GameSnapshot } from "@spillorama/shared-types/game";
@@ -603,6 +606,204 @@ describe("GameBridge", () => {
         currentGame: makeGameSnapshot({ id: "game-new", status: "RUNNING", drawnNumbers: [] }),
       }));
       expect(bridge.getGapMetrics().lastAppliedDrawIndex).toBe(-1);
+    });
+  });
+
+  /**
+   * Saldo-flash fix (Tobias 2026-04-26): Wallet rarely changes per-ball,
+   * but `room:update` fires on every draw. Without de-duplication, the
+   * lobby shell did an optimistic re-render with a wrong split (PR #512
+   * vs total balance from game-client) for ~0.5 s every ball. Bridge now
+   * caches last-emitted balance and skips identical re-emits.
+   */
+  describe("spillorama:balanceChanged dedup (saldo-flash fix)", () => {
+    let events: Array<{ balance: number }>;
+    let listener: (evt: Event) => void;
+
+    beforeEach(() => {
+      events = [];
+      listener = (evt: Event) => {
+        if (evt.type === "spillorama:balanceChanged") {
+          const detail = (evt as CustomEvent).detail as { balance: number };
+          events.push({ balance: detail.balance });
+        }
+      };
+      window.addEventListener("spillorama:balanceChanged", listener);
+    });
+
+    afterEach(() => {
+      window.removeEventListener("spillorama:balanceChanged", listener);
+    });
+
+    it("emits on first room:update", () => {
+      bridge.start("player-1");
+      socket.fire("roomUpdate", makeRoomUpdate());
+      expect(events).toEqual([{ balance: 100 }]);
+    });
+
+    it("skips re-emit when 100 room:update events carry identical balance", () => {
+      bridge.start("player-1");
+      for (let i = 0; i < 100; i++) {
+        socket.fire("roomUpdate", makeRoomUpdate({ serverTimestamp: Date.now() + i }));
+      }
+      // Only the first room:update produced an emit; the other 99 are deduped.
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual({ balance: 100 });
+    });
+
+    it("re-emits when balance actually changes", () => {
+      bridge.start("player-1");
+      socket.fire("roomUpdate", makeRoomUpdate());
+      socket.fire(
+        "roomUpdate",
+        makeRoomUpdate({
+          players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 80 }],
+        }),
+      );
+      socket.fire(
+        "roomUpdate",
+        makeRoomUpdate({
+          players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 80 }],
+        }),
+      );
+      socket.fire(
+        "roomUpdate",
+        makeRoomUpdate({
+          players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 60 }],
+        }),
+      );
+      expect(events).toEqual([
+        { balance: 100 },
+        { balance: 80 },
+        // identical 80 deduped
+        { balance: 60 },
+      ]);
+    });
+
+    it("stop() resets cache so a fresh start re-emits the first balance", () => {
+      bridge.start("player-1");
+      socket.fire("roomUpdate", makeRoomUpdate());
+      expect(events).toHaveLength(1);
+
+      bridge.stop();
+      bridge.start("player-1");
+      socket.fire("roomUpdate", makeRoomUpdate());
+      expect(events).toHaveLength(2);
+      expect(events[1]).toEqual({ balance: 100 });
+    });
+  });
+
+  /**
+   * Saldo-flash deep-dive (Tobias 2026-04-26):
+   * ─────────────────────────────────────────────
+   * Tobias rapporterte 256 ↔ 400-oscillering på hver ball-trekning. Disse
+   * testene dekker scenarioer som tidligere fix-forsøk (PR #512 + PR #526)
+   * ikke fanget:
+   *   - Floating-point precision på balance-verdier (1000 vs 1000.0)
+   *   - Rapid-fire room:update ved bet:arm + draw:next (5+ events under 100ms)
+   *   - Per-ball balance-mutering når payouts skjer mid-game
+   */
+  describe("spillorama:balanceChanged dedup — deep-dive scenarios", () => {
+    let events: Array<{ balance: number }>;
+    let listener: (evt: Event) => void;
+
+    beforeEach(() => {
+      events = [];
+      listener = (evt: Event) => {
+        if (evt.type === "spillorama:balanceChanged") {
+          const detail = (evt as CustomEvent).detail as { balance: number };
+          events.push({ balance: detail.balance });
+        }
+      };
+      window.addEventListener("spillorama:balanceChanged", listener);
+    });
+
+    afterEach(() => {
+      window.removeEventListener("spillorama:balanceChanged", listener);
+    });
+
+    it("ball-draw bursts (10 raske room:update med samme balance) emitter kun 1 event", () => {
+      bridge.start("player-1");
+
+      // Initial — first emit
+      socket.fire("roomUpdate", makeRoomUpdate({
+        players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 256 }],
+      }));
+
+      // Burst: 10 ball-draws i rask rekkefølge, alle med samme balance.
+      // Pre-fix var hver av disse en flash-trigger.
+      for (let i = 0; i < 10; i++) {
+        socket.fire("roomUpdate", makeRoomUpdate({
+          players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 256 }],
+          serverTimestamp: Date.now() + i,
+        }));
+      }
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toEqual({ balance: 256 });
+    });
+
+    it("payout mid-game emitter ny balance, men neste ball-draws dedup'es på den", () => {
+      bridge.start("player-1");
+
+      // Pre-payout: balance = 256
+      socket.fire("roomUpdate", makeRoomUpdate({
+        players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 256 }],
+      }));
+
+      // Phase-payout 50 kr → balance = 306
+      socket.fire("roomUpdate", makeRoomUpdate({
+        players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 306 }],
+      }));
+
+      // Neste 5 ball-draws: ingen ny payout, balance = 306
+      for (let i = 0; i < 5; i++) {
+        socket.fire("roomUpdate", makeRoomUpdate({
+          players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 306 }],
+          serverTimestamp: Date.now() + i,
+        }));
+      }
+
+      expect(events).toEqual([
+        { balance: 256 },
+        { balance: 306 },
+      ]);
+    });
+
+    it("identisk floating-point balance dedup'es korrekt (1000 vs 1000.0)", () => {
+      bridge.start("player-1");
+
+      socket.fire("roomUpdate", makeRoomUpdate({
+        players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 1000 }],
+      }));
+      socket.fire("roomUpdate", makeRoomUpdate({
+        players: [{ id: "player-1", name: "Test", walletId: "w1", balance: 1000.0 }],
+      }));
+
+      // 1000 === 1000.0 i JS — skal dedup'es.
+      expect(events).toHaveLength(1);
+    });
+
+    it("balance-flip mellom available og gross emitter to events (men dedup'er innenfor hver verdi)", () => {
+      // Edge-case: hvis backend ved et uhell flipper player.balance fra
+      // available (256) til gross (640) midt i en runde — f.eks. om
+      // refreshPlayerObjectsFromWallet kjørte med getBalance() før vår fix —
+      // skal hver verdi-overgang gi nøyaktig én emit, ikke en flash-loop.
+      bridge.start("player-1");
+
+      const balanceTransitions = [256, 256, 256, 640, 640, 640, 256, 256];
+      for (const bal of balanceTransitions) {
+        socket.fire("roomUpdate", makeRoomUpdate({
+          players: [{ id: "player-1", name: "Test", walletId: "w1", balance: bal }],
+          serverTimestamp: Date.now() + balanceTransitions.indexOf(bal),
+        }));
+      }
+
+      expect(events).toEqual([
+        { balance: 256 },
+        { balance: 640 },
+        { balance: 256 },
+      ]);
     });
   });
 });

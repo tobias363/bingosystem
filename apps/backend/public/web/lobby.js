@@ -284,16 +284,33 @@
   var _gameBarWalletInterval = null;
 
   // Wallet-split: vis deposit-saldo og winnings-gevinst som separate chips.
-  // Backend /api/wallet/me returnerer { balance, depositBalance, winningsBalance }.
-  // `balance` beholdes som total for legacy-compliance; UI viser split.
+  // Backend /api/wallet/me returnerer:
+  //   { balance, depositBalance, winningsBalance,            ← brutto (inkl. reservasjoner)
+  //     reservedDeposit, reservedWinnings,                    ← låst i pre-round-bonger
+  //     availableDeposit, availableWinnings, availableBalance } ← brutto - reservert
+  //
+  // Header-chip-en SKAL vise tilgjengelig (etter reservasjoner). Forhåndskjøp
+  // på ventende runde reserverer beløpet via wallet_reservations — chip-en
+  // må reflektere dette umiddelbart, ellers ser saldoen ut som den ikke
+  // oppdateres når brukeren kjøper bonger til neste runde mens aktiv runde
+  // kjører (BIN-693 + PR #495 round-state-isolation regression-fix 2026-04-25).
+  //
+  // "Lommebok"-detalj-siden bruker fortsatt brutto-saldo (`balance`) — det
+  // er riktig regnskaps-info; det er kun chip-en som skal vise tilgjengelig.
   function applyWalletToHeader(account) {
     if (!account) return;
-    var depositAmt = (typeof account.depositBalance === 'number')
-      ? account.depositBalance
-      : account.balance; // fallback for legacy adapters
-    var winningsAmt = (typeof account.winningsBalance === 'number')
-      ? account.winningsBalance
-      : 0;
+    // Foretrekk available-felt; fall tilbake til brutto for legacy-payloads
+    // (game-client socket-events sender ikke nødvendigvis available-feltene).
+    var depositAmt = (typeof account.availableDeposit === 'number')
+      ? account.availableDeposit
+      : (typeof account.depositBalance === 'number')
+        ? account.depositBalance
+        : account.balance;
+    var winningsAmt = (typeof account.availableWinnings === 'number')
+      ? account.availableWinnings
+      : (typeof account.winningsBalance === 'number')
+        ? account.winningsBalance
+        : 0;
     var depositFormatted = formatKr(depositAmt);
     var winningsFormatted = formatKr(winningsAmt);
 
@@ -341,16 +358,40 @@
   // Real-time balance sync from web game client socket events.
   // The game client dispatches 'spillorama:balanceChanged' on every room:update.
   //
-  // Event-payload kan være:
-  //   { balance }                                  — legacy (game-client i dag)
-  //   { balance, depositBalance, winningsBalance } — utvidet wallet-split
+  // Saldo-flash deep-dive 2026-04-26 (Tobias):
+  // ─────────────────────────────────────────────
+  // Tidligere forsøkte vi optimistisk client-side split-approximering basert på
+  // ratioen winnings/total fra forrige snapshot. Det kollapset av to grunner:
   //
-  // Når split-feltene mangler refetcher vi /api/wallet/me (debounced) for å
-  // få autoritativ split. Merk at backend allerede sender split i
-  // wallet-endepunktet — event-utvidelsen er en senere optimalisering.
+  //   1. Game-client emitterer `me.balance` fra `room:update`-payloaden, og
+  //      backend setter `player.balance` til AVAILABLE-saldo (etter
+  //      reservasjoner) i `refreshPlayerBalancesForWallet`, men til GROSS i
+  //      `refreshPlayerObjectsFromWallet` (game-start). De to er ulike størrelser,
+  //      men chip-en viser AVAILABLE. Ratio-approximeringen krysset disse domener.
+  //
+  //   2. `hasSplit=true`-grenen bygde et account-objekt UTEN
+  //      `availableDeposit`/`availableWinnings`, så `applyWalletToHeader` falt
+  //      tilbake til `depositBalance` (gross) → chip viste 400 i stedet for 256.
+  //      Når debounced-refetch landet 250ms senere oppdaterte den seg til 256.
+  //      Det var oscilleringen Tobias rapporterte (256 ↔ 400 på hver ball).
+  //
+  // Ny strategi: ALDRI gjør optimistisk split-rekonstruksjon. Når en
+  // `spillorama:balanceChanged` kommer, og vi ikke har autoritative
+  // available-felt i payloaden, scheduler vi bare en refetch fra
+  // `/api/wallet/me` (debounced 250ms) og lar serveren være sannhetskilden.
+  // Det gir én korrekt render i stedet for to (en feil + en korrigerende).
+  //
+  // Event-payload format vi forstår:
+  //   { balance }                                                   — legacy (kun total)
+  //   { balance, depositBalance, winningsBalance }                  — wallet-split (gross)
+  //   { availableDeposit, availableWinnings, availableBalance, ... } — full available
+  //
+  // Kun den siste varianten kan rendres direkte uten refetch — alle andre
+  // går via refetch.
   var _balanceSyncHandler = null;
   var _balanceRefetchTimer = null;
   var _balanceRefreshReqHandler = null;
+  var _lastBalanceSeen = null; // dedup på event-nivå (gross-saldo fra socket)
 
   function _scheduleBalanceRefetch() {
     if (_balanceRefetchTimer) return;
@@ -365,54 +406,51 @@
     _balanceSyncHandler = function (e) {
       var d = (e && e.detail) || {};
       var balance = (typeof d.balance === 'number') ? d.balance : null;
-      var hasSplit =
-        typeof d.depositBalance === 'number' &&
-        typeof d.winningsBalance === 'number';
+      var hasAvailable =
+        typeof d.availableDeposit === 'number' &&
+        typeof d.availableWinnings === 'number';
 
-      if (hasSplit) {
-        // Direct apply — no refetch needed
-        var account = {
-          balance: (balance !== null) ? balance : (d.depositBalance + d.winningsBalance),
-          depositBalance: d.depositBalance,
-          winningsBalance: d.winningsBalance
+      // Path 1: Full available-payload — autoritativ, kan rendres direkte.
+      if (hasAvailable) {
+        var availAccount = {
+          balance: (balance !== null)
+            ? balance
+            : (typeof d.availableBalance === 'number'
+                ? d.availableBalance
+                : d.availableDeposit + d.availableWinnings),
+          depositBalance: (typeof d.depositBalance === 'number') ? d.depositBalance : d.availableDeposit,
+          winningsBalance: (typeof d.winningsBalance === 'number') ? d.winningsBalance : d.availableWinnings,
+          availableDeposit: d.availableDeposit,
+          availableWinnings: d.availableWinnings,
+          availableBalance: (typeof d.availableBalance === 'number') ? d.availableBalance : (d.availableDeposit + d.availableWinnings)
         };
-        applyWalletToHeader(account);
+        applyWalletToHeader(availAccount);
         if (lobbyState.wallet && lobbyState.wallet.account) {
-          lobbyState.wallet.account.balance = account.balance;
-          lobbyState.wallet.account.depositBalance = account.depositBalance;
-          lobbyState.wallet.account.winningsBalance = account.winningsBalance;
+          lobbyState.wallet.account.balance = availAccount.balance;
+          lobbyState.wallet.account.depositBalance = availAccount.depositBalance;
+          lobbyState.wallet.account.winningsBalance = availAccount.winningsBalance;
+          lobbyState.wallet.account.availableDeposit = availAccount.availableDeposit;
+          lobbyState.wallet.account.availableWinnings = availAccount.availableWinnings;
+          lobbyState.wallet.account.availableBalance = availAccount.availableBalance;
         }
+        _lastBalanceSeen = balance;
         return;
       }
 
+      // Path 2: Kun total-balance (eller gross split uten available) — kan
+      // IKKE rendres direkte, fordi vi ikke vet hvor mye som er reservert
+      // (header-chip skal vise available, ikke gross). Dedup mot forrige
+      // sett verdi for å unngå overflødige refetch'er, og scheduler én
+      // autoritativ refetch.
       if (balance === null) return;
-      // Optimistic total-update so UI reflects change immediately; deposit/
-      // winnings split is corrected by the debounced refetch below.
-      //
-      // Round-state-isolation (Tobias 2026-04-25): rerender chip text NOW
-      // — the previous version only stored balance in lobbyState and waited
-      // 250ms for the refetch, so saldoen sto urørt på skjermen rett etter
-      // bet:arm. Render bruker depositBalance fra eksisterende state hvis
-      // vi har split-data; ellers bruker vi total-balance som approximation
-      // (refetch fyller inn riktig split innen 250ms).
-      if (lobbyState.wallet && lobbyState.wallet.account) {
-        var oldDeposit = lobbyState.wallet.account.depositBalance;
-        var oldWinnings = lobbyState.wallet.account.winningsBalance;
-        var oldBalance = lobbyState.wallet.account.balance;
-        lobbyState.wallet.account.balance = balance;
-        // Approximate the new deposit balance: if we know how the split
-        // ratioed before, preserve winnings and put the rest in deposit.
-        // Otherwise just blast `balance` into both fields and let the
-        // refetch correct it.
-        if (typeof oldDeposit === 'number' && typeof oldWinnings === 'number' && typeof oldBalance === 'number' && oldBalance > 0) {
-          var winningsRatio = oldWinnings / oldBalance;
-          lobbyState.wallet.account.winningsBalance = Math.max(0, balance * winningsRatio);
-          lobbyState.wallet.account.depositBalance = balance - lobbyState.wallet.account.winningsBalance;
-        } else {
-          lobbyState.wallet.account.depositBalance = balance;
-        }
-        applyWalletToHeader(lobbyState.wallet.account);
+      if (_lastBalanceSeen !== null && balance === _lastBalanceSeen) {
+        // Redundant event — bridge har allerede dedup, dette er en defensiv
+        // sikkerhet for andre potensielle emitters (f.eks. hall-switch,
+        // candy:balanceChanged), eller for tilfeller hvor bridgens cache er
+        // invalidert (mount/unmount-cyclus mens lobby kjører).
+        return;
       }
+      _lastBalanceSeen = balance;
       _scheduleBalanceRefetch();
     };
     _balanceRefreshReqHandler = function () {
@@ -435,6 +473,7 @@
       clearTimeout(_balanceRefetchTimer);
       _balanceRefetchTimer = null;
     }
+    _lastBalanceSeen = null; // Reset event-dedup cache så ny start re-render'er korrekt.
   }
 
   // Called by the in-game back-button or shell when returning to lobby.
