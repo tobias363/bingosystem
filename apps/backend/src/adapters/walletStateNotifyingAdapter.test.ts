@@ -69,7 +69,7 @@ function makeStubAdapter(): WalletAdapter {
     }),
     listTransactions: async () => [],
     getAvailableBalance: async () => 100,
-    reserve: async (id) => reservation(id),
+    reserve: async (id, _amt, opts) => reservation(id, opts.roomCode),
     increaseReservation: async (resId) => reservation(resId.replace("res-", ""), "ROOM2"),
     releaseReservation: async (resId) => ({ ...reservation(resId.replace("res-", "")), status: "released" }),
     commitReservation: async (resId, to): Promise<WalletTransferResult> => ({
