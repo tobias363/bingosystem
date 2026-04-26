@@ -568,20 +568,21 @@ export class BingoTicketHtml {
         });
         if (n === 0) {
           // FREE-celle (Tobias 2026-04-26): bytter ut tidligere "FREE"-tekst-pille
-          // med Spillorama-logo-bilde. Bevarer hvit ytre cellebakgrunn for
-          // kontinuitet med sentersymbol-konseptet.
+          // med Spillorama-logo-bilde. Logoen fyller hele cellen (100% × 100%
+          // med contain-fit, så den skaleres ned hvis cellen er ikke-kvadrat).
+          // Bakgrunnen blir transparent slik at logoens egen gull/grønn-design
+          // ikke konkurrerer med en ekstra fyllfarge.
           const freeImg = document.createElement("img");
           freeImg.src = FREE_LOGO_URL;
           freeImg.alt = "FREE";
           freeImg.draggable = false;
           Object.assign(freeImg.style, {
-            width: "82%",
-            height: "82%",
+            width: "100%",
+            height: "100%",
             objectFit: "contain",
             pointerEvents: "none",
             userSelect: "none",
-            // Behold gamle FREE_BG/FREE_TEXT-konstantene levende slik at andre
-            // referanser ikke knekker — de er ikke lenger appliert på cellen.
+            display: "block",
           });
           // Bruk konstantene defensivt for å unngå "unused" type-error fra strict.
           void FREE_BG;
