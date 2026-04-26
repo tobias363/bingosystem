@@ -347,12 +347,19 @@ function renderModalBody(state: State): string {
        </div>`
     : "";
 
+  // K1-D wireframe 16.25/17.10: dato-felt er editerbart kun i admin-edit-modus.
+  // Agent close-day bruker shift's startedAt-dato (read-only).
+  const dateField = state.mode === "edit"
+    ? `<dt>${escapeHtml(t("date") || "Dato")}:</dt>
+       <dd><input type="date" id="sb-business-date" class="form-control input-sm"
+                  value="${escapeHtml(state.businessDate)}" style="width:160px;display:inline-block;"></dd>`
+    : `<dt>${escapeHtml(t("date") || "Dato")}:</dt><dd>${escapeHtml(state.businessDate)}</dd>`;
   return `
     <div class="settlement-breakdown">
       <dl class="dl-horizontal" style="margin-bottom:12px;">
         <dt>${escapeHtml(t("hall") || "Hall")}:</dt><dd>${escapeHtml(state.hallName)}</dd>
         <dt>${escapeHtml(t("agent") || "Agent")}:</dt><dd>${escapeHtml(state.agentName)}</dd>
-        <dt>${escapeHtml(t("date") || "Dato")}:</dt><dd>${escapeHtml(state.businessDate)}</dd>
+        ${dateField}
       </dl>
 
       <table class="table table-bordered table-condensed" id="sb-table">
@@ -562,12 +569,18 @@ export function openSettlementBreakdownModal(opts: SettlementBreakdownModalOptio
               );
               return;
             }
+            // K1-D: send businessDate kun hvis den faktisk er endret fra
+            // opprinnelig verdi (unngår unødvendige patch-felt + audit-spam).
+            const originalDate = opts.existingSettlement?.businessDate;
+            const businessDateChanged =
+              typeof originalDate === "string" && state.businessDate !== originalDate;
             const updated = await editSettlement(shiftId, {
               reason,
               reportedCashCount: state.reportedCashCountNok,
               settlementNote: notes || null,
               machineBreakdown: breakdown,
               ...(state.receipt ? { bilagReceipt: state.receipt } : {}),
+              ...(businessDateChanged ? { businessDate: state.businessDate } : {}),
             });
             Toast.success(t("data_updated_successfully") || "Oppgjør oppdatert.");
             inst.close("button");
@@ -707,6 +720,13 @@ export function openSettlementBreakdownModal(opts: SettlementBreakdownModalOptio
     }
     if (target.id === "sb-edit-reason") {
       state.editReason = target.value;
+      return;
+    }
+    if (target.id === "sb-business-date") {
+      // K1-D: admin-edit av business_date. Aksepter tom verdi (klient resetter
+      // til opprinnelig verdi ved submit hvis tom). Service validerer format.
+      const v = target.value.trim();
+      if (v) state.businessDate = v;
       return;
     }
   });
