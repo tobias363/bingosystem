@@ -129,3 +129,30 @@ export function loadSavedGameToGame(id: string): Promise<LoadSavedGamePayload> {
     { method: "POST", body: {}, auth: true }
   );
 }
+
+export interface ApplySavedGameToScheduleResult {
+  /** Den oppdaterte DailySchedule etter at template-config ble skrevet inn. */
+  schedule: {
+    id: string;
+    name: string;
+    isSavedGame: boolean;
+    subgames: unknown[];
+    otherData: Record<string, unknown>;
+    [k: string]: unknown;
+  };
+}
+
+/**
+ * Apply a SavedGame template to an eksisterende DailySchedule. Overwrites
+ * subgames + otherData og setter isSavedGame=true. Endepunktet er
+ * skrivebeskyttet på SavedGame-siden — kun target-schedule muteres.
+ */
+export function applySavedGameToSchedule(
+  savedGameId: string,
+  scheduleId: string
+): Promise<ApplySavedGameToScheduleResult> {
+  return apiRequest<ApplySavedGameToScheduleResult>(
+    `/api/admin/saved-games/${encodeURIComponent(savedGameId)}/apply-to-schedule`,
+    { method: "POST", body: { scheduleId }, auth: true }
+  );
+}

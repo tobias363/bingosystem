@@ -141,6 +141,42 @@ export async function deleteDailySchedule(
   );
 }
 
+export interface SaveScheduleAsTemplateInput {
+  templateName: string;
+  description?: string;
+  /** Valgfri override — hvis tom resolves backend fra koblet GameManagement. */
+  gameTypeId?: string;
+}
+
+export interface SaveScheduleAsTemplateResult {
+  savedGame: {
+    id: string;
+    gameTypeId: string;
+    name: string;
+    isAdminSave: boolean;
+    config: Record<string, unknown>;
+    status: "active" | "inactive";
+    createdBy: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+}
+
+/**
+ * Lagre en eksisterende DailySchedule som en gjenbrukbar SavedGame-mal.
+ * Backend leser subgames + otherData fra schedulen + valgfri description
+ * embeddet i config_json.
+ */
+export async function saveScheduleAsTemplate(
+  scheduleId: string,
+  input: SaveScheduleAsTemplateInput
+): Promise<SaveScheduleAsTemplateResult> {
+  return apiRequest<SaveScheduleAsTemplateResult>(
+    `/api/admin/daily-schedules/${encodeURIComponent(scheduleId)}/save-as-template`,
+    { method: "POST", body: input, auth: true }
+  );
+}
+
 // ── Weekday bitmask-helpers (mirror legacy) ────────────────────────────────
 
 /** Bitmask-konstanter: mon=1, tue=2, wed=4, thu=8, fri=16, sat=32, sun=64. */
