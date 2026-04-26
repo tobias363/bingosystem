@@ -418,3 +418,105 @@ describe("BingoTicketHtml — BLINK-FIX (round 5) regressions", () => {
     expect(bongPulseClass![0]).not.toContain("position");
   });
 });
+
+describe("BingoTicketHtml — BLINK-FIX (round 6) regressions", () => {
+  /**
+   * Round 6 hazard #7 — `buildElvisBanner` rev hver gang loadTicket(ticket)
+   * ble kalt på en eksisterende Elvis-bong. Selv om ticket.color var identisk
+   * med forrige snapshot, ble banner-noden revet ned og bygget på nytt
+   * (inkluderer img-decoding → kort flash mens browseren mellomlagrer
+   * pixel-buffer). Memo via `elvisBannerColorKey` skipper rebuild når farge
+   * er uendret — 0 DOM-mutasjoner, 0 img-decoding.
+   */
+  it("hazard #7: loadTicket med samme Elvis-farge skal ikke re-bygge banner-noden", () => {
+    const t = new BingoTicketHtml({
+      ticket: {
+        id: "tkt-0",
+        grid: [
+          [1, 16, 31, 46, 61],
+          [2, 17, 32, 47, 62],
+          [3, 18, 0, 48, 63],
+          [4, 19, 33, 49, 64],
+          [5, 20, 34, 50, 65],
+        ],
+        color: "elvis2",
+        type: "elvis",
+      },
+      price: 30,
+      rows: 5,
+      cols: 5,
+      cancelable: false,
+    });
+    document.body.appendChild(t.root);
+
+    const bannerBefore = t.root.querySelector(".ticket-elvis-banner");
+    expect(bannerBefore).not.toBeNull();
+
+    // loadTicket med samme color — banner-noden skal være SAMME instans
+    // (ikke replaced).
+    t.loadTicket({
+      id: "tkt-1",
+      grid: [
+        [1, 16, 31, 46, 61],
+        [2, 17, 32, 47, 62],
+        [3, 18, 0, 48, 63],
+        [4, 19, 33, 49, 64],
+        [5, 20, 34, 50, 65],
+      ],
+      color: "elvis2",
+      type: "elvis",
+    });
+
+    const bannerAfter = t.root.querySelector(".ticket-elvis-banner");
+    expect(
+      bannerAfter,
+      "banner-node skal være SAMME instans (ikke replaceWith) når color er uendret",
+    ).toBe(bannerBefore);
+  });
+
+  it("hazard #7: loadTicket med ny Elvis-farge skal fortsatt re-bygge banner", () => {
+    const t = new BingoTicketHtml({
+      ticket: {
+        id: "tkt-0",
+        grid: [
+          [1, 16, 31, 46, 61],
+          [2, 17, 32, 47, 62],
+          [3, 18, 0, 48, 63],
+          [4, 19, 33, 49, 64],
+          [5, 20, 34, 50, 65],
+        ],
+        color: "elvis1",
+        type: "elvis",
+      },
+      price: 30,
+      rows: 5,
+      cols: 5,
+      cancelable: false,
+    });
+    document.body.appendChild(t.root);
+
+    const bannerBefore = t.root.querySelector(".ticket-elvis-banner");
+    expect(bannerBefore).not.toBeNull();
+
+    // Ny farge — banner SKAL replaces så img/label oppdateres.
+    t.loadTicket({
+      id: "tkt-1",
+      grid: [
+        [1, 16, 31, 46, 61],
+        [2, 17, 32, 47, 62],
+        [3, 18, 0, 48, 63],
+        [4, 19, 33, 49, 64],
+        [5, 20, 34, 50, 65],
+      ],
+      color: "elvis5",
+      type: "elvis",
+    });
+
+    const bannerAfter = t.root.querySelector(".ticket-elvis-banner");
+    expect(bannerAfter).not.toBeNull();
+    expect(
+      bannerAfter,
+      "banner-node skal være NY instans når color faktisk endres",
+    ).not.toBe(bannerBefore);
+  });
+});

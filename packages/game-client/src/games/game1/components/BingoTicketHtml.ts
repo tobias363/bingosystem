@@ -230,6 +230,15 @@ export class BingoTicketHtml {
     this.updateToGo();
   }
 
+  /** BLINK-FIX (round 6, hazard #7): Memo av sist bygget Elvis-color slik at
+   *  vi unngår å rive banner-noden ned og bygge på nytt når
+   *  loadTicket(ticket) kalles med samme farge som forrige ticket. Tidligere
+   *  rebuilt vi banneret hver gang ticket-objektet ble swapped (selv ved
+   *  identisk farge), noe som inkluderte img-decoding (Pixi-bilde-asset
+   *  ble re-decoded → kort flash mens browseren brukte mellomliggende
+   *  pixel-buffer). null = ingen banner i DOM nå. */
+  private elvisBannerColorKey: string | null = null;
+
   /**
    * Sørg for at Elvis-banneret i DOM matcher nåværende ticket.color.
    * Kalles kun fra {@link loadTicket} — under konstruksjon renderes banneret
@@ -238,16 +247,25 @@ export class BingoTicketHtml {
   private syncElvisBanner(): void {
     const existing = this.front.querySelector(".ticket-elvis-banner");
     const shouldHave = isElvisColor(this.ticket.color);
+    const colorKey = shouldHave ? (this.ticket.color ?? "") : null;
+
     if (shouldHave && !existing) {
       const banner = this.buildElvisBanner();
       const gridWrap = this.front.querySelector(".ticket-grid");
       this.front.insertBefore(banner, gridWrap);
+      this.elvisBannerColorKey = colorKey;
     } else if (!shouldHave && existing) {
       existing.remove();
+      this.elvisBannerColorKey = null;
     } else if (shouldHave && existing) {
-      // Refresh banner (bilde/label kan ha endret seg ved variant-swap).
+      // BLINK-FIX (round 6, hazard #7): Skip rebuild hvis farge er identisk
+      // med forrige bygging. Color-key inkluderer hele color-strengen så
+      // variant-bytte (f.eks. "elvis1" → "elvis2") fortsatt trigger refresh.
+      // Identisk farge → 0 DOM-mutasjoner, 0 img-decoding, ingen flash.
+      if (this.elvisBannerColorKey === colorKey) return;
       const replacement = this.buildElvisBanner();
       existing.replaceWith(replacement);
+      this.elvisBannerColorKey = colorKey;
     }
   }
 
@@ -425,9 +443,11 @@ export class BingoTicketHtml {
 
     face.appendChild(header);
 
-    // Elvis-banner — beholdt for Elvis-bonger (BIN-688).
+    // Elvis-banner — beholdt for Elvis-bonger (BIN-688). Tracker color-key
+    // så loadTicket() kan skippe rebuild hvis farge er uendret (round 6 #7).
     if (isElvisColor(this.ticket.color)) {
       face.appendChild(this.buildElvisBanner());
+      this.elvisBannerColorKey = this.ticket.color ?? "";
     }
 
     // Grid container — 5 kolonner, 5px gap.
