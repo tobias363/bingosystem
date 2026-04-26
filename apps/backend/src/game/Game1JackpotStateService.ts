@@ -34,6 +34,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { logger as rootLogger } from "../util/logger.js";
+import { todayOsloKey } from "../util/osloTimezone.js";
 
 const log = rootLogger.child({ module: "game1-jackpot-state-service" });
 
@@ -119,14 +120,14 @@ export interface Game1JackpotStateServiceOptions {
   schema?: string;
   /**
    * Override for testing — returnerer dagens dato som 'YYYY-MM-DD'.
-   * Default: UTC now(). Serveren kjører i UTC-timezone (Docker default).
+   *
+   * Default: `Europe/Oslo`-tidssone (LOW-2-fix 2026-04-26). Tidligere brukte
+   * dette UTC, som ga 1-2 timers feil-vindu rundt midnatt der en runde
+   * over UTC-midnatt akkumulerte på "feil" dag (jackpott +4 000 kr ble
+   * tildelt en dato bingoen ikke skulle være på). Norge-tid løser dette
+   * uavhengig av sommer-/vintertid.
    */
   todayKey?: () => string;
-}
-
-function todayUtcKey(): string {
-  const d = new Date();
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 function toDateKey(value: unknown): string {
@@ -200,7 +201,7 @@ export class Game1JackpotStateService {
   constructor(options: Game1JackpotStateServiceOptions) {
     this.pool = options.pool;
     this.schema = options.schema ?? "public";
-    this.todayKey = options.todayKey ?? todayUtcKey;
+    this.todayKey = options.todayKey ?? todayOsloKey;
   }
 
   private table(): string {

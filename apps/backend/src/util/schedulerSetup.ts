@@ -7,6 +7,7 @@ import { DomainError } from "../game/BingoEngine.js";
 import type { BingoEngine } from "../game/BingoEngine.js";
 import type { DrawScheduler, SchedulerSettings } from "../draw-engine/DrawScheduler.js";
 import type { BingoSchedulerSettings } from "./bingoSettings.js";
+import { yesterdayOsloKey } from "./osloTimezone.js";
 import type { RoomUpdatePayload } from "./roomHelpers.js";
 import type { RoomSnapshot } from "../game/types.js";
 
@@ -219,9 +220,12 @@ export function createDailyReportScheduler(deps: DailyReportSchedulerDeps): { st
   let handle: NodeJS.Timeout | null = null;
 
   async function tick(nowMs: number): Promise<void> {
-    const d = new Date(nowMs);
-    const yesterday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1);
-    const dateKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, "0")}-${String(yesterday.getDate()).padStart(2, "0")}`;
+    // LOW-2-fix 2026-04-26: bruk Oslo-tz, ikke server-lokal tid.
+    // I Docker er server-lokal tid UTC, slik at "yesterday" mistolket
+    // forrige dag rundt midnatt (en runde over Norge-midnatt mellom
+    // 00:00 og 01/02 UTC ble registrert som "i dag" i UTC og rapporten
+    // for "i går" inkluderte ikke disse omsetningene).
+    const dateKey = yesterdayOsloKey(new Date(nowMs));
     if (dateKey === lastDateKey) return;
     const report = await deps.engine.runDailyReportJob({ date: dateKey });
     lastDateKey = dateKey;
