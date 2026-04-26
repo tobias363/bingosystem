@@ -15,23 +15,32 @@ import type { WalletAdapter } from "../adapters/WalletAdapter.js";
 export type LedgerGameType = "MAIN_GAME" | "DATABINGO";
 export type LedgerChannel = "HALL" | "INTERNET";
 /**
- * HIGH-6 split-rounding-ledger: HOUSE_RETAINED dokumenterer rest-øren
- * fra multi-winner-split-rounding (floor(totalPhasePrize / winnerCount)
- * → rest til hus). Skrives av Game1PayoutService når houseRetainedCents > 0.
+ * Ledger event types tracked per pengespillforskriften §71.
  *
- * Regulatorisk (§71 pengespillforskriften):
- *   - Auditor skal kunne verifisere at husets margin matcher §11-beregningen.
- *   - Uten HOUSE_RETAINED-entry vil daily_report.net (= stake - prize) vise
- *     et større "hus-overskudd" enn faktisk, fordi rest-øre er en del av
- *     pott (gjenstår for senere fase) og ikke ren retention.
- *   - Dual-balance-sjekk: stake = prize + houseRetained + uavklart-rest.
+ * - `STAKE`: spilleren betaler buy-in.
+ * - `PRIZE`: faste/variable premier utbetalt til spiller (regulatorisk truth
+ *   for §11-distribusjon — uavhengig av pool-finansiering).
+ * - `EXTRA_PRIZE`: jackpot/bonus utenfor ordinær prize-pool.
+ * - `ORG_DISTRIBUTION`: §11-overføring til mottakerorganisasjon.
+ * - `HOUSE_RETAINED`: HIGH-6 split-rounding-ledger — rest-øre fra
+ *   multi-winner-split (floor(totalPhasePrize / winnerCount) → rest til hus).
+ *   Skrives av Game1PayoutService når houseRetainedCents > 0. Bevarer
+ *   net = grossTurnover - prizesPaid byte-identisk; houseRetained er separat
+ *   audit-dimensjon (dual-balance-sjekk: stake = prize + houseRetained + rest).
+ * - `HOUSE_DEFICIT`: audit-signal når faste premier (winningType=fixed)
+ *   utbetaler mer enn pool dekker. Hus dekker differansen — hus-konto kan
+ *   gå negativt for system-konti. Denne event-typen er REN AUDIT og inngår
+ *   IKKE i gross-turnover/prize-aggregater. Eksisterende rapporter (som
+ *   `Game1ManagementReport`, `HallSpecificReport`) som filtrerer på
+ *   `STAKE`/`PRIZE`/`EXTRA_PRIZE` ignorerer HOUSE_DEFICIT automatisk.
  */
 export type LedgerEventType =
   | "STAKE"
   | "PRIZE"
   | "EXTRA_PRIZE"
   | "ORG_DISTRIBUTION"
-  | "HOUSE_RETAINED";
+  | "HOUSE_RETAINED"
+  | "HOUSE_DEFICIT";
 
 export interface ComplianceLedgerEntry {
   id: string;
