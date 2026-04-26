@@ -376,12 +376,15 @@ class Game1Controller implements GameController {
     this.deps.audio.resetAnnouncedNumbers();
     this.deps.audio.stopAll();
 
-    // Refresh player balance
-    if (this.myPlayerId) {
-      const me = state.players.find((p) => p.id === this.myPlayerId);
-      if (me && typeof me.balance === "number" && typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("spillorama:balanceChanged", { detail: { balance: me.balance } }));
-      }
+    // Saldo-flash deep-dive (Tobias 2026-04-26): Game-end er en av få
+    // hendelser hvor saldo GARANTERT har endret seg (payout/buy-in commit),
+    // så vi vil ha en autoritativ refetch fra lobby, men IKKE pushe et
+    // optimistisk balance-tall som kommer til å være enten gross eller
+    // available avhengig av hvilken backend-path som sist berørte
+    // `player.balance`. Sender refresh-request i stedet — lobby gjør
+    // debounced GET /api/wallet/me og rendrer korrekt available.
+    if (this.myPlayerId && typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("spillorama:balanceRefreshRequested"));
     }
 
     if (this.phase === "PLAYING") {
