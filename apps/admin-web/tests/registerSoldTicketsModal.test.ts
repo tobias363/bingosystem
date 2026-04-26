@@ -185,6 +185,128 @@ describe("RegisterSoldTicketsModal", () => {
     });
   });
 
+  it("REQ-091: når en rad har existingRange.id, blir initial-cellen et input som agenten kan redigere, og submit kaller PUT /api/agent/ticket-ranges/:rangeId", async () => {
+    const initialIdsWithExisting = {
+      gameId: "g-1",
+      hallId: "hall-a",
+      entries: [
+        // small_yellow har eksisterende rad → må kunne redigeres
+        {
+          ticketType: "small_yellow",
+          initialId: 1,
+          roundNumber: 1,
+          carriedFromGameId: null,
+          existingRange: {
+            id: "range-sy-1",
+            gameId: "g-1",
+            hallId: "hall-a",
+            ticketType: "small_yellow",
+            initialId: 1,
+            finalId: 10,
+            soldCount: 10,
+            roundNumber: 1,
+            carriedFromGameId: null,
+            recordedByUserId: "agent-1",
+            recordedAt: "2026-04-26T12:00:00Z",
+            createdAt: "2026-04-26T12:00:00Z",
+            updatedAt: "2026-04-26T12:00:00Z",
+          },
+        },
+        { ticketType: "small_white", initialId: 1, roundNumber: 1, carriedFromGameId: null, existingRange: null },
+        { ticketType: "large_yellow", initialId: 1, roundNumber: 1, carriedFromGameId: null, existingRange: null },
+        { ticketType: "large_white", initialId: 1, roundNumber: 1, carriedFromGameId: null, existingRange: null },
+        { ticketType: "small_purple", initialId: 1, roundNumber: 1, carriedFromGameId: null, existingRange: null },
+        { ticketType: "large_purple", initialId: 1, roundNumber: 1, carriedFromGameId: null, existingRange: null },
+      ],
+    };
+
+    const fetchMock = vi.fn()
+      // GET initial-ids
+      .mockResolvedValueOnce(okJson(initialIdsWithExisting))
+      // PUT ticket-ranges/:rangeId
+      .mockResolvedValueOnce(okJson({
+        range: {
+          id: "range-sy-1",
+          gameId: "g-1",
+          hallId: "hall-a",
+          ticketType: "small_yellow",
+          initialId: 5,
+          finalId: 25,
+          soldCount: 21,
+          roundNumber: 1,
+          carriedFromGameId: null,
+          recordedByUserId: "agent-1",
+          recordedAt: "2026-04-26T12:30:00Z",
+          createdAt: "2026-04-26T12:00:00Z",
+          updatedAt: "2026-04-26T12:30:00Z",
+        },
+        before: {
+          id: "range-sy-1",
+          gameId: "g-1",
+          hallId: "hall-a",
+          ticketType: "small_yellow",
+          initialId: 1,
+          finalId: 10,
+          soldCount: 10,
+          roundNumber: 1,
+          carriedFromGameId: null,
+          recordedByUserId: "agent-1",
+          recordedAt: "2026-04-26T12:00:00Z",
+          createdAt: "2026-04-26T12:00:00Z",
+          updatedAt: "2026-04-26T12:00:00Z",
+        },
+      }));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const onSuccess = vi.fn();
+    const mod = await import("../src/pages/agent-portal/modals/RegisterSoldTicketsModal.js");
+    mod.openRegisterSoldTicketsModal({ gameId: "g-1", onSuccess });
+    await flush();
+
+    // Initial-cellen skal nå være et input (ikke ren tekst) for small_yellow
+    const initialInput = document.querySelector<HTMLInputElement>(
+      '[data-marker="initial-input-small_yellow"]',
+    );
+    expect(initialInput).toBeTruthy();
+    expect(initialInput!.tagName).toBe("INPUT");
+    expect(initialInput!.value).toBe("1");
+
+    // Endre initial til 5
+    initialInput!.value = "5";
+    initialInput!.dispatchEvent(new Event("input", { bubbles: true }));
+
+    // Endre final til 25
+    const finalInput = document.querySelector<HTMLInputElement>(
+      '[data-marker="final-input-small_yellow"]',
+    )!;
+    finalInput.value = "25";
+    finalInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    // Sold-cellen skal vise 21 (25 - 5 + 1)
+    expect(document.querySelector('[data-marker="sold-small_yellow"]')?.textContent).toBe("21");
+
+    // Submit
+    const submitBtn = document.querySelector<HTMLButtonElement>('[data-action="submit"]')!;
+    submitBtn.click();
+    await flush();
+    await flush();
+
+    // Andre fetch-kall skal være PUT mot ticket-ranges-endepunktet
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const putCall = fetchMock.mock.calls[1]!;
+    expect(putCall[0]).toBe("/api/agent/ticket-ranges/range-sy-1");
+    expect((putCall[1] as RequestInit).method).toBe("PUT");
+    const body = JSON.parse((putCall[1] as RequestInit).body as string);
+    expect(body.gameId).toBe("g-1");
+    expect(body.initialId).toBe(5);
+    expect(body.finalId).toBe(25);
+
+    // onSuccess ble kalt
+    expect(onSuccess).toHaveBeenCalled();
+    const arg = onSuccess.mock.calls[0]![0] as { totalSoldCount: number };
+    expect(arg.totalSoldCount).toBe(21);
+  });
+
   it("viser fetch-error som alert når backend returnerer 404", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       failJson(404, "GAME_NOT_FOUND", "Spillet finnes ikke"),

@@ -29,6 +29,7 @@ import { t } from "../../../i18n/I18n.js";
 import {
   agentGetInitialIds,
   agentRecordFinalIds,
+  agentEditTicketRange,
   TICKET_TYPES,
   TICKET_TYPE_LABELS,
   type InitialIdEntry,
@@ -64,6 +65,14 @@ interface RowState {
   finalId: number | null;
   /** Eksisterende registrering hvis modalen åpnes igjen. */
   existingFinalId: number | null;
+  /**
+   * REQ-091 — ID på eksisterende rad. Når satt, kan agenten redigere
+   * `initialId` (og `finalId`) på en allerede registrert range mellom
+   * runder via PUT /api/agent/ticket-ranges/:rangeId. Når null, bruker
+   * modalen den vanlige recordFinalIds-flyten (carry-forward initial,
+   * final må scannes/tastes).
+   */
+  existingRangeId: string | null;
 }
 
 /**
@@ -143,6 +152,7 @@ export function openRegisterSoldTicketsModal(
         carriedFromGameId: e?.carriedFromGameId ?? null,
         finalId: e?.existingRange?.finalId ?? null,
         existingFinalId: e?.existingRange?.finalId ?? null,
+        existingRangeId: e?.existingRange?.id ?? null,
       };
     });
   }
@@ -178,11 +188,39 @@ export function openRegisterSoldTicketsModal(
       typeCell.setAttribute("data-marker", `label-${row.ticketType}`);
 
       const initialCell = document.createElement("td");
-      initialCell.className = "text-muted";
       initialCell.setAttribute("data-marker", `initial-${row.ticketType}`);
-      initialCell.textContent = String(row.initialId);
-      if (row.carriedFromGameId) {
-        initialCell.title = `Carry-forward fra ${row.carriedFromGameId}`;
+      if (row.existingRangeId !== null) {
+        // REQ-091: eksisterende rad → tillat inline-edit av initialId.
+        initialCell.classList.add("ticket-range-editable");
+        const initialInput = document.createElement("input");
+        initialInput.type = "number";
+        initialInput.className = "form-control input-sm";
+        initialInput.min = "0";
+        initialInput.value = String(row.initialId);
+        initialInput.setAttribute("data-marker", `initial-input-${row.ticketType}`);
+        initialInput.addEventListener("input", () => {
+          const v = initialInput.value.trim();
+          if (!v) return;
+          const n = Number(v);
+          if (Number.isFinite(n) && Number.isInteger(n) && n >= 0) {
+            row.initialId = n;
+            // Min-attribute på final-input må følge med
+            const finalInput = rowInputs.get(row.ticketType);
+            if (finalInput) finalInput.min = String(n);
+            updateSoldCell(row);
+          }
+        });
+        initialCell.append(initialInput);
+        if (row.carriedFromGameId) {
+          initialCell.title = `Carry-forward fra ${row.carriedFromGameId}`;
+        }
+      } else {
+        // Ny rad → initialId er read-only fra carry-forward.
+        initialCell.classList.add("text-muted");
+        initialCell.textContent = String(row.initialId);
+        if (row.carriedFromGameId) {
+          initialCell.title = `Carry-forward fra ${row.carriedFromGameId}`;
+        }
       }
 
       const finalCell = document.createElement("td");
@@ -308,30 +346,57 @@ export function openRegisterSoldTicketsModal(
       }
     }
 
-    const perTypeFinalIds: Partial<Record<TicketType, number>> = {};
-    for (const row of filled) {
-      perTypeFinalIds[row.ticketType] = row.finalId!;
-    }
+    // REQ-091: rader som har eksisterende range-ID må gå via PUT
+    // /api/agent/ticket-ranges/:rangeId fordi `recordFinalIds` ikke
+    // tillater å endre `initialId`. Vi splitter listen i to.
+    const editableRows = filled.filter((r) => r.existingRangeId !== null);
+    const newRows = filled.filter((r) => r.existingRangeId === null);
 
     try {
-      const res = await agentRecordFinalIds(opts.gameId, {
-        perTypeFinalIds,
-        hallId: opts.hallId,
-      });
+      // 1. PUT for hver eksisterende rad (sekvensielt — backend audit-log
+      //    sporer hver endring separat).
+      for (const row of editableRows) {
+        await agentEditTicketRange(row.existingRangeId!, {
+          gameId: opts.gameId,
+          initialId: row.initialId,
+          finalId: row.finalId!,
+          hallId: opts.hallId,
+        });
+      }
+
+      // 2. POST recordFinalIds for nye rader (carry-forward initial er
+      //    backend-bestemt; klienten sender kun final).
+      let totalSoldCount = editableRows.reduce(
+        (s, r) => s + (r.finalId! - r.initialId + 1),
+        0,
+      );
+      let hallReadyStatus: { isReady: boolean; error?: string } | null = null;
+      if (newRows.length > 0) {
+        const perTypeFinalIds: Partial<Record<TicketType, number>> = {};
+        for (const row of newRows) {
+          perTypeFinalIds[row.ticketType] = row.finalId!;
+        }
+        const res = await agentRecordFinalIds(opts.gameId, {
+          perTypeFinalIds,
+          hallId: opts.hallId,
+        });
+        totalSoldCount += res.totalSoldCount;
+        hallReadyStatus = res.hallReadyStatus;
+      }
 
       // Success feedback
-      const readyMsg = res.hallReadyStatus?.isReady
+      const readyMsg = hallReadyStatus?.isReady
         ? ` — ${t("register_sold_tickets_hall_ready")}`
-        : res.hallReadyStatus?.error
-          ? ` — ${t("register_sold_tickets_hall_ready_error")}: ${res.hallReadyStatus.error}`
+        : hallReadyStatus?.error
+          ? ` — ${t("register_sold_tickets_hall_ready_error")}: ${hallReadyStatus.error}`
           : "";
       Toast.success(
-        `${t("register_sold_tickets_success")} ${res.totalSoldCount}${readyMsg}`,
+        `${t("register_sold_tickets_success")} ${totalSoldCount}${readyMsg}`,
       );
 
       opts.onSuccess?.({
-        totalSoldCount: res.totalSoldCount,
-        hallReadyStatus: res.hallReadyStatus,
+        totalSoldCount,
+        hallReadyStatus,
       });
       instance.close("programmatic");
     } catch (err) {
