@@ -213,7 +213,7 @@ export function remainingForPhase(
 
 // ── Pure internals ──────────────────────────────────────────────────────────
 
-/** Bygg alle C(5,k) kombinasjoner av vertikale kolonner OR'et sammen. */
+/** Bygg alle C(5,k) kombinasjoner av horisontale rader OR'et sammen. 2026-04-27 fix: regelendring 2026-04-24 (8ba2d19b). Speiler rowCombinations(k) i shared-types/spill1-patterns. */
 function buildRowCombinations(k: number): PatternMask[] {
   const out: PatternMask[] = [];
   const n = 5;
