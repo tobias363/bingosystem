@@ -48,7 +48,18 @@ export interface DailyBalance {
   updatedAt: string;
 }
 
-export function openDay(body: { openingBalance: number; note?: string }): Promise<DailyBalance> {
+/**
+ * Add daily balance / open day — agent legger inn start-skift-balance
+ * (legacy 17.5).  Backend-kontrakt er `{ amount, notes }` (se
+ * `apps/backend/src/routes/agentOpenDay.ts:86`).
+ */
+export interface OpenDayRequest {
+  /** Beløp i NOK som overføres fra hall-cash til shiftens daily-balance. */
+  amount: number;
+  notes?: string;
+}
+
+export function openDay(body: OpenDayRequest): Promise<DailyBalance> {
   return apiRequest<DailyBalance>("/api/agent/shift/open-day", { method: "POST", body, auth: true });
 }
 
@@ -73,22 +84,35 @@ export function getPhysicalCashoutSummary(): Promise<{ count: number; totalAmoun
   return apiRequest("/api/agent/shift/physical-cashouts/summary", { auth: true });
 }
 
-// ───────── Control daily balance (midtveis-sjekk) ─────────
+// ───────── Control daily balance (midtveis-sjekk, legacy 17.3) ─────────
+//
+// Legacy-feltsett (per wireframe PDF 17.3 + backend AgentSettlementService):
+//   - reportedDailyBalance     — agent teller daglig saldo (kasse-skift-delta)
+//   - reportedTotalCashBalance — agent teller total kontantsaldo i hallen
+//
+// Severity-regler (sammenfaller med backend `computeDiffSeverity`):
+//   - |diff| ≤ 500 kr OG ≤ 5 %  → OK
+//   - 500 < |diff| ≤ 1000 kr ELLER 5 < |%| ≤ 10 → NOTE_REQUIRED
+//   - |diff| > 1000 kr ELLER |%| > 10           → FORCE_REQUIRED (krever ADMIN)
 
 export interface ControlDailyBalanceRequest {
-  actualCountedCash: number;
-  note?: string;
+  reportedDailyBalance: number;
+  reportedTotalCashBalance: number;
+  notes?: string;
 }
 
+export type DiffSeverity = "OK" | "NOTE_REQUIRED" | "FORCE_REQUIRED";
+
 export interface ControlDailyBalanceResult {
-  expected: number;
-  actual: number;
-  difference: number;
-  /** True if diff > 500 kr OR > 5% of expected — a note is required. */
-  requiresNote: boolean;
-  /** `"within-tolerance" | "diff-requires-note" | "accepted-with-note"` */
-  status: "within-tolerance" | "diff-requires-note" | "accepted-with-note";
-  controlId?: string;
+  /** Backend-snitt (computed fra shift). */
+  shiftDailyBalance: number;
+  /** Det agenten rapporterte. */
+  reportedDailyBalance: number;
+  /** reportedDailyBalance − shiftDailyBalance. */
+  diff: number;
+  /** Diff i prosent av shiftDailyBalance. */
+  diffPct: number;
+  severity: DiffSeverity;
 }
 
 export function controlDailyBalance(body: ControlDailyBalanceRequest): Promise<ControlDailyBalanceResult> {
