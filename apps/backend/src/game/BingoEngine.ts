@@ -1782,7 +1782,45 @@ export class BingoEngine {
     }
     // HOEY-3: Checkpoint after each draw — persists draw sequence state
     await this.writeDrawCheckpoint(room, game);
-    if (game.drawnNumbers.length >= this.maxDrawsPerRound) {
+    // FULLTHUS-FIX (2026-04-27): Phase 5 (Fullt Hus) MÅ vinnes hvis alle
+    // 75 baller er trukket — for 75-ball bingo dekker drawnSet alltid hele
+    // 5×5-grid (kun cell 0 er free centre). Hvis `evaluateActivePhase`
+    // over har lagt evaluering bak ENDED-flag for Phase 5, må vi IKKE
+    // overskrive `game.endedReason` med MAX_DRAWS_REACHED.
+    //
+    // ROOT CAUSE: før denne fixen overskrev MAX_DRAWS_REACHED-blokken
+    // ubetinget `game.status="ENDED"` og `game.endedReason` selv om
+    // Phase 5 nettopp hadde satt `BINGO_CLAIMED`. User-rapportert bug
+    // 2026-04-27: ad-hoc bingo der user vant 1-4 Rader, men Fullt Hus
+    // forble won=False fordi MAX_DRAWS_REACHED skrev over BINGO_CLAIMED-
+    // status fra evaluateActivePhase i samme drawNextNumber-call.
+    //
+    // Defensiv tiltak: hvis `evaluateActivePhase` ikke fikk fullført
+    // Phase 5 (f.eks. transient ledger-feil ble swallowed av try/catch
+    // over), kjør én siste evaluering FØR vi ender med MAX_DRAWS. Dette
+    // er trygt: hvis Phase 5 ikke kan vinnes (ingen tickets med fullt
+    // hus), returnerer evaluateActivePhase uten side-effekter.
+    if (game.drawnNumbers.length >= this.maxDrawsPerRound && game.status === "RUNNING") {
+      // Last-chance Phase 5 evaluation before MAX_DRAWS_REACHED. Hvis
+      // evaluateActivePhase tidligere kastet en transient feil, gir vi
+      // det én siste sjanse her — særlig viktig på ball 75 der ALL non-
+      // free celler i 5×5-grid garantert er dekket av drawnSet.
+      if (variantConfigForDraw?.autoClaimPhaseMode) {
+        try {
+          await this.evaluateActivePhase(room, game);
+        } catch (err) {
+          logger.error(
+            { err, gameId: game.id, roomCode: room.code },
+            "[FULLTHUS-FIX] last-chance evaluateActivePhase failed before MAX_DRAWS",
+          );
+        }
+      }
+    }
+    // Re-sjekk status: hvis Phase 5 vant i evaluateActivePhase (enten
+    // det første kallet over eller last-chance-kallet), er game.status
+    // allerede "ENDED" med endedReason="BINGO_CLAIMED". Da MÅ vi IKKE
+    // overskrive til MAX_DRAWS_REACHED.
+    if (game.drawnNumbers.length >= this.maxDrawsPerRound && game.status === "RUNNING") {
       const endedAtMs = Date.now();
       const endedAt = new Date(endedAtMs);
       game.status = "ENDED";
