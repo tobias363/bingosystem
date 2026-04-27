@@ -84,12 +84,30 @@ function stubPool(rows: Array<{ hall_id: string; pot_key: string }>, capture?: {
 
 // ── Pure helpers ────────────────────────────────────────────────────────────
 
-test("todayUtcString: konverterer Date → YYYY-MM-DD (UTC)", () => {
-  const d = new Date("2026-04-22T23:59:59.000Z");
-  assert.equal(todayUtcString(d), "2026-04-22");
-  // 00:00:01 i UTC same dag:
+test("todayUtcString: returnerer Oslo-dato (LOW-2-fix 2026-04-26)", () => {
+  // Funksjonen heter `todayUtcString` av historiske grunner (rename er
+  // cross-cutting og krever DB-migrasjon — se kommentar i implementasjonen).
+  // Semantikken er nå `Europe/Oslo`. Tester verifiserer at navnet ikke
+  // lurer oss til å tro det er UTC.
+  //
+  // Vinter (UTC+1): 22:30 UTC den 22. = 23:30 Oslo den 22. → "2026-04-22"
+  //                 23:30 UTC den 22. = 00:30 Oslo den 23. → "2026-04-23"
+  // (April er etter spring-forward, så vi er på sommer-tid:
+  //  20:30 UTC den 22. = 22:30 Oslo den 22. → "2026-04-22"
+  //  22:30 UTC den 22. = 00:30 Oslo den 23. → "2026-04-23")
   assert.equal(
-    todayUtcString(new Date("2026-04-22T00:00:01.000Z")),
+    todayUtcString(new Date("2026-04-22T20:30:00.000Z")),
+    "2026-04-22",
+    "før Oslo-midnatt"
+  );
+  assert.equal(
+    todayUtcString(new Date("2026-04-22T22:30:00.000Z")),
+    "2026-04-23",
+    "etter Oslo-midnatt — runde over UTC-midnatt på en sommerdag akkumulerer riktig dag"
+  );
+  // Midt på dagen — uavhengig av tz blir dato 2026-04-22.
+  assert.equal(
+    todayUtcString(new Date("2026-04-22T12:00:00.000Z")),
     "2026-04-22"
   );
 });

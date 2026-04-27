@@ -3,10 +3,16 @@
  *
  * Bakgrunn:
  *   Spor 4-pot-er (Jackpott, Innsatsen) har en daglig auto-påfyll
- *   (`dailyBoostCents`). Boost-en må kjøres en gang pr kalender-dag (UTC)
- *   pr pot. Game1PotService.accumulateDaily er allerede idempotent per
+ *   (`dailyBoostCents`). Boost-en må kjøres en gang pr kalender-dag pr
+ *   pot. Game1PotService.accumulateDaily er allerede idempotent per
  *   `(hallId, potKey, dateUtc)` — dette laget er et tynt orkestreringslag
  *   oppå som sikrer at pot-boost faktisk blir kjørt:
+ *
+ *   LOW-2-fix 2026-04-26: kalender-dag tolkes nå som `Europe/Oslo`-dag
+ *   (var tidligere UTC). Variabel/parameter-navn `todayUtc`/`dateUtc` er
+ *   beholdt for backwards-compat — semantisk er det nå Oslo-tid. Full
+ *   rename krever DB-migrasjon (last_daily_boost_date) og er flagget for
+ *   oppfølging.
  *
  *     * `runDailyTick(todayUtc)` — iterer ALLE pot-er og kall accumulateDaily.
  *       Brukes av daglig cron (eller ops-trigget manuelt). Fail-closed
@@ -33,6 +39,7 @@
 
 import type { Pool } from "pg";
 import { logger as rootLogger } from "../../util/logger.js";
+import { todayOsloKey } from "../../util/osloTimezone.js";
 import type { Game1PotService } from "./Game1PotService.js";
 
 const log = rootLogger.child({ module: "pot-daily-accumulation-tick-service" });
@@ -190,13 +197,19 @@ export class PotDailyAccumulationTickService {
 // ── Pure helpers (eksportert for test) ──────────────────────────────────────
 
 /**
- * Returnerer dagens UTC-dato på formatet "YYYY-MM-DD". Brukes som default
- * `todayUtc` i runDailyTick — deterministisk per UTC-dag, uavhengig av
- * server-timezone.
+ * Returnerer dagens dato på formatet "YYYY-MM-DD" i `Europe/Oslo`-tidssonen.
+ *
+ * LOW-2-fix 2026-04-26: tidligere `todayUtcString` brukte UTC, men
+ * Spillorama opererer i Norge. UTC-midnatt er kl 01:00 (vinter) /
+ * 02:00 (sommer) norsk tid, så en runde over Norge-midnatt akkumulerte
+ * Innsatsen-pot på "feil" dag. Variabel- og parameter-navn beholder
+ * `Utc`-suffiks for backwards-compat med kallsteder; semantikken er
+ * Oslo-tid.
+ *
+ * @deprecated Bruk `todayUtcString` fortsatt, men semantikken er nå Oslo.
+ *             Felt-/parameter-rename til `osloDate` kan gjøres i en
+ *             oppfølgings-PR (cross-cutting; krever DB-kolonne-rename).
  */
 export function todayUtcString(now: Date = new Date()): string {
-  const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(now.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return todayOsloKey(now);
 }
