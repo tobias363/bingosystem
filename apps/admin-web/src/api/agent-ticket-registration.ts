@@ -116,3 +116,47 @@ export function agentGetSummary(gameId: string): Promise<GetSummaryResponse> {
     { auth: true },
   );
 }
+
+// ── REQ-091: edit ticket-range mellom runder ────────────────────────────────
+
+export interface EditTicketRangeBody {
+  gameId: string;
+  initialId: number;
+  finalId: number;
+  /** ADMIN kan overstyre hallId — ignoreres for AGENT/HALL_OPERATOR. */
+  hallId?: string;
+}
+
+export interface EditTicketRangeResponse {
+  range: TicketRange;
+  before: TicketRange;
+}
+
+/**
+ * REQ-091 — Endrer initial_id/final_id på en eksisterende ticket-range mellom
+ * runder. Returnerer både pre- og post-state for UI/audit-visning.
+ *
+ * Backend: PUT /api/agent/ticket-ranges/:rangeId
+ *
+ * Feilkoder:
+ *   - 404 RANGE_NOT_FOUND / GAME_NOT_FOUND
+ *   - 409 GAME_NOT_EDITABLE (spillet kjører)
+ *   - 409 FINAL_LESS_THAN_INITIAL
+ *   - 409 RANGE_OVERLAP
+ *   - 409 RANGE_HALL_MISMATCH / RANGE_GAME_MISMATCH
+ *   - 403 FORBIDDEN (cross-hall)
+ *   - 400 INVALID_INPUT
+ */
+export function agentEditTicketRange(
+  rangeId: string,
+  body: EditTicketRangeBody,
+): Promise<EditTicketRangeResponse> {
+  return apiRequest<EditTicketRangeResponse>(
+    `/api/agent/ticket-ranges/${encodeURIComponent(rangeId)}`,
+    {
+      method: "PUT",
+      body,
+      auth: true,
+    },
+  );
+}
