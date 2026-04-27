@@ -339,15 +339,18 @@ test("BIN-694: Fase 2 vinnes av 2 hele HORISONTALE rader", async () => {
  * 2026-04-21 (Tobias): faste premier 100/200/200/200/1000 kr via
  * `winningType: "fixed"` + `prize1`. Verifiser at evaluatoren leser
  * disse feltene i stedet for prizePercent.
+ *
+ * 2026-04-26 (FIXED-PRIZE-FIX): Faste premier MÅ utbetales fullt
+ * uavhengig av pool — huset garanterer dem (legacy spillorama-paritet).
+ * Tidligere ble Fullt Hus capet mot resterende pool; nå betales hele
+ * 1000 kr og §11 single-prize-cap (2500 kr) er den eneste regulatoriske
+ * grensen.
  */
-test("fast premie — 1 Rad betaler 100 kr, Fullt Hus 1000 kr (enkel vinner, stor pool)", async () => {
+test("fast premie — alle 5 faser betales fullt selv når pool er mindre (hus garanterer)", async () => {
   const { engine, roomCode, hostId } = await setupRoom();
-  // entryFee=500 → prizePool=1000, payoutBudget=950 (95%) — nok til at alle
-  // fase-premier (100+200+200+200+1000 = 1700 kr) KAN capes. Første 4 faser
-  // (=700 kr) betales fullt, Fullt Hus (=1000 kr) cap'es mot resterende
-  // pool/budget og ender ≈ 250 kr. Testen fokuserer på rad 1-4 som IKKE
-  // cap'es. Fullt Hus sjekkes bare at den betaler > 0 og avslutter runden.
-  // (entryFee=1000 avvises av compliance-limits — holder oss under det.)
+  // entryFee=500, 2 spillere → pool=1000, payoutBudget=950. Annonserte
+  // faste premier summerer til 1700 kr — pool dekker IKKE alle. Hus
+  // garanterer differansen via system-konto (kan gå negativt).
   await engine.startGame({
     roomCode, actorPlayerId: hostId, entryFee: 500, ticketsPerPlayer: 1,
     payoutPercent: 95, gameType: "standard", variantConfig: DEFAULT_NORSK_BINGO_CONFIG,
@@ -369,18 +372,13 @@ test("fast premie — 1 Rad betaler 100 kr, Fullt Hus 1000 kr (enkel vinner, sto
     phaseByName.set(r.patternName, r.payoutAmount);
   }
 
-  // 1-4 Rad betales fullt (100+200+200+200 = 700 kr totalt, budget=950 holder).
+  // FIXED-PRIZE-FIX: alle faser betales fullt — pool/budget irrelevant.
   assert.equal(phaseByName.get("1 Rad"), 100,   "1 Rad = 100 kr fast");
   assert.equal(phaseByName.get("2 Rader"), 200, "2 Rader = 200 kr fast");
   assert.equal(phaseByName.get("3 Rader"), 200, "3 Rader = 200 kr fast");
   assert.equal(phaseByName.get("4 Rader"), 200, "4 Rader = 200 kr fast");
-  // Fullt Hus: 1000 kr fast — under 2-player-pool (1000 kr) / budget (950)
-  // blir det capet til resterende pool etter 1-4 Rad (300 kr) / resterende
-  // budget (250). Assertér bare at noe ble utbetalt; total=1000 kr-verifisering
-  // krever større pool (se 3-way-split-test).
-  const fhPayout = phaseByName.get("Fullt Hus") ?? 0;
-  assert.ok(fhPayout > 0, "Fullt Hus skal ha utbetalt noe (>0)");
-  assert.ok(fhPayout <= 1000, "Fullt Hus skal aldri utbetale mer enn fast 1000 kr");
+  // Fullt Hus 1000 kr — HUS GARANTERER, ikke capet mot pool.
+  assert.equal(phaseByName.get("Fullt Hus"), 1000, "Fullt Hus = 1000 kr fast (hus garanterer)");
 });
 
 /**
@@ -432,4 +430,102 @@ test("fast premie — 3 vinnere på 1 Rad splitter 100 kr til 33 hver (huset beh
   assert.ok(phase1?.winnerIds?.includes(p1!));
   assert.ok(phase1?.winnerIds?.includes(p2!));
   assert.ok(phase1?.winnerIds?.includes(p3!));
+});
+
+/**
+ * FIXED-PRIZE-FIX (2026-04-26): regresjon for Tobias' XGFLXH-bug.
+ *
+ * Solo-spiller med 4 brett, lav buy-in (ca 45 kr/brett = 180 kr) og
+ * 80% payoutPercent → pool=144 kr. Fast-premie-konfig (1 Rad: 100,
+ * 2-4: 200, FH: 1000) summerer til 1700 kr. Pre-fix: spilleren fikk
+ * kun 100 + 44 + 0 + 0 + 0 = 144 kr (pool tom). Post-fix: alle
+ * annonserte beløp utbetales, hus-konto går negativt og HOUSE_DEFICIT
+ * audit-event logges.
+ */
+test("FIXED-PRIZE-FIX: solo-spiller med liten pool får alle 5 faste premier (1700 kr totalt)", async () => {
+  const engine = new BingoEngine(
+    new PerPlayerTicketAdapter(),
+    new InMemoryWalletAdapter(),
+    { minDrawIntervalMs: 0, minPlayersToStart: 1 },
+  );
+  const { roomCode, playerId: hostId } = await engine.createRoom({
+    hallId: "hall-1", playerName: "Alice", walletId: "w-alice",
+  });
+  // Solo: bare én spiller med 4 brett. entryFee=45, 4 tickets → pool=180.
+  // payoutPercent=80 → budget=144. Faste premier 1700 kr >> 144 kr.
+  // Pre-fix: payouts ble cappet ved 144 kr. Post-fix: alle annonserte
+  // beløp utbetales fullt; hus-konto kan gå negativt.
+  await engine.startGame({
+    roomCode, actorPlayerId: hostId!, entryFee: 45, ticketsPerPlayer: 4,
+    payoutPercent: 80, gameType: "standard", variantConfig: DEFAULT_NORSK_BINGO_CONFIG,
+  });
+
+  const allAlice: number[] = [];
+  for (const row of PLAYER_A_GRID) for (const n of row) if (n !== 0) allAlice.push(n);
+  prioritiseDrawBag(engine, roomCode, allAlice);
+  for (let i = 0; i < 24; i += 1) {
+    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
+  }
+
+  const game = engine.getRoomSnapshot(roomCode).currentGame!;
+  assert.equal(game.status, "ENDED");
+
+  const phaseByName = new Map<string, number | undefined>();
+  for (const r of game.patternResults ?? []) {
+    phaseByName.set(r.patternName, r.payoutAmount);
+  }
+  assert.equal(phaseByName.get("1 Rad"), 100,   "1 Rad fullt utbetalt");
+  assert.equal(phaseByName.get("2 Rader"), 200, "2 Rader fullt utbetalt");
+  assert.equal(phaseByName.get("3 Rader"), 200, "3 Rader fullt utbetalt (pre-fix: 0 pga pool tom)");
+  assert.equal(phaseByName.get("4 Rader"), 200, "4 Rader fullt utbetalt (pre-fix: 0)");
+  assert.equal(phaseByName.get("Fullt Hus"), 1000, "Fullt Hus fullt utbetalt — HUS GARANTERER");
+
+  // Sum total skal være 1700 kr — annonsert til spilleren.
+  const totalPaid = (phaseByName.get("1 Rad") ?? 0)
+    + (phaseByName.get("2 Rader") ?? 0)
+    + (phaseByName.get("3 Rader") ?? 0)
+    + (phaseByName.get("4 Rader") ?? 0)
+    + (phaseByName.get("Fullt Hus") ?? 0);
+  assert.equal(totalPaid, 1700, "Totalt utbetalt til spilleren = 1700 kr (annonsert)");
+
+  // Ingen claim skal være rtpCapped — pool/RTP-cap gjelder ikke faste premier.
+  const claims = game.claims.filter((c) => c.valid);
+  for (const c of claims) {
+    assert.equal(c.rtpCapped, false, `claim ${c.id} skal IKKE være rtpCapped`);
+  }
+});
+
+/**
+ * FIXED-PRIZE-FIX: rtpCapped-flagget settes aldri for faste premier.
+ * Speiler kontrakten i `claim.rtpCapped` for ad-hoc-engine.
+ */
+test("FIXED-PRIZE-FIX: claim.rtpCapped er false for fixed-prize claims", async () => {
+  const engine = new BingoEngine(
+    new PerPlayerTicketAdapter(),
+    new InMemoryWalletAdapter(),
+    { minDrawIntervalMs: 0, minPlayersToStart: 1 },
+  );
+  const { roomCode, playerId: hostId } = await engine.createRoom({
+    hallId: "hall-1", playerName: "Alice", walletId: "w-alice",
+  });
+  await engine.startGame({
+    roomCode, actorPlayerId: hostId!, entryFee: 45, ticketsPerPlayer: 4,
+    payoutPercent: 80, gameType: "standard", variantConfig: DEFAULT_NORSK_BINGO_CONFIG,
+  });
+  const allAlice: number[] = [];
+  for (const row of PLAYER_A_GRID) for (const n of row) if (n !== 0) allAlice.push(n);
+  prioritiseDrawBag(engine, roomCode, allAlice);
+  for (let i = 0; i < 24; i += 1) {
+    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
+  }
+  const game = engine.getRoomSnapshot(roomCode).currentGame!;
+  // Alle 5 claims skal være valid + rtpCapped=false (faste premier
+  // bypasser RTP-cap; kun §11 single-prize-cap kan slå inn — og 1000 kr
+  // er under 2500 kr-cap).
+  const claims = game.claims.filter((c) => c.valid);
+  assert.equal(claims.length, 5, "5 fase-vinner-claims (1-4 Rad + Fullt Hus)");
+  for (const c of claims) {
+    assert.equal(c.rtpCapped, false, `claim ${c.id} (${c.type}) skal IKKE være rtpCapped`);
+    assert.equal(c.payoutWasCapped, false, `claim ${c.id} skal heller ikke være §11-capet`);
+  }
 });

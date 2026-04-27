@@ -24,6 +24,26 @@ interface InternalAccount {
   winningsBalance: number;
   createdAt: string;
   updatedAt: string;
+  /**
+   * FIXED-PRIZE-FIX: hus-konti markeres som system og kan gå negativt.
+   * Speiler PostgresWalletAdapter `is_system`-kolonnen. Spiller-konti
+   * er aldri system og blokkeres på INSUFFICIENT_FUNDS som før.
+   */
+  isSystem: boolean;
+}
+
+/**
+ * FIXED-PRIZE-FIX: gjenkjenn hus-konti basert på prefiks. Speiler
+ * PostgresWalletAdapter.isSystemAccountId. Hus-konti opprettet via
+ * `BingoEngine.ensureAccount(makeHouseAccountId(...))` får
+ * `house-<hallId>-<gameType>-<channel>`-format.
+ */
+function isSystemAccountId(accountId: string): boolean {
+  return (
+    accountId.startsWith("house-") ||
+    accountId.startsWith("__house__") ||
+    accountId.startsWith("__system_")
+  );
 }
 
 export class InMemoryWalletAdapter implements WalletAdapter {
@@ -48,7 +68,10 @@ export class InMemoryWalletAdapter implements WalletAdapter {
       }
       throw new WalletError("ACCOUNT_EXISTS", `Wallet ${accountId} finnes allerede.`);
     }
-    const initialBalance = input?.initialBalance ?? this.defaultInitialBalance;
+    const isSystem = isSystemAccountId(accountId);
+    // System-konti får ikke initial-funding — de starter på 0 og fylles av
+    // player-stakes (eller går negativt for fixed-prize-deficit).
+    const initialBalance = isSystem ? 0 : (input?.initialBalance ?? this.defaultInitialBalance);
     this.assertNonNegativeAmount(initialBalance);
 
     const now = new Date().toISOString();
@@ -58,7 +81,8 @@ export class InMemoryWalletAdapter implements WalletAdapter {
       depositBalance: initialBalance,
       winningsBalance: 0,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      isSystem,
     };
     this.accounts.set(accountId, account);
 
@@ -122,7 +146,9 @@ export class InMemoryWalletAdapter implements WalletAdapter {
     this.assertPositiveAmount(amount);
     const account = await this.ensureAccountInternal(accountId);
     const total = account.depositBalance + account.winningsBalance;
-    if (total < amount) {
+    // FIXED-PRIZE-FIX: system-konti (hus) kan gå negativt. Spiller-konti
+    // blokkeres på INSUFFICIENT_FUNDS som før.
+    if (!account.isSystem && total < amount) {
       throw new WalletError("INSUFFICIENT_FUNDS", `Wallet ${account.id} mangler saldo.`);
     }
 
@@ -232,7 +258,10 @@ export class InMemoryWalletAdapter implements WalletAdapter {
     const from = await this.ensureAccountInternal(fromId);
     const to = await this.ensureAccountInternal(toId);
     const fromTotal = from.depositBalance + from.winningsBalance;
-    if (fromTotal < amount) {
+    // FIXED-PRIZE-FIX: system-konti (hus) kan gå negativt på transfer
+    // — nødvendig for å garantere annonserte faste premier som overgår
+    // pool. Spiller-konti er fortsatt blokkert.
+    if (!from.isSystem && fromTotal < amount) {
       throw new WalletError("INSUFFICIENT_FUNDS", `Wallet ${from.id} mangler saldo.`);
     }
 

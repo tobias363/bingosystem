@@ -270,6 +270,10 @@ export class PostgresWalletAdapter implements WalletAdapter {
     const accountId = this.normalizeUserWalletId(input?.accountId || `wallet-${randomUUID()}`);
     const initialBalance = input?.initialBalance ?? this.defaultInitialBalance;
     this.assertNonNegativeAmount(initialBalance);
+    // FIXED-PRIZE-FIX: hus-konti markeres som system slik at de kan gå
+    // negativt når faste premier overgår pool. Spiller-konti forblir
+    // ikke-system (deposit/winnings >= 0 enforced).
+    const isSystem = this.isSystemAccountId(accountId);
 
     const client = await this.pool.connect();
     try {
@@ -283,8 +287,11 @@ export class PostgresWalletAdapter implements WalletAdapter {
         throw new WalletError("ACCOUNT_EXISTS", `Wallet ${accountId} finnes allerede.`);
       }
 
-      await this.insertAccount(client, accountId, false);
-      if (initialBalance > 0) {
+      await this.insertAccount(client, accountId, isSystem);
+      // System-konti (house-*) skal IKKE få initial-funding via
+      // external_cash. De starter på 0 og fyller seg fra player-stakes
+      // (eller går negativt når faste premier overgår pool).
+      if (!isSystem && initialBalance > 0) {
         const operationId = randomUUID();
         const txId = randomUUID();
         await this.executeLedger(
@@ -1496,6 +1503,24 @@ export class PostgresWalletAdapter implements WalletAdapter {
       throw new WalletError("INVALID_ACCOUNT_ID", "walletId bruker reservert prefiks.");
     }
     return normalized;
+  }
+
+  /**
+   * FIXED-PRIZE-FIX: Hus-konti (`house-<hallId>-<gameType>-<channel>`) og
+   * legacy system-konti (`__house__`, `__system_*`) skal markeres som
+   * `is_system=true` slik at de kan gå negativt — nødvendig når faste
+   * premier (winningType=fixed) overgår pool. Hus garanterer annonserte
+   * premier (legacy spillorama-paritet).
+   *
+   * DB-constraint:
+   *   `CHECK (is_system = true OR deposit_balance >= 0)`.
+   */
+  private isSystemAccountId(accountId: string): boolean {
+    return (
+      accountId.startsWith("house-") ||
+      accountId.startsWith("__house__") ||
+      accountId.startsWith("__system_")
+    );
   }
 
   private assertPositiveAmount(amount: number): void {

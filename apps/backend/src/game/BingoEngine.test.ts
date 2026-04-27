@@ -200,7 +200,14 @@ export class InMemoryWalletAdapter implements WalletAdapter {
 
     const account = await this.ensureAccount(normalizedAccountId);
     const nextBalance = account.balance + delta;
-    if (nextBalance < 0) {
+    // FIXED-PRIZE-FIX: hus-konti (`house-*`, `__house__`, `__system_*`) er
+    // markert som system og kan gå negativt. Speiler PostgresWalletAdapter
+    // og production-InMemoryWalletAdapter. Spiller-konti er fortsatt blokkert.
+    const isSystem =
+      normalizedAccountId.startsWith("house-") ||
+      normalizedAccountId.startsWith("__house__") ||
+      normalizedAccountId.startsWith("__system_");
+    if (!isSystem && nextBalance < 0) {
       throw new WalletError("INSUFFICIENT_FUNDS", "Ikke nok saldo.");
     }
 
@@ -208,11 +215,14 @@ export class InMemoryWalletAdapter implements WalletAdapter {
     // kan verifisere post-kjøps-saldo. `delta < 0` er en debit/transfer-out —
     // trekk split fra deposit/winnings. `delta > 0` er credit/transfer-in —
     // målkonto via targetSide (default deposit).
+    // FIXED-PRIZE-FIX: system-konti kan gå negativt (clamp ved 0 brukes kun
+    // for spiller-konti der deposit/winnings >= 0 enforced).
+    const clampZero = (v: number) => (isSystem ? v : Math.max(0, v));
     let nextDeposit = account.depositBalance ?? nextBalance;
     let nextWinnings = account.winningsBalance ?? 0;
     if (delta < 0 && split) {
-      nextDeposit = Math.max(0, nextDeposit - split.fromDeposit);
-      nextWinnings = Math.max(0, nextWinnings - split.fromWinnings);
+      nextDeposit = clampZero(nextDeposit - split.fromDeposit);
+      nextWinnings = clampZero(nextWinnings - split.fromWinnings);
     } else if (delta > 0) {
       const absDelta = Math.abs(delta);
       if (targetSide === "winnings") {
@@ -222,7 +232,7 @@ export class InMemoryWalletAdapter implements WalletAdapter {
       }
     } else if (delta < 0) {
       // Debit uten split (legacy-path) — trekk alt fra deposit for bakoverkompat.
-      nextDeposit = Math.max(0, nextDeposit + delta);
+      nextDeposit = clampZero(nextDeposit + delta);
     }
 
     const updated: WalletAccount = {

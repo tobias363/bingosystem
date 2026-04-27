@@ -79,7 +79,8 @@ export type PersistedLedgerEventType =
   | "PRIZE"
   | "EXTRA_PRIZE"
   | "ORG_DISTRIBUTION"
-  | "HOUSE_RETAINED";
+  | "HOUSE_RETAINED"
+  | "HOUSE_DEFICIT";
 
 export interface PersistedComplianceLedgerEntry {
   id: string;
