@@ -37,6 +37,8 @@ import { openSettlementModal } from "./modals/SettlementModal.js";
 import { openControlDailyBalanceModal } from "./modals/ControlDailyBalanceModal.js";
 import { openAddMoneyRegisteredUserModal } from "./modals/AddMoneyRegisteredUserModal.js";
 import { openWithdrawRegisteredUserModal } from "./modals/WithdrawRegisteredUserModal.js";
+import { openAddMoneyUniqueIdModal } from "../agent-portal/unique-id/AddMoneyUniqueIdModal.js";
+import { openWithdrawUniqueIdModal } from "../agent-portal/unique-id/WithdrawUniqueIdModal.js";
 import { contentHeader, escapeHtml, formatNOK } from "./shared.js";
 
 const F5_F6_F8 = new Set(["F5", "F6", "F8"]);
@@ -155,10 +157,10 @@ export function renderCashInOutPage(container: HTMLElement): void {
                         data-action="slot-machine">
                   ${escapeHtml(t("slot_machine"))}
                 </button>
-                <a class="btn btn-success cashinout-grid-btn"
-                   href="#/agent/unique-id/add" data-action="add-money-unique-id">
+                <button type="button" class="btn btn-success cashinout-grid-btn"
+                        data-action="add-money-unique-id">
                   ${escapeHtml(t("add_money"))} ${escapeHtml(t("unique_id"))}
-                </a>
+                </button>
                 <button type="button" class="btn btn-success cashinout-grid-btn"
                         data-action="add-money-registered-user">
                   ${escapeHtml(t("add_money_registered_user"))} (F5)
@@ -167,10 +169,10 @@ export function renderCashInOutPage(container: HTMLElement): void {
                    href="#/uniqueId" data-action="create-new-unique-id">
                   ${escapeHtml(t("create_new_unique_id"))}
                 </a>
-                <a class="btn btn-danger cashinout-grid-btn"
-                   href="#/agent/unique-id/withdraw" data-action="withdraw-unique-id">
+                <button type="button" class="btn btn-danger cashinout-grid-btn"
+                        data-action="withdraw-unique-id">
                   ${escapeHtml(t("withdraw_unique_id"))}
-                </a>
+                </button>
                 <button type="button" class="btn btn-danger cashinout-grid-btn"
                         data-action="withdraw-registered-user">
                   ${escapeHtml(t("withdraw_registered_user"))} (F6)
@@ -289,9 +291,29 @@ function wireActions(container: HTMLElement): void {
       case "withdraw-registered-user":
         openWithdrawRegisteredUserModal({ onSuccess: () => void refreshBalance(container) });
         break;
-      // shift-log-out, todays-sales-report, add-money-unique-id,
-      // create-new-unique-id, withdraw-unique-id, sell-products håndteres
-      // via href eller av AgentCashInOutPage (Shift Log Out).
+      case "add-money-unique-id":
+        // Wireframe §17.10 — popup-modal direkte fra Cash In/Out-dashboardet
+        // (ikke en separat side). Yes/No-confirm med akkumulert balance per
+        // PM-rule Q4 (170 + 200 = 370). Cash/Card payment-type tillates.
+        openAddMoneyUniqueIdModal({ onSuccess: () => void refreshBalance(container) });
+        break;
+      case "withdraw-unique-id":
+        // Wireframe §17.11/17.28 — popup-modal direkte fra Cash In/Out.
+        // Cash-only (PM rule). Brukerens Unique ID etterspørres først via
+        // prompt — ID-tasking matcher legacy-flow der agenten skanner /
+        // skriver inn et eksisterende kort før withdraw-skjemaet vises.
+        {
+          const id = window.prompt(t("please_enter_unique_id"));
+          if (id && id.trim()) {
+            openWithdrawUniqueIdModal({
+              uniqueId: id.trim(),
+              onSuccess: () => void refreshBalance(container),
+            });
+          }
+        }
+        break;
+      // shift-log-out, todays-sales-report, create-new-unique-id, sell-products
+      // håndteres via href eller av AgentCashInOutPage (Shift Log Out).
     }
   });
 }
