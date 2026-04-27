@@ -59,6 +59,13 @@ const COLOR_I18N_KEY: Record<TicketColor, string> = {
   RED: "ticket_color_red",
   GREEN: "ticket_color_green",
   BLUE: "ticket_color_blue",
+  // G11 (audit 2026-04-27): Elvis 1-5. Display-navn er kun "Elvis 1"-"Elvis 5"
+  // — ingen lokalisering nødvendig (egennavn fra papir-spec).
+  ELVIS1: "ticket_color_elvis1",
+  ELVIS2: "ticket_color_elvis2",
+  ELVIS3: "ticket_color_elvis3",
+  ELVIS4: "ticket_color_elvis4",
+  ELVIS5: "ticket_color_elvis5",
 };
 
 /**

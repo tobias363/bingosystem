@@ -20,8 +20,14 @@
 //      normalisere ut senere uten ytterligere wire-brudd.
 
 /**
- * 9 kanoniske ticket-farger for Schedule-editoren. Matcher Admin V1.0-
- * wireframene (s. 4) + det Tobias godkjente 2026-04-23.
+ * 14 kanoniske ticket-farger for Schedule-editoren. Matcher Admin V1.0-
+ * wireframene (s. 4) + det Tobias godkjente 2026-04-23, samt Elvis 1-5
+ * (G11, audit 2026-04-27) — Elvis-fargene fantes allerede i
+ * `apps/backend/src/game/spill1VariantMapper.ts:COLOR_SLUG_TO_NAME`,
+ * men manglet i admin-UI-en så bingoverten ikke kunne velge dem ved
+ * sub-game-konfigurasjon. Med ELVIS1..ELVIS5 her propagerer fargene
+ * gjennom `SubGamesListEditor` checkbox-listen og blir lagret i
+ * `ScheduleSubgame.ticketColors`.
  *
  * Verdiene er stabile string-identifikatorer som lagres i database og
  * sendes over wire. Display-navn (nb/en) lever i admin-web/i18n.
@@ -36,6 +42,11 @@ export const TICKET_COLORS = [
   "RED",
   "GREEN",
   "BLUE",
+  "ELVIS1",
+  "ELVIS2",
+  "ELVIS3",
+  "ELVIS4",
+  "ELVIS5",
 ] as const;
 
 export type TicketColor = (typeof TICKET_COLORS)[number];

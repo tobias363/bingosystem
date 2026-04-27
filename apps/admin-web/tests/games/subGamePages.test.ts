@@ -111,22 +111,28 @@ describe("SubGameAddEditPage", () => {
     expect(submit?.disabled).toBe(false);
   });
 
-  it("add-page includes ticket-color select with 9 canonical + 8 legacy options", async () => {
+  it("add-page includes ticket-color select with 9 canonical + 5 Elvis + 8 legacy options", async () => {
     const c = document.createElement("div");
     await renderSubGameAddPage(c);
     const colorSelect = c.querySelector<HTMLSelectElement>('select[name="selectTicketColor"]');
     expect(colorSelect).not.toBeNull();
     // Enabled for BIN-621 wire-up.
     expect(colorSelect?.disabled).toBe(false);
-    // feat/schedule-8-colors-mystery: 9 canonical TICKET_COLORS + 8 legacy strings = 17.
-    expect(colorSelect?.querySelectorAll("option").length).toBe(17);
-    // Canonical codes er blant valgene.
+    // G11 (audit 2026-04-27): 9 canonical TICKET_COLORS + 5 Elvis + 8 legacy = 22.
+    expect(colorSelect?.querySelectorAll("option").length).toBe(22);
+    // Canonical codes + Elvis er blant valgene.
     const values = Array.from(colorSelect!.querySelectorAll("option")).map(
       (o) => o.getAttribute("value")
     );
     expect(values).toContain("SMALL_YELLOW");
     expect(values).toContain("LARGE_PURPLE");
     expect(values).toContain("BLUE");
+    // G11: Elvis 1-5 må kunne velges av admin/agent
+    expect(values).toContain("ELVIS1");
+    expect(values).toContain("ELVIS2");
+    expect(values).toContain("ELVIS3");
+    expect(values).toContain("ELVIS4");
+    expect(values).toContain("ELVIS5");
   });
 
   it("add-page includes status select with active/inactive", async () => {

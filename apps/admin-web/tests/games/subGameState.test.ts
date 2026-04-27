@@ -180,9 +180,10 @@ describe("isGameNameLocallyValid", () => {
 });
 
 describe("LEGACY_TICKET_COLOR_OPTIONS", () => {
-  it("exposes canonical 9-color codes first, legacy strings last", () => {
-    // feat/schedule-8-colors-mystery (2026-04-23): de 9 canonical TICKET_COLORS
-    // er prepended, de 8 legacy-navnene beholdes for bakoverkompat.
+  it("exposes canonical 9-color codes + Elvis 1-5, legacy strings last", () => {
+    // G11 (audit 2026-04-27): Elvis 1-5 lagt til etter de 9 canonical farge-
+    // kodene, før legacy-strengene. Bingoverten må kunne velge Elvis-farger
+    // ved sub-game-konfigurasjon — legacy-Spill1-mapper hadde dem allerede.
     expect(LEGACY_TICKET_COLOR_OPTIONS).toEqual([
       "SMALL_YELLOW",
       "LARGE_YELLOW",
@@ -193,6 +194,11 @@ describe("LEGACY_TICKET_COLOR_OPTIONS", () => {
       "RED",
       "GREEN",
       "BLUE",
+      "ELVIS1",
+      "ELVIS2",
+      "ELVIS3",
+      "ELVIS4",
+      "ELVIS5",
       "Yellow",
       "Blue",
       "Green",
@@ -204,8 +210,19 @@ describe("LEGACY_TICKET_COLOR_OPTIONS", () => {
     ]);
   });
 
+  it("includes Elvis 1-5 for SubGame multi-select (G11)", () => {
+    // Symmetri-sjekk mot apps/backend/src/game/spill1VariantMapper.ts
+    // som har lowercase `elvis1`-`elvis5` i COLOR_SLUG_TO_NAME.
+    expect(LEGACY_TICKET_COLOR_OPTIONS).toContain("ELVIS1");
+    expect(LEGACY_TICKET_COLOR_OPTIONS).toContain("ELVIS2");
+    expect(LEGACY_TICKET_COLOR_OPTIONS).toContain("ELVIS3");
+    expect(LEGACY_TICKET_COLOR_OPTIONS).toContain("ELVIS4");
+    expect(LEGACY_TICKET_COLOR_OPTIONS).toContain("ELVIS5");
+  });
+
   it("is a readonly tuple (cannot push)", () => {
     expect(Array.isArray(LEGACY_TICKET_COLOR_OPTIONS)).toBe(true);
-    expect(LEGACY_TICKET_COLOR_OPTIONS.length).toBe(17);
+    // 9 canonical + 5 Elvis + 8 legacy fri-form = 22 totalt
+    expect(LEGACY_TICKET_COLOR_OPTIONS.length).toBe(22);
   });
 });
