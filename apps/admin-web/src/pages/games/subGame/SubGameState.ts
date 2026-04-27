@@ -191,7 +191,11 @@ export function isGameNameLocallyValid(name: string): boolean {
  * feat/schedule-8-colors-mystery (2026-04-23): listen nå er en union av:
  *   1. De 9 canonical TICKET_COLORS-kodene (Admin V1.0 s. 4, Tobias-godkjent
  *      2026-04-23). Disse brukes av Schedule-editor og nye Game 1-flows.
- *   2. Legacy fri-form-strenger ("Yellow", "Blue", ...) beholdt for
+ *   2. Elvis 1-5 (G11, audit 2026-04-27) — fantes i
+ *      `apps/backend/src/game/spill1VariantMapper.ts:COLOR_SLUG_TO_NAME`
+ *      og `SPILL1_TICKET_COLORS` (lowercase) men manglet i admin-UI.
+ *      Lagt til som UPPERCASE-konvensjon for å matche TICKET_COLORS.
+ *   3. Legacy fri-form-strenger ("Yellow", "Blue", ...) beholdt for
  *      bakoverkompat inntil alle SubGame-maler er migrert.
  *
  * Backend `SubGameService.assertTicketColors` tillater begge skjemaene
@@ -207,6 +211,11 @@ export const LEGACY_TICKET_COLOR_OPTIONS = [
   "RED",
   "GREEN",
   "BLUE",
+  "ELVIS1",
+  "ELVIS2",
+  "ELVIS3",
+  "ELVIS4",
+  "ELVIS5",
   "Yellow",
   "Blue",
   "Green",

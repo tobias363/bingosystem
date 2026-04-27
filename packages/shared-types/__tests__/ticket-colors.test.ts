@@ -16,8 +16,9 @@ import {
   validateRowPrizesByColor,
 } from "../src/ticket-colors.js";
 
-test("TICKET_COLORS: 9 unike koder i dokumentert rekkefølge", () => {
-  assert.equal(TICKET_COLORS.length, 9);
+test("TICKET_COLORS: 14 unike koder i dokumentert rekkefølge (inkl Elvis 1-5)", () => {
+  // 9 base-farger + 5 Elvis (G11, audit 2026-04-27)
+  assert.equal(TICKET_COLORS.length, 14);
   assert.deepEqual([...TICKET_COLORS], [
     "SMALL_YELLOW",
     "LARGE_YELLOW",
@@ -28,9 +29,35 @@ test("TICKET_COLORS: 9 unike koder i dokumentert rekkefølge", () => {
     "RED",
     "GREEN",
     "BLUE",
+    "ELVIS1",
+    "ELVIS2",
+    "ELVIS3",
+    "ELVIS4",
+    "ELVIS5",
   ]);
   const set = new Set(TICKET_COLORS);
-  assert.equal(set.size, 9);
+  assert.equal(set.size, 14);
+});
+
+test("TICKET_COLORS: Elvis 1-5 inkludert (G11)", () => {
+  // Symmetri-check mot spill1VariantMapper.COLOR_SLUG_TO_NAME (lowercase)
+  // Mapper bruker `elvis1`-`elvis5`; her bruker vi UPPERCASE-konvensjon.
+  // Bingoverten må kunne velge Elvis-farger ved sub-game-konfigurasjon.
+  assert.ok((TICKET_COLORS as readonly string[]).includes("ELVIS1"));
+  assert.ok((TICKET_COLORS as readonly string[]).includes("ELVIS2"));
+  assert.ok((TICKET_COLORS as readonly string[]).includes("ELVIS3"));
+  assert.ok((TICKET_COLORS as readonly string[]).includes("ELVIS4"));
+  assert.ok((TICKET_COLORS as readonly string[]).includes("ELVIS5"));
+});
+
+test("isTicketColor: aksepterer Elvis 1-5", () => {
+  // Roundtrip-sjekk: Elvis må passere type-guarden så
+  // SubGameService kan persistere dem uten validation-fail.
+  assert.equal(isTicketColor("ELVIS1"), true);
+  assert.equal(isTicketColor("ELVIS5"), true);
+  // Lowercase-form (som mapper bruker) er IKKE canonical her —
+  // admin-web normaliserer til UPPERCASE før persist.
+  assert.equal(isTicketColor("elvis1"), false);
 });
 
 test("SUB_GAME_TYPES: STANDARD + MYSTERY", () => {
