@@ -75,7 +75,12 @@ export async function renderSettlementPage(
     columns: [
       { key: "businessDate", title: t("date") },
       { key: "shiftId", title: t("shift") },
-      { key: "agentUserId", title: t("agent") },
+      {
+        key: "agentUserId",
+        title: t("agent"),
+        // K1-D: vis displayName hvis backend returnerer det, ellers fall tilbake til ID.
+        render: (r) => r.agentDisplayName || r.agentUserId,
+      },
       {
         key: "dailyBalanceAtEnd",
         title: t("balance"),
@@ -188,8 +193,10 @@ async function openFullBreakdownModal(
     existingSettlement: settlement,
     shiftId: settlement.shiftId,
     agentUserId: settlement.agentUserId,
-    agentName: settlement.agentUserId,
-    hallName: settlement.hallId,
+    // K1-D: bruk resolved-navn fra backend hvis tilgjengelig (wireframe-paritet),
+    // fall tilbake til ID for forward-compat med eldre backend-versjoner.
+    agentName: settlement.agentDisplayName || settlement.agentUserId,
+    hallName: settlement.hallName || settlement.hallId,
     businessDate: settlement.businessDate,
     onSubmitted: () => {
       void onSaved();

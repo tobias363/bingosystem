@@ -104,6 +104,14 @@ export interface AdminSettlement {
   bilagReceipt: BilagReceipt | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * K1-D wireframe 16.25/17.10: backend resolves hallName + agentDisplayName
+   * for å gi modal-headeren faktiske navn ("Hall: Game of Hall" / "Agent
+   * Name: Nsongka Thomas") istedenfor IDs. Optional fordi historiske
+   * responser uten berikelse fortsatt skal kunne deserialiseres.
+   */
+  hallName?: string;
+  agentDisplayName?: string;
 }
 
 // ── GET /api/admin/shifts/settlements ───────────────────────────────────────
@@ -152,6 +160,11 @@ export interface EditSettlementBody {
   machineBreakdown?: MachineBreakdown;
   /** K1: null = nullstill bilag. */
   bilagReceipt?: BilagReceipt | null;
+  /**
+   * K1-D wireframe 16.25/17.10: admin kan korrigere business_date.
+   * YYYY-MM-DD-format. Brukstilfelle: agent close-day-et med feil dato.
+   */
+  businessDate?: string;
 }
 
 export async function editSettlement(shiftId: string, body: EditSettlementBody): Promise<AdminSettlement> {
