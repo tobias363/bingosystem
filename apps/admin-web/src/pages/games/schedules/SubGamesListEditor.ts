@@ -162,7 +162,10 @@ function emptyRow(): SubGameRowState {
     jackpotPrize: "",
     luckyBonusAmount: "",
     luckyBonusEnabled: false,
-    subGameType: "STANDARD",
+    // Tobias 2026-04-27 (testing-default): Mystery er nå default sub-game-type
+    // for nye schedule-rader så pilot-test kan øve på Mystery-flyten uten å
+    // måtte velge manuelt. Bytt tilbake til "STANDARD" når pilot-test er over.
+    subGameType: "MYSTERY",
     // K4: default tom — legacy-oppførsel (admin kan overstyre premier per
     // farge i Spill1Config.ts). Når admin velger en preset fra dropdown,
     // settes feltet til én av SPILL1_SUB_VARIANT_TYPES-verdiene.
