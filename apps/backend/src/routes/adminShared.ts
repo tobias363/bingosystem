@@ -17,6 +17,7 @@ import type { RoomUpdatePayload } from "../util/roomHelpers.js";
 import type { AuditLogService, AuditActorType } from "../compliance/AuditLogService.js";
 import type { EmailService } from "../integration/EmailService.js";
 import type { HallCashLedger } from "../agent/HallCashLedger.js";
+import type { PreFlightValidator } from "../game/RoomStartPreFlightValidator.js";
 
 // ── BIN-588 wire-up helpers ───────────────────────────────────────────────────
 
@@ -145,6 +146,17 @@ export interface AdminRouterDeps {
    * Gjenbruker samme ledger som `AgentSettlementService`.
    */
   hallCashLedger: HallCashLedger;
+  /**
+   * Tobias 2026-04-27: pre-flight validator for room start.
+   *
+   * Sjekker (a) at hallen er medlem av minst én aktiv hall-gruppe, og
+   * (b) at minst én aktiv daily-schedule målretter hallen før engine
+   * kalles med `startGame`. Optional — hvis null skipper routeren
+   * sjekken (brukes i tester som ikke har behov for DB-oppslag).
+   *
+   * Se `RoomStartPreFlightValidator` for full kontrakt + feilkoder.
+   */
+  roomStartPreFlightValidator?: PreFlightValidator | null;
 }
 
 // ── Shared helpers factory ────────────────────────────────────────────────────

@@ -115,6 +115,7 @@ import { createAdminGame1MasterTransferRouter } from "./routes/adminGame1MasterT
 import { createGame1PurchaseRouter } from "./routes/game1Purchase.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createAdminRouter } from "./routes/admin.js";
+import { RoomStartPreFlightValidator } from "./game/RoomStartPreFlightValidator.js";
 import { createWalletRouter } from "./routes/wallet.js";
 import { createAdminWalletRouter } from "./routes/adminWallet.js";
 import { createAdminWalletReconciliationRouter } from "./routes/adminWalletReconciliation.js";
@@ -2353,6 +2354,17 @@ const hallCashLedger = new PostgresHallCashLedger({
   pool: platformService.getPool(),
   schema: pgSchema,
 });
+
+// Tobias 2026-04-27 (pilot-test feedback): pre-flight validator for
+// `POST /api/admin/rooms/:roomCode/start`. Sikrer at hallen tilhører en
+// aktiv hall-gruppe (link) og at minst én aktiv daily-schedule målretter
+// hallen før engine.startGame kjøres. Se RoomStartPreFlightValidator.ts
+// for full kontrakt + feilkoder (HALL_NOT_IN_GROUP / NO_SCHEDULE_FOR_HALL_GROUP).
+const roomStartPreFlightValidator = new RoomStartPreFlightValidator({
+  pool: platformService.getPool(),
+  schema: pgSchema,
+});
+
 const agentSettlementService = new AgentSettlementService({
   platformService,
   agentService,
@@ -2676,6 +2688,9 @@ app.use(createAdminRouter({
   emailService,
   supportEmail,
   hallCashLedger,
+  // Tobias 2026-04-27 (pilot-test feedback): pre-flight validator for
+  // POST /api/admin/rooms/:roomCode/start.
+  roomStartPreFlightValidator,
 }));
 
 app.use(createWalletRouter({ platformService, engine, walletAdapter, swedbankPayService, emitWalletRoomUpdates }));

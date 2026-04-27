@@ -70,7 +70,31 @@ export function createAdminRoomsRouter(deps: AdminSubRouterDeps): express.Router
       const scopeHallId = resolveHallScopeFilter(adminUser);
       const scopedRooms = scopeHallId ? rooms.filter((r) => r.hallId === scopeHallId) : rooms;
       if (!includeSnapshots) {
-        apiSuccess(res, scopedRooms);
+        // Tobias 2026-04-27 (pilot-test feedback): inkluder lett `currentGame`-
+        // fragment (status + endedReason + id) i listen så agent-portal kan
+        // vise "Klar for ny runde"-affordance ved ENDED uten ekstra round-trip.
+        // Full snapshot er fortsatt bak `?includeSnapshots=true`.
+        const enriched = scopedRooms.map((room) => {
+          try {
+            const snap = engine.getRoomSnapshot(room.code);
+            const cg = snap.currentGame;
+            return {
+              ...room,
+              currentGame: cg
+                ? {
+                    id: cg.id,
+                    status: cg.status,
+                    endedAt: cg.endedAt ?? null,
+                    endedReason: cg.endedReason ?? null,
+                    isPaused: cg.isPaused ?? false,
+                  }
+                : null,
+            };
+          } catch {
+            return { ...room, currentGame: null };
+          }
+        });
+        apiSuccess(res, enriched);
         return;
       }
       const detailed = scopedRooms.map((room) => ({
@@ -165,7 +189,14 @@ export function createAdminRoomsRouter(deps: AdminSubRouterDeps): express.Router
   router.post("/api/admin/rooms/:roomCode/start", async (req, res) => {
     try {
       const adminUser = await requireAdminPermissionUser(req, "ROOM_CONTROL_WRITE");
-      const { roomCode } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
+      const { roomCode, hallId } = requireRoomHallScope(adminUser, req.params.roomCode); // BIN-591
+      // Tobias 2026-04-27 (pilot-test feedback): pre-flight validation.
+      // Sikrer at hallen tilhører en aktiv link/group + at det finnes
+      // minst én aktiv spilleplan før engine.startGame kjøres. Skipper
+      // hvis validator ikke er injisert (test-stier).
+      if (deps.roomStartPreFlightValidator) {
+        await deps.roomStartPreFlightValidator.validate(hallId);
+      }
       const entryFee = parseOptionalNonNegativeNumber(req.body?.entryFee, "entryFee") ?? getRoomConfiguredEntryFee(roomCode);
       const hallGameConfig = await resolveBingoHallGameConfigForRoom(roomCode);
       const requestedTicketsPerPlayer = parseOptionalTicketsPerPlayerInput(req.body?.ticketsPerPlayer);
