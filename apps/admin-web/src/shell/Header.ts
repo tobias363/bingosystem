@@ -65,7 +65,11 @@ export function renderHeader(container: HTMLElement, session: Session, maintenan
   const ul = document.createElement("ul");
   ul.className = "nav navbar-nav";
 
-  if (session.role === "agent") {
+  // Tobias 2026-04-27: Daily balance + Cash inn/ut-knapp + Notifications-bell
+  // skal vises for ALLE auth-roller (admin/super-admin/agent/hall-operator)
+  // per legacy admin-skjermbilde. Tidligere ble disse kun rendret når
+  // session.role === "agent" — derfor admin ikke så header-elementene.
+  {
     // Daily balance
     const balLi = document.createElement("li");
     const bal = session.dailyBalance ?? 0;
