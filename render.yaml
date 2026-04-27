@@ -4,7 +4,15 @@ services:
     runtime: node
     region: frankfurt
     plan: starter
-    buildCommand: npm install --include=dev && npm --prefix apps/backend install --include=dev && npm run build
+    # Migrate prod-DB ved hvert deploy. KRITISK: før denne ble lagt til
+    # (2026-04-26) hadde prod-DB 95 pending migrations som førte til
+    # "Uventet feil i server"-bugs (manglende tabell `app_user_profile_settings`
+    # traff Spill 1-spillere). Hvis migrate feiler, deploy stopper
+    # og app forblir på forrige versjon (fail-fast).
+    # Skjema-arkeolog-PR (ops/schema-sync-plan-2026-04-26) må lande FØRST
+    # for å bringe prod i lock-step — ellers vil neste deploy henge på
+    # legacy-skjema-divergens. Se docs/operations/MIGRATION_DEPLOY_RUNBOOK.md.
+    buildCommand: npm install --include=dev && npm --prefix apps/backend install --include=dev && npm run build && npm --prefix apps/backend run migrate
     startCommand: npm --prefix apps/backend run start
     envVars:
       - key: NODE_ENV
