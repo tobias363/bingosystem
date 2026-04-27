@@ -1,5 +1,7 @@
 # Master-plan: Spill 1 pilot-klar stack — 2026-04-24
 
+> **STATUS-OPPDATERING 2026-04-27:** Alle K1-«kritiske blokkere» (1.1-1.6) og alle P0-punkter (2.1-2.8) i denne planen er nå **merget til main**. Detaljer i §10 nedenfor. Faktisk gjenværende arbeid er P1-polish, ikke pilot-blokkere.
+
 **Formål:** Samlet plan for å oppnå **100% funksjonell paritet med legacy** for en full dag i bingolokalet — bong-salg, kaffe-salg, terminal-drift, hovedspill 1-kjøring på TV-skjerm og spiller-klient.
 
 **Basert på:** 3 research-rapporter levert 2026-04-24 — R1 Spill 1 backend, R2 Agent-workflow, R3 Hall-binding.
@@ -249,3 +251,71 @@ K1 (4-6 dager) → K2 (5-7 dager) → K3 (4-6 dager) = **13-19 dev-dager paralle
 K1+K2+K3 + P1 + regulatorisk-avklaring = **35-50 dev-dager**
 
 **Start:** Bølge K1 bør spawnes umiddelbart (compliance-bug er pilot-blokker).
+
+---
+
+## 10. Faktisk status per 2026-04-27
+
+Audit av main viser at planen ble overhalt av paralelle agent-bølger 24-27 april. Status:
+
+### Alle «kritiske blokkere» (K1) er merget
+
+| Pkt | Funksjon | Status | Referanse |
+|---|---|---|---|
+| 1.1 | Compliance multi-hall-binding (`actor_hall_id`) | ✅ Merget | PR #443 (`8a4fc366`) — `Game1TicketPurchaseService.ts:606`, `Game1PayoutService.ts:390`, mini-game + pot-evaluator alle bindes til kjøpe-hall |
+| 1.2 | Settlement maskin-breakdown | ✅ Merget | PR #441 + #547 + #573 — JSONB med 14-rad maskin-breakdown + bilag-receipt, wireframe-paritet |
+| 1.3 | Customer Unique ID (prepaid-kort) | ✅ Merget | PR #464 (kjerne) + #599 (expiry-cron) — `UniqueIdService.ts`, 8 endpoints, 41 tests |
+| 1.4 | `transferHallAccess` 60s handshake | ✅ Merget | PR #453 — `Game1TransferHallService.ts`, expiry-tick, socket-events, admin-UI |
+| 1.5 | Manuell Bingo-check UI | ✅ Merget | PR #433 — Check-for-Bingo + Physical Cashout med Reward-All |
+| 1.6 | Mystery Game client-overlay | ✅ Merget | PR #430 — full port med 5 runder |
+
+### Alle P0 (operativ kvalitet) er merget
+
+| Pkt | Funksjon | Status |
+|---|---|---|
+| 2.1 | Lucky Number Bonus ved Fullt Hus | ✅ `Game1LuckyBonusService.ts` |
+| 2.2 | Jackpott daglig akkumulering | ✅ `Game1JackpotStateService.ts` (Oslo-tz fixed i #584) |
+| 2.3 | Per-agent ready-state | ✅ `Game1HallReadyService.ts` + #593 ready-state-machine |
+| 2.4 | Per-hall payout-cap | ✅ `HallCashLedger.ts` |
+| 2.5 | Auto-escalation | ✅ `game1ScheduleTick.ts` cron |
+| 2.6 | Shift-end checkboxer | ✅ #455 + AgentShiftService.logout.distributeWinnings/transferRegisterTickets |
+| 2.7 | Ticket-farger 11-palette | ✅ `Game1DrawEnginePhysicalTickets.ts` + SubGameService |
+| 2.8 | XML-Withdraw pipeline | ✅ `WithdrawXmlExportService.ts` + `AccountingEmailService.ts` |
+
+### Andre store leveranser
+
+- **Casino-grade wallet** (BIN-761→764) — outbox, REPEATABLE READ, nightly reconciliation, hash-chain audit
+- **TOTP 2FA + active sessions** (REQ-129/132) — backend + frontend
+- **Phone+PIN-login** (REQ-130)
+- **Ready-state-machine + Hall Info-popup** (REQ-007/014, PR #593)
+- **Multi-currency readiness** (BIN-766)
+- **Idempotency-key 90-dager TTL cleanup** (BIN-767)
+- **Trace-ID propagation** (MED-1) på tvers av HTTP/Socket.IO/async
+- **Group-of-halls aggregert hall-account-rapport** (REQ-143)
+- **Per-player game-mgmt detail + manual winning** (GAP #4/#16, regulatorisk gating)
+- **Profile image upload** (GAP #5)
+- **Player-initiated stop-game vote** (GAP #38)
+- **Close-day recurring patterns** (REQ-116)
+
+### Faktisk gjenværende arbeid (P1-polish, ikke pilot-blokker)
+
+Kategorisert fra `BACKEND_1TO1_GAP_AUDIT_2026-04-24.md` (hvor ~20 gaps allerede er merget siden audit-dato):
+
+| GAP | Tema | Vurdering |
+|---|---|---|
+| #1 | Forward-eskalere KYC pending-request | Operasjonell, post-pilot |
+| #11 | Admin "Withdraw Amount" manual chips-action | Mindre admin-CRUD |
+| #13 | Legacy "transactions payment"-view | Trolig route-alias, kan WONTFIX |
+| #14 | Pattern-game attach | Trolig dekket av sub-game-koblinger |
+| #18 | Bulk-transfer players between halls | Admin utility, post-pilot |
+| #20 | Removed-state-arkiv for groupHall | Post-pilot |
+| #21 | Edit existing email (regnskap-mottakere) | Mindre admin-CRUD |
+| #22, #33 | Public CMS-endpoints (FAQ/Terms) | Trenger frontend-ruting også |
+| #24 | Programmatic restart fra admin | Post-pilot ops-tool |
+| #26, #27, #41 | Background/theme/banner-CRUD | UI-polish, post-pilot |
+| #30 | Ad-hoc modal-data | WONTFIX-kandidat |
+| #31 | SMS-kanalen via Sveve | Vi har FCM push — SMS post-pilot |
+| #32 | Online-player-count per spill | Polish |
+| #34 | Periodic player-state-poll | Trolig dekket av socket-auto-push |
+
+**Konklusjon:** Pilot-blokkere finnes ikke lenger. Pilot er funksjonelt klar i backend. Anbefalt fokus: end-to-end smoke-test i prod-miljø + utvalgte P1 ettersom de blokkerer faktisk drift.
