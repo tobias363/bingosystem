@@ -452,6 +452,38 @@ export async function evaluateActivePhase(
   activeResult.winnerIds = [...allWinnerIds];
   activeResult.payoutAmount = firstPayoutAmount;
 
+  // Demo Hall bypass (Tobias 2026-04-27): test-haller skal kjøre runden
+  // helt igjennom uten å pause på fase-vinn eller avslutte på Fullt Hus.
+  // Operatøren vil verifisere mini-game-rotasjon, jackpot-akkumulering og
+  // bong-evaluering på tvers av alle faser. Payout har allerede skjedd
+  // over (linje 405-453); vi hopper bare over end-of-round / pause-flyten.
+  // MAX_DRAWS_REACHED / DRAW_BAG_EMPTY i drawNextNumber stopper runden
+  // når alle baller er trukket — regulatorisk forsvarlig fordi flagget
+  // kun påvirker pause/end-on-pattern, ikke ball-uttrekk eller payout.
+  if (room.isTestHall === true) {
+    if (activePattern.claimType === "BINGO" && !game.bingoWinnerId) {
+      game.bingoWinnerId = firstWinnerId;
+    }
+    if (activePattern.claimType === "LINE" && !game.lineWinnerId) {
+      game.lineWinnerId = firstWinnerId;
+    }
+    logger.info(
+      {
+        roomCode: room.code,
+        gameId: game.id,
+        hallId: room.hallId,
+        patternName: activePattern.name,
+        claimType: activePattern.claimType,
+        firstWinnerId,
+      },
+      "[demo-hall-bypass] phase won — hopper over end/pause (test-hall)",
+    );
+    // Same-draw multi-phase wins: behold rekursjons-semantikken slik at
+    // alle faser blir paid out i samme draw.
+    await evaluateActivePhase(callbacks, room, game);
+    return;
+  }
+
   // End round when Fullt Hus is won.
   if (activePattern.claimType === "BINGO") {
     const endedAtMs = Date.now();
@@ -618,6 +650,21 @@ export async function evaluateConcurrentPatterns(
   // scope-bekreftelsen sa "alle unwon = ferdig" — enkleste semantikken.
   const allDone = game.patternResults.every((r) => r.isWon);
   if (allDone) {
+    // Demo Hall bypass (Tobias 2026-04-27): test-haller skal kjøre runden
+    // helt til alle baller er trukket selv om alle custom patterns er
+    // vunnet. MAX_DRAWS_REACHED / DRAW_BAG_EMPTY i drawNextNumber
+    // avslutter når draw-bag er tom.
+    if (room.isTestHall === true) {
+      logger.info(
+        {
+          roomCode: room.code,
+          gameId: game.id,
+          hallId: room.hallId,
+        },
+        "[demo-hall-bypass] all concurrent patterns won — hopper over end-of-round (test-hall)",
+      );
+      return;
+    }
     const endedAtMs = Date.now();
     game.status = "ENDED";
     game.endedAt = new Date(endedAtMs).toISOString();

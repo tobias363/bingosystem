@@ -219,6 +219,14 @@ interface CreateRoomInput {
    * Hvis en `string` sendes brukes den som override på `hallId`.
    */
   effectiveHallId?: string | null;
+  /**
+   * Demo Hall bypass (Tobias 2026-04-27): hentes typisk fra
+   * `PlatformService.getHall(hallId).isTestHall`. Når TRUE settes
+   * `RoomState.isTestHall=true` slik at pattern-evaluator bypasser
+   * end-on-bingo og scheduled-engine bypasser auto-pause-på-phase-won.
+   * Ingen effekt når `undefined` eller FALSE — eksisterende oppførsel.
+   */
+  isTestHall?: boolean;
 }
 
 interface JoinRoomInput extends CreateRoomInput {
@@ -751,6 +759,11 @@ export class BingoEngine {
     // global rooms. Vi beholder opprettende hall i `room.hallId` (audit) men
     // setter `isHallShared=true` så `joinRoom` skipper HALL_MISMATCH.
     const isHallShared = input.effectiveHallId === null;
+    // Demo Hall bypass (Tobias 2026-04-27): caller (typisk join-handler i
+    // socket-laget) sender flagget basert på PlatformService.getHall.isTestHall.
+    // Engine selv slår ikke opp i DB her — vi holder createRoom synkron mot
+    // wallet og lar caller composere hall-info.
+    const isTestHall = input.isTestHall === true;
     const room: RoomState = {
       code,
       hallId,
@@ -763,6 +776,7 @@ export class BingoEngine {
       players: new Map([[playerId, player]]),
       gameHistory: [],
       ...(isHallShared ? { isHallShared: true } : {}),
+      ...(isTestHall ? { isTestHall: true } : {}),
     };
 
     this.rooms.set(code, room);

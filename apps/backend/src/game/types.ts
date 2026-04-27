@@ -282,6 +282,22 @@ export interface RoomState {
    * `effectiveHallId: null` i input.
    */
   isHallShared?: boolean;
+  /**
+   * Demo Hall bypass (Tobias 2026-04-27): hvis TRUE skal pattern-evaluator
+   * IKKE avslutte runden på Fullt Hus-vinn / pause på phase-won, slik at
+   * runden går helt gjennom alle 5 faser + MAX_DRAWS uten manuell Resume.
+   * MAX_DRAWS_REACHED / DRAW_BAG_EMPTY-stiene er uberørt — runden ender
+   * uansett når alle baller er trukket.
+   *
+   * Kilde: `app_halls.is_test_hall`-kolonnen. Settes av
+   * `BingoEngine.createRoom` basert på `input.isTestHall` (caller henter
+   * via `PlatformService.getHall(hallId).isTestHall`). Default FALSE →
+   * eksisterende end-on-bingo-oppførsel bevart for prod-haller.
+   *
+   * Optional i typen for bakoverkompatibilitet med eldre fixtures og
+   * test-rom som ikke setter feltet — manglende verdi tolkes som FALSE.
+   */
+  isTestHall?: boolean;
   players: Map<string, Player>;
   currentGame?: GameState;
   gameHistory: GameSnapshot[];
