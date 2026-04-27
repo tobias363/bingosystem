@@ -152,6 +152,8 @@ export const routes: RouteDef[] = [
   { path: "/auditLog", titleKey: "audit_log_title" },
   // HIGH-11: chat-moderasjon (Casino Review). ADMIN + HALL_OPERATOR + SUPPORT.
   { path: "/admin/chat-moderation", titleKey: "chat_moderation_title", roles: ["admin", "super-admin", "hall-operator"] },
+  // ADMIN Super-User Operations Console — live ops-dashboard.
+  { path: "/admin/ops", titleKey: "ops_console_title", roles: ["admin", "super-admin"] },
 
   { path: "/agent/dashboard", titleKey: "agent_dashboard", roles: ["agent", "hall-operator"] },
   { path: "/agent/players", titleKey: "agent_players_title", roles: ["agent", "hall-operator"] },

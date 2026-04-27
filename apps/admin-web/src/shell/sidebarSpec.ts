@@ -49,6 +49,9 @@ export const adminSidebar: SidebarNode[] = [
   // 1. Dashboard
   { kind: "leaf", id: "dashboard", path: "/admin", icon: "fa fa-dashboard", labelKey: "dashboard" },
 
+  // ADMIN Super-User Operations Console — live ops-dashboard. ADMIN-only.
+  { kind: "leaf", id: "admin-ops", path: "/admin/ops", icon: "fa fa-tachometer", labelKey: "ops_console_title", roles: ["admin", "super-admin"] },
+
   // 2. Kontant inn/ut (expanded by default — legacy default-state)
   {
     kind: "group",
