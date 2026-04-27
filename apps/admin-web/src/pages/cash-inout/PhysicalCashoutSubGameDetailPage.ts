@@ -3,27 +3,19 @@
 // Displays the per-ticket cashout grid for a single sub-game with totals and
 // a "Reward All" action. URL: `#/agent/physical-cashout/sub-game/:id`.
 //
-// MINIMAL SCOPE (FOLLOWUP-12 first cut):
-//   - 8-column table per wireframe (Physical Ticket No, Type, Price,
-//     Winning Pattern, Total Winning, Rewarded, Pending, Action).
-//   - Footer totals (Total Winnings + Rewarded + Pending).
-//   - "Reward All" button → POST stub endpoint.
-//   - Bank-icon action shows placeholder toast — full 5×5 pattern grid is
-//     out of scope for this PR (see follow-up).
-//
-// Backend (stub, returns NOT_IMPLEMENTED — to be wired in follow-up):
-//   GET  /api/agent/physical-cashout/sub-game/:subGameId
-//   POST /api/agent/physical-cashout/sub-game/:subGameId/reward-all
-//
-// Wiring: dispatched by `apps/admin-web/src/pages/cash-inout/index.ts` via
-// hash-regex `/agent/physical-cashout/sub-game/:id`. NOT yet wired (commit
-// 1 lands the page; commit 2 will wire the dispatcher) so this file ships
-// dormant. Wireframe: docs/architecture/WIREFRAME_CATALOG.md §17.34.
+// FOLLOWUP-13 update: bank-icon now opens the per-ticket 5×5 pattern popup
+// (PhysicalCashoutPatternModal) per wireframe §17.35. The popup highlights
+// matched cells and shows Cashout/Rewarded status per pattern.
 
 import { t } from "../../i18n/I18n.js";
 import { Toast } from "../../components/Toast.js";
 import { ApiError, apiRequest } from "../../api/client.js";
 import { boxClose, boxOpen, contentHeader, escapeHtml, formatNOK } from "./shared.js";
+import { openPhysicalCashoutPatternModal } from "./PhysicalCashoutPatternModal.js";
+import type {
+  PhysicalTicket,
+  PhysicalTicketPattern,
+} from "../../api/admin-physical-tickets.js";
 
 interface CashoutTicketRow {
   uniqueId: string;
@@ -34,6 +26,12 @@ interface CashoutTicketRow {
   totalWinningCents: number;
   rewardedCents: number;
   pendingCents: number;
+  numbersJson?: number[] | null;
+  patternWon?: PhysicalTicketPattern | null;
+  assignedGameId?: string | null;
+  hallId?: string;
+  batchId?: string;
+  soldAt?: string | null;
 }
 
 interface SubGameDetailResponse {
@@ -42,10 +40,6 @@ interface SubGameDetailResponse {
   tickets: CashoutTicketRow[];
 }
 
-/**
- * Extracts the `:id` segment from `#/agent/physical-cashout/sub-game/:id`.
- * Returns empty string if not on this route.
- */
 function extractSubGameIdFromHash(): string {
   const hash = window.location.hash.replace(/^#/, "");
   const bare = hash.split("?")[0] ?? "";
@@ -121,8 +115,6 @@ export function renderPhysicalCashoutSubGameDetailPage(container: HTMLElement): 
       }
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : "Noe gikk galt.";
-      // NOT_IMPLEMENTED er forventet inntil backend-stub er koblet til.
-      // Vis en mild informasjons-melding i stedet for tom feil-toast.
       if (err instanceof ApiError && err.code === "NOT_IMPLEMENTED") {
         tableHost.innerHTML = `<p class="text-muted">${escapeHtml(msg)}</p>`;
         rewardAllBtn.disabled = true;
@@ -207,7 +199,10 @@ function renderTickets(host: HTMLElement, rows: CashoutTicketRow[]): void {
           <td class="text-right">${formatNOK(r.rewardedCents / 100)} kr</td>
           <td class="text-right">${formatNOK(r.pendingCents / 100)} kr</td>
           <td class="text-center">
-            <button type="button" class="btn btn-default btn-sm po-pattern-btn" title="${escapeHtml(t("view_details"))}">
+            <button type="button" class="btn btn-default btn-sm po-pattern-btn"
+                    data-unique-id="${escapeHtml(r.uniqueId)}"
+                    title="${escapeHtml(t("agent_physical_cashout_view_pattern"))}"
+                    aria-label="${escapeHtml(t("agent_physical_cashout_view_pattern"))}">
               <i class="fa fa-university" aria-hidden="true"></i>
             </button>
           </td>
@@ -223,12 +218,56 @@ function renderTickets(host: HTMLElement, rows: CashoutTicketRow[]): void {
       </table>
     </div>`;
 
-  // Bank-ikon: minimal placeholder. Full 5×5 pattern-grid kommer i oppfølger.
-  // Bruker en hardkodet streng siden i18n-key `pattern_details_coming_soon`
-  // ikke er lagt inn i én commit-vindu (sweeper-konkurranse i delt worktree).
+  // FOLLOWUP-13: bank-ikon åpner 5×5 pattern-popup per wireframe §17.35.
   host.querySelectorAll<HTMLButtonElement>(".po-pattern-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      Toast.info("Mønster-detaljer kommer i oppfølger.");
+      const uniqueId = btn.getAttribute("data-unique-id");
+      if (!uniqueId) return;
+      const row = rows.find((r) => r.uniqueId === uniqueId);
+      if (!row) {
+        Toast.error(t("something_went_wrong"));
+        return;
+      }
+      const ticket = rowToPhysicalTicket(row);
+      const isRewarded = row.pendingCents <= 0 && row.rewardedCents > 0;
+      openPhysicalCashoutPatternModal({
+        ticket,
+        gameId: row.assignedGameId ?? null,
+        isRewarded,
+        canReward: false,
+      });
     });
   });
+}
+
+function rowToPhysicalTicket(row: CashoutTicketRow): PhysicalTicket {
+  return {
+    id: row.uniqueId,
+    batchId: row.batchId ?? "",
+    uniqueId: row.uniqueId,
+    hallId: row.hallId ?? "",
+    status: "SOLD",
+    priceCents: row.ticketPriceCents,
+    assignedGameId: row.assignedGameId ?? null,
+    soldAt: row.soldAt ?? null,
+    soldBy: null,
+    buyerUserId: null,
+    voidedAt: null,
+    voidedBy: null,
+    voidedReason: null,
+    createdAt: "",
+    updatedAt: "",
+    numbersJson: Array.isArray(row.numbersJson) ? row.numbersJson : null,
+    patternWon: row.patternWon ?? coercePattern(row.winningPattern),
+    wonAmountCents: row.totalWinningCents,
+    evaluatedAt: null,
+    isWinningDistributed: row.pendingCents <= 0 && row.rewardedCents > 0,
+    winningDistributedAt: null,
+  };
+}
+
+function coercePattern(raw: string): PhysicalTicketPattern | null {
+  const norm = raw.trim().toLowerCase().replace(/\s+/g, "_");
+  const known: PhysicalTicketPattern[] = ["row_1", "row_2", "row_3", "row_4", "full_house"];
+  return known.includes(norm as PhysicalTicketPattern) ? (norm as PhysicalTicketPattern) : null;
 }

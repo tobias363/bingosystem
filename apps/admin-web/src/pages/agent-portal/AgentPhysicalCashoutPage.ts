@@ -43,6 +43,7 @@ import {
   type PhysicalTicketPattern,
   type PhysicalTicketGameInHallRow,
 } from "../../api/admin-physical-tickets.js";
+import { openPhysicalCashoutPatternModal } from "../cash-inout/PhysicalCashoutPatternModal.js";
 
 // ── Types & helpers ─────────────────────────────────────────────────────────
 
@@ -486,148 +487,20 @@ export function mountAgentPhysicalCashout(container: HTMLElement): void {
   }
 
   // ── View 3: Per-Ticket Pattern Popup ──────────────────────────────────────
+  // Delegated to shared `openPhysicalCashoutPatternModal` (FOLLOWUP-13).
+  // Modalen rendrer 5×5-grid med matched cells fra
+  // /api/agent/bingo/check (eksakt highlight) og pattern-status-tabell.
 
   function openPatternPopup(ticket: PhysicalTicket, isRewarded: boolean): void {
-    const numbers = Array.isArray(ticket.numbersJson) ? ticket.numbersJson : [];
-    // 5×5 grid: numbersJson har 25 tall, men frittsentre-celle (index 12) kan
-    // være 0/null. Vi rendrer alltid 25 celler.
-    const cells: number[] = [];
-    for (let i = 0; i < 25; i += 1) {
-      const v = numbers[i];
-      cells.push(typeof v === "number" ? v : 0);
-    }
-
-    // Vi har ikke matched-cells fra agentListPending — winning_pattern er
-    // det som er stemplet. Vi viser pattern-cellene (basert på pattern_won)
-    // som highlight, og lar all kjente tall stå med bakgrunn. For en
-    // mer presis match kan UI senere kalle /api/agent/bingo/check med
-    // dragene-tall fra spillet.
-    const patternCells = patternToCellIndices(ticket.patternWon);
-
-    const gridHtml = cells.map((n, idx) => {
-      const isCenter = idx === 12;
-      const isPatternCell = patternCells.has(idx);
-      const cellClasses = ["cashout-cell"];
-      if (isPatternCell) cellClasses.push("cashout-cell-pattern");
-      if (isCenter) cellClasses.push("cashout-cell-center");
-      const display = isCenter ? "★" : (n > 0 ? String(n) : "—");
-      return `<div class="${cellClasses.join(" ")}">${display}</div>`;
-    }).join("");
-
-    const wonCents = ticket.wonAmountCents ?? 0;
-    const statusLabel = isRewarded
-      ? `<span class="label label-success">${escapeHtml(t("agent_physical_cashout_status_rewarded"))}</span>`
-      : `<span class="label label-warning">${escapeHtml(t("agent_physical_cashout_status_cashout"))}</span>`;
-
-    const evaluatedAt = ticket.evaluatedAt
-      ? `<div><strong>${escapeHtml(t("agent_physical_cashout_evaluated_at"))}:</strong>
-          ${escapeHtml(new Date(ticket.evaluatedAt).toLocaleString("nb-NO"))}</div>`
-      : "";
-
-    const wrap = document.createElement("div");
-    wrap.innerHTML = `
-      <style>
-        .cashout-grid {
-          display: grid;
-          grid-template-columns: repeat(5, 56px);
-          gap: 4px;
-          justify-content: center;
-          margin: 12px 0;
-        }
-        .cashout-cell {
-          background: #f5f5f5;
-          border: 2px solid #ddd;
-          border-radius: 4px;
-          height: 56px;
-          width: 56px;
-          line-height: 1;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 18px;
-          font-weight: 600;
-          color: #333;
-        }
-        .cashout-cell-pattern {
-          background: #5cb85c;
-          border-color: #449d44;
-          color: #fff;
-        }
-        .cashout-cell-center {
-          background: #f0ad4e;
-          border-color: #eea236;
-          color: #fff;
-        }
-        .cashout-pattern-list {
-          margin-top: 8px;
-        }
-        .cashout-pattern-list .label {
-          margin-right: 6px;
-          font-size: 12px;
-        }
-      </style>
-      <p>
-        <strong>${escapeHtml(t("ticket_id"))}:</strong> <code>${escapeHtml(ticket.uniqueId)}</code><br>
-        <strong>${escapeHtml(t("winning_pattern"))}:</strong>
-        ${escapeHtml(patternLabel(ticket.patternWon))} ${statusLabel}<br>
-        <strong>${escapeHtml(t("total_winning"))}:</strong> ${formatNOK(wonCents)} kr
-        ${evaluatedAt}
-      </p>
-      <div class="cashout-grid">${gridHtml}</div>
-      <div class="cashout-pattern-list">
-        <strong>${escapeHtml(t("agent_physical_cashout_pattern_status_header"))}:</strong>
-        ${renderPatternStatuses(ticket, isRewarded)}
-      </div>`;
-
-    Modal.open({
-      title: t("agent_physical_cashout_pattern_modal_title"),
-      content: wrap,
-      size: "lg",
-      buttons: [
-        { label: t("close"), variant: "default", action: "close" },
-      ],
+    openPhysicalCashoutPatternModal({
+      ticket,
+      gameId: state.selectedGameId,
+      isRewarded,
+      canReward: state.isCurrentDay && !isRewarded,
+      onRewarded: async () => {
+        await loadSubGameDetail();
+      },
     });
-  }
-
-  /**
-   * Renderer en liste over alle 5 mønstre med Cashout/Rewarded-status.
-   * Ticket har et enkelt `patternWon`-felt som er det høyeste mønsteret det
-   * dekker. Vi viser den som rewarded eller pending; resten markeres som
-   * "ikke vinner" på denne billetten.
-   */
-  function renderPatternStatuses(ticket: PhysicalTicket, isRewarded: boolean): string {
-    const allPatterns: PhysicalTicketPattern[] = ["row_1", "row_2", "row_3", "row_4", "full_house"];
-    return allPatterns.map((p) => {
-      if (ticket.patternWon === p) {
-        const wonCents = ticket.wonAmountCents ?? 0;
-        const status = isRewarded ? t("agent_physical_cashout_status_rewarded") : t("agent_physical_cashout_status_cashout");
-        const labelClass = isRewarded ? "label-success" : "label-warning";
-        return `<div>${escapeHtml(patternLabel(p))}: <strong>${formatNOK(wonCents)} kr</strong>
-          <span class="label ${labelClass}">${escapeHtml(status)}</span></div>`;
-      }
-      return `<div class="text-muted" style="opacity:0.6">${escapeHtml(patternLabel(p))}: —</div>`;
-    }).join("");
-  }
-
-  /**
-   * Returnerer cell-indices (0..24) for et 5×5 grid som tilsvarer en
-   * winning pattern. Brukes til å highlight celler i pattern-popup.
-   */
-  function patternToCellIndices(p: PhysicalTicketPattern | null): Set<number> {
-    const s = new Set<number>();
-    if (!p) return s;
-    if (p === "row_1") {
-      for (let i = 0; i < 5; i += 1) s.add(i);
-    } else if (p === "row_2") {
-      for (let i = 5; i < 10; i += 1) s.add(i);
-    } else if (p === "row_3") {
-      for (let i = 10; i < 15; i += 1) s.add(i);
-    } else if (p === "row_4") {
-      for (let i = 15; i < 20; i += 1) s.add(i);
-    } else if (p === "full_house") {
-      for (let i = 0; i < 25; i += 1) s.add(i);
-    }
-    return s;
   }
 
   // ── Reward All / Per-Ticket Reward (delt mellom views) ────────────────────
