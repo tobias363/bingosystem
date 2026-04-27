@@ -10,6 +10,7 @@
 
 import { t } from "../../../i18n/I18n.js";
 import { Toast } from "../../../components/Toast.js";
+import { Modal } from "../../../components/Modal.js";
 import { ApiError } from "../../../api/client.js";
 import { escapeHtml } from "../common/escape.js";
 import {
@@ -21,6 +22,7 @@ import {
 } from "./DailyScheduleState.js";
 import { openDailyScheduleEditorModal } from "./DailyScheduleEditorModal.js";
 import { renderDailyScheduleListPage } from "./DailyScheduleListPage.js";
+import { saveScheduleAsTemplate } from "../../../api/admin-daily-schedules.js";
 
 export type DailyScheduleKind =
   | "view"
@@ -157,6 +159,13 @@ async function renderSubgameView(container: HTMLElement, id: string): Promise<vo
             <div class="panel-heading">
               <div class="pull-left"><h6 class="panel-title txt-dark">${escapeHtml(title)}</h6></div>
               <div class="pull-right">
+                <button type="button"
+                  class="btn btn-success btn-sm m-lr-3"
+                  data-action="save-as-template"
+                  data-id="${escapeHtml(id)}"
+                  title="${escapeHtml(t("save_as_template"))}">
+                  <i class="fa fa-bookmark"></i> ${escapeHtml(t("save_as_template"))}
+                </button>
                 <a href="#/dailySchedule/view" class="btn btn-default btn-sm">
                   <i class="fa fa-arrow-left" aria-hidden="true"></i> ${escapeHtml(t("back"))}
                 </a>
@@ -172,6 +181,16 @@ async function renderSubgameView(container: HTMLElement, id: string): Promise<vo
         </div></div>
       </section>
     </div></div>`;
+
+  const saveBtn = container.querySelector<HTMLButtonElement>(
+    'button[data-action="save-as-template"]'
+  );
+  if (saveBtn && id) {
+    saveBtn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void openSaveAsTemplateModal(id);
+    });
+  }
 
   const body = container.querySelector<HTMLElement>("#ds-view-body");
   if (!body || !id) {
@@ -214,6 +233,62 @@ function renderDetailedView(details: DailyScheduleDetailsResponse): string {
     ${gm}
     <h4>${escapeHtml(t("sub_games"))} (${details.subgames.length})</h4>
     <pre style="max-height:400px;overflow:auto;background:#f5f5f5;padding:12px;border-radius:3px;">${escapeHtml(subgamesJson)}</pre>`;
+}
+
+async function openSaveAsTemplateModal(scheduleId: string): Promise<void> {
+  const bodyHtml = `
+    <div class="form-group">
+      <label for="save-template-name">${escapeHtml(t("template_save_name_label"))}</label>
+      <input type="text" id="save-template-name" class="form-control" maxlength="200" autocomplete="off" />
+    </div>
+    <div class="form-group">
+      <label for="save-template-description">${escapeHtml(t("template_save_description_label"))}</label>
+      <textarea id="save-template-description" class="form-control" rows="3" maxlength="500"></textarea>
+    </div>`;
+  Modal.open({
+    title: t("save_as_template"),
+    content: bodyHtml,
+    buttons: [
+      { label: t("cancel"), variant: "default", action: "cancel" },
+      {
+        label: t("save_as_template"),
+        variant: "primary",
+        action: "confirm",
+        dismiss: false,
+        onClick: async (instance) => {
+          const nameInput = instance.root.querySelector<HTMLInputElement>(
+            "#save-template-name"
+          );
+          const descInput = instance.root.querySelector<HTMLTextAreaElement>(
+            "#save-template-description"
+          );
+          const templateName = nameInput?.value.trim() ?? "";
+          if (!templateName) {
+            Toast.error(t("template_save_name_label"));
+            nameInput?.focus();
+            return;
+          }
+          const description = descInput?.value.trim();
+          try {
+            await saveScheduleAsTemplate(scheduleId, {
+              templateName,
+              ...(description ? { description } : {}),
+            });
+            Toast.success(t("template_saved_success"));
+            instance.close("button");
+          } catch (err) {
+            const msg =
+              err instanceof ApiError
+                ? err.message
+                : err instanceof Error
+                  ? err.message
+                  : String(err);
+            Toast.error(msg);
+          }
+        },
+      },
+    ],
+  });
 }
 
 function renderRowView(row: DailyScheduleRow): string {

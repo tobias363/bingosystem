@@ -7,6 +7,7 @@
 import { t } from "../../../i18n/I18n.js";
 import { DataTable } from "../../../components/DataTable.js";
 import { Toast } from "../../../components/Toast.js";
+import { Modal } from "../../../components/Modal.js";
 import { escapeHtml } from "../common/escape.js";
 import {
   fetchSavedGameList,
@@ -14,6 +15,11 @@ import {
   loadSavedGameToGame,
   type SavedGameRow,
 } from "./SavedGameState.js";
+import { applySavedGameToSchedule } from "../../../api/admin-saved-games.js";
+import {
+  listDailySchedules,
+  type DailyScheduleRow,
+} from "../../../api/admin-daily-schedules.js";
 import { ApiError } from "../../../api/client.js";
 
 export async function renderSavedGameListPage(container: HTMLElement): Promise<void> {
@@ -103,6 +109,15 @@ function renderTable(host: HTMLElement, rows: SavedGameRow[]): void {
             title="${escapeHtml(t("load_to_game"))}">
             <i class="fa fa-cloud-download" aria-hidden="true"></i>
           </button>
+          <button type="button"
+            class="btn btn-purple btn-xs btn-rounded m-lr-3"
+            data-action="apply-to-schedule"
+            data-id="${escapeHtml(r._id)}"
+            data-name="${escapeHtml(r.name)}"
+            data-game-type-id="${escapeHtml(r.gameTypeId)}"
+            title="${escapeHtml(t("apply_to_schedule"))}">
+            <i class="fa fa-magic"></i>
+          </button>
           <a href="#/savedGameList/${encodeURIComponent(r.gameTypeId)}/edit/${encodeURIComponent(r._id)}"
              class="btn btn-warning btn-xs btn-rounded"
              title="${escapeHtml(t("edit"))}">
@@ -136,6 +151,17 @@ function renderTable(host: HTMLElement, rows: SavedGameRow[]): void {
       const id = btn.dataset.id;
       if (!id) return;
       void handleLoad(btn, id);
+    });
+  });
+
+  host.querySelectorAll<HTMLButtonElement>('button[data-action="apply-to-schedule"]').forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      const id = btn.dataset.id;
+      const gameTypeId = btn.dataset.gameTypeId ?? "";
+      const name = btn.dataset.name ?? "";
+      if (!id) return;
+      void handleApply(host, btn, id, gameTypeId, name);
     });
   });
 }
@@ -174,4 +200,84 @@ async function handleLoad(btn: HTMLButtonElement, id: string): Promise<void> {
   } finally {
     btn.disabled = false;
   }
+}
+
+/**
+ * Vis modal med liste av aktive DailySchedules (filtrert på gameTypeId via
+ * koblet GameManagement) og POST apply-to-schedule for valgt rad. Backend
+ * gjør den endelige hall-scope-sjekken — vi viser bare det brukeren har lov
+ * til å se via samme listings-endpoint.
+ */
+async function handleApply(
+  tableHost: HTMLElement,
+  btn: HTMLButtonElement,
+  savedGameId: string,
+  gameTypeId: string,
+  templateName: string
+): Promise<void> {
+  btn.disabled = true;
+  try {
+    const result = await listDailySchedules({ status: "active", limit: 200 });
+    const schedules = result.schedules;
+    if (schedules.length === 0) {
+      Toast.info(t("no_data_available"));
+      return;
+    }
+    const optionsHtml = schedules
+      .map((s) => renderScheduleOption(s))
+      .join("");
+    const bodyHtml = `
+      <p>${escapeHtml(t("template_apply_select_schedule"))}</p>
+      <p class="text-muted">${escapeHtml(templateName)} (${escapeHtml(gameTypeId)})</p>
+      <select id="apply-schedule-select" class="form-control">
+        ${optionsHtml}
+      </select>`;
+    Modal.open({
+      title: t("apply_to_schedule"),
+      content: bodyHtml,
+      buttons: [
+        { label: t("cancel"), variant: "default", action: "cancel" },
+        {
+          label: t("apply_to_schedule"),
+          variant: "primary",
+          action: "confirm",
+          dismiss: false,
+          onClick: async (instance) => {
+            const select = instance.root.querySelector<HTMLSelectElement>(
+              "#apply-schedule-select"
+            );
+            const scheduleId = select?.value ?? "";
+            if (!scheduleId) {
+              Toast.error(t("template_apply_select_schedule"));
+              return;
+            }
+            try {
+              await applySavedGameToSchedule(savedGameId, scheduleId);
+              Toast.success(t("template_applied_success"));
+              instance.close("button");
+              await loadAndRender(tableHost);
+            } catch (err) {
+              const msg =
+                err instanceof ApiError
+                  ? err.message
+                  : err instanceof Error
+                    ? err.message
+                    : String(err);
+              Toast.error(msg);
+            }
+          },
+        },
+      ],
+    });
+  } catch (err) {
+    const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
+    Toast.error(msg);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderScheduleOption(s: DailyScheduleRow): string {
+  const label = `${s.name}${s.startDate ? ` — ${s.startDate}` : ""}${s.hallId ? ` (${s.hallId})` : ""}`;
+  return `<option value="${escapeHtml(s.id)}">${escapeHtml(label)}</option>`;
 }

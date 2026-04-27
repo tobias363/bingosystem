@@ -38,6 +38,7 @@ import type {
   UpdateDailyScheduleInput,
   ListDailyScheduleFilter,
 } from "../admin/DailyScheduleService.js";
+import type { SavedGameService } from "../admin/SavedGameService.js";
 import {
   assertAdminPermission,
   assertUserHallScope,
@@ -62,6 +63,12 @@ export interface AdminDailySchedulesRouterDeps {
   dailyScheduleService: DailyScheduleService;
   /** Valgfri: brukes av /:id/details for å embedde GameManagement-referansen. */
   gameManagementService?: GameManagementService;
+  /**
+   * Valgfri: brukes av POST /:id/save-as-template for å speile en eksisterende
+   * plan inn i SavedGame-katalogen. Hvis ikke injisert, returnerer endpoint
+   * 503 (NOT_CONFIGURED).
+   */
+  savedGameService?: SavedGameService;
 }
 
 function clientIp(req: express.Request): string | null {
@@ -189,6 +196,7 @@ export function createAdminDailySchedulesRouter(
     auditLogService,
     dailyScheduleService,
     gameManagementService,
+    savedGameService,
   } = deps;
   const router = express.Router();
 
@@ -642,6 +650,97 @@ export function createAdminDailySchedulesRouter(
       apiFailure(res, error);
     }
   });
+
+  // ── Write: save-as-template ─────────────────────────────────────────
+  //
+  // Lagre en eksisterende DailySchedule som en gjenbrukbar SavedGame-mal.
+  // Inverse av POST /api/admin/saved-games/:id/apply-to-schedule. gameTypeId
+  // resolves fra (a) request body, eller (b) den koblede GameManagement-raden.
+  // Hvis verken finnes returnerer vi 400 GAME_TYPE_REQUIRED. Duplikat-navn
+  // fanges av eksisterende unique-constraint og bobler opp som
+  // SAVED_GAME_DUPLICATE.
+  router.post(
+    "/api/admin/daily-schedules/:id/save-as-template",
+    async (req, res) => {
+      try {
+        const actor = await requirePermission(req, "SCHEDULE_WRITE");
+        if (!savedGameService) {
+          throw new DomainError(
+            "NOT_CONFIGURED",
+            "SavedGame-tjenesten er ikke aktivert i denne instansen."
+          );
+        }
+        const id = mustBeNonEmptyString(req.params.id, "id");
+        if (!isRecordObject(req.body)) {
+          throw new DomainError("INVALID_INPUT", "Payload må være et objekt.");
+        }
+        const body = req.body;
+        const templateName = mustBeNonEmptyString(
+          body.templateName,
+          "templateName"
+        );
+        const description =
+          typeof body.description === "string" && body.description.trim()
+            ? body.description.trim()
+            : undefined;
+
+        const schedule = await dailyScheduleService.get(id);
+        assertRowHallScope(actor, schedule);
+
+        let gameTypeId: string | null = null;
+        if (typeof body.gameTypeId === "string" && body.gameTypeId.trim()) {
+          gameTypeId = body.gameTypeId.trim();
+        } else if (schedule.gameManagementId && gameManagementService) {
+          try {
+            const gm = await gameManagementService.get(schedule.gameManagementId);
+            gameTypeId = gm.gameTypeId;
+          } catch (err) {
+            logger.warn(
+              { err, scheduleId: id, gameManagementId: schedule.gameManagementId },
+              "[BIN-624] save-as-template: kunne ikke resolve gameTypeId fra GameManagement"
+            );
+          }
+        }
+        if (!gameTypeId) {
+          throw new DomainError(
+            "GAME_TYPE_REQUIRED",
+            "gameTypeId må enten oppgis i body eller kunne resolves fra koblet GameManagement."
+          );
+        }
+
+        const config: Record<string, unknown> = {
+          subgames: schedule.subgames,
+          otherData: schedule.otherData,
+        };
+
+        const saved = await savedGameService.saveFromSchedule({
+          templateName,
+          gameTypeId,
+          config,
+          createdBy: actor.id,
+          ...(description !== undefined ? { description } : {}),
+        });
+        fireAudit({
+          actorId: actor.id,
+          actorType: actorTypeFromRole(actor.role),
+          action: "admin.saved_game.saved_from_schedule",
+          resource: "saved_game",
+          resourceId: saved.id,
+          details: {
+            savedGameId: saved.id,
+            dailyScheduleId: schedule.id,
+            gameTypeId,
+            templateName,
+          },
+          ipAddress: clientIp(req),
+          userAgent: userAgent(req),
+        });
+        apiSuccess(res, { savedGame: saved });
+      } catch (error) {
+        apiFailure(res, error);
+      }
+    }
+  );
 
   return router;
 }

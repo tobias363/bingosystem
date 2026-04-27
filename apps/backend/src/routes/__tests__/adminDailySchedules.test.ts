@@ -35,6 +35,11 @@ import type {
   GameManagementService,
   GameManagement,
 } from "../../admin/GameManagementService.js";
+import type {
+  SavedGameService,
+  SavedGame,
+  SaveFromScheduleInput,
+} from "../../admin/SavedGameService.js";
 import type { PlatformService, PublicAppUser } from "../../platform/PlatformService.js";
 import { DomainError } from "../../game/BingoEngine.js";
 
@@ -72,9 +77,11 @@ interface Ctx {
     creates: DailySchedule[];
     updates: Array<{ id: string; changed: string[] }>;
     removes: Array<{ id: string; hard: boolean }>;
+    savedGameSaves: SaveFromScheduleInput[];
   };
   rows: Map<string, DailySchedule>;
   gms: Map<string, GameManagement>;
+  savedGames: Map<string, SavedGame>;
   close: () => Promise<void>;
 }
 
@@ -272,6 +279,48 @@ async function startServer(
     },
   } as unknown as GameManagementService;
 
+  const savedGames = new Map<string, SavedGame>();
+  const savedGameSaves: SaveFromScheduleInput[] = [];
+  let savedGameIdCounter = 0;
+  const savedGameService = {
+    async saveFromSchedule(input: SaveFromScheduleInput): Promise<SavedGame> {
+      // Mirror SAVED_GAME_DUPLICATE-håndtering fra unique-constraint.
+      for (const g of savedGames.values()) {
+        if (
+          !g.deletedAt &&
+          g.gameTypeId === input.gameTypeId &&
+          g.name === input.templateName
+        ) {
+          throw new DomainError(
+            "SAVED_GAME_DUPLICATE",
+            `duplicate ${input.gameTypeId}/${input.templateName}`
+          );
+        }
+      }
+      savedGameSaves.push(input);
+      savedGameIdCounter += 1;
+      const id = `sg-${savedGameIdCounter}`;
+      const description = input.description?.trim();
+      const config: Record<string, unknown> = description
+        ? { ...input.config, description }
+        : { ...input.config };
+      const saved: SavedGame = {
+        id,
+        gameTypeId: input.gameTypeId,
+        name: input.templateName,
+        isAdminSave: true,
+        config,
+        status: "active",
+        createdBy: input.createdBy,
+        createdAt: "2026-04-15T10:00:00Z",
+        updatedAt: "2026-04-15T10:00:00Z",
+        deletedAt: null,
+      };
+      savedGames.set(id, saved);
+      return saved;
+    },
+  } as unknown as SavedGameService;
+
   const app = express();
   app.use(express.json());
   app.use(
@@ -280,6 +329,7 @@ async function startServer(
       auditLogService,
       dailyScheduleService,
       gameManagementService,
+      savedGameService,
     })
   );
 
@@ -288,9 +338,10 @@ async function startServer(
   const port = (server.address() as AddressInfo).port;
   return {
     baseUrl: `http://127.0.0.1:${port}`,
-    spies: { auditStore, creates, updates, removes },
+    spies: { auditStore, creates, updates, removes, savedGameSaves },
     rows,
     gms,
+    savedGames,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }
@@ -1027,6 +1078,93 @@ test("BIN-626: DELETE nekter HALL_OPERATOR i annen hall", async () => {
     );
     assert.equal(res.status, 400);
     assert.equal(res.json.error.code, "FORBIDDEN");
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ── save-as-template (BIN-624 ↔ BIN-626) ────────────────────────────────────
+
+test("BIN-624: POST /save-as-template oppretter SavedGame + audit saved_from_schedule", async () => {
+  const seedRow = makeRow({
+    id: "ds-1",
+    name: "Lørdag-plan",
+    hallId: "hall-a",
+    gameManagementId: "gm-1",
+    subgames: [{ index: 0, ticketPrice: 500 }],
+    otherData: { foo: "bar" },
+  });
+  const ctx = await startServer(
+    { "admin-tok": adminUser },
+    [seedRow],
+    [makeGm("gm-1", { gameTypeId: "bingo" })]
+  );
+  try {
+    const res = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/daily-schedules/ds-1/save-as-template",
+      "admin-tok",
+      { templateName: "Lørdag-mal", description: "Spar denne" }
+    );
+    assert.equal(res.status, 200, JSON.stringify(res.json));
+    assert.equal(res.json.ok, true);
+    const saved = res.json.data.savedGame;
+    assert.equal(saved.name, "Lørdag-mal");
+    assert.equal(saved.gameTypeId, "bingo");
+    // Description embeddes i config og subgames/otherData er kopiert inn.
+    assert.equal(saved.config.description, "Spar denne");
+    assert.deepEqual(saved.config.subgames, [{ index: 0, ticketPrice: 500 }]);
+    assert.deepEqual(saved.config.otherData, { foo: "bar" });
+
+    const event = await waitForAudit(
+      ctx.spies.auditStore,
+      "admin.saved_game.saved_from_schedule"
+    );
+    assert.ok(event, "audit-event mangler");
+    assert.equal(event!.details.dailyScheduleId, "ds-1");
+    assert.equal(event!.details.templateName, "Lørdag-mal");
+    assert.equal(event!.details.gameTypeId, "bingo");
+    assert.equal(ctx.spies.savedGameSaves.length, 1);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("BIN-624: POST /save-as-template returnerer 400 SAVED_GAME_DUPLICATE ved gjenbruk av navn", async () => {
+  const seedRow = makeRow({
+    id: "ds-1",
+    name: "Lørdag-plan",
+    hallId: "hall-a",
+    gameManagementId: "gm-1",
+  });
+  const ctx = await startServer(
+    { "admin-tok": adminUser },
+    [seedRow],
+    [makeGm("gm-1", { gameTypeId: "bingo" })]
+  );
+  try {
+    // Første lagring lykkes
+    const first = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/daily-schedules/ds-1/save-as-template",
+      "admin-tok",
+      { templateName: "DupeMal" }
+    );
+    assert.equal(first.status, 200, JSON.stringify(first.json));
+
+    // Andre lagring med samme navn + samme gameType skal feile som duplicate
+    const second = await req(
+      ctx.baseUrl,
+      "POST",
+      "/api/admin/daily-schedules/ds-1/save-as-template",
+      "admin-tok",
+      { templateName: "DupeMal" }
+    );
+    assert.equal(second.status, 400);
+    assert.equal(second.json.ok, false);
+    assert.equal(second.json.error.code, "SAVED_GAME_DUPLICATE");
   } finally {
     await ctx.close();
   }
