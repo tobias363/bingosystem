@@ -142,6 +142,15 @@ export interface HallDefinition {
    * med eldre fixtures som ikke setter feltet.
    */
   tvVoiceSelection?: HallTvVoice;
+  /**
+   * Demo Hall bypass (Tobias 2026-04-27): hvis TRUE bypasser Spill 1-engines
+   * "stop on first pattern" / auto-pause på phase-won. Kun for lokal testing
+   * (Demo Hall*) — produksjons-haller skal ALLTID være FALSE.
+   *
+   * Kilde: migration `20261110000000_app_halls_is_test_hall.sql`. NOT NULL
+   * DEFAULT FALSE i DB. Optional i typen for bakoverkompat med eldre fixtures.
+   */
+  isTestHall?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -389,6 +398,12 @@ interface HallRow {
   tv_token: string;
   /** TV-kiosk voice-pack — migration 20260811000000. NOT NULL DEFAULT 'voice1'. */
   tv_voice_selection: string;
+  /**
+   * Demo Hall bypass — migration 20261110000000. NOT NULL DEFAULT FALSE.
+   * Optional på row-typen for å håndtere ad-hoc init-flyt der kolonnen ikke
+   * er tilstede ennå (test-DB-er som booter med eldre fallback-DDL).
+   */
+  is_test_hall?: boolean | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -1236,7 +1251,7 @@ export class PlatformService {
       `SELECT id, slug, name, region, address,
               organization_number, settlement_account, invoice_method,
               is_active, tv_url, hall_number, cash_balance, tv_token,
-              tv_voice_selection, created_at, updated_at
+              tv_voice_selection, is_test_hall, created_at, updated_at
        FROM ${this.hallsTable()}
        ${includeInactive ? "" : "WHERE is_active = true"}
        ORDER BY name ASC, slug ASC`
@@ -1339,7 +1354,7 @@ export class PlatformService {
        RETURNING id, slug, name, region, address,
                  organization_number, settlement_account, invoice_method,
                  is_active, tv_url, hall_number, cash_balance, tv_token,
-                 tv_voice_selection, created_at, updated_at`,
+                 tv_voice_selection, is_test_hall, created_at, updated_at`,
       [hallRow.id, voice]
     );
     if (!rows[0]) {
@@ -1393,7 +1408,7 @@ export class PlatformService {
          RETURNING id, slug, name, region, address,
                    organization_number, settlement_account, invoice_method,
                    is_active, tv_url, hall_number, cash_balance, tv_token,
-                   tv_voice_selection, created_at, updated_at`,
+                   tv_voice_selection, is_test_hall, created_at, updated_at`,
         [hallId, slug, name, region, address, organizationNumber, settlementAccount, invoiceMethod, isActive, hallNumber]
       );
       await this.seedHallGameConfigForHall(client, hallId);
@@ -1463,7 +1478,7 @@ export class PlatformService {
        RETURNING id, slug, name, region, address,
                  organization_number, settlement_account, invoice_method,
                  is_active, tv_url, hall_number, cash_balance, tv_token,
-                 tv_voice_selection, created_at, updated_at`,
+                 tv_voice_selection, is_test_hall, created_at, updated_at`,
       [current.id, nextSlug, nextName, nextRegion, nextAddress, nextOrgNumber, nextSettlementAccount, nextInvoiceMethod, nextIsActive, nextHallNumber]
     );
 
@@ -3771,6 +3786,10 @@ export class PlatformService {
       cashBalance: Number.isFinite(cashBalance) ? cashBalance : 0,
       tvToken: row.tv_token,
       tvVoiceSelection: this.normalizeTvVoice(row.tv_voice_selection),
+      // Demo Hall bypass (migration 20261110000000): koerseres til boolean.
+      // Manglende kolonne (eldre test-DB-er) → false (eksisterende prod-
+      // oppførsel for normale haller).
+      isTestHall: row.is_test_hall === true,
       createdAt: asIso(row.created_at),
       updatedAt: asIso(row.updated_at)
     };
@@ -3988,7 +4007,7 @@ export class PlatformService {
       `SELECT id, slug, name, region, address,
               organization_number, settlement_account, invoice_method,
               is_active, tv_url, hall_number, cash_balance, tv_token,
-              tv_voice_selection, created_at, updated_at
+              tv_voice_selection, is_test_hall, created_at, updated_at
        FROM ${this.hallsTable()}
        WHERE id = $1
           OR slug = $2
@@ -4174,6 +4193,10 @@ export class PlatformService {
         "dropsafe_balance NUMERIC(14, 2) NOT NULL DEFAULT 0",
         // BIN-498 migrasjon 20260418140000: TV-display embed URL.
         "tv_url TEXT",
+        // Demo Hall bypass (migrasjon 20261110000000): test-hall-flagg som
+        // bypasser Spill 1 stop-on-pattern. Kun for lokal testing — prod
+        // setter aldri TRUE her.
+        "is_test_hall BOOLEAN NOT NULL DEFAULT FALSE",
       ]) {
         await client.query(
           `ALTER TABLE ${this.hallsTable()} ADD COLUMN IF NOT EXISTS ${col}`

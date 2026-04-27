@@ -352,6 +352,16 @@ interface ScheduledGameRow {
    * på historiske rader → fall tilbake til default-patterns (bakoverkompat).
    */
   game_config_json: unknown;
+  /**
+   * Demo Hall bypass (Tobias 2026-04-27): hentes via JOIN mot
+   * `app_halls.is_test_hall` på master-hall-IDen. NULL hvis JOIN ikke
+   * matcher (orphaned scheduled_game) — tolkes som FALSE.
+   *
+   * Når TRUE skal `drawNext` IKKE auto-pause på phase-won, slik at
+   * runden går helt gjennom alle 5 faser + MAX_DRAWS uten manuell
+   * Resume-trykk. Brukes kun i lokal/test-flyt.
+   */
+  master_is_test_hall?: boolean | null;
 }
 
 interface GameStateRow {
@@ -1166,9 +1176,28 @@ export class Game1DrawEngineService {
       // paused_at_phase brukes av master-UI for banner-tekst ("Pause
       // etter Rad N") og av Resume-flyten (`resumeGame` må tillate
       // running+paused-state og nullstille feltet).
-      const autoPauseTriggered = phaseResult.phaseWon && !bingoWon;
+      //
+      // Demo Hall bypass (Tobias 2026-04-27): hvis master-hallen er merket
+      // som test-hall (`app_halls.is_test_hall = TRUE`), skipper vi auto-
+      // pausen helt så testeren får hele runden gjennom alle 5 faser uten
+      // manuell Resume. MAX_DRAWS_REACHED i `isFinished` over avslutter
+      // runden naturlig når draw-bag er tom. Operatoren ser fortsatt
+      // phase-won-broadcast og kan verifisere mini-game/jackpot-flyt.
+      const isMasterTestHall = game.master_is_test_hall === true;
+      const autoPauseTriggered =
+        phaseResult.phaseWon && !bingoWon && !isMasterTestHall;
       if (autoPauseTriggered) {
         capturedAutoPausedPhase = state.current_phase;
+      }
+      if (isMasterTestHall && phaseResult.phaseWon && !bingoWon) {
+        log.info(
+          {
+            scheduledGameId,
+            phase: state.current_phase,
+            drawSequence: nextSequence,
+          },
+          "[demo-hall-bypass] phase won — hopper over auto-pause (master_is_test_hall=true)"
+        );
       }
 
       await client.query(
@@ -1755,11 +1784,26 @@ export class Game1DrawEngineService {
     client: PoolClient,
     scheduledGameId: string
   ): Promise<ScheduledGameRow> {
+    // Demo Hall bypass (Tobias 2026-04-27): join inn `is_test_hall` fra
+    // master-hallen så `drawNext` kan bypasse auto-pause-på-phase-won
+    // når master-hallen er en test-hall (Demo Hall*). LEFT JOIN — orphaned
+    // master_hall_id (skulle ikke skje pga FK, men defensiv) gir NULL
+    // → tolkes som FALSE i ::boolean-koersjonen i drawNext.
+    //
+    // FOR UPDATE OF sg sikrer at vi kun låser scheduled_games-raden, ikke
+    // halls (som kan brukes parallelt av andre transaksjoner).
     const { rows } = await client.query<ScheduledGameRow>(
-      `SELECT id, status, ticket_config_json, room_code, game_config_json
-         FROM ${this.scheduledGamesTable()}
-         WHERE id = $1
-         FOR UPDATE`,
+      `SELECT sg.id,
+              sg.status,
+              sg.ticket_config_json,
+              sg.room_code,
+              sg.game_config_json,
+              h.is_test_hall AS master_is_test_hall
+         FROM ${this.scheduledGamesTable()} sg
+         LEFT JOIN "${this.schema}"."app_halls" h
+                ON h.id = sg.master_hall_id
+         WHERE sg.id = $1
+         FOR UPDATE OF sg`,
       [scheduledGameId]
     );
     const row = rows[0];
