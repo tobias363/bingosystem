@@ -35,6 +35,7 @@ import { requireSlotProvider } from "../../components/SlotProviderSwitch.js";
 import { openSlotMachineModal } from "./modals/SlotMachineModal.js";
 import { openSettlementBreakdownModal } from "./modals/SettlementBreakdownModal.js";
 import { openControlDailyBalanceModal } from "./modals/ControlDailyBalanceModal.js";
+import { openAddDailyBalanceModal } from "./modals/AddDailyBalanceModal.js";
 import { openAddMoneyRegisteredUserModal } from "./modals/AddMoneyRegisteredUserModal.js";
 import { openWithdrawRegisteredUserModal } from "./modals/WithdrawRegisteredUserModal.js";
 import { openAddMoneyUniqueIdModal } from "../agent-portal/unique-id/AddMoneyUniqueIdModal.js";
@@ -267,7 +268,7 @@ function wireActions(container: HTMLElement): void {
         // `href="javascript:history.back()"` håndterer det — ingen JS-trigger.
         break;
       case "add-daily-balance":
-        openAddDailyBalanceModal(container);
+        openAddDailyBalanceModal({ onSuccess: () => void refreshBalance(container) });
         break;
       case "refresh-balance":
         void refreshBalance(container);
@@ -434,49 +435,6 @@ function renderBalance(container: HTMLElement, b: DailyBalance): void {
   set("v-totalCashOut", formatNOK(b.totalCashOut));
   const dbEl = container.querySelector<HTMLElement>("#v-dailyBalance");
   if (dbEl) dbEl.innerHTML = `<strong>${escapeHtml(formatNOK(b.dailyBalance))}</strong>`;
-}
-
-function openAddDailyBalanceModal(container: HTMLElement): void {
-  const form = document.createElement("form");
-  form.innerHTML = `
-    <div class="form-group">
-      <label for="openingBalance">${escapeHtml(t("opening_balance") || t("daily_balance"))} (kr)</label>
-      <input type="number" step="0.01" min="0" class="form-control" id="openingBalance" name="openingBalance" required autofocus>
-    </div>
-    <div class="form-group">
-      <label for="note">${escapeHtml(t("note_optional"))}</label>
-      <textarea class="form-control" id="note" name="note" rows="2"></textarea>
-    </div>`;
-
-  Modal.open({
-    title: t("add_daily_balance"),
-    content: form,
-    buttons: [
-      { label: t("cancel_button"), variant: "default", action: "cancel" },
-      {
-        label: t("save"),
-        variant: "success",
-        action: "confirm",
-        onClick: async () => {
-          const openingBalance = Number((form.querySelector<HTMLInputElement>("#openingBalance")!).value);
-          if (!Number.isFinite(openingBalance) || openingBalance < 0) {
-            Toast.error(t("invalid_input") || t("something_went_wrong"));
-            throw new Error("invalid");
-          }
-          const note = (form.querySelector<HTMLTextAreaElement>("#note")!).value || undefined;
-          try {
-            await openDay({ openingBalance, note });
-            Toast.success(t("data_updated_successfully"));
-            void refreshBalance(container);
-          } catch (err) {
-            const msg = err instanceof ApiError ? err.message : t("something_went_wrong");
-            Toast.error(msg);
-            throw err;
-          }
-        },
-      },
-    ],
-  });
 }
 
 /**
