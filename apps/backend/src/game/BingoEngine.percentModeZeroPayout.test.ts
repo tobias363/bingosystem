@@ -173,7 +173,11 @@ test(
         { name: "4 Rader", claimType: "LINE", prizePercent: 0, design: 4 },
         { name: "Fullt Hus", claimType: "BINGO", prizePercent: 0, design: 0 },
       ],
+      // Manual-claim only — slå AV både patternEvalMode auto-claim OG
+      // autoClaimPhaseMode (som ellers ville utløst evaluateActivePhase
+      // på hver draw og endt runden tidlig før vi får submittet manuelt).
       patternEvalMode: "manual-claim",
+      autoClaimPhaseMode: false,
     };
 
     await engine.startGame({
@@ -187,12 +191,19 @@ test(
     });
 
     // Trekk alle 24 ikke-null-celler så Fullt Hus er oppfylt.
+    // markNumber-en er nødvendig fordi submitClaim-validering bruker
+    // playerMarks (ikke drawnSet) — manual-claim-modus krever at spilleren
+    // (eller test-en) eksplisitt merker hver trukket ball.
     const allAlice: number[] = [];
     for (const row of ALICE_GRID) for (const n of row) if (n !== 0) allAlice.push(n);
     prioritiseDrawBag(engine, roomCode, allAlice);
 
     for (let i = 0; i < 24; i += 1) {
-      await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
+      const { number: drawn } = await engine.drawNextNumber({
+        roomCode,
+        actorPlayerId: hostId!,
+      });
+      await engine.markNumber({ roomCode, playerId: hostId!, number: drawn });
     }
 
     // Submit BINGO claim manuelt — dette er der bug-en var.
@@ -261,7 +272,11 @@ test(
         { name: "4 Rader", claimType: "LINE", prizePercent: 0, design: 4 },
         { name: "Fullt Hus", claimType: "BINGO", prizePercent: 0, design: 0 },
       ],
+      // Manual-claim only — slå AV både patternEvalMode auto-claim OG
+      // autoClaimPhaseMode (som ellers ville utløst evaluateActivePhase
+      // på hver draw og endt runden tidlig før vi får submittet manuelt).
       patternEvalMode: "manual-claim",
+      autoClaimPhaseMode: false,
     };
 
     await engine.startGame({
@@ -275,9 +290,14 @@ test(
     });
 
     // Trekk hele rad 0 → 1 Rad er oppfylt.
+    // markNumber kreves for manual-claim-modus (samme som Test 2).
     prioritiseDrawBag(engine, roomCode, [1, 16, 31, 46, 61]);
     for (let i = 0; i < 5; i += 1) {
-      await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
+      const { number: drawn } = await engine.drawNextNumber({
+        roomCode,
+        actorPlayerId: hostId!,
+      });
+      await engine.markNumber({ roomCode, playerId: hostId!, number: drawn });
     }
 
     // Submit LINE claim manuelt — dette er der bug-en var.
