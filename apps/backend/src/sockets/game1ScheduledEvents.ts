@@ -191,6 +191,20 @@ export function createGame1ScheduledEventHandlers(
         walletId: user.walletId,
         socketId,
       });
+      // Bug A fix (Tobias 2026-04-28): refresh `RoomState.isTestHall` for
+      // eksisterende scheduled-rom. PR #671 propagerte flagget kun ved
+      // createRoom — eksisterende rom (skapt før deploy, eller hvor admin
+      // toggler is_test_hall etter rom-opprettelse) fikk aldri oppdatert
+      // bypass-flagget. Resultat: Demo Hall fortsatt pauser på Phase 1.
+      try {
+        const hall = await platformService.getHall(hallId);
+        engine.setRoomTestHall(roomCode, hall.isTestHall === true);
+      } catch (err) {
+        log.warn(
+          { err, hallId, roomCode },
+          "setRoomTestHall refresh feilet — fortsetter med eksisterende state"
+        );
+      }
       // CRIT-4: rommet kan ha blitt rebygget av en restart (Render-instans
       // som lastet state fra Redis-store) uten at scheduledGameId ble
       // hydrert fra DB-mappingen. Marker idempotent her så guarden
