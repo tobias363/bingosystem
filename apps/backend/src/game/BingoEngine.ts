@@ -3083,6 +3083,65 @@ export class BingoEngine {
     return [...this.rooms.keys()];
   }
 
+  /**
+   * Bug A fix (Tobias 2026-04-28): refresh `RoomState.isTestHall` for et
+   * eksisterende rom. Brukes av socket-laget i `room:create`/`room:join`-
+   * flytene NÅR det kanoniske rommet allerede eksisterer — uten denne
+   * "sticker" en gammel `isTestHall=undefined` (rom skapt før PR #671)
+   * eller en stale `isTestHall=true` (hvis admin senere fjerner test-
+   * flagget i DB).
+   *
+   * No-op hvis verdien allerede matcher. Idempotent.
+   *
+   * Sikkerhetsregel: vi gjør IKKE noe annet her enn å sette flagget. Ingen
+   * draws, claims eller wallet-mutasjoner — så det er trygt å kalle fra
+   * join-stier som allerede har gjort sin authoritative wallet-validering.
+   */
+  setRoomTestHall(roomCode: string, isTestHall: boolean): void {
+    const room = this.rooms.get(roomCode.trim().toUpperCase());
+    if (!room) return; // fail-soft: room kan være ryddet i mellomtiden
+    if (isTestHall) {
+      if (room.isTestHall !== true) {
+        room.isTestHall = true;
+        this.syncRoomToStore(room);
+      }
+    } else if (room.isTestHall === true) {
+      room.isTestHall = undefined;
+      this.syncRoomToStore(room);
+    }
+  }
+
+  /**
+   * Bug B fix (Tobias 2026-04-28): finn et rom basert på eksakt rom-kode.
+   * I motsetning til `getPrimaryRoomForHall` filtrerer vi IKKE på hallId —
+   * canonical-flyten (Spill 1 group-of-halls, Spill 2/3 globale rom)
+   * bruker rom-koden som single-source-of-truth, ikke `room.hallId`.
+   *
+   * Returnerer `null` hvis rommet ikke finnes — caller (room:create-
+   * handler) skal da opprette nytt rom med samme kanonisk-kode.
+   *
+   * Returnerer en lett snapshot (RoomSummary), IKKE rå `RoomState`.
+   * Caller henter fullt snapshot via `getRoomSnapshot(code)` etterpå hvis
+   * de trenger spillere/tickets/etc.
+   */
+  findRoomByCode(roomCode: string): RoomSummary | null {
+    const code = roomCode.trim().toUpperCase();
+    const room = this.rooms.get(code);
+    if (!room) return null;
+    const gameStatus: RoomSummary["gameStatus"] = room.currentGame
+      ? room.currentGame.status
+      : "NONE";
+    return {
+      code: room.code,
+      hallId: room.hallId,
+      hostPlayerId: room.hostPlayerId,
+      gameSlug: room.gameSlug,
+      playerCount: room.players.size,
+      createdAt: room.createdAt,
+      gameStatus,
+    };
+  }
+
   listRoomSummaries(): RoomSummary[] {
     return [...this.rooms.values()]
       .map((room) => {
