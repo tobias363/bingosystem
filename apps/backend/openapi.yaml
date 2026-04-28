@@ -4291,7 +4291,7 @@ paths:
   /api/auth/sessions/logout-all:
     post:
       tags: [Auth]
-      summary: Logg ut alle sesjoner (default: behold gjeldende)
+      summary: "Logg ut alle sesjoner (default: behold gjeldende)"
       requestBody:
         required: false
         content:
