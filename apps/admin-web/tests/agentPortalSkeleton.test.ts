@@ -202,9 +202,12 @@ describe("Agent-portal placeholder-sider", () => {
     expect(crumb).toBeTruthy();
     expect(container.querySelector("section.content-header h1")).toBeTruthy();
     expect(container.querySelector("[data-marker='coming-soon']")).toBeNull();
-    // Har game-id-input-skjema.
-    expect(container.querySelector("#agent-cashout-form")).toBeTruthy();
-    expect(container.querySelector("#agent-cashout-gameId")).toBeTruthy();
+    // PR #670 (BIN-FOLLOWUP-13) erstattet game-id-skjema med daily-list-vy.
+    // Verifiser at hovedstrukturen rendres — body-containere og box-shell
+    // (tom-state mens current-shift lastes async).
+    expect(container.querySelector("#cashout-body")).toBeTruthy();
+    expect(container.querySelector("#cashout-banner")).toBeTruthy();
+    expect(container.querySelector(".box.box-primary")).toBeTruthy();
   });
 
   it("cash-in-out: rendrer full implementation med Shift Log Out-knapp (Gap #9)", () => {
