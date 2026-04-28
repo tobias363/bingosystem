@@ -128,11 +128,22 @@ class Game1Controller implements GameController {
     // BIN-690 PR-M6: router subscribes to `miniGameTrigger` + `miniGameResult`
     // via bridge, and emits `mini_game:choice` via socket.sendMiniGameChoice.
     // No room-code needed — the wire contract is resultId-based.
+    //
+    // PIXI-P0-002 (Bølge 2A, 2026-04-28): wire `onChoiceLost` so a forced
+    // dismiss on game-end (in-flight choice didn't ack in time) shows the
+    // user a toast instead of failing silently.
     this.miniGame = new MiniGameRouter({
       root: this.root,
       app,
       socket,
       bridge,
+      onChoiceLost: ({ resultId }) => {
+        this.toast?.error(
+          "Valget ble ikke registrert i tide. Eventuell gevinst krediteres automatisk.",
+          6000,
+        );
+        console.warn("[Game1Controller] mini-game choice lost", { resultId });
+      },
     });
     this.actions = new Game1SocketActions({
       socket,
@@ -434,8 +445,17 @@ class Game1Controller implements GameController {
   }
 
   private onGameEnded(state: GameState): void {
-    // Dismiss any active mini-game overlay so it doesn't block the EndScreen
-    this.miniGame?.dismiss();
+    // Dismiss any active mini-game overlay so it doesn't block the EndScreen.
+    //
+    // PIXI-P0-002 (Bølge 2A, 2026-04-28): use the graceful dismiss so we
+    // briefly wait for any in-flight `mini_game:choice` ack before tearing
+    // the overlay down. Without this, a player who clicked just before the
+    // game ended would lose their choice silently. Backend remains
+    // idempotent on choice (orchestrator `completed_at` lock) so a late
+    // ack after the wait doesn't double-pay; the wait just shrinks the
+    // user-visible loss window. Fire-and-forget — EndScreen / WAITING
+    // transition below doesn't depend on the overlay being gone yet.
+    void this.miniGame?.dismissAfterPendingChoices();
 
     this.deps.audio.resetAnnouncedNumbers();
     this.deps.audio.stopAll();

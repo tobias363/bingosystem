@@ -123,6 +123,19 @@ export class PlayScreen extends Container {
   private screenW: number;
   private screenH: number;
 
+  /**
+   * PIXI-P0-003 (Bølge 2A, 2026-04-28): live Elvis-replace bar + an
+   * AbortController whose signal owns the bar's `click` listeners. Used by
+   * `showElvisReplace` to (a) dedupe — calling twice removes the old bar
+   * before adding the new one — and (b) teardown — `destroy()` aborts all
+   * listeners and detaches the DOM node so they don't leak across rounds.
+   *
+   * Audit reference: `docs/audit/GAME_CLIENT_PIXI_AUDIT_2026-04-28.md`
+   * §"Memory Management" hole #1 + §"Findings" P0-003.
+   */
+  private elvisBar: HTMLElement | null = null;
+  private elvisAbort: AbortController | null = null;
+
   private callbacks: Callbacks = {};
   private lastState: GameState | null = null;
   private lineAlreadyWon = false;
@@ -576,9 +589,31 @@ export class PlayScreen extends Container {
     }
   }
 
-  /** BIN-419: Elvis replace — lets the player swap pre-round tickets for a fee. */
+  /** BIN-419: Elvis replace — lets the player swap pre-round tickets for a fee.
+   *
+   *  PIXI-P0-003 (Bølge 2A, 2026-04-28): the previous implementation
+   *  appended a fresh `<div>` with two `addEventListener` calls every time
+   *  `Game1Controller.transitionTo("WAITING", …)` ran, with no dedupe and
+   *  no teardown ownership beyond `bar.remove()` (which leaves the bar
+   *  reachable from the listener closures until GC). Over an 8h shift —
+   *  many WAITING ↔ PLAYING transitions — this leaked N listeners + N DOM
+   *  nodes per round.
+   *
+   *  Fix: track the bar in `this.elvisBar` and own its listeners via an
+   *  `AbortController`. Calling `showElvisReplace` twice removes the
+   *  previous bar before mounting the new one. `destroy()` aborts the
+   *  controller so any remaining listeners go away with the bar. */
   showElvisReplace(replaceAmount: number, onReplace: () => void): void {
     if (replaceAmount <= 0) return;
+
+    // Dedupe: a fresh call replaces the previous bar entirely. Without this,
+    // every WAITING-transition with elvis stacked another bar at the same
+    // bottom:10px coordinate.
+    this.removeElvisBar();
+
+    const abort = new AbortController();
+    const { signal } = abort;
+
     const bar = document.createElement("div");
     Object.assign(bar.style, {
       position: "absolute",
@@ -602,17 +637,41 @@ export class PlayScreen extends Container {
     const btn = document.createElement("button");
     btn.textContent = "Bytt";
     btn.style.cssText = "background:linear-gradient(180deg,#c41030,#8a0020);border:none;border-radius:6px;padding:6px 16px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;";
-    btn.addEventListener("click", () => {
-      onReplace();
-      bar.remove();
-    });
+    btn.addEventListener(
+      "click",
+      () => {
+        onReplace();
+        this.removeElvisBar();
+      },
+      { signal },
+    );
     bar.appendChild(btn);
     const dismissBtn = document.createElement("button");
     dismissBtn.textContent = "\u2715";
     dismissBtn.style.cssText = "background:none;border:none;color:#999;font-size:16px;cursor:pointer;";
-    dismissBtn.addEventListener("click", () => bar.remove());
+    dismissBtn.addEventListener("click", () => this.removeElvisBar(), { signal });
     bar.appendChild(dismissBtn);
     this.overlayManager.getRoot().appendChild(bar);
+
+    this.elvisBar = bar;
+    this.elvisAbort = abort;
+  }
+
+  /**
+   * PIXI-P0-003: dispose of the live Elvis bar. Aborts the listener
+   * controller (revokes both click handlers) and detaches the DOM node so
+   * the closure is unreachable + GC-eligible. Idempotent — safe to call
+   * with no bar mounted.
+   */
+  private removeElvisBar(): void {
+    if (this.elvisAbort) {
+      this.elvisAbort.abort();
+      this.elvisAbort = null;
+    }
+    if (this.elvisBar) {
+      this.elvisBar.remove();
+      this.elvisBar = null;
+    }
   }
 
   /** Called after game-end reset from Controller. */
@@ -771,6 +830,13 @@ export class PlayScreen extends Container {
     this.blinkDiagnosticDispose?.();
     this.blinkDiagnosticDispose = null;
     this.leftInfo.stopCountdown();
+    // PIXI-P0-003: revoke any live Elvis-bar click listeners + detach the
+    // DOM node before overlayManager.destroy() rips out its parent. Order
+    // matters: aborting AFTER the parent is gone still works (nodes are
+    // already detached) but the explicit teardown keeps the contract
+    // self-evident — listeners are owned by PlayScreen, not by the
+    // overlay-manager's broad sweep.
+    this.removeElvisBar();
     this.buyPopup.destroy();
     this.ticketGrid.destroy();
     this.calledNumbers.destroy();

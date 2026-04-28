@@ -404,3 +404,135 @@ describe("MiniGameRouter — MED-10 disconnect-recovery", () => {
     expect(live[0].show).toHaveBeenCalledWith({ middleNumber: 12345 });
   });
 });
+
+/**
+ * PIXI-P0-002 (Bølge 2A pilot-blockers, 2026-04-28):
+ *
+ * The audit flagged that `Game1Controller.onGameEnded` immediately calls
+ * `miniGame.dismiss()` which destroys the overlay AND nulls
+ * `activeResultId`. If a player picked a chest/color/wheel-segment but the
+ * `mini_game:choice` ack hadn't returned yet, the choice was silently
+ * dropped — no toast, no telemetry, no retry.
+ *
+ * The fix wires `dismissAfterPendingChoices(timeoutMs)` which waits up to
+ * `MINI_GAME_CHOICE_DRAIN_TIMEOUT_MS` for in-flight acks before destroying.
+ * If the timeout fires first, telemetry is emitted and the new
+ * `onChoiceLost` callback (wired to a toast in Game1Controller) is invoked.
+ */
+describe("MiniGameRouter — PIXI-P0-002 in-flight choice on game-end", () => {
+  beforeEach(() => {
+    wheelMock.mockReset();
+    chestMock.mockReset();
+    colorDraftMock.mockReset();
+    oddsenMock.mockReset();
+    mysteryMock.mockReset();
+  });
+
+  it("dismissAfterPendingChoices: drains in-flight choice and dismisses normally on success", async () => {
+    // Make `sendMiniGameChoice` resolve only when we want — this lets us
+    // simulate "player clicked, ack hasn't returned yet" precisely.
+    let resolveAck: ((v: { ok: true; data: { accepted: true } }) => void) | null = null;
+    const sendMiniGameChoice = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAck = resolve;
+        }),
+    );
+    const onChoiceLost = vi.fn();
+    const { deps, root } = makeDeps({
+      socket: { sendMiniGameChoice } as unknown as SpilloramaSocket,
+    });
+    const router = new MiniGameRouter({ ...deps, onChoiceLost });
+
+    router.onTrigger(makeTrigger("chest", {}, "mgr-drain-1"));
+    const overlay = root.children[0] as FakeOverlay;
+    // Player clicks — choice fires, ack pending.
+    void overlay._onChoice?.({ chosenIndex: 2 });
+
+    // Game-end happens before ack arrives.
+    const dismissPromise = router.dismissAfterPendingChoices(500);
+
+    // Server replies a few ticks later — ack arrives BEFORE the drain timeout.
+    setTimeout(() => resolveAck?.({ ok: true, data: { accepted: true } }), 30);
+    await dismissPromise;
+
+    // Overlay was torn down.
+    expect(overlay.destroyed).toBe(true);
+    // No "lost" callback should fire — the choice landed in time.
+    expect(onChoiceLost).not.toHaveBeenCalled();
+  });
+
+  it("dismissAfterPendingChoices: surfaces onChoiceLost + telemetry when ack times out", async () => {
+    // Ack never resolves → simulates a real "game ended before server replied".
+    const sendMiniGameChoice = vi.fn().mockImplementation(() => new Promise(() => {}));
+    const onChoiceLost = vi.fn();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { deps, root } = makeDeps({
+      socket: { sendMiniGameChoice } as unknown as SpilloramaSocket,
+    });
+    const router = new MiniGameRouter({ ...deps, onChoiceLost });
+
+    router.onTrigger(makeTrigger("wheel", {}, "mgr-lost-1"));
+    const overlay = root.children[0] as FakeOverlay;
+    void overlay._onChoice?.({});
+
+    // Short timeout for the test — drain expires immediately.
+    await router.dismissAfterPendingChoices(50);
+
+    // The choice was lost — controller (here: a stub) is told so it can toast.
+    expect(onChoiceLost).toHaveBeenCalledWith({
+      resultId: "mgr-lost-1",
+      reason: "game_ended_before_ack",
+    });
+    // Overlay still gets destroyed so EndScreen isn't blocked.
+    expect(overlay.destroyed).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it("dismissAfterPendingChoices: no in-flight choice → behaves like dismiss()", async () => {
+    const onChoiceLost = vi.fn();
+    const { deps, root } = makeDeps();
+    const router = new MiniGameRouter({ ...deps, onChoiceLost });
+
+    router.onTrigger(makeTrigger("colordraft"));
+    const overlay = root.children[0] as FakeOverlay;
+    // Player did NOT click — no in-flight choice to drain.
+    await router.dismissAfterPendingChoices(500);
+
+    expect(overlay.destroyed).toBe(true);
+    expect(onChoiceLost).not.toHaveBeenCalled();
+  });
+
+  it("dismissAfterPendingChoices: no overlay → no-op (game-end fired with nothing active)", async () => {
+    const onChoiceLost = vi.fn();
+    const { deps } = makeDeps();
+    const router = new MiniGameRouter({ ...deps, onChoiceLost });
+
+    // No onTrigger — there's nothing to drain or destroy.
+    await expect(router.dismissAfterPendingChoices(50)).resolves.toBeUndefined();
+    expect(onChoiceLost).not.toHaveBeenCalled();
+  });
+
+  it("regression guard: legacy synchronous dismiss() still tears down without waiting", () => {
+    // Pre-fix behavior preserved for callers that need an immediate teardown
+    // (e.g. socket disconnect, room destroyed). The audit's silent-loss
+    // problem only shipped through `onGameEnded`; everywhere else still
+    // wants the snappy dismiss.
+    const sendMiniGameChoice = vi.fn().mockImplementation(() => new Promise(() => {}));
+    const onChoiceLost = vi.fn();
+    const { deps, root } = makeDeps({
+      socket: { sendMiniGameChoice } as unknown as SpilloramaSocket,
+    });
+    const router = new MiniGameRouter({ ...deps, onChoiceLost });
+    router.onTrigger(makeTrigger("chest"));
+    const overlay = root.children[0] as FakeOverlay;
+    void overlay._onChoice?.({ chosenIndex: 1 });
+
+    router.dismiss();
+
+    expect(overlay.destroyed).toBe(true);
+    // Synchronous dismiss does NOT fire the lost-callback — that's by design;
+    // it's only for the game-end graceful path.
+    expect(onChoiceLost).not.toHaveBeenCalled();
+  });
+});
