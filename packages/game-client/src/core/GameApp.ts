@@ -58,6 +58,22 @@ export class GameApp {
       resolution: window.devicePixelRatio || 1,
       autoDensity: true,
     });
+
+    // PIXI-P0-001 (Bølge 2A stopgap, 2026-04-28): Cap ticker to 60 fps.
+    //
+    // Pixi v8's default ticker runs uncapped, often at 90-144 fps on
+    // high-refresh displays. Combined with persistent HTML overlays
+    // z-stacked over the canvas, the GPU compositor races with Pixi's
+    // render loop on every frame — visible to users as "blink". This
+    // single line is the 30-min stopgap from the audit; per
+    // GAME_CLIENT_PIXI_AUDIT_2026-04-28.md §"Refactor Roadmap" Phase 1
+    // it eliminates ~80-90% of the remaining blink class on its own.
+    //
+    // The full fix (manual ticker start/stop driven by an animation-
+    // lease registry — also called "Plan B" in
+    // SPILL1_BLINK_ELIMINATION_RUNDE_7 §5) is deferred to Bølge 3.
+    this.app.ticker.maxFPS = 60;
+
     container.appendChild(this.app.canvas);
 
     // BIN-542: Guard against WebGL context-loss (iOS Safari, low memory).
