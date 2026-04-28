@@ -117,9 +117,12 @@ describe("Sidebar spec", () => {
   // appear in the correct order under "Hovednavigasjon". `game1-master-console`
   // skutt inn etter cash-inout for hurtig-tilgang til BIN1-master (PR
   // #629 + master-console-route 2026-04-27).
+  // `admin-ops` skutt inn etter dashboard som ADMIN/super-admin-only entry
+  // for ops-console (PR #667 — Ops Console backend + frontend 2026-04-27).
   describe("legacy 1:1 layout", () => {
     const LEGACY_ORDER: { id: string; kind: "leaf" | "group" }[] = [
       { id: "dashboard", kind: "leaf" },
+      { id: "admin-ops", kind: "leaf" },
       { id: "cash-inout", kind: "group" },
       { id: "game1-master-console", kind: "leaf" },
       { id: "player-management", kind: "group" },
@@ -142,7 +145,7 @@ describe("Sidebar spec", () => {
       expect(adminSidebar[0]).toEqual({ kind: "header", labelKey: "main_navigation" });
     });
 
-    it("the 16 legacy menu-items appear directly after the header in correct order", () => {
+    it("the 16 legacy menu-items + admin-ops appear directly after the header in correct order", () => {
       const after = adminSidebar.slice(1, 1 + LEGACY_ORDER.length);
       const observed = after.map((n) => ({
         id: n.kind === "header" ? "<header>" : n.id,
@@ -267,7 +270,7 @@ describe("renderSidebar", () => {
     expect(chevron).toBeTruthy();
   });
 
-  it("admin sidebar renders all 16 legacy menu-items in sequence directly after the header", () => {
+  it("admin sidebar renders all 16 legacy menu-items + admin-ops in sequence directly after the header", () => {
     const host = document.getElementById("host")!;
     const session = adminSession();
     setSession(session);
@@ -280,8 +283,11 @@ describe("renderSidebar", () => {
     // Legacy menu-items. We verify each by id (leaf) or data-group-id (group).
     // Game1 master-console er innskutt etter cash-inout (PR #629 +
     // game1-master-console route 2026-04-27).
+    // admin-ops er innskutt etter dashboard som ADMIN/super-admin-only
+    // entry for ops-console (PR #667 — 2026-04-27).
     const expected = [
       { kind: "leaf", routeId: "dashboard" },
+      { kind: "leaf", routeId: "admin-ops" },
       { kind: "group", id: "cash-inout" },
       { kind: "leaf", routeId: "game1-master-console" },
       { kind: "group", id: "player-management" },

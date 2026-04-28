@@ -62,6 +62,43 @@ function getConfirmButton(): HTMLButtonElement {
   return btn;
 }
 
+/**
+ * Per Tobias 2026-04-27 ble default `subGameType` for nye sub-game-rader
+ * endret fra "STANDARD" til "MYSTERY" (testing-default for pilot). Det
+ * betyr at validering nå krever `mysteryPriceOptions` med mindre admin
+ * eksplisitt bytter type-velgeren tilbake til STANDARD før submit.
+ *
+ * Eldre tester ble skrevet med antagelse om at default var STANDARD og
+ * setter derfor ikke mystery-felt. Denne helperen lar tester eksplisitt
+ * sette type på alle (eller en spesifikk) row før submit, slik at
+ * STANDARD-flyten testes uten å bli blokkert av Mystery-validering.
+ *
+ * Skal trenges fjernet når default flippes tilbake til STANDARD post-pilot
+ * (se SubGamesListEditor.ts:165-168).
+ */
+function setRowSubGameType(
+  rowIndex: number,
+  type: "STANDARD" | "MYSTERY",
+): void {
+  const rows = document.querySelectorAll<HTMLElement>(".sg-row");
+  const row = rows[rowIndex];
+  if (!row) throw new Error(`row not found at index ${rowIndex}`);
+  const sel = row.querySelector<HTMLSelectElement>(
+    '[data-sg-field="subGameType"]'
+  );
+  if (!sel) throw new Error(`subGameType select not found in row ${rowIndex}`);
+  sel.value = type;
+  sel.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/** Bytt alle eksisterende rader til STANDARD subGameType. */
+function setAllRowsToStandard(): void {
+  const rows = document.querySelectorAll<HTMLElement>(".sg-row");
+  for (let i = 0; i < rows.length; i++) {
+    setRowSubGameType(i, "STANDARD");
+  }
+}
+
 beforeEach(() => {
   initI18n();
   document.body.innerHTML = "";
@@ -164,6 +201,11 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
 
     const rows = document.querySelectorAll<HTMLElement>(".sg-row");
     expect(rows.length).toBe(2);
+
+    // Bytt subGameType til STANDARD før vi setter felt — default er nå
+    // MYSTERY (Tobias 2026-04-27 testing-default) som krever
+    // mysteryPriceOptions; STANDARD er det denne testen mente å verifisere.
+    setAllRowsToStandard();
 
     // Rad 1
     const r1Name = rows[0]!.querySelector<HTMLInputElement>('[data-sg-field="name"]')!;
@@ -377,6 +419,10 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
       .click();
     await flush();
 
+    // Bytt til STANDARD så validering ikke kaster på Mystery-felt
+    // (default-flip 2026-04-27).
+    setAllRowsToStandard();
+
     const row = document.querySelector<HTMLElement>(".sg-row")!;
     const ttField = row.querySelector<HTMLTextAreaElement>(
       '[data-sg-field="ticketTypesDataJson"]'
@@ -405,6 +451,9 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
       .querySelector<HTMLButtonElement>('[data-sg-action="add"]')!
       .click();
     await flush();
+    // Bytt til STANDARD så getSubGames() ikke kaster på Mystery-validering
+    // når toggle pakker rader til JSON (post Tobias 2026-04-27 default-flip).
+    setAllRowsToStandard();
     const nameInput = document.querySelector<HTMLInputElement>(
       '[data-sg-field="name"]'
     )!;
@@ -505,7 +554,10 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
 
   // ── feat/schedule-8-colors-mystery (2026-04-23): 9 farger + Mystery ─────
 
-  it("8-colors: type-select default STANDARD viser farge-fieldset med 9 farger", async () => {
+  it("8-colors: type-select STANDARD viser farge-fieldset med 9 farger", async () => {
+    // Tobias 2026-04-27 byttet default-type til MYSTERY (testing-default
+    // for pilot, se SubGamesListEditor.ts:165-168). For å verifisere
+    // STANDARD-konfigen må vi eksplisitt bytte type-velgeren først.
     installFetch(() => successResponse({}));
     await openScheduleEditorModal({ mode: "create" });
     await flush();
@@ -513,6 +565,9 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
     document
       .querySelector<HTMLButtonElement>('[data-sg-action="add"]')!
       .click();
+    await flush();
+
+    setRowSubGameType(0, "STANDARD");
     await flush();
 
     const row = document.querySelector<HTMLElement>(".sg-row")!;
@@ -579,6 +634,10 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
     document
       .querySelector<HTMLButtonElement>('[data-sg-action="add"]')!
       .click();
+    await flush();
+
+    // Bytt fra default MYSTERY til STANDARD så color-fieldset rendrer.
+    setRowSubGameType(0, "STANDARD");
     await flush();
 
     // Huk av Small Yellow og Red.
@@ -863,6 +922,10 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
       .click();
     await flush();
 
+    // Bytt fra default MYSTERY til STANDARD så validering ikke krever
+    // mysteryPriceOptions ved submit (default-flip 2026-04-27).
+    setAllRowsToStandard();
+
     const row = document.querySelector<HTMLElement>(".sg-row")!;
     row.querySelector<HTMLInputElement>('[data-sg-field="name"]')!.value =
       "Innsatsen-runde";
@@ -1093,6 +1156,13 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
       .click();
     await flush();
 
+    // spill1Variant + preview-boks rendres kun for STANDARD subGameType
+    // (se SubGamesListEditor.ts ~line 644 — `renderPresetInfo` gated på
+    // STANDARD). Default flippet til MYSTERY 2026-04-27 så vi må bytte
+    // til STANDARD eksplisitt.
+    setRowSubGameType(0, "STANDARD");
+    await flush();
+
     const select = document.querySelector<HTMLSelectElement>(
       '[data-sg-field="spill1Variant"]'
     );
@@ -1140,6 +1210,12 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
     document
       .querySelector<HTMLButtonElement>('[data-sg-action="add"]')!
       .click();
+    await flush();
+
+    // spill1Variant-velgeren krever STANDARD subGameType for å være
+    // meningsfull (renderPresetInfo gated på STANDARD). Default flippet
+    // til MYSTERY 2026-04-27 så vi må bytte først.
+    setRowSubGameType(0, "STANDARD");
     await flush();
 
     const variantSelect = document.querySelector<HTMLSelectElement>(
@@ -1446,6 +1522,9 @@ describe("SubGamesListEditor (fix/schedule-structured-subgames)", () => {
           .click();
         await flush();
       }
+      // Bytt alle til STANDARD så validering ikke kaster på Mystery
+      // (default flippet 2026-04-27).
+      setAllRowsToStandard();
       const rows = document.querySelectorAll<HTMLElement>(".sg-row");
       const setName = (idx: number, name: string): void => {
         const inp = rows[idx]!.querySelector<HTMLInputElement>(

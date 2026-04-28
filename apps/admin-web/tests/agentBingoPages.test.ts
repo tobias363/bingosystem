@@ -8,7 +8,9 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { initI18n } from "../src/i18n/I18n.js";
 import { setSession, type Session } from "../src/auth/Session.js";
 import { mountAgentCheckForBingo } from "../src/pages/agent-portal/AgentCheckForBingoPage.js";
-import { mountAgentPhysicalCashout } from "../src/pages/agent-portal/AgentPhysicalCashoutPage.js";
+// Note: mountAgentPhysicalCashout-import fjernet 2026-04-28 — alle 3
+// AgentPhysicalCashoutPage-tester er skip'et inntil ny vy (PR #670) får
+// dedikert test-suite. Se test-bodies for detaljer.
 
 function agentSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -127,99 +129,31 @@ describe("AgentPhysicalCashoutPage", () => {
     window.localStorage.setItem("bingo_admin_access_token", "tok");
   });
 
-  it("rendrer game-id-skjema uten coming-soon-marker", () => {
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    mountAgentPhysicalCashout(root);
-    expect(root.querySelector("#agent-cashout-form")).toBeTruthy();
-    expect(root.querySelector("#agent-cashout-gameId")).toBeTruthy();
-    expect(root.querySelector("[data-marker='coming-soon']")).toBeNull();
-    // Breadcrumb linker tilbake til agent-dashboard.
-    expect(root.querySelector(".breadcrumb a[href='#/agent/dashboard']")).toBeTruthy();
+  // Test-debt 2026-04-28: PR #670 (BIN-FOLLOWUP-13 — Physical Cashout 5×5
+  // pattern popup + Reward All) erstatte hele AgentPhysicalCashoutPage med
+  // en ny daily-list-vy som laster fra current-shift via getCurrentShift()
+  // i stedet for å kreve game-id-skjema som input. Det gamle kontraktet
+  // (`#agent-cashout-form`, `#agent-cashout-gameId`, submit → POST
+  // /api/agent/physical/pending med gameId) finnes ikke lenger.
+  //
+  // Disse 3 testene må re-implementeres mot ny vy:
+  //   1. Mock `getCurrentShift()` for å returnere hallId.
+  //   2. Mock `GET /api/agent/physical/cashout/daily-list` per ny route.
+  //   3. Verifiser daily-list-tabell + per-game drill-down + 5×5 popup +
+  //      reward-all-knapp i den nye flyten.
+  //
+  // Skip i påvente av re-implementasjon — ikke bug i prod-koden, kun
+  // test-debt etter pilot-fix-bølge.
+  it.skip("rendrer game-id-skjema uten coming-soon-marker", () => {
+    /* OBSOLETE: Page rewritten in PR #670, no longer has game-id form. */
   });
 
-  it("kaller /api/agent/physical/pending med gameId ved innsending", async () => {
-    let capturedUrl = "";
-    mockApiRouter([
-      {
-        match: /\/api\/agent\/physical\/pending/,
-        handler: (url) => {
-          capturedUrl = url;
-          return {
-            gameId: "game-7",
-            pending: [
-              {
-                id: "t1",
-                batchId: "b1",
-                uniqueId: "100042",
-                hallId: "hall-a",
-                status: "SOLD",
-                priceCents: 2000,
-                assignedGameId: "game-7",
-                soldAt: "2026-04-23T10:00:00Z",
-                soldBy: "ag-1",
-                buyerUserId: null,
-                voidedAt: null,
-                voidedBy: null,
-                voidedReason: null,
-                createdAt: "2026-04-23T09:00:00Z",
-                updatedAt: "2026-04-23T10:00:00Z",
-                numbersJson: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25],
-                patternWon: "row_1",
-                wonAmountCents: 50000,
-                evaluatedAt: "2026-04-23T10:05:00Z",
-                isWinningDistributed: false,
-                winningDistributedAt: null,
-              },
-            ],
-            rewarded: [],
-            pendingCount: 1,
-            rewardedCount: 0,
-          };
-        },
-      },
-    ]);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    mountAgentPhysicalCashout(root);
-    root.querySelector<HTMLInputElement>("#agent-cashout-gameId")!.value = "game-7";
-    root.querySelector<HTMLFormElement>("#agent-cashout-form")!.dispatchEvent(
-      new Event("submit", { cancelable: true, bubbles: true }),
-    );
-    await tick();
-    expect(capturedUrl).toContain("/api/agent/physical/pending");
-    expect(capturedUrl).toContain("gameId=game-7");
-    // Tabell med den eneste pending-billetten vises.
-    expect(root.textContent).toContain("100042");
-    // Reward-All-knapp er synlig fordi det er 1 pending.
-    expect(root.querySelector<HTMLButtonElement>('[data-action="reward-all"]')).toBeTruthy();
-    // Per-ticket reward-knapp er synlig.
-    expect(root.querySelector<HTMLButtonElement>('[data-action="reward-ticket"]')).toBeTruthy();
+  it.skip("kaller /api/agent/physical/pending med gameId ved innsending", async () => {
+    /* OBSOLETE: Page rewritten in PR #670 — daily-list-flyt, ikke gameId-skjema. */
   });
 
-  it("viser tom-state hvis ingen pending eller rewarded", async () => {
-    mockApiRouter([
-      {
-        match: /\/api\/agent\/physical\/pending/,
-        handler: () => ({
-          gameId: "game-7",
-          pending: [],
-          rewarded: [],
-          pendingCount: 0,
-          rewardedCount: 0,
-        }),
-      },
-    ]);
-    const root = document.createElement("div");
-    document.body.appendChild(root);
-    mountAgentPhysicalCashout(root);
-    root.querySelector<HTMLInputElement>("#agent-cashout-gameId")!.value = "game-7";
-    root.querySelector<HTMLFormElement>("#agent-cashout-form")!.dispatchEvent(
-      new Event("submit", { cancelable: true, bubbles: true }),
-    );
-    await tick();
-    // Ingen reward-all-knapp når ingen pending.
-    expect(root.querySelector<HTMLButtonElement>('[data-action="reward-all"]')).toBeNull();
+  it.skip("viser tom-state hvis ingen pending eller rewarded", async () => {
+    /* OBSOLETE: Page rewritten in PR #670 — daily-list rendrer tom-state annerledes. */
   });
 });
 

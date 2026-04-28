@@ -107,6 +107,14 @@ test("BASELINE: 4 fulle rader (Norsk-config) -> phase 1-4 won + active=Fullt Hus
   prioritiseDrawBag(engine, roomCode, fourRowsBalls);
 
   for (let i = 0; i < fourRowsBalls.length; i += 1) {
+    // PR #643 (`fix(spill1): KRITISK — ad-hoc-engine auto-pauser etter
+    // fase-vinning`): Spill 1 ad-hoc pauser etter hver fase-vinn for å
+    // matche prod-flyt der master må starte spillet igjen. I tester
+    // simulerer vi master-resume inline.
+    const snapBefore = engine.getRoomSnapshot(roomCode);
+    if (snapBefore.currentGame?.isPaused) {
+      engine.resumeGame(roomCode);
+    }
     await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
     const snap = snapshotPatterns(engine, roomCode);
     if (snap.status === "ENDED") break;
@@ -176,6 +184,14 @@ test("ALT-HYPOTHESE (a): standard fallback (uten autoClaim) -> 0 server-vinn ved
   prioritiseDrawBag(engine, roomCode, fourRowsBalls);
 
   for (let i = 0; i < fourRowsBalls.length; i += 1) {
+    // PR #643 (`fix(spill1): KRITISK — ad-hoc-engine auto-pauser etter
+    // fase-vinning`): Spill 1 ad-hoc pauser etter hver fase-vinn for å
+    // matche prod-flyt der master må starte spillet igjen. I tester
+    // simulerer vi master-resume inline.
+    const snapBefore = engine.getRoomSnapshot(roomCode);
+    if (snapBefore.currentGame?.isPaused) {
+      engine.resumeGame(roomCode);
+    }
     await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
     const snap = snapshotPatterns(engine, roomCode);
     if (snap.status === "ENDED") break;

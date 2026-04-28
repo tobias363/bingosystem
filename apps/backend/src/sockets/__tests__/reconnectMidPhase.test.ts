@@ -59,7 +59,12 @@ describe("Socket: reconnect mid-phase (hull 1)", () => {
     });
 
     // Trekk 5 baller → rad 0 komplett → fase 1 vunnet av begge.
+    // PR #643: ad-hoc Spill 1 pauser etter fase-vinn — auto-resume inline.
     for (let i = 0; i < 5; i += 1) {
+      const snap = server.engine.getRoomSnapshot(roomCode);
+      if (snap.currentGame?.isPaused) {
+        server.engine.resumeGame(roomCode);
+      }
       await alice.emit<AckResponse>("draw:next", { roomCode });
     }
 
@@ -77,6 +82,13 @@ describe("Socket: reconnect mid-phase (hull 1)", () => {
     await new Promise((r) => setTimeout(r, 100));
 
     // Alice trekker en ball til mens Bob er borte (nå i fase 2).
+    // Auto-resume etter eventuell pause.
+    {
+      const snap = server.engine.getRoomSnapshot(roomCode);
+      if (snap.currentGame?.isPaused) {
+        server.engine.resumeGame(roomCode);
+      }
+    }
     const drawWhileAway = await alice.emit<AckResponse<{ number: number }>>(
       "draw:next", { roomCode },
     );

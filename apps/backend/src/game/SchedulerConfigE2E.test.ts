@@ -331,20 +331,23 @@ test("E2E: admin GM.config.spill1 → scheduler spawn → drawEngine per-farge-u
   // 5. Draw neste kule → skal utløse fase 1-win for begge vinnere.
   await drawEngine.drawNext(spawned.id);
 
-  // 6. Verifiser: Alice (white) fikk 100 kr, Bob (yellow) fikk 50 kr
-  //    — per-farge-matriser fra GM.config.spill1 levde hele veien fra
-  //    admin-UI gjennom scheduler til engine.
+  // 6. Verifiser: per Q3=X (PR #653 — `fix(backend): Spill 1 Q3 global pot
+  //    per phase`) brukes første vinners farge-pattern som GLOBAL pot, og
+  //    alle vinnere deler likt. Med Alice's pattern = 100 kr og 2 vinnere
+  //    får begge 50 kr hver (uavhengig av Bob's egen farge-matrise).
+  //    Eldre forventning (Alice 100, Bob 50 — per-color isolerte premier)
+  //    gjaldt før PR #653; nå må E2E-testen verifisere global-pot-semantikk.
   assert.equal(credits.length, 2, "to wallet-credit-kall — én per vinner");
   const alice = credits.find((c) => c.accountId === "w-alice");
   const bob = credits.find((c) => c.accountId === "w-bob");
   assert.ok(alice, "Alice skal ha credit");
   assert.ok(bob, "Bob skal ha credit");
   assert.equal(
-    alice!.amount, 100,
-    "Alice (small_white) får 100 kr — matcher GM.config.spill1.ticketColors[small_white].prizePerPattern.row_1.amount"
+    alice!.amount, 50,
+    "Alice → 50 kr (global pot 100 fra første vinners farge / 2 vinnere)"
   );
   assert.equal(
     bob!.amount, 50,
-    "Bob (small_yellow) får 50 kr — matcher GM.config.spill1.ticketColors[small_yellow].prizePerPattern.row_1.amount"
+    "Bob → 50 kr (samme global pot, uavhengig av egen farge-matrise per Q3=X)"
   );
 });

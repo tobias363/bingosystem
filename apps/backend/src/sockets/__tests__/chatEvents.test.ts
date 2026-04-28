@@ -126,6 +126,17 @@ function makeCtx(opts: CtxOptions = {}): {
       acks.push(r);
       cb(r as never);
     },
+    // Bølge D Issue 3 (2026-04-25): chatEvents.ts kaller logger.warn/error
+    // ved fail-closed-grenene (HALL_REQUIRED + INVALID_STATE). Test-mock
+    // må derfor levere en fungerende logger — uten dette ville HALL_REQUIRED
+    // throw blitt skygget av en `TypeError: undefined.warn` og endt som
+    // INTERNAL_ERROR i ack-responsen.
+    logger: {
+      warn: () => {},
+      error: () => {},
+      info: () => {},
+      debug: () => {},
+    } as unknown as SocketContext["logger"],
     appendChatMessage(roomCode: string, msg: ChatMessage) {
       let h = chatHistoryByRoom.get(roomCode);
       if (!h) {
@@ -262,7 +273,12 @@ test("chat:send — samme hall tillates", async () => {
   assert.equal(emits.length, 1);
 });
 
-test("chat:send — playerHallId=null + hallId=null tillates (legacy/utvalgte rom)", async () => {
+test("chat:send — playerHallId=null + hallId=null avvises med HALL_REQUIRED (Bølge D Issue 3 fail-closed 2026-04-25)", async () => {
+  // Tidligere: "tillates (legacy/utvalgte rom)" — fail-open ved
+  // undefined hallId. Etter Bølge D Issue 3-fix (chatEvents.ts:50-74)
+  // er hall-scope-sjekken fail-closed: spiller uten hallId kan ikke
+  // chatte (for å hindre cross-hall-chat-anomali). Testen verifiserer
+  // nå korrekt fail-closed-atferd.
   const { ctx, socket, emits } = makeCtx({
     hallId: null,
     playerHallId: null,
@@ -275,8 +291,9 @@ test("chat:send — playerHallId=null + hallId=null tillates (legacy/utvalgte ro
     emojiId: 0,
   });
 
-  assert.equal(response.ok, true);
-  assert.equal(emits.length, 1);
+  assert.equal(response.ok, false);
+  assert.equal(response.error?.code, "HALL_REQUIRED");
+  assert.equal(emits.length, 0, "ingen broadcast når chat avvises");
 });
 
 // ── chat:send: input validation ───────────────────────────────────────────

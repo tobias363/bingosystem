@@ -212,9 +212,31 @@ describe("GameManagementAddForm — validering", () => {
     expect(c.querySelector("[data-testid='gm-field-errors-alert']")).not.toBeNull();
   });
 
+  // Helper: explicit set mode-select to a value + dispatch change event.
+  // Etter PR #692 (PILOT-EMERGENCY 2026-04-28) er default mode "fixed", så
+  // tester som validerer percent-sum-oppførsel må eksplisitt sette mode
+  // til "percent" først.
+  function setPrizeMode(
+    c: HTMLElement,
+    color: string,
+    pattern: string,
+    mode: "percent" | "fixed"
+  ): void {
+    const sel = c.querySelector<HTMLSelectElement>(
+      `[data-testid='gm-prize-mode-${color}-${pattern}']`
+    );
+    if (!sel) throw new Error(`mode-select not found: ${color}/${pattern}`);
+    sel.value = mode;
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
   it("fremhever pattern-%-sum > 100 som rød", async () => {
     const c = await setupForm("bingo");
     toggleCheckbox(c, "gm-ticket-check-small_white");
+    // Eksplisitt sett mode=percent (default ble endret til "fixed" i PR
+    // #692 — KRITISK payout-guard mapper-fallback).
+    setPrizeMode(c, "small_white", "row_1", "percent");
+    setPrizeMode(c, "small_white", "row_2", "percent");
     setInputValue(c, "[data-testid='gm-prize-small_white-row_1']", "60");
     setInputValue(c, "[data-testid='gm-prize-small_white-row_2']", "50");
     const sumCell = c.querySelector<HTMLElement>("[data-testid='gm-prize-sum-small_white']");
@@ -226,6 +248,9 @@ describe("GameManagementAddForm — validering", () => {
     // Per PM-vedtak 2026-04-21: fixed-mode kr-beløp teller ikke mot 100%-taket.
     const c = await setupForm("bingo");
     toggleCheckbox(c, "gm-ticket-check-small_white");
+    // Eksplisitt sett mode=percent (PR #692 endret default til "fixed").
+    setPrizeMode(c, "small_white", "row_1", "percent");
+    setPrizeMode(c, "small_white", "row_2", "percent");
     setInputValue(c, "[data-testid='gm-prize-small_white-row_1']", "60");
     setInputValue(c, "[data-testid='gm-prize-small_white-row_2']", "50");
     // Begge er percent → sum 110%.
@@ -233,14 +258,7 @@ describe("GameManagementAddForm — validering", () => {
     expect(sumCell?.textContent).toBe("110%");
 
     // Endre row_2 til fixed → bare row_1 (60) teller.
-    const modeSelect = c.querySelector<HTMLSelectElement>(
-      "[data-testid='gm-prize-mode-small_white-row_2']"
-    );
-    expect(modeSelect).not.toBeNull();
-    if (modeSelect) {
-      modeSelect.value = "fixed";
-      modeSelect.dispatchEvent(new Event("change", { bubbles: true }));
-    }
+    setPrizeMode(c, "small_white", "row_2", "fixed");
     sumCell = c.querySelector<HTMLElement>("[data-testid='gm-prize-sum-small_white']");
     expect(sumCell?.textContent).toBe("60%");
     expect(sumCell?.style.color).toBe("");

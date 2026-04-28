@@ -301,10 +301,14 @@ test("4d.1: loadScheduledGameForUpdate SELECT FOR UPDATE inkluderer room_code-ko
       /app_game1_scheduled_games/i.test(q.sql)
   );
   assert.ok(forUpdateQuery, "SELECT FOR UPDATE skal ha vært forsøkt kjørt");
+  // Etter Demo Hall bypass-feature (Tobias 2026-04-27, se
+  // loadScheduledGameForUpdate kommentar) joines master-hall inn med alias
+  // `sg.` og `h.is_test_hall AS master_is_test_hall`. Test-regex må derfor
+  // tillate alias-prefiks `sg.` på kolonnene.
   assert.match(
     forUpdateQuery!.sql,
-    /SELECT\s+id,\s+status,\s+ticket_config_json,\s+room_code/i,
-    "SELECT FOR UPDATE skal inkludere room_code i kolonne-lista"
+    /SELECT\s+sg\.id,\s+sg\.status,\s+sg\.ticket_config_json,\s+sg\.room_code/i,
+    "SELECT FOR UPDATE skal inkludere room_code i kolonne-lista (med sg.-alias post Demo Hall join)"
   );
 
   // Ingen UPDATE ... SET room_code skulle ha vært forsøkt (4d.2-scope).

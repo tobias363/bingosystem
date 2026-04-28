@@ -173,15 +173,37 @@ function prioritiseDrawBag(
   bag.push(...preferred, ...rest);
 }
 
+/**
+ * Trekk N baller, auto-resume etter hver fase-pause (PR #643).
+ *
+ * Spill 1 ad-hoc-engine pauser etter hver fase-vinning. I tester som vil
+ * verifisere flerfase-payout simulerer vi master-resume mellom hver
+ * draw — funksjonelt ekvivalent med produksjonsflyten der UI sender
+ * "start spillet igjen" mellom faser.
+ */
+async function drawWithAutoResume(
+  engine: BingoEngine,
+  roomCode: string,
+  hostId: string,
+  count: number
+): Promise<void> {
+  for (let i = 0; i < count; i += 1) {
+    const snap = engine.getRoomSnapshot(roomCode);
+    if (!snap.currentGame || snap.currentGame.status !== "RUNNING") return;
+    if (snap.currentGame.isPaused) {
+      engine.resumeGame(roomCode);
+    }
+    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
+  }
+}
+
 // ── Tester ──────────────────────────────────────────────────────────────────
 
 test("PR-P2: fase 1 = 3 % av pool (ingen gulv-aktivering ved stor pool)", async () => {
   // 2 spillere × entryFee=1000 → pool=2000 kr → 3 % = 60 kr > 50 kr gulv.
   const { engine, roomCode, hostId } = await setupRoom(1000, 2);
   prioritiseDrawBag(engine, roomCode, [1, 16, 31, 46, 61]); // rad 0
-  for (let i = 0; i < 5; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 5);
   const snap = engine.getRoomSnapshot(roomCode);
   const game = snap.currentGame!;
   const phase1 = game.patternResults?.find((r) => r.patternName === "1 Rad");
@@ -198,9 +220,7 @@ test("PR-P2: fase 1 gulv aktiveres når pool er lav", async () => {
   // 1 spiller entryFee=500 → pool=500 → 3 % = 15 kr < 50 kr gulv.
   const { engine, roomCode, hostId } = await setupRoom(500);
   prioritiseDrawBag(engine, roomCode, [1, 16, 31, 46, 61]);
-  for (let i = 0; i < 5; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 5);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const claim = game.claims.find((c) => c.type === "LINE");
   assert.equal(
@@ -221,9 +241,7 @@ test("PR-P2: fase 2 = fase 1 × 2 (60 × 2 = 120 kr, over 50 kr gulv)", async ()
     roomCode,
     [1, 16, 31, 46, 61, 2, 17, 32, 47, 62]
   );
-  for (let i = 0; i < 10; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 10);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   // patternResults bærer patternName + payoutAmount per fase (total før split).
   const phase2 = game.patternResults?.find((r) => r.patternName === "2 Rader");
@@ -250,9 +268,7 @@ test("PR-P2: fase 1 gulv-justert base brukes som cascade-basis for fase 2", asyn
     roomCode,
     [1, 16, 31, 46, 61, 2, 17, 32, 47, 62]
   );
-  for (let i = 0; i < 10; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 10);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   // Fase 2 payout leses fra patternResults (total før split).
   const phase2Result = game.patternResults?.find((r) => r.patternName === "2 Rader");
@@ -322,9 +338,7 @@ test("PR-P2: fase 2 gulv aktiveres når fase 1 × 2 < fase 2 min", async () => {
   });
   // Pool=1000, fase 1 gulv=50, fase 2 = 50×2 = 100 < 500 gulv → brukes 500.
   prioritiseDrawBag(engine, roomCode, [1, 16, 31, 46, 61, 2, 17, 32, 47, 62]);
-  for (let i = 0; i < 10; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId!, 10);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   // Fase 2 payout leses fra patternResults (total før split).
   const phase2Result = game.patternResults?.find((r) => r.patternName === "2 Rader");
@@ -341,9 +355,7 @@ test("PR-P2: multi-winner-split på multiplier-total", async () => {
   // Fase 1 = 3 % av 2000 = 60 kr. Begge vinner samtidig → 30 kr hver.
   const { engine, roomCode, hostId } = await setupRoom(1000, 2);
   prioritiseDrawBag(engine, roomCode, [1, 16, 31, 46, 61]);
-  for (let i = 0; i < 5; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 5);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const claims = game.claims.filter((c) => c.type === "LINE");
   assert.equal(claims.length, 2, "to LINE-claims");
@@ -359,9 +371,7 @@ test("PR-P2: Fullt Hus = fase 1 × 10, gulv aktivert ved lav pool", async () => 
   const allNumbers: number[] = [];
   for (const row of SHARED_GRID) for (const n of row) if (n !== 0) allNumbers.push(n);
   prioritiseDrawBag(engine, roomCode, allNumbers);
-  for (let i = 0; i < 24; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 24);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const bingo = game.claims.find((c) => c.type === "BINGO");
   assert.ok(bingo, "Fullt Hus skal være claimet");
