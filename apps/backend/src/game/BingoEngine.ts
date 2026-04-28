@@ -3686,6 +3686,55 @@ export class BingoEngine {
     return cleaned;
   }
 
+  /**
+   * PILOT-EMERGENCY 2026-04-28 (Tobias): rydd stale wallet-bindinger fra
+   * NON-CANONICAL rom uavhengig av runde-status. Dette er en mer aggressiv
+   * variant av `cleanupStaleWalletInIdleRooms` som er nødvendig for Del B:
+   *
+   * Scenario: Hall A skapte rom `4RCQSX` (random `makeRoomCode()`-output)
+   * FØR PR #677 lukket Bug B. Spiller binder seg til `4RCQSX` i runden, så
+   * boot-sweep finner det som RUNNING og bevarer det. Når spilleren kobler
+   * seg til via room:join → canonical `BINGO_<groupId>`, kaster
+   * `assertWalletNotInRunningGame` PLAYER_ALREADY_IN_RUNNING_GAME fordi
+   * 4RCQSX-rommet matcher walletId.
+   *
+   * Fix: ved room:join til en CANONICAL rom-kode, kall denne metoden for
+   * å fjerne wallet-bindingen fra alle non-canonical rom — uansett status.
+   * Filteret `isCanonicalCode` (se util/canonicalRoomCode.ts) sendes inn
+   * så engine ikke får avhengighet til util-laget.
+   *
+   * Sikkerhetsregler:
+   *   - Vi sletter KUN player-recordene (ikke selve rommet).
+   *   - Vi sletter wallet-binding selv hvis socket fortsatt er attached
+   *     (legacy-rom kan ha lekket socket-binding ved disconnect-flapping).
+   *   - Canonical rom rør vi aldri her — caller har eget regelverk for dem.
+   *
+   * Returnerer antall player-records som ble fjernet (0 = ingen treff).
+   */
+  cleanupStaleWalletInNonCanonicalRooms(
+    walletId: string,
+    isCanonicalCode: (code: string) => boolean,
+  ): number {
+    const normalizedWalletId = walletId.trim();
+    if (!normalizedWalletId) return 0;
+    let cleaned = 0;
+    for (const room of this.rooms.values()) {
+      if (isCanonicalCode(room.code)) continue;
+      let mutated = false;
+      for (const player of [...room.players.values()]) {
+        if (player.walletId === normalizedWalletId) {
+          room.players.delete(player.id);
+          mutated = true;
+          cleaned += 1;
+        }
+      }
+      if (mutated) {
+        this.syncRoomToStore(room);
+      }
+    }
+    return cleaned;
+  }
+
   private archiveIfEnded(room: RoomState): void {
     if (room.currentGame?.status === "ENDED") {
       room.gameHistory.push(this.serializeGame(room.currentGame));
