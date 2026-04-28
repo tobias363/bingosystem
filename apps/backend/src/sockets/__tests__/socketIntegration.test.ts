@@ -660,9 +660,18 @@ describe("Socket.IO integration", () => {
     // Draw 10 grid numbers so alice can mark them. Each mark must NOT trigger
     // a room:update on bob. Bob's counter starts AFTER draws are done so we
     // only measure mark-induced broadcasts.
+    //
+    // PR #643 (`fix(spill1): KRITISK — ad-hoc-engine auto-pauser etter
+    // fase-vinning`): Spill 1 ad-hoc pauser etter hver fase-vinn (matcher
+    // prod-flyt der master må starte spillet igjen). I socket-integration-
+    // tester simulerer vi master-resume direkte via server.engine.
     const gridNumbers = new Set([1,2,3,4,5, 13,14,15,16,17, 25,26,27,28, 37,38,39,40,41, 49,50,51,52,53]);
     const drawn: number[] = [];
     for (let i = 0; i < 60 && drawn.length < 10; i++) {
+      const snap = server.engine.getRoomSnapshot(roomCode);
+      if (snap.currentGame?.isPaused) {
+        server.engine.resumeGame(roomCode);
+      }
       const dr = await alice.emit<AckResponse<{ number: number }>>("draw:next", { roomCode });
       if (!dr.ok) break;
       if (gridNumbers.has(dr.data!.number)) drawn.push(dr.data!.number);
@@ -1052,11 +1061,17 @@ describe("Socket.IO integration", () => {
     await bob.emit("bet:arm", { roomCode, armed: true });
     await alice.emit("game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 });
 
-    // Draw several numbers and mark matching ones on alice's ticket
+    // Draw several numbers and mark matching ones on alice's ticket.
+    // PR #643: ad-hoc Spill 1 pauser etter fase-vinn — auto-resume inline
+    // for å simulere master-resume.
     const gridNumbers = new Set([1,2,3,4,5, 13,14,15,16,17, 25,26,27,28, 37,38,39,40,41, 49,50,51,52,53]);
     const drawnNumbers: number[] = [];
     const markedNumbers: number[] = [];
     for (let i = 0; i < 10; i++) {
+      const snap = server.engine.getRoomSnapshot(roomCode);
+      if (snap.currentGame?.isPaused) {
+        server.engine.resumeGame(roomCode);
+      }
       const drawResult = await alice.emit<AckResponse<{ number: number }>>("draw:next", { roomCode });
       if (!drawResult.ok) break;
       drawnNumbers.push(drawResult.data!.number);
@@ -1147,9 +1162,18 @@ describe("Socket.IO integration", () => {
 
     // Draw all numbers until the engine refuses. BIN-672: default is now
     // 75-ball bingo (was 60-ball databingo), so loop up to 76.
+    //
+    // PR #643: ad-hoc Spill 1 pauser etter fase-vinn. Auto-resume inline
+    // simulerer master-flyten så vi får drained hele bag-en. Vi
+    // distinguerer mellom GAME_PAUSED (resume + retry) og terminal feil
+    // (NO_MORE_NUMBERS / GAME_NOT_RUNNING / lignende — break ut).
     let drawCount = 0;
     let lastError: string | undefined;
     for (let i = 0; i < 76; i++) {
+      const snap = server.engine.getRoomSnapshot(roomCode);
+      if (snap.currentGame?.isPaused) {
+        server.engine.resumeGame(roomCode);
+      }
       const drawResult = await alice.emit<AckResponse<{ number: number }>>("draw:next", { roomCode });
       if (!drawResult.ok) {
         lastError = drawResult.error?.code;
@@ -1191,9 +1215,13 @@ describe("Socket.IO integration", () => {
     await bob.emit("bet:arm", { roomCode, armed: true });
     await alice.emit("game:start", { roomCode, entryFee: 10, ticketsPerPlayer: 1 });
 
-    // Draw 5 numbers
+    // Draw 5 numbers. PR #643: auto-resume inline etter fase-pause.
     const drawnNumbers: number[] = [];
     for (let i = 0; i < 5; i++) {
+      const snap = server.engine.getRoomSnapshot(roomCode);
+      if (snap.currentGame?.isPaused) {
+        server.engine.resumeGame(roomCode);
+      }
       const drawResult = await alice.emit<AckResponse<{ number: number }>>("draw:next", { roomCode });
       assert.ok(drawResult.ok, `draw ${i} failed: ${drawResult.error?.message}`);
       drawnNumbers.push(drawResult.data!.number);
@@ -1216,8 +1244,12 @@ describe("Socket.IO integration", () => {
     );
     assert.equal(stateResult.data!.snapshot.currentGame.status, "RUNNING");
 
-    // Draw 5 more and re-verify consistency
+    // Draw 5 more and re-verify consistency. PR #643: auto-resume inline.
     for (let i = 0; i < 5; i++) {
+      const snap = server.engine.getRoomSnapshot(roomCode);
+      if (snap.currentGame?.isPaused) {
+        server.engine.resumeGame(roomCode);
+      }
       const drawResult = await alice.emit<AckResponse<{ number: number }>>("draw:next", { roomCode });
       assert.ok(drawResult.ok, `draw ${i + 5} failed: ${drawResult.error?.message}`);
       drawnNumbers.push(drawResult.data!.number);

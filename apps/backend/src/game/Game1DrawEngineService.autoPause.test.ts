@@ -747,22 +747,25 @@ test("Task 1.1: Fullt Hus (fase 5) → game ends, IKKE auto-pause", async () => 
 
 test("Task 1.1: Rad 2-vinn → paused_at_phase=2 (idempotent pause-mekanisme)", async () => {
   // Verifiserer at auto-pause fungerer gjentagende, ikke bare for Rad 1.
-  // Fase 2 i Spill 1 = 2 komplette VERTIKALE KOLONNER (ref
-  // Game1PatternEvaluator.ts:11-15). Vi markerer kolonne 0 + kolonne 1
-  // fullt + free centre. `buildWinningGrid()` har:
-  //   col 0 = [10, 1, 2, 3, 4]
-  //   col 1 = [20, 16, 17, 18, 19]
-  const twoColumnsMarked = new Array(25).fill(false);
-  // Kolonne 0: indices 0, 5, 10, 15, 20
-  for (const r of [0, 1, 2, 3, 4]) twoColumnsMarked[r * 5 + 0] = true;
-  // Kolonne 1: indices 1, 6, 11, 16, 21
-  for (const r of [0, 1, 2, 3, 4]) twoColumnsMarked[r * 5 + 1] = true;
-  twoColumnsMarked[12] = true; // free centre
+  //
+  // Per 2026-04-27-fix (Game1PatternEvaluator.ts:100 — "byttet fra
+  // vertikale kolonner til horisontale rader for paritet med shared-
+  // types/spill1-patterns") = Fase 2 krever 2 hele HORISONTALE RADER.
+  // Tidligere versjon av denne testen brukte 2 vertikale kolonner som
+  // matchet daværende implementasjon. Oppdatert til row-baserte markings.
+  //
+  // `buildWinningGrid()` har:
+  //   row 0 = [10, 20, 30, 40, 50] = indices 0, 1, 2, 3, 4
+  //   row 1 = [1, 16, 31, 46, 61] = indices 5, 6, 7, 8, 9
+  const twoRowsMarked = new Array(25).fill(false);
+  for (const i of [0, 1, 2, 3, 4]) twoRowsMarked[i] = true; // row 0
+  for (const i of [5, 6, 7, 8, 9]) twoRowsMarked[i] = true; // row 1
+  twoRowsMarked[12] = true; // free centre
 
-  // Viktig: draw_bag må være stor nok til å støtte at tilstrekkelig mange
-  // draws kan skje. 6-ball-bag holder opp til draw 6 — så vi bruker en
-  // større bag her.
-  const largerBag = [1, 2, 3, 4, 10, 16, 17, 18, 19, 20];
+  // draw_bag må være stor nok til å støtte at tilstrekkelig mange draws
+  // kan skje. Med ny horisontal-design trekker vi ball 20 sist (matcher
+  // grid-celle idx 1 = row 0 col 1).
+  const largerBag = [1, 16, 31, 46, 61, 10, 30, 40, 50, 20];
   const { broadcaster, autoPaused } = makeRecordingBroadcaster();
 
   const { service, queries } = makeService({
@@ -798,7 +801,7 @@ test("Task 1.1: Rad 2-vinn → paused_at_phase=2 (idempotent pause-mekanisme)", 
             grid_numbers_json: buildWinningGrid(),
             markings_json: wrapMarkings(
               (() => {
-                const m = [...twoColumnsMarked];
+                const m = [...twoRowsMarked];
                 m[1] = false; // ball 20 (idx 1) vil markeres i markBallOnAssignments
                 return m;
               })()
@@ -821,7 +824,7 @@ test("Task 1.1: Rad 2-vinn → paused_at_phase=2 (idempotent pause-mekanisme)", 
           {
             id: "a-1",
             grid_numbers_json: buildWinningGrid(),
-            markings_json: wrapMarkings(twoColumnsMarked), // nå komplett
+            markings_json: wrapMarkings(twoRowsMarked), // nå komplett
             buyer_user_id: "u-1",
             hall_id: "hall-a",
             ticket_color: "yellow",

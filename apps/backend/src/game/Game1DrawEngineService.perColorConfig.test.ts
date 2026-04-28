@@ -155,9 +155,16 @@ function runningStateRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-// ── Test 1: Per-farge fixed-beløp — to vinnere, ulike premier ─────────────
+// ── Test 1: Per-farge fixed-beløp — to vinnere, global pot deles ────────
+//
+// NB (post PR #653 — Q3=X global pot): Tidligere antok denne testen at
+// hver farge fikk sin egen pot-pattern (Alice 100, Bob 50). Etter PR #653
+// (`fix(backend): Spill 1 Q3 global pot per phase (regulatorisk pilot-fix)`)
+// brukes første vinners farge-pattern som GLOBAL pot, og alle vinnere
+// deler likt uansett farge. Med Alice's pattern = 100 kr og 2 vinnere
+// får begge 50 kr hver.
 
-test("perColorConfig: game_config_json med spill1.ticketColors → per-farge fixed-premier", async () => {
+test("perColorConfig: game_config_json med spill1.ticketColors → global pot fra første vinners farge-matrise (PR #653 Q3=X)", async () => {
   const { adapter: wallet, credits } = makeFakeWallet();
   const payoutService = new Game1PayoutService({
     walletAdapter: wallet,
@@ -259,14 +266,15 @@ test("perColorConfig: game_config_json med spill1.ticketColors → per-farge fix
 
   await service.drawNext("g1");
 
-  // Alice (white) = 100 kr, Bob (yellow) = 50 kr.
+  // Per Q3=X (PR #653): global pot = Alice's farge-pattern = 100 kr.
+  // 2 vinnere deler likt → 50 kr hver, uavhengig av Bob's egen farge-matrise.
   assert.equal(credits.length, 2, "to vinnere → to wallet-credit-kall");
   const alice = credits.find((c) => c.accountId === "w-alice");
   const bob = credits.find((c) => c.accountId === "w-bob");
   assert.ok(alice, "Alice skal ha credit");
   assert.ok(bob, "Bob skal ha credit");
-  assert.equal(alice!.amount, 100, "Alice (small_white) → 100 kr per farge-matrise");
-  assert.equal(bob!.amount, 50, "Bob (small_yellow) → 50 kr per farge-matrise");
+  assert.equal(alice!.amount, 50, "Alice → 50 kr (global pot 100 / 2 vinnere)");
+  assert.equal(bob!.amount, 50, "Bob → 50 kr (global pot 100 / 2 vinnere, uavhengig av egen farge)");
 });
 
 // ── Test 2: Bakoverkompat — game_config_json=null → flat-path ──────────

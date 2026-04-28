@@ -259,6 +259,11 @@ test(
         endedAtDraw = drawCount;
         break;
       }
+      // PR #643: Spill 1 ad-hoc auto-pauser etter hver fase-vinning. I
+      // E2E-tester simulerer vi master-resume inline mellom draws.
+      if (snap.currentGame?.isPaused) {
+        engine.resumeGame(roomCode);
+      }
       await engine.drawNextNumber({
         roomCode,
         actorPlayerId: alice.id,
@@ -383,15 +388,25 @@ test(
       assert.equal(miniGameEntry!.amount, miniGameResult.prizeAmount);
     }
 
-    // Total PRIZE-payout skal IKKE overskride payoutBudget (192 kr) +
-    // mini-game-prize (separat budsjett, kommer fra hall-account).
+    // Total PRIZE-payout med faste premier (DEFAULT_NORSK_BINGO_CONFIG —
+    // 100/200/200/200/1000 kr) bypasser pool/RTP-cap per "FIXED-PRIZE-FIX"
+    // i BingoEngine.ts:2404-2414. Hus garanterer annonsert beløp uavhengig
+    // av påløpt pool — det er regulatorisk (PM-vedtak 2026-04-21) for å
+    // unngå å lure spillere. Eldre versjon av denne testen antok at cap
+    // capet til payoutBudget=192 kr; det gjelder ikke lenger for fixed-mode.
+    //
+    // Med 3 spillere og fellesgrid (alle 12 brett vinner samtidig) blir
+    // 5-fase total = 100+200+200+200+1000 = 1700 kr (split per fase mellom
+    // 12 vinnende brett gir 100/12 + ... men sum forblir ≤ 1700 etter
+    // floor-rounding). Vi verifiserer at total ikke overstiger denne
+    // teoretiske summen pluss en liten margin for floor-rounding.
     const totalGamePrize = prizes
       .filter((e) => !e.claimId?.startsWith("minigame-"))
       .reduce((sum, e) => sum + e.amount, 0);
-    const payoutBudget = 240 * 0.8; // entryFee * playerCount * payoutPercent/100
+    const fixedPrizeMaxTotal = 100 + 200 + 200 + 200 + 1000; // 1700 kr
     assert.ok(
-      totalGamePrize <= payoutBudget + 0.01, // floating-point margin
-      `total game-PRIZE (${totalGamePrize}) skal ikke overstige payoutBudget (${payoutBudget})`,
+      totalGamePrize <= fixedPrizeMaxTotal + 0.01, // floating-point margin
+      `total game-PRIZE (${totalGamePrize}) skal ikke overstige fixed-prize-sum (${fixedPrizeMaxTotal})`,
     );
 
     // ── 8. Wallet-deltaer matcher payout - stake per spiller ─────────────

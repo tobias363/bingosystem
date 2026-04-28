@@ -88,7 +88,16 @@ async function setupAdhocBingoRoom(opts?: {
   return { engine, roomCode, hostId: hostId! };
 }
 
-/** Drain hele drawBag til status flippes til ENDED eller bag tom. */
+/**
+ * Drain hele drawBag til status flippes til ENDED eller bag tom.
+ *
+ * Etter PR #643 (`fix(spill1): KRITISK — ad-hoc-engine auto-pauser etter
+ * fase-vinning`) pauser Spill 1 ad-hoc-engine etter hver fase-vinn for å
+ * matche prod-flyt der master må starte spillet igjen mellom faser. I
+ * test-flyten simulerer vi master-resume inline via `engine.resumeGame()`
+ * — det er den korrekte semantikken for tester som verifiserer end-to-end
+ * payout-flyt på tvers av faser.
+ */
 async function drainAllBalls(
   engine: BingoEngine,
   roomCode: string,
@@ -98,6 +107,12 @@ async function drainAllBalls(
   for (;;) {
     const snap = engine.getRoomSnapshot(roomCode);
     if (!snap.currentGame || snap.currentGame.status !== "RUNNING") break;
+    // Auto-resume etter fase-pause (PR #643). Master ville gjort dette
+    // manuelt via UI; her gjør vi det automatisk så testen kan verifisere
+    // hele drainen.
+    if (snap.currentGame.isPaused) {
+      engine.resumeGame(roomCode);
+    }
     try {
       await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
       drawn += 1;
@@ -212,11 +227,15 @@ test("KRITISK: Phase 5 detekteres selv om evaluateActivePhase kastet exception p
     await orig(room, game, playerId, pattern, patternResult, prizePerWinner);
   };
 
-  // Drain alle 75 baller.
+  // Drain alle 75 baller. Auto-resume etter fase-pause (PR #643 — se
+  // helper-kommentar i drainAllBalls for kontekst).
   let drawn = 0;
   for (;;) {
     const snap = engine.getRoomSnapshot(roomCode);
     if (!snap.currentGame || snap.currentGame.status !== "RUNNING") break;
+    if (snap.currentGame.isPaused) {
+      engine.resumeGame(roomCode);
+    }
     try {
       await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
       drawn += 1;

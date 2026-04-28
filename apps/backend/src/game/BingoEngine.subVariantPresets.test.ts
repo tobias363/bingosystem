@@ -112,6 +112,28 @@ async function setupRoomWithVariant(
   return { engine, roomCode, hostId: hostId!, wallet };
 }
 
+/**
+ * Trekk N baller, auto-resume etter hver fase-pause (PR #643).
+ * Spill 1 ad-hoc-engine pauser etter hver fase-vinning (matcher prod-flyt
+ * der master må starte spillet igjen). I tester simulerer vi master-resume
+ * inline.
+ */
+async function drawWithAutoResume(
+  engine: BingoEngine,
+  roomCode: string,
+  hostId: string,
+  count: number,
+): Promise<void> {
+  for (let i = 0; i < count; i += 1) {
+    const snap = engine.getRoomSnapshot(roomCode);
+    if (!snap.currentGame || snap.currentGame.status !== "RUNNING") return;
+    if (snap.currentGame.isPaused) {
+      engine.resumeGame(roomCode);
+    }
+    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
+  }
+}
+
 function priorityOrderLast(
   engine: BingoEngine,
   roomCode: string,
@@ -148,9 +170,7 @@ test("K4 integration: Kvikkis-preset gir 1000 kr payout ved Fullt Hus", async ()
   );
   // Draw alle 24 grid-tall → Fullt Hus.
   priorityOrderLast(engine, roomCode, 65);
-  for (let i = 0; i < 24; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 24);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const bingo = game.claims.find((c) => c.type === "BINGO");
   assert.ok(bingo, "BINGO claim må finnes");
@@ -171,9 +191,7 @@ test("K4 integration: Ball × 10-preset — siste ball 34 → 1250 + 340 = 1590 
     1,
   );
   priorityOrderLast(engine, roomCode, 34);
-  for (let i = 0; i < 24; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 24);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const bingoClaims = game.claims.filter((c) => c.type === "BINGO");
   const total = bingoClaims.reduce((s, c) => s + (c.payoutAmount ?? 0), 0);
@@ -189,9 +207,7 @@ test("K4 integration: Super-NILS-preset — siste ball 34 (N-kol) → 1000 kr", 
     1,
   );
   priorityOrderLast(engine, roomCode, 34); // N-kol = 1000 kr
-  for (let i = 0; i < 24; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 24);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const bingo = game.claims.find((c) => c.type === "BINGO");
   assert.ok(bingo);
@@ -205,9 +221,7 @@ test("K4 integration: Super-NILS — siste ball 5 (B-kol) → 500 kr", async () 
     1,
   );
   priorityOrderLast(engine, roomCode, 5); // B-kol = 500 kr
-  for (let i = 0; i < 24; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 24);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const bingo = game.claims.find((c) => c.type === "BINGO");
   assert.equal(bingo!.payoutAmount, 500, "Super-NILS B-kol = 500 kr");
@@ -240,9 +254,7 @@ test("K4 integration: Spillernes spill — fase 1 med stor pool gir percent-base
     bag.length = 0;
     bag.push(...preferred, ...rest);
   }
-  for (let i = 0; i < 5; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 5);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const phase1 = game.claims.find((c) => c.type === "LINE");
   assert.ok(phase1, "fase 1 LINE-claim");
@@ -269,9 +281,7 @@ test("K4 integration: Spillernes spill — lav pool trigger min-gulv (50 kr)", a
     bag.length = 0;
     bag.push(...preferred, ...rest);
   }
-  for (let i = 0; i < 5; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 5);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const phase1 = game.claims.find((c) => c.type === "LINE");
   assert.equal(phase1!.payoutAmount, 50, "gulv-aktivering: 50 kr (ikke 15)");
@@ -294,9 +304,7 @@ test("K4 integration: TV Extra-preset — Fullt Hus gir 3000 kr (concurrent)", a
   );
   // Draw alle 24 grid-tall → alle 3 patterns oppfylt.
   priorityOrderLast(engine, roomCode, 65);
-  for (let i = 0; i < 24; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 24);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   // Sjekk at patternResults inneholder Bilde + Ramme + Fullt Hus.
   const byName = new Map(
@@ -318,9 +326,7 @@ test("K4 integration: standard-preset — fase 1 = 100 kr fast, Fullt Hus = 1000
     1,
   );
   priorityOrderLast(engine, roomCode, 65);
-  for (let i = 0; i < 24; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
-  }
+  await drawWithAutoResume(engine, roomCode, hostId, 24);
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
   const lineClaims = game.claims.filter((c) => c.type === "LINE");
   const bingoClaim = game.claims.find((c) => c.type === "BINGO");
