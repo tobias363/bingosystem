@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 export type AgentLanguage = string;
 export type AgentStatus = "active" | "inactive";
@@ -147,7 +147,15 @@ export interface AgentStore {
    * Deltas are signed (cash-in is positive, cash-out is negative). Must be
    * called inside the same DB transaction as the transaction-row insert.
    */
-  applyShiftCashDelta(shiftId: string, delta: ShiftCashDelta): Promise<AgentShift>;
+  applyShiftCashDelta(shiftId: string, delta: ShiftCashDelta, client?: PoolClient): Promise<AgentShift>;
+  /**
+   * BIN-PILOT-K1 (Code Review #1 P0-1): kjør callback i en delt PG-tx slik
+   * at cross-store atomicity oppnås (applyShiftCashDelta + insertIdempotent
+   * i samme BEGIN/COMMIT). In-memory-impl kjører callback med null-client
+   * (single-threaded JS, ingen tx-grenser) — service-laget skal være
+   * tolerant for null.
+   */
+  runInTransaction<T>(callback: (client: PoolClient | null) => Promise<T>): Promise<T>;
 
   /**
    * BIN-583 B3.3: skriv control_daily_balance JSONB med agent's reported
@@ -593,7 +601,14 @@ export class PostgresAgentStore implements AgentStore {
     return rows.map((r) => this.mapShift(r));
   }
 
-  async applyShiftCashDelta(shiftId: string, delta: ShiftCashDelta): Promise<AgentShift> {
+  async applyShiftCashDelta(
+    shiftId: string,
+    delta: ShiftCashDelta,
+    client?: PoolClient,
+  ): Promise<AgentShift> {
+    // BIN-PILOT-K1: optional `client` lar caller binde UPDATE-en til samme
+    // tx som `agentTransactionStore.insertIdempotent(... , client)`.
+    const exec = client ?? this.pool;
     // Bygg UPDATE-setning dynamisk basert på hvilke felter som er med.
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -609,12 +624,15 @@ export class PostgresAgentStore implements AgentStore {
     addDelta("daily_balance", delta.dailyBalance);
     addDelta("selling_by_customer_number", delta.sellingByCustomerNumber);
     if (sets.length === 0) {
-      const existing = await this.getShiftById(shiftId);
-      if (!existing) throw new Error("[BIN-583] shift not found");
-      return existing;
+      const { rows: noopRows } = await exec.query<ShiftRow>(
+        `SELECT * FROM ${this.shifts()} WHERE id = $1`,
+        [shiftId]
+      );
+      if (!noopRows[0]) throw new Error("[BIN-583] shift not found");
+      return this.mapShift(noopRows[0]);
     }
     params.push(shiftId);
-    const { rows } = await this.pool.query<ShiftRow>(
+    const { rows } = await exec.query<ShiftRow>(
       `UPDATE ${this.shifts()}
        SET ${sets.join(", ")}, updated_at = now()
        WHERE id = $${params.length}
@@ -623,6 +641,30 @@ export class PostgresAgentStore implements AgentStore {
     );
     if (!rows[0]) throw new Error("[BIN-583] shift not found");
     return this.mapShift(rows[0]);
+  }
+
+  /**
+   * BIN-PILOT-K1: kjør callback i en delt PG-tx (BEGIN/COMMIT/ROLLBACK).
+   * Caller skal videreformidle den passerte client-en til alle store-
+   * metoder som tar `client?` for å oppnå atomicity.
+   */
+  async runInTransaction<T>(callback: (client: PoolClient | null) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await callback(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // best-effort rollback
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async setShiftControlDailyBalance(shiftId: string, payload: Record<string, unknown>): Promise<AgentShift> {
@@ -982,7 +1024,13 @@ export class InMemoryAgentStore implements AgentStore {
       .map((s) => ({ ...s }));
   }
 
-  async applyShiftCashDelta(shiftId: string, delta: ShiftCashDelta): Promise<AgentShift> {
+  async applyShiftCashDelta(
+    shiftId: string,
+    delta: ShiftCashDelta,
+    _client?: PoolClient,
+  ): Promise<AgentShift> {
+    // BIN-PILOT-K1: client-arg ignoreres for in-memory (single-threaded JS,
+    // ingen tx-grenser).
     const s = this.shifts.get(shiftId);
     if (!s) throw new Error("[BIN-583] shift not found");
     if (delta.totalCashIn) s.totalCashIn += delta.totalCashIn;
@@ -993,6 +1041,13 @@ export class InMemoryAgentStore implements AgentStore {
     if (delta.sellingByCustomerNumber) s.sellingByCustomerNumber += delta.sellingByCustomerNumber;
     s.updatedAt = new Date().toISOString();
     return { ...s };
+  }
+
+  /**
+   * BIN-PILOT-K1: in-memory mirror — kjører callback med null-client.
+   */
+  async runInTransaction<T>(callback: (client: PoolClient | null) => Promise<T>): Promise<T> {
+    return callback(null);
   }
 
   async setShiftControlDailyBalance(shiftId: string, payload: Record<string, unknown>): Promise<AgentShift> {

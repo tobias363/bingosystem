@@ -1099,3 +1099,118 @@ test("PR #522: ulike clientRequestIds → ulike wallet-tx (ingen falsk idempoten
   assert.notEqual(tx1.walletTxId, tx2.walletTxId);
   assert.equal(await ctx.wallet.getBalance("wallet-p1"), 150);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BIN-PILOT-K1 (Code Review #1 P0-1): Atomicity-fix for agent cash-ops.
+//
+// Bug-spec:
+//   AgentTransactionService.processCashOp utførte 3 separate ledger-stegs i
+//   3 separate PG-transaksjoner. Ved network-flap mellom steg 1 (wallet)
+//   og steg 2 (applyShiftCashDelta) ville retry:
+//     - Idempotent treffe samme wallet-tx (steg 1 OK)
+//     - DOBBEL-INKREMENTERE shift.daily_balance (steg 2 ikke idempotent)
+//     - Opprette duplikat-rad i app_agent_transactions (steg 3 ny txId)
+//
+// Fix-spec (denne testen):
+//   Steg 2 + 3 wrapped i felles tx + INSERT med ON CONFLICT DO NOTHING på
+//   client_request_id. Retry skal:
+//     - Returnere SAMME agent-tx-id (ikke ny txId)
+//     - IKKE dobbel-inkrementere shift.daily_balance
+//     - IKKE opprette duplikat-rad
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("BIN-PILOT-K1: cashIn-retry returnerer samme agent-tx-id (idempotent INSERT)", async () => {
+  const ctx = makeSetup();
+  await ctx.seedAgent("a1", "hall-a");
+  ctx.seedPlayer("p1", "hall-a");
+  await seedPlayerBalance(ctx, "p1", 100);
+  const tx1 = await ctx.service.cashIn({
+    agentUserId: "a1", playerUserId: "p1", amount: 50,
+    paymentMethod: "CASH", clientRequestId: "atomic-key-1",
+  });
+  const tx2 = await ctx.service.cashIn({
+    agentUserId: "a1", playerUserId: "p1", amount: 50,
+    paymentMethod: "CASH", clientRequestId: "atomic-key-1",
+  });
+  // Begge kall skal returnere SAMME persisterte rad — ikke en duplikat.
+  assert.equal(tx1.id, tx2.id, "retry må returnere samme agent-tx-id");
+  // Bekreft at det kun finnes ÉN rad i transaction-store (ingen duplikat).
+  const all = await ctx.txs.list({ agentUserId: "a1", actionType: "CASH_IN" });
+  assert.equal(all.length, 1, "retry må ikke opprette duplikat-rad");
+});
+
+test("BIN-PILOT-K1: cashIn-retry dobbel-inkrementerer IKKE shift.daily_balance", async () => {
+  const ctx = makeSetup();
+  const shiftId = await ctx.seedAgent("a1", "hall-a");
+  ctx.seedPlayer("p1", "hall-a");
+  await seedPlayerBalance(ctx, "p1", 100);
+  // Første cashIn legger til 50 i daily_balance.
+  await ctx.service.cashIn({
+    agentUserId: "a1", playerUserId: "p1", amount: 50,
+    paymentMethod: "CASH", clientRequestId: "atomic-key-2",
+  });
+  const shiftAfterFirst = await ctx.store.getShiftById(shiftId);
+  assert.equal(shiftAfterFirst?.dailyBalance, 50);
+  assert.equal(shiftAfterFirst?.totalCashIn, 50);
+  // Retry med samme clientRequestId — daily_balance skal IKKE øke til 100.
+  await ctx.service.cashIn({
+    agentUserId: "a1", playerUserId: "p1", amount: 50,
+    paymentMethod: "CASH", clientRequestId: "atomic-key-2",
+  });
+  const shiftAfterRetry = await ctx.store.getShiftById(shiftId);
+  assert.equal(shiftAfterRetry?.dailyBalance, 50,
+    "retry må IKKE dobbel-inkrementere daily_balance");
+  assert.equal(shiftAfterRetry?.totalCashIn, 50,
+    "retry må IKKE dobbel-inkrementere total_cash_in");
+});
+
+test("BIN-PILOT-K1: cashOut-retry dobbel-debiterer IKKE shift.daily_balance", async () => {
+  const ctx = makeSetup();
+  const shiftId = await ctx.seedAgent("a1", "hall-a");
+  ctx.seedPlayer("p1", "hall-a");
+  await seedPlayerBalance(ctx, "p1", 1000);
+  // Bygg opp daily_balance til 500 først.
+  await ctx.service.cashIn({
+    agentUserId: "a1", playerUserId: "p1", amount: 500,
+    paymentMethod: "CASH", clientRequestId: "seed-key",
+  });
+  // Cashout 200 — daily_balance skal gå fra 500 til 300.
+  await ctx.service.cashOut({
+    agentUserId: "a1", playerUserId: "p1", amount: 200,
+    paymentMethod: "CASH", clientRequestId: "out-atomic-key",
+  });
+  const shiftAfter = await ctx.store.getShiftById(shiftId);
+  assert.equal(shiftAfter?.dailyBalance, 300);
+  assert.equal(shiftAfter?.totalCashOut, 200);
+  // Retry — daily_balance skal IKKE gå til 100, totalCashOut skal IKKE bli 400.
+  await ctx.service.cashOut({
+    agentUserId: "a1", playerUserId: "p1", amount: 200,
+    paymentMethod: "CASH", clientRequestId: "out-atomic-key",
+  });
+  const shiftAfterRetry = await ctx.store.getShiftById(shiftId);
+  assert.equal(shiftAfterRetry?.dailyBalance, 300,
+    "cashOut-retry må IKKE dobbel-debite daily_balance");
+  assert.equal(shiftAfterRetry?.totalCashOut, 200,
+    "cashOut-retry må IKKE dobbel-debite total_cash_out");
+});
+
+test("BIN-PILOT-K1: ulike clientRequestIds → faktiske separate cash-ops (regress)", async () => {
+  // Regresjons-test: idempotency-fix må IKKE feilaktig deduplisere ulike
+  // klient-requests. To ulike clientRequestIds skal gi to faktiske
+  // wallet-mutasjoner og to faktiske shift-delta-mutasjoner.
+  const ctx = makeSetup();
+  const shiftId = await ctx.seedAgent("a1", "hall-a");
+  ctx.seedPlayer("p1", "hall-a");
+  await seedPlayerBalance(ctx, "p1", 100);
+  await ctx.service.cashIn({
+    agentUserId: "a1", playerUserId: "p1", amount: 25,
+    paymentMethod: "CASH", clientRequestId: "key-x",
+  });
+  await ctx.service.cashIn({
+    agentUserId: "a1", playerUserId: "p1", amount: 25,
+    paymentMethod: "CASH", clientRequestId: "key-y",
+  });
+  const shiftAfter = await ctx.store.getShiftById(shiftId);
+  assert.equal(shiftAfter?.dailyBalance, 50, "to ulike requests = to delta-applieringer");
+  assert.equal(shiftAfter?.totalCashIn, 50);
+});

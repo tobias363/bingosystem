@@ -43,6 +43,13 @@ export interface AgentTransaction {
   notes: string | null;
   otherData: Record<string, unknown>;
   relatedTxId: string | null;
+  /**
+   * BIN-PILOT-K1 (Code Review #1 P0-1): client-supplied retry-key som
+   * matcher partial unique-index på `(agent_user_id, player_user_id,
+   * client_request_id)`. Brukes av service-laget for å detektere retry
+   * og hoppe over shift-cash-delta-replay.
+   */
+  clientRequestId: string | null;
   createdAt: string;
 }
 
@@ -64,6 +71,25 @@ export interface InsertAgentTransactionInput {
   notes?: string | null;
   otherData?: Record<string, unknown>;
   relatedTxId?: string | null;
+  /**
+   * BIN-PILOT-K1: client-supplied retry-key som gjør INSERT idempotent
+   * via partial unique-index `idx_app_agent_transactions_idempotency`.
+   * Bruk `insertIdempotent()` for retry-safe INSERT som returnerer
+   * eksisterende rad ved konflikt.
+   */
+  clientRequestId?: string | null;
+}
+
+/**
+ * BIN-PILOT-K1: resultat fra `insertIdempotent`. `created=true` betyr at
+ * raden ble opprettet i dette kallet (service-lag MÅ deretter applye
+ * shift-cash-delta atomisk i samme transaksjon). `created=false` betyr at
+ * en eksisterende rad ble funnet via client_request_id-konflikt — caller
+ * skal IKKE applye delta på nytt.
+ */
+export interface InsertIdempotentResult {
+  created: boolean;
+  row: AgentTransaction;
 }
 
 export interface ListFilter {
@@ -90,6 +116,31 @@ export interface ShiftAggregate {
 
 export interface AgentTransactionStore {
   insert(input: InsertAgentTransactionInput, client?: PoolClient): Promise<AgentTransaction>;
+  /**
+   * BIN-PILOT-K1: idempotent INSERT — bruker `ON CONFLICT
+   * (agent_user_id, player_user_id, client_request_id) DO NOTHING`.
+   *
+   * - `created=true`: ny rad. Caller MÅ applye shift-cash-delta i samme tx.
+   * - `created=false`: eksisterende rad ble funnet (retry-detect). Caller
+   *    skal IKKE applye delta — det skjedde i forrige fullførte kall.
+   *
+   * Krever at `input.clientRequestId` er satt — kaster `Error` hvis null.
+   * Optional `client` lar caller binde dette til samme transaksjon som
+   * `agentStore.applyShiftCashDelta(... , client)`.
+   */
+  insertIdempotent(
+    input: InsertAgentTransactionInput,
+    client?: PoolClient,
+  ): Promise<InsertIdempotentResult>;
+  /**
+   * BIN-PILOT-K1: oppslag på partial unique-index. Returnerer eksisterende
+   * rad hvis (agent, player, clientRequestId) finnes.
+   */
+  findByClientRequestId(
+    agentUserId: string,
+    playerUserId: string,
+    clientRequestId: string,
+  ): Promise<AgentTransaction | null>;
   getById(id: string): Promise<AgentTransaction | null>;
   list(filter: ListFilter): Promise<AgentTransaction[]>;
   findSaleByTicketUniqueId(ticketUniqueId: string): Promise<AgentTransaction | null>;
@@ -124,6 +175,7 @@ interface Row {
   notes: string | null;
   other_data: unknown;
   related_tx_id: string | null;
+  client_request_id: string | null;
   created_at: Date | string;
 }
 
@@ -174,8 +226,9 @@ export class PostgresAgentTransactionStore implements AgentTransactionStore {
       `INSERT INTO ${this.tableName}
         (id, shift_id, agent_user_id, player_user_id, hall_id, action_type,
          wallet_direction, payment_method, amount, previous_balance, after_balance,
-         wallet_tx_id, ticket_unique_id, external_reference, notes, other_data, related_tx_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17)
+         wallet_tx_id, ticket_unique_id, external_reference, notes, other_data, related_tx_id,
+         client_request_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18)
        RETURNING *`,
       [
         input.id,
@@ -194,10 +247,91 @@ export class PostgresAgentTransactionStore implements AgentTransactionStore {
         input.externalReference ?? null,
         input.notes ?? null,
         JSON.stringify(input.otherData ?? {}),
-        input.relatedTxId ?? null
+        input.relatedTxId ?? null,
+        input.clientRequestId ?? null,
       ]
     );
     return this.map(rows[0]!);
+  }
+
+  /**
+   * BIN-PILOT-K1: idempotent INSERT med ON CONFLICT DO NOTHING.
+   * Returnerer `{ created: true, row }` ved nytt INSERT, eller
+   * `{ created: false, row }` ved konflikt (eksisterende rad).
+   */
+  async insertIdempotent(
+    input: InsertAgentTransactionInput,
+    client?: PoolClient,
+  ): Promise<InsertIdempotentResult> {
+    if (!input.clientRequestId) {
+      throw new Error(
+        "[BIN-PILOT-K1] insertIdempotent krever clientRequestId — bruk insert() for non-idempotent inserts."
+      );
+    }
+    const exec = client ?? this.pool;
+    const { rows } = await exec.query<Row>(
+      `INSERT INTO ${this.tableName}
+        (id, shift_id, agent_user_id, player_user_id, hall_id, action_type,
+         wallet_direction, payment_method, amount, previous_balance, after_balance,
+         wallet_tx_id, ticket_unique_id, external_reference, notes, other_data, related_tx_id,
+         client_request_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18)
+       ON CONFLICT (agent_user_id, player_user_id, client_request_id)
+         WHERE client_request_id IS NOT NULL
+         DO NOTHING
+       RETURNING *`,
+      [
+        input.id,
+        input.shiftId,
+        input.agentUserId,
+        input.playerUserId,
+        input.hallId,
+        input.actionType,
+        input.walletDirection,
+        input.paymentMethod,
+        input.amount,
+        input.previousBalance,
+        input.afterBalance,
+        input.walletTxId ?? null,
+        input.ticketUniqueId ?? null,
+        input.externalReference ?? null,
+        input.notes ?? null,
+        JSON.stringify(input.otherData ?? {}),
+        input.relatedTxId ?? null,
+        input.clientRequestId,
+      ]
+    );
+    if (rows[0]) {
+      return { created: true, row: this.map(rows[0]) };
+    }
+    // ON CONFLICT triggered — fetch existing via samme exec så vi ser raden
+    // uavhengig av COMMIT-status fra parallelle/originale transaksjoner.
+    const { rows: existingRows } = await exec.query<Row>(
+      `SELECT * FROM ${this.tableName}
+       WHERE agent_user_id = $1 AND player_user_id = $2 AND client_request_id = $3
+       LIMIT 1`,
+      [input.agentUserId, input.playerUserId, input.clientRequestId]
+    );
+    if (!existingRows[0]) {
+      throw new Error(
+        "[BIN-PILOT-K1] insertIdempotent: ON CONFLICT triggered but row not found — race condition?"
+      );
+    }
+    return { created: false, row: this.map(existingRows[0]) };
+  }
+
+  async findByClientRequestId(
+    agentUserId: string,
+    playerUserId: string,
+    clientRequestId: string,
+  ): Promise<AgentTransaction | null> {
+    const { rows } = await this.pool.query<Row>(
+      `SELECT * FROM ${this.tableName}
+       WHERE agent_user_id = $1 AND player_user_id = $2 AND client_request_id = $3
+       LIMIT 1`,
+      [agentUserId, playerUserId, clientRequestId]
+    );
+    return rows[0] ? this.map(rows[0]) : null;
   }
 
   async getById(id: string): Promise<AgentTransaction | null> {
@@ -331,6 +465,7 @@ export class PostgresAgentTransactionStore implements AgentTransactionStore {
       notes: row.notes,
       otherData: asJsonObject(row.other_data),
       relatedTxId: row.related_tx_id,
+      clientRequestId: row.client_request_id,
       createdAt: asIso(row.created_at)
     };
   }
@@ -352,6 +487,21 @@ export class InMemoryAgentTransactionStore implements AgentTransactionStore {
         throw Object.assign(new Error("duplicate key value violates unique constraint"), { code: "23505" });
       }
     }
+    // BIN-PILOT-K1: enforce partial unique-index på client_request_id når satt.
+    if (input.clientRequestId) {
+      const dup = this.rows.find(
+        (r) =>
+          r.agentUserId === input.agentUserId
+          && r.playerUserId === input.playerUserId
+          && r.clientRequestId === input.clientRequestId
+      );
+      if (dup) {
+        throw Object.assign(
+          new Error("duplicate key value violates unique constraint"),
+          { code: "23505" }
+        );
+      }
+    }
     const row: AgentTransaction = {
       id: input.id,
       shiftId: input.shiftId,
@@ -370,10 +520,49 @@ export class InMemoryAgentTransactionStore implements AgentTransactionStore {
       notes: input.notes ?? null,
       otherData: input.otherData ?? {},
       relatedTxId: input.relatedTxId ?? null,
+      clientRequestId: input.clientRequestId ?? null,
       createdAt: new Date().toISOString()
     };
     this.rows.push(row);
     return { ...row };
+  }
+
+  /**
+   * BIN-PILOT-K1: in-memory mirror av Postgres ON CONFLICT DO NOTHING.
+   */
+  async insertIdempotent(
+    input: InsertAgentTransactionInput,
+  ): Promise<InsertIdempotentResult> {
+    if (!input.clientRequestId) {
+      throw new Error(
+        "[BIN-PILOT-K1] insertIdempotent krever clientRequestId — bruk insert() for non-idempotent inserts."
+      );
+    }
+    const existing = this.rows.find(
+      (r) =>
+        r.agentUserId === input.agentUserId
+        && r.playerUserId === input.playerUserId
+        && r.clientRequestId === input.clientRequestId
+    );
+    if (existing) {
+      return { created: false, row: { ...existing } };
+    }
+    const row = await this.insert(input);
+    return { created: true, row };
+  }
+
+  async findByClientRequestId(
+    agentUserId: string,
+    playerUserId: string,
+    clientRequestId: string,
+  ): Promise<AgentTransaction | null> {
+    const r = this.rows.find(
+      (row) =>
+        row.agentUserId === agentUserId
+        && row.playerUserId === playerUserId
+        && row.clientRequestId === clientRequestId
+    );
+    return r ? { ...r } : null;
   }
 
   async getById(id: string): Promise<AgentTransaction | null> {
