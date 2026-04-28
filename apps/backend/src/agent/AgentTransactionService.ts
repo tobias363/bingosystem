@@ -293,6 +293,29 @@ export class AgentTransactionService {
       );
     }
 
+    // ── BIN-PILOT-K1 (Code Review #1 P0-1): atomic 3-step cash-op ──────────
+    //
+    // Tidligere (buggy):
+    //   Step 1: wallet.credit/debit                       (egen tx, idempotent)
+    //   Step 2: store.applyShiftCashDelta                 (egen tx, IKKE idempotent)
+    //   Step 3: txs.insert                                (egen tx, fersk txId)
+    //
+    // Hvis network-flap mellom 1 og 2 → retry dobbel-inkrementerte
+    // shift.daily_balance + opprettet duplikat-rad i app_agent_transactions.
+    //
+    // Fix: Step 2 + 3 wrapped i felles PG-tx via agentStore.runInTransaction.
+    // INSERT bruker ON CONFLICT (agent_user_id, player_user_id, client_request_id)
+    // DO NOTHING. Ved retry-konflikt:
+    //   - INSERT slår mot conflict → vi vet at forrige kall fullførte
+    //     både delta + insert (atomisk i samme tx)
+    //   - vi hopper over delta-update og returnerer den eksisterende raden
+    //
+    // Step 1 (wallet) holder seg utenfor — wallet-adapter har egen
+    // idempotency via idempotencyKey (PR #522 hotfix). Network-flap
+    // mellom step 1 og step 2+3 er trygt: retry vil treffe samme wallet-
+    // rad (idempotency) og samme tx-rad (ON CONFLICT).
+    // ─────────────────────────────────────────────────────────────────────
+
     const txId = `agenttx-${randomUUID()}`;
     // PR #522 hotfix: idempotency-key må KEYES på clientRequestId fra
     // klienten — ikke på fresh txId — slik at network-retry treffer
@@ -304,6 +327,7 @@ export class AgentTransactionService {
     });
     const reason = `agent ${actionType} shift=${shift.id} clientReq=${input.clientRequestId}`;
 
+    // Step 1: wallet (egen tx, idempotent via wallet.idempotencyKey).
     const walletTx = walletDirection === "CREDIT"
       ? await this.wallet.credit(player.walletId, input.amount, reason, { idempotencyKey })
       : await this.wallet.debit(player.walletId, input.amount, reason, { idempotencyKey });
@@ -329,26 +353,43 @@ export class AgentTransactionService {
         delta.totalCardOut = input.amount;
       }
     }
-    await this.store.applyShiftCashDelta(shift.id, delta);
 
-    const tx = await this.txs.insert({
-      id: txId,
-      shiftId: shift.id,
-      agentUserId: input.agentUserId,
-      playerUserId: player.id,
-      hallId: shift.hallId,
-      actionType,
-      walletDirection,
-      paymentMethod: input.paymentMethod,
-      amount: input.amount,
-      previousBalance,
-      afterBalance,
-      walletTxId: walletTx.id,
-      notes: input.notes ?? null,
-      externalReference: input.externalReference ?? null,
-      otherData: { clientRequestId: input.clientRequestId },
+    // Steps 2 + 3: atomic — INSERT (ON CONFLICT DO NOTHING) + applyShiftCashDelta
+    // i samme PG-tx. Hvis INSERT slår mot conflict (retry-detect), hopp over
+    // delta-update for å unngå dobbel-mutasjon.
+    const result = await this.store.runInTransaction(async (client) => {
+      const insertResult = await this.txs.insertIdempotent(
+        {
+          id: txId,
+          shiftId: shift.id,
+          agentUserId: input.agentUserId,
+          playerUserId: player.id,
+          hallId: shift.hallId,
+          actionType,
+          walletDirection,
+          paymentMethod: input.paymentMethod,
+          amount: input.amount,
+          previousBalance,
+          afterBalance,
+          walletTxId: walletTx.id,
+          notes: input.notes ?? null,
+          externalReference: input.externalReference ?? null,
+          otherData: { clientRequestId: input.clientRequestId },
+          clientRequestId: input.clientRequestId,
+        },
+        client ?? undefined,
+      );
+      if (insertResult.created) {
+        // Ny rad — apply delta atomisk i samme tx.
+        await this.store.applyShiftCashDelta(shift.id, delta, client ?? undefined);
+      }
+      // Hvis !created (retry-konflikt): forrige kall committet både
+      // delta + insert. Ikke applye delta på nytt — det ville dobbel-
+      // inkrementert shift.daily_balance.
+      return insertResult.row;
     });
-    return tx;
+
+    return result;
   }
 
   // ── Wireframe 17.7: Add Money — Registered User ─────────────────────────
