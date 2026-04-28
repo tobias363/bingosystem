@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import cors from "cors";
 import express from "express";
+import helmet from "helmet";
 import http from "node:http";
 import path from "node:path";
 import fs from "node:fs";
@@ -348,6 +349,107 @@ const corsOrigins: string[] | "*" = corsAllowedOriginsRaw
 // might log so the traceId is included in every log line for the request.
 // Sets the X-Trace-Id response header so clients can correlate.
 app.use(traceIdMiddleware());
+
+// SEC-P0-002 (Bølge 2A 2026-04-28): Helmet — defense-in-depth HTTP
+// security headers. Closes FIN-P0-02 from the 2026-04-28 audit.
+//
+// What this gives us:
+//   - X-Frame-Options: DENY → admin panel cannot be iframed (clickjacking
+//     protection — agent cannot be tricked into clicking "force-end-day"
+//     by a transparent overlay).
+//   - Strict-Transport-Security: 1 yr + includeSubDomains + preload →
+//     forces HTTPS; mitigates downgrade attacks against admin sessions.
+//   - X-Content-Type-Options: nosniff → blocks MIME-sniff XSS via
+//     uploaded files served from /api/uploads (image upload pipeline).
+//   - Referrer-Policy: strict-origin-when-cross-origin → cuts cross-site
+//     referrer leakage of session-bearing URLs.
+//   - X-DNS-Prefetch-Control: off → reduces fingerprinting of admin's
+//     external dependencies.
+//   - Content-Security-Policy: defense-in-depth fallback for the 27 XSS
+//     sinks tracked in FIN-P1-01 (those are fixed in Bølge 2B). Until
+//     then a CSP block tells the browser to refuse loading
+//     attacker-injected resources from disallowed origins.
+//
+// CSP rationale:
+//   - We INTENTIONALLY allow `'unsafe-inline'` for both scripts and
+//     styles. Reason: `apps/backend/public/web/index.html` (the player
+//     web shell) contains ~3000 lines of inline CSS + several inline
+//     `<script>` blocks (Firebase init, lobby init). Migrating those to
+//     external files is tracked separately. With `'unsafe-inline'` the
+//     CSP still blocks resource loads from disallowed origins (the main
+//     attack vector for the XSS sinks), it just doesn't block inline
+//     execution. This is a conscious trade-off documented in the audit.
+//   - `'unsafe-eval'` for scripts: Pixi.js (game-client) needs it for
+//     some shader-compile paths.
+//   - `connect-src` includes wss: + https: so Socket.IO can establish
+//     websocket connections to any allowed origin (Socket.IO falls back
+//     to long-poll over HTTPS too).
+//   - `img-src` allows `data:` (base64 logos, QR codes), `blob:` (file
+//     previews), `https:` (Cloudinary uploads, external CDN images).
+//   - `script-src` includes `https://www.gstatic.com` for Firebase
+//     messaging SDK loaded from CDN by /web/index.html.
+//   - `frame-ancestors 'none'` overrides X-Frame-Options for browsers
+//     that prefer CSP (modern Chrome/Firefox).
+//
+// This is intentionally permissive for pilot — Bølge 2B will fix the XSS
+// sinks AND tighten CSP in lockstep so we never serve a broken admin.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      // Use Helmet's default `default-src 'self'` then layer overrides.
+      useDefaults: true,
+      directives: {
+        // Allow inline + eval for legacy/Pixi compatibility (see rationale above).
+        "script-src": [
+          "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
+          "https://www.gstatic.com",
+        ],
+        // Allow inline styles (legacy <style> blocks in /web/).
+        "style-src": ["'self'", "'unsafe-inline'", "https:"],
+        // External images: Cloudinary uploads, external CDN, data: URIs (logos), blob: (previews).
+        "img-src": ["'self'", "data:", "blob:", "https:"],
+        // Socket.IO + REST need wss/https. Allow `*` would defeat CSP — instead allow protocols.
+        "connect-src": ["'self'", "wss:", "https:", "ws:"],
+        // Fonts from /web/legacy-skin and Google Fonts patterns.
+        "font-src": ["'self'", "data:", "https:"],
+        // Clickjacking: frame-ancestors 'none' is the modern equivalent of X-Frame-Options: DENY.
+        "frame-ancestors": ["'none'"],
+        // Block forms POSTing to other origins (defense vs reflected-XSS phishing redirects).
+        "form-action": ["'self'"],
+        // Disable plugins / object embeds (Flash etc).
+        "object-src": ["'none'"],
+        // Upgrade any http: subresources to https: (defense-in-depth + HSTS).
+        "upgrade-insecure-requests": [],
+      },
+    },
+    // 1 year HSTS, includeSubDomains, preload-eligible.
+    strictTransportSecurity: {
+      maxAge: 31_536_000,
+      includeSubDomains: true,
+      preload: true,
+    },
+    // Frame-Options: DENY — defense-in-depth alongside CSP frame-ancestors.
+    frameguard: { action: "deny" },
+    // Cut referrer leakage. `strict-origin-when-cross-origin` is the modern default.
+    referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+    // Block DNS prefetching that could fingerprint admin's external deps.
+    dnsPrefetchControl: { allow: false },
+    // X-Content-Type-Options: nosniff — blocks MIME-sniff XSS on uploaded media.
+    noSniff: true,
+    // Hide Express version (already removed by us, but Helmet pins it for safety).
+    hidePoweredBy: true,
+    // Cross-Origin-Resource-Policy default 'same-origin' would break Cloudinary thumbnails;
+    // we serve assets to <img>-tags from external origins.
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    // Cross-Origin-Embedder-Policy: leave default (require-corp) off — game-client
+    // assets need to load cross-origin without CORP headers.
+    crossOriginEmbedderPolicy: false,
+    // Cross-Origin-Opener-Policy: same-origin would prevent OAuth / Vipps redirects.
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+  }),
+);
 app.use(cors({ origin: corsOrigins, credentials: true }));
 // LAV-3: 100 KB for all endpoints, except registration which carries compressed photo IDs (~2 * 100KB base64)
 // PT1: static-ticket CSV-import kan ha opptil ~50k rader (~10MB raw), derfor 15mb limit.
