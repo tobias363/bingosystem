@@ -1628,6 +1628,33 @@ export class BingoEngine {
       finishPlaySessionsForGame: (room, game, endedAtMs) =>
         this.finishPlaySessionsForGame(room, game, endedAtMs),
       writeGameEndCheckpoint: (room, game) => this.writeGameEndCheckpoint(room, game),
+      // Tobias prod-incident 2026-04-29: trigger mini-game (Mystery / Wheel /
+      // Chest / ColorDraft) i auto-claim-pathen. Når Fullt Hus auto-claimes
+      // i `evaluateActivePhase` (uten å gå via socket `claim:submit`),
+      // kaller den hooken her; vi delegerer til den eksisterende
+      // `activateMiniGame`-helperen som muterer `game.miniGame` og
+      // returnerer state-en. Idempotent: hvis `game.miniGame` allerede er
+      // satt (rare race med manuell claim:submit), returnerer helperen
+      // bare den eksisterende uten å overskrive.
+      //
+      // Multi-winner: dagens MiniGameState-schema har én playerId per
+      // game. Vi aktiverer for første deterministiske vinner (winnerIds[0])
+      // — matcher manuell claim:submit-pathens semantikk der kun en
+      // spillers handler vinner race-en til activateMiniGame. socket-laget
+      // detekterer mini-game-state og emitterer `minigame:activated` til
+      // riktig vinner via wallet-rommet (drawEvents.ts).
+      onAutoClaimedFullHouse: (room, game, winnerIds) => {
+        if (winnerIds.length === 0) return;
+        const winnerPlayerId = winnerIds[0]!;
+        // activateMiniGameHelper er idempotent — andre kall returnerer
+        // eksisterende mini-game uten å overskrive (BingoEngineMiniGames.ts:262).
+        activateMiniGameHelper(
+          this.getMiniGamesContext(),
+          this.miniGameRotation,
+          room.code,
+          winnerPlayerId,
+        );
+      },
     };
   }
 
@@ -3462,6 +3489,25 @@ export class BingoEngine {
       roomCode,
       playerId,
     );
+  }
+
+  /**
+   * Read the current mini-game state for a room without mutating anything.
+   *
+   * Tobias prod-incident 2026-04-29: Socket-laget bruker dette etter
+   * `drawNextNumber` for å detektere at `evaluateActivePhase` aktiverte
+   * mini-game (Fullt Hus auto-claim → `onAutoClaimedFullHouse` →
+   * `activateMiniGameHelper`). Sammenlignes med pre-draw-snapshot for å
+   * sende `minigame:activated` til vinneren via wallet-rommet.
+   *
+   * Returnerer null hvis rommet ikke finnes eller hvis ingen mini-game
+   * er aktiv på currentGame. Kaster ikke — fail-soft for socket-laget.
+   */
+  getCurrentMiniGame(roomCode: string): MiniGameState | null {
+    const code = roomCode.trim().toUpperCase();
+    const room = this.rooms.get(code);
+    if (!room) return null;
+    return room.currentGame?.miniGame ?? null;
   }
 
   /**
