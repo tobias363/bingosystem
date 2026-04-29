@@ -6,6 +6,7 @@
 // Fylles inn i oppfølger-PR-er per legacy V1.0/V2.0-wireframes.
 
 import { t } from "../../i18n/I18n.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 export interface AgentPortalPlaceholderOpts {
   /** i18n-key for side-tittel (f.eks. "add_physical_tickets"). */
@@ -44,8 +45,4 @@ export function mountAgentPortalPlaceholder(
         </div>
       </div>
     </section>`;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

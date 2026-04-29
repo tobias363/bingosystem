@@ -1,5 +1,6 @@
 import { t } from "../i18n/I18n.js";
 import type { RouteDef } from "../router/routes.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
 
 export function renderPlaceholder(container: HTMLElement, route: RouteDef): void {
   const title = t(route.titleKey);
@@ -27,8 +28,4 @@ export function renderUnknown(container: HTMLElement, path: string): void {
         <a href="#/admin" class="btn btn-primary btn-sm">← ${escapeHtml(t("dashboard"))}</a>
       </div>
     </div>`;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

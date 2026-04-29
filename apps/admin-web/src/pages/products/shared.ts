@@ -7,13 +7,8 @@
 import { t } from "../../i18n/I18n.js";
 import type { ProductStatus } from "../../api/admin-products.js";
 
-export function escapeHtml(s: string | null | undefined): string {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!
-  );
-}
-
+import { escapeHtml } from "../../utils/escapeHtml.js";
+export { escapeHtml };
 /** 50050 øre → "500.50" (NOK). */
 export function formatPriceCents(cents: number | null | undefined): string {
   if (cents == null || !Number.isFinite(cents)) return "0.00";

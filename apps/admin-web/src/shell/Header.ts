@@ -2,6 +2,7 @@ import { t } from "../i18n/I18n.js";
 import type { Session } from "../auth/Session.js";
 import { logout } from "../api/auth.js";
 import { listPendingRequests } from "../api/paymentRequests.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
 
 export function renderHeader(container: HTMLElement, session: Session, maintenanceMode: boolean): void {
   container.innerHTML = "";
@@ -195,8 +196,4 @@ async function refreshNotifications(session: Session, bellLi: HTMLElement): Prom
   } catch {
     // silent — PAYMENT_REQUEST_READ may be missing for some operators
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

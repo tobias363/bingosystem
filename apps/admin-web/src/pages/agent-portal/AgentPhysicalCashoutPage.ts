@@ -44,6 +44,7 @@ import {
   type PhysicalTicketGameInHallRow,
 } from "../../api/admin-physical-tickets.js";
 import { openPhysicalCashoutPatternModal } from "../cash-inout/PhysicalCashoutPatternModal.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 // ── Types & helpers ─────────────────────────────────────────────────────────
 
@@ -64,10 +65,6 @@ interface PageState {
   pendingTickets: PhysicalTicket[];
   rewardedTickets: PhysicalTicket[];
   loading: boolean;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 function formatNOK(cents: number | null): string {

@@ -28,6 +28,7 @@ import {
   type Game1HallStatus,
 } from "../../api/admin-game1-master.js";
 import { apiRequest } from "../../api/client.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 const POLL_INTERVAL_MS = 5_000;
 
@@ -352,13 +353,6 @@ async function onMarkReady(container: HTMLElement): Promise<void> {
   } finally {
     state.busy = false;
   }
-}
-
-function escapeHtml(s: unknown): string {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!)
-  );
 }
 
 // Test-only exports

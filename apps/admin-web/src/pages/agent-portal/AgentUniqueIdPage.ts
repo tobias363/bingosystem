@@ -22,10 +22,7 @@ import { openCreateUniqueIdModal } from "./unique-id/CreateUniqueIdModal.js";
 import { openAddMoneyUniqueIdModal } from "./unique-id/AddMoneyUniqueIdModal.js";
 import { openWithdrawUniqueIdModal } from "./unique-id/WithdrawUniqueIdModal.js";
 import { mountUniqueIdDetailsView } from "./unique-id/UniqueIdDetailsView.js";
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
+import { escapeHtml } from "../../utils/escapeHtml.js";
 function formatKr(cents: number): string {
   return (cents / 100).toFixed(2);
 }

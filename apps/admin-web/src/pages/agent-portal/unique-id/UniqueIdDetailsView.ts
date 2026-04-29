@@ -8,6 +8,7 @@ import { t } from "../../../i18n/I18n.js";
 import { Modal } from "../../../components/Modal.js";
 import { Toast } from "../../../components/Toast.js";
 import { ApiError } from "../../../api/client.js";
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 import {
   getUniqueIdDetails,
   regenerateUniqueId,
@@ -17,10 +18,6 @@ import {
   type UniqueIdDetailsResponse,
   type UniqueIdTransaction,
 } from "../../../api/agent-unique-ids.js";
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
 function formatKr(cents: number): string {
   return (cents / 100).toFixed(2);
 }

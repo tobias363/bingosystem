@@ -24,6 +24,7 @@ import { t } from "../../../i18n/I18n.js";
 import { Modal, type ModalButton } from "../../../components/Modal.js";
 import { Toast } from "../../../components/Toast.js";
 import { ApiError, apiRequest } from "../../../api/client.js";
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 import {
   MACHINE_ROW_KEYS,
   MAX_BILAG_BYTES,
@@ -55,10 +56,6 @@ const ROW_LABELS: Record<MachineRowKey, string> = {
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
 
 function nokToOre(nok: number): number {
   return Math.round(nok * 100);

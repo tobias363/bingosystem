@@ -34,10 +34,7 @@ import {
 import { renderCashInOutPage } from "../cash-inout/CashInOutPage.js";
 import { openPendingCashoutsModal } from "./PendingCashoutsModal.js";
 import { openRegisterSoldTicketsModal } from "./modals/RegisterSoldTicketsModal.js";
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 export function mountAgentCashInOut(container: HTMLElement): void {
   // 1. Render the canonical, legacy-ported cash-inout page (daily balance,

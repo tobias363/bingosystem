@@ -3,6 +3,7 @@
 import { t } from "../../../i18n/I18n.js";
 import type { TopPlayerRow } from "../../../api/dashboard.js";
 import type { Role } from "../../../auth/Session.js";
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 
 export interface TopPlayersOptions {
   /** `null` = endpoint not yet available (BIN-A2-API-2). Show placeholder. */
@@ -61,10 +62,6 @@ export function renderTopPlayersBox(opts: TopPlayersOptions): HTMLElement {
   }
   box.append(footer);
   return box;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 function escapeAttr(s: string): string {
   return s.replace(/["<>&]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);

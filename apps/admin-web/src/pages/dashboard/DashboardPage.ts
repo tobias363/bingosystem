@@ -8,6 +8,7 @@ import { renderInfoBox } from "./widgets/InfoBox.js";
 import { renderLatestRequestsBox } from "./widgets/LatestRequestsBox.js";
 import { renderTopPlayersBox } from "./widgets/TopPlayersBox.js";
 import { renderOngoingGamesTabs } from "./widgets/OngoingGamesTabs.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 const REFRESH_MS = 10_000;
 
@@ -186,8 +187,4 @@ function renderError(container: HTMLElement, err: unknown): void {
 function canViewPlayers(session: Session): boolean {
   const p = session.permissions["Players Management"];
   return Boolean(p?.view);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

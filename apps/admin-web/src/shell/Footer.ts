@@ -1,4 +1,5 @@
 import { t } from "../i18n/I18n.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
 
 const VERSION = "0.1.0-shell";
 
@@ -13,8 +14,4 @@ export function renderFooter(container: HTMLElement): void {
     <strong>${escapeHtml(t("copyright_line"))} &copy; ${new Date().getFullYear()} Spillorama.</strong> ${escapeHtml(t("all_rights_reserved"))}
   `;
   container.append(footer);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

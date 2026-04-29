@@ -1,5 +1,6 @@
 import { t } from "../i18n/I18n.js";
 import type { RouteDef } from "../router/routes.js";
+import { escapeHtml } from "../utils/escapeHtml.js";
 
 export function renderBreadcrumb(container: HTMLElement, route: RouteDef | undefined, path: string): void {
   container.innerHTML = "";
@@ -13,8 +14,4 @@ export function renderBreadcrumb(container: HTMLElement, route: RouteDef | undef
       <li class="active">${escapeHtml(title)}</li>
     </ol>`;
   container.append(section);
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

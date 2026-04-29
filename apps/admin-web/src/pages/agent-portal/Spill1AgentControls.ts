@@ -12,19 +12,7 @@
  */
 
 import type { Spill1CurrentGame } from "../../api/agent-game1.js";
-
-function escapeHtml(s: unknown): string {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[c]!)
-  );
-}
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 export interface Spill1AgentControlsProps {
   currentGame: Spill1CurrentGame;

@@ -5,13 +5,8 @@
 
 import { t } from "../../i18n/I18n.js";
 
-export function escapeHtml(s: string | null | undefined): string {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!
-  );
-}
-
+import { escapeHtml } from "../../utils/escapeHtml.js";
+export { escapeHtml };
 /** Content-header with breadcrumb rooted at "Security Management". */
 export function contentHeader(titleKey: string, moduleKey = "security_management"): string {
   return `
