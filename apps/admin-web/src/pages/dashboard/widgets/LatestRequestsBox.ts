@@ -4,6 +4,7 @@
 import { t } from "../../../i18n/I18n.js";
 import type { PaymentRequest } from "../../../api/paymentRequests.js";
 import type { Role } from "../../../auth/Session.js";
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 
 export interface LatestRequestsOptions {
   requests: PaymentRequest[];
@@ -21,7 +22,7 @@ export function renderLatestRequestsBox(opts: LatestRequestsOptions): HTMLElemen
   header.innerHTML = `
     <h3 class="box-title">${escapeHtml(t("latest_request"))}</h3>
     <div class="box-tools pull-right">
-      <span class="label label-danger" title="${escapeAttr(t("total_pending_request"))}">${opts.totalPending}</span>
+      <span class="label label-danger" title="${escapeHtml(t("total_pending_request"))}">${opts.totalPending}</span>
     </div>`;
   box.append(header);
 
@@ -86,11 +87,4 @@ function formatDate(iso: string): string {
   } catch {
     return iso;
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
-function escapeAttr(s: string): string {
-  return s.replace(/["<>&]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 }

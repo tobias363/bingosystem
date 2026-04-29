@@ -5,13 +5,8 @@
 import { t } from "../../i18n/I18n.js";
 import type { KycStatus, PlayerSummary } from "../../api/admin-players.js";
 
-export function escapeHtml(s: string | null | undefined): string {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, (c) => (
-    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!
-  ));
-}
-
+import { escapeHtml } from "../../utils/escapeHtml.js";
+export { escapeHtml };
 export function formatNOK(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "00.00";
   return n.toFixed(2);

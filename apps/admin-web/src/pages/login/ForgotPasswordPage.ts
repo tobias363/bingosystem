@@ -1,5 +1,6 @@
 import { t } from "../../i18n/I18n.js";
 import { forgotPassword } from "../../api/auth.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 //
 // Enumeration-safe UX: the backend at apps/backend/src/routes/auth.ts:227-267
@@ -101,8 +102,4 @@ export function renderForgotPasswordPage(root: HTMLElement): void {
       submit.removeAttribute("aria-busy");
     }
   });
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

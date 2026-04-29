@@ -1,5 +1,7 @@
 // Four variants: bg-blue / bg-yellow / bg-green / bg-red via icon-color.
 
+import { escapeHtml } from "../../../utils/escapeHtml.js";
+
 export interface InfoBoxOptions {
   labelLine1: string;
   labelLine2: string;
@@ -24,7 +26,7 @@ export function renderInfoBox(opts: InfoBoxOptions): HTMLElement {
 
   const iconSpan = document.createElement("span");
   iconSpan.className = `info-box-icon bg-${opts.color}`;
-  iconSpan.innerHTML = `<i class="${escapeAttr(opts.icon)}"></i>`;
+  iconSpan.innerHTML = `<i class="${escapeHtml(opts.icon)}"></i>`;
   box.append(iconSpan);
 
   const content = document.createElement("div");
@@ -42,11 +44,4 @@ export function renderInfoBox(opts: InfoBoxOptions): HTMLElement {
   wrap.append(box);
   col.append(wrap);
   return col;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
-function escapeAttr(s: string): string {
-  return s.replace(/["<>&]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 }

@@ -19,10 +19,7 @@ import { Modal } from "../../../components/Modal.js";
 import { Toast } from "../../../components/Toast.js";
 import { ApiError } from "../../../api/client.js";
 import { getDailyBalance, openDay, type DailyBalance } from "../../../api/agent-shift.js";
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 
 function formatNOK(n: number): string {
   return `${n.toFixed(2)} kr`;

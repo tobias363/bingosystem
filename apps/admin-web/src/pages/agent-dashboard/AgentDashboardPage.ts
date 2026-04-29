@@ -12,6 +12,7 @@
 // shift-info hører hjemme der per legacy V1.0.
 
 import { t } from "../../i18n/I18n.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 const GAME_TABS = ["game1", "game2", "game3", "game4"] as const;
 type GameTab = (typeof GAME_TABS)[number];
@@ -198,8 +199,4 @@ function wireTabs(container: HTMLElement): void {
       container.querySelector(`#tab-${which}`)?.classList.add("active");
     });
   });
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

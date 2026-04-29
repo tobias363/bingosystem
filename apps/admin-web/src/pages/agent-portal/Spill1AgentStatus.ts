@@ -16,19 +16,7 @@ import type {
   Spill1CurrentGame,
   Spill1CurrentGameHall,
 } from "../../api/agent-game1.js";
-
-function escapeHtml(s: unknown): string {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, (c) =>
-    ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      '"': "&quot;",
-      "'": "&#39;",
-    }[c]!)
-  );
-}
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 function statusBadge(status: string): string {
   const cls = (() => {

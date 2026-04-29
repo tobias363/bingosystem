@@ -35,6 +35,7 @@ import { Modal, type ModalInstance } from "../../../components/Modal.js";
 import { Toast } from "../../../components/Toast.js";
 import { ApiError } from "../../../api/client.js";
 import { t } from "../../../i18n/I18n.js";
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 import {
   agentGetInitialIds,
   agentRecordFinalIds,
@@ -44,12 +45,6 @@ import {
   type InitialIdEntry,
   type TicketType,
 } from "../../../api/agent-ticket-registration.js";
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
-  );
-}
 
 export interface RegisterMoreTicketsModalOptions {
   gameId: string;

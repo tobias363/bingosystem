@@ -7,6 +7,7 @@
 import { t } from "../../i18n/I18n.js";
 import { login, loginPhone, completeTwoFALogin } from "../../api/auth.js";
 import { setSession } from "../../auth/Session.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 type LoginMethod = "email" | "phone";
 
@@ -248,8 +249,4 @@ export function renderLoginPage(root: HTMLElement, onSuccess: () => void): void 
     hideAlert();
     showCredentialsStep();
   });
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

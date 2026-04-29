@@ -28,6 +28,7 @@
 
 import "./tv-screen.css";
 import { io, type Socket } from "socket.io-client";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 import {
   fetchTvState,
   fetchTvVoice,
@@ -626,14 +627,6 @@ function formatTimeHHMM(iso: string): string {
   } catch {
     return "--:--";
   }
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 function scheduleWinnersSwitch(instance: ActiveInstance): void {

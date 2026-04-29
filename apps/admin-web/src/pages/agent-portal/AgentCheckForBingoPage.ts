@@ -22,13 +22,10 @@ import {
   type AgentCheckBingoResponse,
 } from "../../api/agent-bingo.js";
 import type { PhysicalTicketPattern } from "../../api/admin-physical-tickets.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 const GRID_SIZE = 5;
 const TICKET_SIZE = GRID_SIZE * GRID_SIZE;
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
 
 function formatNOK(cents: number): string {
   return (cents / 100).toFixed(2);

@@ -2,6 +2,7 @@ import { t } from "../../i18n/I18n.js";
 import { register } from "../../api/auth.js";
 import { setSession } from "../../auth/Session.js";
 import { ApiError } from "../../api/client.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 // PR-B7 (BIN-675) — builds an *actual* registration form. The legacy
 // of login.html (no first-name/surname/birthdate fields) — we port against
@@ -227,8 +228,4 @@ function mapErrorToI18n(err: unknown): string {
     }
   }
   return err instanceof Error ? err.message : t("register_error_generic");
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

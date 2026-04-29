@@ -68,6 +68,7 @@ import {
   rejectGame1MasterTransfer,
 } from "../../api/admin-game1-master.js";
 import { fetchMe } from "../../api/auth.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 const POLL_INTERVAL_MS = 5_000;
 const DEFAULT_COUNTDOWN_SECONDS = 120;
@@ -1238,11 +1239,6 @@ function formatRelativeTime(ms: number | undefined): string {
   const diffMin = Math.floor(diffSec / 60);
   if (diffMin < 60) return `${diffMin}m`;
   return `${Math.floor(diffMin / 60)}t`;
-}
-
-function escapeHtml(s: unknown): string {
-  if (s == null) return "";
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 // ── Test-only exports ────────────────────────────────────────────────────

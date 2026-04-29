@@ -26,16 +26,13 @@ import { t } from "../../../i18n/I18n.js";
 import { Modal } from "../../../components/Modal.js";
 import { Toast } from "../../../components/Toast.js";
 import { ApiError } from "../../../api/client.js";
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 import {
   controlDailyBalance,
   type ControlDailyBalanceResult,
 } from "../../../api/agent-shift.js";
 
 const DIFF_LIMIT = 500;
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
 
 function formatNOK(n: number): string {
   return `${n.toFixed(2)} kr`;

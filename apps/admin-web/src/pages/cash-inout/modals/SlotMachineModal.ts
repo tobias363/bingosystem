@@ -16,10 +16,7 @@ import {
 } from "../../../api/agent-slot.js";
 import { lookupPlayer } from "../../../api/agent-cash.js";
 import { slotProviderLabel as label } from "../../../components/SlotProviderSwitch.js";
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-}
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 
 export function openSlotMachineModal(provider: SlotProvider): void {
   const form = document.createElement("form");

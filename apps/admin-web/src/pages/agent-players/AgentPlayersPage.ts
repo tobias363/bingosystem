@@ -5,6 +5,7 @@
 import { t } from "../../i18n/I18n.js";
 import { Toast } from "../../components/Toast.js";
 import { ApiError } from "../../api/client.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 import {
   downloadAgentPlayerExport,
   listAgentPlayers,
@@ -133,10 +134,6 @@ function contentHeader(titleKey: string): string {
         <li class="active">${title}</li>
       </ol>
     </section>`;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 function formatDate(iso: string): string {

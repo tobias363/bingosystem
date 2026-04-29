@@ -4,6 +4,7 @@
 import { t } from "../../../i18n/I18n.js";
 import { GAME_TABS, type GameTab } from "../DashboardState.js";
 import type { AdminRoomSummary } from "../../../api/dashboard.js";
+import { escapeHtml } from "../../../utils/escapeHtml.js";
 
 export interface OngoingGamesOptions {
   games: Record<GameTab, AdminRoomSummary[]>;
@@ -157,7 +158,4 @@ function formatNumber(v: number | undefined): string {
 function shortId(id: string | undefined): string {
   if (!id) return "—";
   return id.length > 12 ? `${id.slice(0, 8)}…` : id;
-}
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }

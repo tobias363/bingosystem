@@ -18,6 +18,7 @@ import {
   fetchTvWinners,
   type TvWinnersSummary,
 } from "../../api/tv-screen.js";
+import { escapeHtml } from "../../utils/escapeHtml.js";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -138,12 +139,4 @@ function formatPrize(cents: number): string {
   if (cents === 0) return "—";
   const kr = cents / 100;
   return `${kr.toLocaleString("nb-NO")} kr`;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
