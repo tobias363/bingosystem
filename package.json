@@ -44,6 +44,8 @@
     "perf:compare:pilot-hw": "tsx scripts/pilot-hardware/compare-pilot-hw.ts",
     "perf:check:pilot-hw": "npm run perf:collect:pilot-hw && npm run perf:compare:pilot-hw",
     "test:visual:pilot-hw": "npm -w @spillorama/game-client exec playwright test --project=chromium-pilot-hw",
+    "schema:snapshot": "bash scripts/schema-ci/snapshot.sh",
+    "schema:diff": "bash scripts/schema-ci/diff-schema.sh",
     "prepare": "husky || true && node scripts/setup-husky.mjs || true"
   },
   "lint-staged": {
