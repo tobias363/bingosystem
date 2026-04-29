@@ -60,6 +60,89 @@ jobs:
       - name: Run shared-types wire-contract tests
         run: npm --prefix packages/shared-types run test
 
+  # Boot-up smoke-test: verifies that `node dist/index.js` actually starts.
+  # Added after PROD INCIDENT 2026-04-29 07:12 UTC where PR #715 passed
+  # the `backend` job (7752 unit-tests + type-check + build all green) but
+  # crashed prod startup with `Mangler connection string for
+  # PhysicalTicketPayoutService.` The unit-tests bypassed constructors via
+  # forTesting() helpers, so the constructor input-validation regression
+  # only showed up at `node dist/index.js` time — i.e. in prod.
+  #
+  # This job spins up real Postgres + Redis as services, builds the
+  # backend, runs the smoke-test which:
+  #   1. Spawns `node dist/index.js` as a child process
+  #   2. Polls /health until 200 (up to 30s)
+  #   3. Waits 10s, asserts process is still alive
+  #   4. Scans stderr for fatal-boot patterns
+  #   5. Sends SIGTERM, asserts graceful shutdown within 15s
+  #
+  # Companion: `bootStartup.constructorRegression.test.ts` runs in the
+  # `backend` job (no infra dep) and exercises every Postgres-backed
+  # service constructor the way index.ts does — that one would have caught
+  # PR #715 directly. This boot-test is the broader safety net for "build
+  # green, binary won't start" bugs.
+  boot-test:
+    runs-on: ubuntu-latest
+    needs: backend  # short-circuit if unit-tests / build are red
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: spillorama
+          POSTGRES_PASSWORD: spillorama
+          POSTGRES_DB: spillorama_boot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U spillorama"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - name: Install packages/shared-types dependencies
+        run: npm --prefix packages/shared-types install --no-audit --no-fund
+
+      - name: Build packages/shared-types
+        run: npm --prefix packages/shared-types run build
+
+      - name: Install apps/backend dependencies
+        run: npm --prefix apps/backend ci
+
+      - name: Build apps/backend
+        # The smoke-test exec's `node dist/index.js`, so we MUST build first.
+        run: npm --prefix apps/backend run build
+
+      - name: Run boot-up smoke-test
+        working-directory: apps/backend
+        env:
+          BOOT_TEST_PG_CONNECTION_STRING: postgresql://spillorama:spillorama@localhost:5432/spillorama_boot_test
+          BOOT_TEST_REDIS_URL: redis://localhost:6379/15
+          # Sentry DSN is intentionally unset — boot-test runs in dev-mode
+          # without Sentry, so no network egress to sentry.io during CI.
+          LOG_LEVEL: warn
+        run: npx tsx --test src/__tests__/bootStartup.test.ts
+
   admin-web:
     runs-on: ubuntu-latest
 
