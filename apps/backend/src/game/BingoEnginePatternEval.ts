@@ -144,6 +144,44 @@ export interface EvaluatePhaseCallbacks {
   ): Promise<void>;
   /** Skriv GAME_END-checkpoint. protected helper på engine. */
   writeGameEndCheckpoint(room: RoomState, game: GameState): Promise<void>;
+  /**
+   * Tobias prod-incident 2026-04-29: Mini-game auto-trigger for Fullt Hus.
+   *
+   * Tidligere ble mini-game (Mystery / Wheel / Chest / ColorDraft) kun
+   * aktivert når en spiller eksplisitt sendte `claim:submit` (BINGO) via
+   * socket. Spill 1's auto-round-flow bruker `autoClaimPhaseMode` der
+   * patterns auto-claimes server-side i `evaluateActivePhase` — spillere
+   * sender aldri claim:submit, så mini-game ble aldri trigget.
+   *
+   * Verifiert i prod 2026-04-29 15:00: Tobias' Demo Hall test vant alle 5
+   * patterns inkl. Fullt Hus, betalte ut 1740 kr, men ingen mini-game-popup
+   * dukket opp. `MYSTERY_FORCE_DEFAULT_FOR_TESTING=true` ble ikke noe brukt
+   * fordi `activateMiniGame` aldri ble kalt.
+   *
+   * Hooken kalles **etter** at Fullt Hus auto-claim er bokført (patternResult
+   * markert won, payout transferert), men **før** finishPlaySessionsForGame /
+   * writeGameEndCheckpoint slik at mini-game-state er på plass i samme
+   * snapshot som klient mottar via room:update etter draw:next.
+   *
+   * Trigger-betingelse: `activePattern.claimType === "BINGO"` (Fullt Hus).
+   * Fires for både normal end-round-pathen og test-hall-bypassen — begge
+   * scenarier skal trigge mini-game.
+   *
+   * Multi-winner: implementasjonen kalles én gang med hele `winnerIds`-
+   * listen så engine selv velger semantikk. Dagens `MiniGameState`-schema
+   * har én `playerId` per game → engine aktiverer for første determinis-
+   * tiske vinner. Hvis schemaet utvides senere (per-winner mini-game),
+   * trenger ikke evaluator-koden endres.
+   *
+   * Optional + fire-soft: hvis hooken kaster, logges feilen men runden
+   * fortsetter — payout er allerede transferert, det er kun mini-game-
+   * popup-trigger som kan bli stale (klient kan polle wallet).
+   */
+  onAutoClaimedFullHouse?(
+    room: RoomState,
+    game: GameState,
+    winnerIds: readonly string[],
+  ): Promise<void> | void;
 }
 
 /**
@@ -495,6 +533,30 @@ export async function evaluateActivePhase(
   activeResult.winnerId = firstWinnerId;
   activeResult.winnerIds = [...allWinnerIds];
   activeResult.payoutAmount = firstPayoutAmount;
+
+  // Tobias prod-incident 2026-04-29: trigger mini-game ved auto-claim av
+  // Fullt Hus. Tidligere ble mini-game kun aktivert via socket
+  // `claim:submit` (claimEvents.ts:93), men auto-round-flow bruker
+  // `autoClaimPhaseMode` der claim:submit aldri fires fra klient. Hooken
+  // kalles for både test-hall-bypassen (linje 507) og normal end-round-
+  // branchen (linje 531) — begge skal trigge mini-game-popup. Fire-soft:
+  // hvis hooken kaster ruller vi ikke tilbake payout. Se
+  // `EvaluatePhaseCallbacks.onAutoClaimedFullHouse`-doc for full
+  // motivasjon og scope.
+  if (
+    activePattern.claimType === "BINGO" &&
+    allWinnerIds.length > 0 &&
+    callbacks.onAutoClaimedFullHouse
+  ) {
+    try {
+      await callbacks.onAutoClaimedFullHouse(room, game, allWinnerIds);
+    } catch (err) {
+      logger.warn(
+        { err, gameId: game.id, roomCode: room.code, winnerIds: allWinnerIds },
+        "onAutoClaimedFullHouse hook failed — payout er bokført, mini-game-popup kan være stale",
+      );
+    }
+  }
 
   // Demo Hall bypass (Tobias 2026-04-27): test-haller skal kjøre runden
   // helt igjennom uten å pause på fase-vinn eller avslutte på Fullt Hus.

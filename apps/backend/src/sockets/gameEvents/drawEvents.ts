@@ -14,6 +14,7 @@ import { Game3Engine } from "../../game/Game3Engine.js";
 import type { SocketContext } from "./context.js";
 import { emitG2DrawEvents, emitG3DrawEvents } from "./drawEmits.js";
 import { metrics as promMetrics } from "../../util/metrics.js";
+import { walletRoomKey } from "../walletStatePusher.js";
 import type {
   AckResponse,
   ExtraDrawPayload,
@@ -49,6 +50,12 @@ export function registerDrawEvents(ctx: SocketContext): void {
           .filter((r) => r.isWon)
           .map((r) => r.patternId),
       );
+      // Tobias prod-incident 2026-04-29: snapshot mini-game-state PRE-draw
+      // så vi kan detektere at `evaluateActivePhase` aktiverte mini-game
+      // (Fullt Hus auto-claim → `onAutoClaimedFullHouse`). Vi har ingen
+      // egen event-trigger fra engine, så vi bruker before/after-pattern
+      // — samme strategi som `pattern:won` over.
+      const miniGameBefore = engine.getCurrentMiniGame(roomCode);
 
       const { number, drawIndex, gameId } = await engine.drawNextNumber({ roomCode, actorPlayerId: playerId });
       io.to(roomCode).emit("draw:new", { number, drawIndex, gameId });
@@ -70,6 +77,34 @@ export function registerDrawEvents(ctx: SocketContext): void {
             gameId: afterSnap.currentGame?.id,
             winnerIds,
             winnerCount: winnerIds.length,
+          });
+        }
+      }
+
+      // Tobias prod-incident 2026-04-29: emit `minigame:activated` når
+      // engine aktiverte mini-game i `evaluateActivePhase` (auto-claim av
+      // Fullt Hus). Tidligere ble denne event-en kun emittert fra
+      // `claim:submit`-handler-en (claimEvents.ts:93), men auto-round-
+      // flow-en sender aldri claim:submit fra klient — engine auto-
+      // claimer patterns server-side. Ved å detektere mini-game-state-
+      // overgang her får vi samme wire-shape som manuell claim-pathen.
+      //
+      // Emit-target: `wallet:<walletId>`-rommet for vinneren (ikke hele
+      // room-fanout) — mini-game-popup skal kun vises for spilleren som
+      // vant, ikke alle observers. Wallet-rommet er authoritativt etter
+      // BIN-760.
+      const miniGameAfter = engine.getCurrentMiniGame(roomCode);
+      if (
+        miniGameAfter &&
+        (!miniGameBefore || miniGameBefore.playerId !== miniGameAfter.playerId)
+      ) {
+        const winner = afterSnap.players.find((p) => p.id === miniGameAfter.playerId);
+        if (winner?.walletId) {
+          io.to(walletRoomKey(winner.walletId)).emit("minigame:activated", {
+            gameId: afterSnap.currentGame?.id,
+            playerId: miniGameAfter.playerId,
+            type: miniGameAfter.type,
+            prizeList: miniGameAfter.prizeList,
           });
         }
       }
