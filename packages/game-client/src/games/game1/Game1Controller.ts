@@ -108,12 +108,20 @@ class Game1Controller implements GameController {
    */
   private roundEndedAt: number | null = null;
   /**
-   * Idempotent guard for buy-popup-trigger fra overlay's COUNTDOWN-fase.
-   * Settes true når overlay fyrer onCountdownNearStart, reset i
-   * onGameStarted (ny runde). Hindrer double-show av buy-popup hvis
-   * overlay re-rendres etter reconnect.
+   * @deprecated Etter Tobias UX-mandat 2026-04-29 (revised) — overlay har
+   * ikke lenger COUNTDOWN-fase, så buy-popup åpnes ikke lenger fra
+   * overlay. Buy-popup vises av rom-state nativt når WAITING aktiverer.
+   * Beholdes som no-op for bakoverkompatibilitet.
    */
   private buyPopupOpenedFromOverlay = false;
+  /**
+   * Tobias UX-mandate 2026-04-29 (revised): timestamp for når
+   * end-of-round-overlay ble vist. Brukes for å detektere første
+   * subsequent state-update som signaliserer at rommet har fersk
+   * live-state — på det tidspunktet kalles `overlay.markRoomReady()`
+   * slik at overlay kan dismisse seg.
+   */
+  private endOfRoundOverlayShownAt: number | null = null;
   private settingsPanel: SettingsPanel | null = null;
   private markerBgPanel: MarkerBackgroundPanel | null = null;
   private gamePlanPanel: GamePlanPanel | null = null;
@@ -491,6 +499,20 @@ class Game1Controller implements GameController {
       this.showEndOfRoundOverlayForState(state);
     }
 
+    // Tobias UX-mandate 2026-04-29 (revised): overlay forblir oppe inntil
+    // controller signalerer "rommet har live-state klar". Vi tolker
+    // FØRSTE state-update etter at overlay ble vist som signal om at
+    // server har sendt fersk room-snapshot. 50ms-grace beskytter mot at
+    // den same-tick state-changen som triggret show()-kallet kvalifiserer
+    // som ready-signal — det skal være _neste_ state-update.
+    if (
+      this.endOfRoundOverlay?.isVisible() &&
+      this.endOfRoundOverlayShownAt !== null &&
+      Date.now() > this.endOfRoundOverlayShownAt + 50
+    ) {
+      this.endOfRoundOverlay.markRoomReady();
+    }
+
     // Single update() entry point. Replaces the old three-way split
     // (updateWaitingState / updateInfo / renderPreRoundTickets + UpcomingPurchase).
     // PlayScreen picks what to show from state.gameStatus + ticket arrays.
@@ -544,6 +566,9 @@ class Game1Controller implements GameController {
     // buy-popup-trigger-guard for ny runde.
     this.roundEndedAt = null;
     this.buyPopupOpenedFromOverlay = false;
+    // Tobias UX-mandate 2026-04-29 (revised): reset overlay-shown-timestamp
+    // så neste runde-end starter med ren markRoomReady-gating.
+    this.endOfRoundOverlayShownAt = null;
 
     // FIXED-PRIZE-FIX: reset round-accumulated winnings ved ny runde.
     this.roundAccumulatedWinnings = 0;
@@ -681,21 +706,12 @@ class Game1Controller implements GameController {
         }
         this.dismissEndOfRoundAndReturnToWaiting();
       },
-      onCountdownNearStart: () => {
-        // Buy-popup opens ON TOP of countdown at 5s remaining. Idempotent
-        // via buyPopupOpenedFromOverlay-guard (reset i onGameStarted).
-        if (this.buyPopupOpenedFromOverlay) return;
-        this.buyPopupOpenedFromOverlay = true;
-        // PlayScreen owns the buy-popup; show it with current state so
-        // ticketTypes are populated. Loss-state-header (PR #725) updates
-        // live via wallet:loss-state-push events — no special handling
-        // here.
-        const fresh = this.deps.bridge.getState();
-        this.playScreen?.showBuyPopup(fresh);
-        telemetry.trackEvent("end_of_round_buy_popup_opened", {
-          remainingMs: 5_000,
-        });
-      },
+      // onCountdownNearStart fjernet 2026-04-29 (revised UX-mandat):
+      // overlay har ikke lenger COUNTDOWN-fase. Buy-popup vises av selve
+      // PlayScreen når room-state transitionerer til WAITING — ikke fra
+      // overlay. Dette sikrer at brukeren faktisk ser live room-elementer
+      // (pattern-animasjon, neste-spill-info) når overlay dismisses.
+      onCountdownNearStart: undefined,
       onOverlayCompleted: () => {
         // Countdown utløp uten at ny runde startet (manuell-modus eller
         // scheduler-glipp). Transition fallback til WAITING.
@@ -703,6 +719,11 @@ class Game1Controller implements GameController {
       },
     };
     overlay.show(summary);
+    // Tobias UX-mandate 2026-04-29 (revised): tag tidspunktet for at
+    // onStateChanged kan bruke det som "barriere" — neste state-update
+    // (etter 50ms grace) kvalifiserer som room-ready-signal og kaller
+    // overlay.markRoomReady().
+    this.endOfRoundOverlayShownAt = Date.now();
     telemetry.trackEvent("end_of_round_overlay_shown", {
       endedReason: summary.endedReason ?? "UNKNOWN",
       ownTotal: this.roundAccumulatedWinnings,

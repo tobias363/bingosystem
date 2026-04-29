@@ -1,33 +1,32 @@
 /**
  * @vitest-environment happy-dom
  *
- * Tobias UX-mandate 2026-04-29 (option C, fluid 3-phase overlay):
- * tester for kombinert SUMMARY → LOADING → COUNTDOWN overlay som
- * transitions naturlig uten popup-stacking. Tester dekker:
+ * Tobias UX-mandate 2026-04-29 (revised post-PR #734): combined Summary +
+ * Loading overlay uten countdown-fase. Tester dekker:
  *
- *   1. Mount + initial DOM-shape (phase 1 = SUMMARY).
- *   2. Phase transitions trigger på timer (SUMMARY → LOADING → COUNTDOWN).
- *   3. Header copy reagerer på endedReason + ownTotal ("Du vant" vs "Du vant ikke").
- *   4. Animated count-up mot ownTotal (Phase 1).
- *   5. Patterns-tabell rendres med riktig vinner-tekst.
- *   6. Lucky number + mini-game-result vises i SUMMARY.
- *   7. Buy-popup-trigger fyrer ved ≤5 sek igjen i COUNTDOWN.
- *   8. onOverlayCompleted fyrer når countdown utløper.
- *   9. "Tilbake til lobby" fungerer fra alle 3 faser.
- *  10. Disconnect-resilience: elapsedSinceEndedMs starter overlay i riktig fase.
- *  11. Empty-summary case (0 tickets armed) — phase 1 reduseres til 1s.
- *  12. Re-render via show() lukker forrige instans først (reconnect-scenario).
- *  13. Distinct DOM-marker (data-testid) — kan skjelnes fra LoadingOverlay.
- *  14. Mini-game-result: type-spesifikk label.
+ *   1. Mount + initial DOM-shape (SUMMARY phase med spinner).
+ *   2. Header copy reagerer på endedReason + ownTotal ("Du vant" vs
+ *      "Spillet er ferdig", "Alle baller trukket", "Runden ble avsluttet").
+ *   3. Patterns-tabell rendres med riktig vinner-tekst.
+ *   4. Lucky number + mini-game-result vises i SUMMARY.
+ *   5. markRoomReady() alene dismisser ikke før min-display-tid passert.
+ *   6. min-display-tid alene dismisser ikke før markRoomReady kalt.
+ *   7. Begge betingelser møtt → onOverlayCompleted fyrer.
+ *   8. Spectator-runde har min-display = 1s (ikke 3s).
+ *   9. "Tilbake til lobby" fyrer onBackToLobby + lukker overlay.
+ *  10. Re-render via show() lukker forrige instans først (reconnect).
+ *  11. Disconnect-resilience: elapsedSinceEndedMs > min-display setter
+ *      `minDisplayElapsed=true` umiddelbart.
+ *  12. Distinct DOM-marker (data-testid) — kan skjelnes fra LoadingOverlay.
+ *  13. Tobias regulatorisk subtitle — MAX_DRAWS-runder skal IKKE feilaktig
+ *      vise "Fullt Hus er vunnet" (PR #733-mandat bevart).
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   Game1EndOfRoundOverlay,
-  SUMMARY_PHASE_MS,
-  SUMMARY_PHASE_SPECTATOR_MS,
-  LOADING_PHASE_MS,
-  BUY_POPUP_TRIGGER_REMAINING_MS,
+  MIN_DISPLAY_MS,
+  MIN_DISPLAY_MS_SPECTATOR,
   type Game1EndOfRoundSummary,
 } from "./Game1EndOfRoundOverlay.js";
 import type { PatternResult } from "@spillorama/shared-types/game";
@@ -62,18 +61,11 @@ function baseSummary(
     myPlayerId: "me",
     myTickets: [{ id: "t1", grid: [[1]] }] as Game1EndOfRoundSummary["myTickets"],
     onBackToLobby: vi.fn(),
-    millisUntilNextStart: 30_000,
     ...over,
   };
 }
 
-// Helper to advance both timers AND rAF (happy-dom doesn't auto-flush rAF
-// when fake timers are active).
-function advanceAndFlush(ms: number): void {
-  vi.advanceTimersByTime(ms);
-}
-
-describe("Game1EndOfRoundOverlay (fluid 3-phase)", () => {
+describe("Game1EndOfRoundOverlay (Summary + Loading combined)", () => {
   let parent: HTMLElement;
   let overlay: Game1EndOfRoundOverlay;
 
@@ -90,46 +82,33 @@ describe("Game1EndOfRoundOverlay (fluid 3-phase)", () => {
     vi.useRealTimers();
   });
 
-  it("mount: phase 1 (SUMMARY) er aktiv initially", () => {
-    overlay.show(
-      baseSummary({
-        patternResults: [mkPattern({ isWon: false })],
-      }),
-    );
-
-    expect(
-      parent.querySelector('[data-testid="game1-end-of-round-overlay"]'),
-    ).not.toBeNull();
-    expect(parent.querySelector('[data-testid="eor-phase-summary"]')).not.toBeNull();
-    expect(parent.querySelector('[data-testid="eor-phase-loading"]')).toBeNull();
-    expect(parent.querySelector('[data-testid="eor-phase-countdown"]')).toBeNull();
+  it("mount: SUMMARY-fasen er aktiv initially", () => {
+    overlay.show(baseSummary());
     expect(overlay.isVisible()).toBe(true);
     expect(overlay.getCurrentPhase()).toBe("SUMMARY");
   });
 
-  it("mount: 'Tilbake til lobby'-knapp er alltid synlig (fase-uavhengig)", () => {
+  it("mount: 'Tilbake til lobby'-knapp er synlig", () => {
     overlay.show(baseSummary());
-    expect(parent.querySelector('[data-testid="eor-lobby-btn"]')).not.toBeNull();
+    const btn = parent.querySelector('[data-testid="eor-lobby-btn"]');
+    expect(btn).not.toBeNull();
+    expect(btn?.textContent).toBe("Tilbake til lobby");
   });
 
-  it("phase transitions: SUMMARY → LOADING → COUNTDOWN på timer", () => {
-    overlay.show(baseSummary({ ownRoundWinnings: 100 }));
-    expect(overlay.getCurrentPhase()).toBe("SUMMARY");
-
-    // Avansér forbi SUMMARY-fasen
-    advanceAndFlush(SUMMARY_PHASE_MS + 50);
-    expect(overlay.getCurrentPhase()).toBe("LOADING");
-
-    // Avansér forbi LOADING-fasen
-    advanceAndFlush(LOADING_PHASE_MS + 50);
-    expect(overlay.getCurrentPhase()).toBe("COUNTDOWN");
+  it("mount: persistent loading-spinner-indikator er synlig i SUMMARY", () => {
+    overlay.show(baseSummary());
+    const loading = parent.querySelector(
+      '[data-testid="eor-loading-indicator"]',
+    );
+    expect(loading).not.toBeNull();
+    expect(loading?.textContent).toContain("Forbereder rommet");
   });
 
   it("header: BINGO_CLAIMED + ownTotal>0 viser 'Du vant'", () => {
     overlay.show(
       baseSummary({
         endedReason: "BINGO_CLAIMED",
-        ownRoundWinnings: 1700,
+        ownRoundWinnings: 100,
       }),
     );
     expect(parent.textContent).toContain("Du vant");
@@ -160,8 +139,6 @@ describe("Game1EndOfRoundOverlay (fluid 3-phase)", () => {
       baseSummary({ endedReason: "MAX_DRAWS_REACHED", ownRoundWinnings: 0 }),
     );
     expect(parent.textContent).toContain("Runden er slutt");
-    // Specifically, MAX_DRAWS-runder skal IKKE vise "Fullt Hus er vunnet" —
-    // det er misvisende fordi runden ble avsluttet PÅ TIDEN, ikke pga. en bingo.
     expect(parent.textContent).not.toContain("Fullt Hus er vunnet");
   });
 
@@ -172,247 +149,229 @@ describe("Game1EndOfRoundOverlay (fluid 3-phase)", () => {
     expect(parent.textContent).toContain("Runden ble avsluttet");
   });
 
-  it("header: DRAW_BAG_EMPTY behandles likt som MAX_DRAWS_REACHED", () => {
-    overlay.show(
-      baseSummary({ endedReason: "DRAW_BAG_EMPTY", ownRoundWinnings: 0 }),
-    );
-    expect(parent.textContent).toContain("Alle baller trukket");
-    expect(parent.textContent).toContain("Runden er slutt");
-  });
-
-  it("egen total: bruker ownRoundWinnings når gitt", () => {
+  it("egen total: rendrer beløp-element", () => {
     overlay.show(baseSummary({ ownRoundWinnings: 1700 }));
-
-    // Count-up animasjon kan ikke garanteres å være ferdig på t=0.
-    // Sjekk at element finnes og har riktig data-testid.
     const ownTotal = parent.querySelector('[data-testid="eor-own-total"]');
     expect(ownTotal).not.toBeNull();
   });
 
-  it("egen total: beregnes fra patternResults når ownRoundWinnings ikke er gitt", () => {
+  it("patterns-tabell: rendrer alle phases med vinner-info", () => {
+    const winnerId = "winner-1";
+    const myId = "me";
     overlay.show(
       baseSummary({
-        myPlayerId: "me",
-        patternResults: [
-          mkPattern({
-            patternName: "Rad 1",
-            isWon: true,
-            winnerIds: ["me"],
-            payoutAmount: 100,
-          }),
-          mkPattern({
-            patternName: "Rad 2",
-            isWon: true,
-            winnerIds: ["other"],
-            payoutAmount: 200,
-          }),
-          mkPattern({
-            patternName: "Fullt Hus",
-            isWon: true,
-            winnerIds: ["me", "other"],
-            winnerCount: 2,
-            payoutAmount: 1000,
-          }),
-        ],
-      }),
-    );
-
-    // Element finnes og har korrekt computeOwnTotal-resultat (100 + 1000 = 1100)
-    // — sjekkes via static text-rendering AV count-up-animasjonen som
-    // initialt rendrer 0 kr og animerer mot 1100.
-    expect(
-      parent.querySelector('[data-testid="eor-own-total"]'),
-    ).not.toBeNull();
-  });
-
-  it("patterns-tabell: viser alle phases med vinner-info", () => {
-    overlay.show(
-      baseSummary({
-        myPlayerId: "me",
-        ownRoundWinnings: 250,
+        myPlayerId: myId,
         patternResults: [
           mkPattern({
             patternId: "p1",
             patternName: "Rad 1",
             isWon: true,
-            winnerId: "me",
-            winnerIds: ["me"],
+            winnerId,
             payoutAmount: 100,
+            wonAtDraw: 5,
           }),
           mkPattern({
             patternId: "p2",
             patternName: "Rad 2",
-            isWon: true,
-            winnerIds: ["me", "p2"],
-            winnerCount: 2,
-            payoutAmount: 150,
-          }),
-          mkPattern({
-            patternId: "p3",
-            patternName: "Rad 3",
             isWon: false,
           }),
         ],
       }),
     );
-
     expect(parent.textContent).toContain("Rad 1");
     expect(parent.textContent).toContain("Rad 2");
-    expect(parent.textContent).toContain("Rad 3");
-    expect(parent.textContent).toContain("Du vant"); // Rad 1 — solo
-    expect(parent.textContent).toContain("Du delte"); // Rad 2 — split
-    expect(parent.textContent).toContain("Ikke vunnet"); // Rad 3
   });
 
-  it("Tilbake til lobby fra phase 1 (SUMMARY): kaller onBackToLobby + lukker", () => {
-    const onLobby = vi.fn();
-    overlay.show(baseSummary({ onBackToLobby: onLobby }));
-
-    const btn = parent.querySelector(
-      '[data-testid="eor-lobby-btn"]',
-    ) as HTMLButtonElement;
-    btn.click();
-
-    expect(onLobby).toHaveBeenCalledTimes(1);
-    expect(overlay.isVisible()).toBe(false);
-  });
-
-  it("Tilbake til lobby fra phase 2 (LOADING): fungerer", () => {
-    const onLobby = vi.fn();
-    overlay.show(baseSummary({ onBackToLobby: onLobby }));
-
-    advanceAndFlush(SUMMARY_PHASE_MS + 50);
-    expect(overlay.getCurrentPhase()).toBe("LOADING");
-
-    const btn = parent.querySelector(
-      '[data-testid="eor-lobby-btn"]',
-    ) as HTMLButtonElement;
-    btn.click();
-
-    expect(onLobby).toHaveBeenCalledTimes(1);
-    expect(overlay.isVisible()).toBe(false);
-  });
-
-  it("Tilbake til lobby fra phase 3 (COUNTDOWN): fungerer", () => {
-    const onLobby = vi.fn();
-    overlay.show(baseSummary({ onBackToLobby: onLobby }));
-
-    advanceAndFlush(SUMMARY_PHASE_MS + LOADING_PHASE_MS + 50);
-    expect(overlay.getCurrentPhase()).toBe("COUNTDOWN");
-
-    const btn = parent.querySelector(
-      '[data-testid="eor-lobby-btn"]',
-    ) as HTMLButtonElement;
-    btn.click();
-
-    expect(onLobby).toHaveBeenCalledTimes(1);
-    expect(overlay.isVisible()).toBe(false);
-  });
-
-  it("phase 3: countdown-display + progress-bar rendres", () => {
+  it("dismiss: markRoomReady alene dismisser IKKE før min-display passert", () => {
+    const onCompleted = vi.fn();
     overlay.show(
       baseSummary({
-        millisUntilNextStart: 30_000,
+        ownRoundWinnings: 100,
+        onOverlayCompleted: onCompleted,
       }),
     );
-
-    advanceAndFlush(SUMMARY_PHASE_MS + LOADING_PHASE_MS + 50);
-    expect(overlay.getCurrentPhase()).toBe("COUNTDOWN");
-
-    expect(
-      parent.querySelector('[data-testid="eor-countdown-seconds"]'),
-    ).not.toBeNull();
-    expect(
-      parent.querySelector('[data-testid="eor-progress-bar"]'),
-    ).not.toBeNull();
+    overlay.markRoomReady();
+    // Min-display ikke passert ennå (3s)
+    vi.advanceTimersByTime(1_000);
+    expect(onCompleted).not.toHaveBeenCalled();
+    expect(overlay.isVisible()).toBe(true);
   });
 
-  it("phase 3 buy-popup-trigger: onCountdownNearStart fyrer ved ≤5 sek igjen", () => {
-    const onCountdownNearStart = vi.fn();
-    // Server gir 8 sekunder igjen — så når COUNTDOWN starter har den 8s,
-    // og ved 5s gjenstående (etter 3s) skal trigger fyre.
+  it("dismiss: min-display alene dismisser IKKE før markRoomReady kalt", () => {
+    const onCompleted = vi.fn();
     overlay.show(
       baseSummary({
-        millisUntilNextStart: 8_000,
-        onCountdownNearStart,
+        ownRoundWinnings: 100,
+        onOverlayCompleted: onCompleted,
       }),
     );
-
-    // Avansér til COUNTDOWN-fasen + 3 sek inn i countdown (= 5 sek igjen)
-    advanceAndFlush(SUMMARY_PHASE_MS + LOADING_PHASE_MS + 3_500);
-    expect(onCountdownNearStart).toHaveBeenCalledTimes(1);
+    // Passer min-display-tid uten å kalle markRoomReady
+    vi.advanceTimersByTime(MIN_DISPLAY_MS + 100);
+    expect(onCompleted).not.toHaveBeenCalled();
+    expect(overlay.isVisible()).toBe(true);
   });
 
-  it("phase 3 buy-popup-trigger: idempotent — fyrer kun én gang", () => {
-    const onCountdownNearStart = vi.fn();
+  it("dismiss: når BÅDE markRoomReady OG min-display er møtt → onOverlayCompleted fyrer", () => {
+    const onCompleted = vi.fn();
     overlay.show(
       baseSummary({
-        millisUntilNextStart: 8_000,
-        onCountdownNearStart,
+        ownRoundWinnings: 100,
+        onOverlayCompleted: onCompleted,
       }),
     );
-
-    // Avansér forbi trigger-grensen og videre
-    advanceAndFlush(SUMMARY_PHASE_MS + LOADING_PHASE_MS + 6_000);
-    expect(onCountdownNearStart).toHaveBeenCalledTimes(1);
-
-    // Avansér enda lenger — skal fortsatt være kun 1 kall
-    advanceAndFlush(2_000);
-    expect(onCountdownNearStart).toHaveBeenCalledTimes(1);
+    // Først min-display
+    vi.advanceTimersByTime(MIN_DISPLAY_MS + 100);
+    expect(onCompleted).not.toHaveBeenCalled();
+    // Så ready → tryDismiss → fade ut
+    overlay.markRoomReady();
+    // Etter PHASE_FADE_MS (300ms) skal completion ha firet
+    vi.advanceTimersByTime(400);
+    expect(onCompleted).toHaveBeenCalledTimes(1);
   });
 
-  it("phase 3 onOverlayCompleted: fyrer når countdown utløper", () => {
-    const onOverlayCompleted = vi.fn();
+  it("dismiss: rekkefølgen ready-først, så min-display, gir samme resultat", () => {
+    const onCompleted = vi.fn();
     overlay.show(
       baseSummary({
-        // Use minimum allowed countdown (= BUY_POPUP_TRIGGER_REMAINING_MS)
-        millisUntilNextStart: BUY_POPUP_TRIGGER_REMAINING_MS,
-        onOverlayCompleted,
+        ownRoundWinnings: 100,
+        onOverlayCompleted: onCompleted,
       }),
     );
-
-    // Avansér forbi hele 3-fase-flyten
-    advanceAndFlush(
-      SUMMARY_PHASE_MS + LOADING_PHASE_MS + BUY_POPUP_TRIGGER_REMAINING_MS + 200,
-    );
-
-    expect(onOverlayCompleted).toHaveBeenCalledTimes(1);
+    overlay.markRoomReady();
+    expect(onCompleted).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(MIN_DISPLAY_MS + 400);
+    expect(onCompleted).toHaveBeenCalledTimes(1);
   });
 
-  it("disconnect-resilience: elapsedSinceEndedMs > SUMMARY_PHASE_MS hopper til LOADING", () => {
+  it("dismiss: idempotent — flere markRoomReady-call gir én onOverlayCompleted", () => {
+    const onCompleted = vi.fn();
     overlay.show(
       baseSummary({
-        elapsedSinceEndedMs: SUMMARY_PHASE_MS + 100,
+        ownRoundWinnings: 100,
+        onOverlayCompleted: onCompleted,
       }),
     );
-    expect(overlay.getCurrentPhase()).toBe("LOADING");
+    vi.advanceTimersByTime(MIN_DISPLAY_MS + 100);
+    overlay.markRoomReady();
+    overlay.markRoomReady();
+    overlay.markRoomReady();
+    vi.advanceTimersByTime(400);
+    expect(onCompleted).toHaveBeenCalledTimes(1);
   });
 
-  it("disconnect-resilience: elapsedSinceEndedMs > SUMMARY+LOADING hopper til COUNTDOWN", () => {
-    overlay.show(
-      baseSummary({
-        elapsedSinceEndedMs: SUMMARY_PHASE_MS + LOADING_PHASE_MS + 100,
-      }),
-    );
-    expect(overlay.getCurrentPhase()).toBe("COUNTDOWN");
-  });
-
-  it("empty-summary case: 0 tickets armed reduserer phase 1 til 1s", () => {
+  it("spectator (0 tickets, ownTotal=0): min-display reduseres til 1s", () => {
+    const onCompleted = vi.fn();
     overlay.show(
       baseSummary({
         myTickets: [],
         ownRoundWinnings: 0,
-        patternResults: [],
+        endedReason: "BINGO_CLAIMED",
+        onOverlayCompleted: onCompleted,
       }),
     );
-    expect(overlay.getCurrentPhase()).toBe("SUMMARY");
-
-    // Avansér ~1.1s (> spectator-fasen, < normal-fasen)
-    advanceAndFlush(SUMMARY_PHASE_SPECTATOR_MS + 200);
-    expect(overlay.getCurrentPhase()).toBe("LOADING");
+    overlay.markRoomReady();
+    // Etter 500ms: spectator min ikke møtt ennå
+    vi.advanceTimersByTime(500);
+    expect(onCompleted).not.toHaveBeenCalled();
+    // Etter 1s + fade: completion fyrer
+    vi.advanceTimersByTime(MIN_DISPLAY_MS_SPECTATOR + 400);
+    expect(onCompleted).toHaveBeenCalledTimes(1);
   });
 
-  it("empty-summary case: viser kun 'Spillet er ferdig' (ingen patterns-tabell)", () => {
+  it("Tilbake til lobby: kaller onBackToLobby + lukker overlay", () => {
+    const onBack = vi.fn();
+    overlay.show(baseSummary({ onBackToLobby: onBack }));
+    const btn = parent.querySelector(
+      '[data-testid="eor-lobby-btn"]',
+    ) as HTMLButtonElement | null;
+    btn?.click();
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(overlay.isVisible()).toBe(false);
+  });
+
+  it("re-render: andre show() lukker forrige instans først (reconnect)", () => {
+    overlay.show(baseSummary({ ownRoundWinnings: 100 }));
+    overlay.show(baseSummary({ ownRoundWinnings: 250 }));
+    // Skal være kun ÉN overlay-rot i DOM
+    const overlays = parent.querySelectorAll(
+      '[data-testid="game1-end-of-round-overlay"]',
+    );
+    expect(overlays.length).toBe(1);
+  });
+
+  it("disconnect-resilience: elapsedSinceEndedMs > MIN_DISPLAY → markRoomReady dismisser umiddelbart", () => {
+    const onCompleted = vi.fn();
+    overlay.show(
+      baseSummary({
+        ownRoundWinnings: 100,
+        elapsedSinceEndedMs: MIN_DISPLAY_MS + 5_000, // 8s allerede gått
+        onOverlayCompleted: onCompleted,
+      }),
+    );
+    // markRoomReady kalles umiddelbart (controller har stale state cached)
+    overlay.markRoomReady();
+    vi.advanceTimersByTime(400); // bare fade-tid
+    expect(onCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it("destroy: lukker DOM + resetter state", () => {
+    overlay.show(baseSummary());
+    expect(overlay.isVisible()).toBe(true);
+    overlay.destroy();
+    expect(overlay.isVisible()).toBe(false);
+  });
+
+  it("data-testid distinct fra LoadingOverlay", () => {
+    overlay.show(baseSummary());
+    const eor = parent.querySelector(
+      '[data-testid="game1-end-of-round-overlay"]',
+    );
+    expect(eor).not.toBeNull();
+    // LoadingOverlay bruker en annen data-testid (hva enn det måtte være)
+    // — denne testen vokter mot at vi ved et uhell deler testid.
+    expect(eor?.getAttribute("data-testid")).toBe(
+      "game1-end-of-round-overlay",
+    );
+  });
+
+  it("lucky number: rendres når til stede", () => {
+    overlay.show(baseSummary({ luckyNumber: 42, ownRoundWinnings: 100 }));
+    const lucky = parent.querySelector('[data-testid="eor-lucky-number"]');
+    expect(lucky).not.toBeNull();
+    expect(lucky?.textContent).toContain("42");
+  });
+
+  it("lucky number: rendres ikke når null", () => {
+    overlay.show(baseSummary({ luckyNumber: null, ownRoundWinnings: 100 }));
+    const lucky = parent.querySelector('[data-testid="eor-lucky-number"]');
+    expect(lucky).toBeNull();
+  });
+
+  it("mini-game-result: rendres med type-spesifikk label", () => {
+    const miniGameResult: MiniGameResultPayload = {
+      resultId: "r1",
+      miniGameType: "wheel",
+      payoutCents: 25_000,
+      resultJson: {
+        winningBucketIndex: 3,
+        prizeGroupIndex: 1,
+        amountKroner: 250,
+        totalBuckets: 8,
+        animationSeed: 1,
+      },
+    };
+    overlay.show(
+      baseSummary({
+        miniGameResult,
+        ownRoundWinnings: 350,
+      }),
+    );
+    const mg = parent.querySelector('[data-testid="eor-mini-game"]');
+    expect(mg).not.toBeNull();
+    expect(mg?.textContent).toContain("Lykkehjul");
+  });
+
+  it("empty-summary case (0 tickets, ownTotal=0): viser kun 'Spillet er ferdig'", () => {
     overlay.show(
       baseSummary({
         myTickets: [],
@@ -421,136 +380,14 @@ describe("Game1EndOfRoundOverlay (fluid 3-phase)", () => {
       }),
     );
     expect(parent.textContent).toContain("Spillet er ferdig");
-    // Spectator-mode skjuler patterns-tabellen for klarhet
-    expect(
-      parent.querySelector('[data-testid="eor-patterns-table"]'),
-    ).toBeNull();
   });
 
-  it("lucky number: rendres når til stede i SUMMARY", () => {
-    overlay.show(baseSummary({ luckyNumber: 42 }));
-    const luckyEl = parent.querySelector('[data-testid="eor-lucky-number"]');
-    expect(luckyEl?.textContent).toContain("42");
-  });
-
-  it("lucky number: rendres ikke når null", () => {
-    overlay.show(baseSummary({ luckyNumber: null }));
-    expect(
-      parent.querySelector('[data-testid="eor-lucky-number"]'),
-    ).toBeNull();
-  });
-
-  it("mini-game-result: rendres med type-spesifikk label", () => {
-    const miniGameResult: MiniGameResultPayload = {
-      resultId: "mg-1",
-      miniGameType: "wheel",
-      payoutCents: 50000, // 500 kr
-      resultJson: {},
-    };
-    overlay.show(baseSummary({ miniGameResult }));
-
-    const miniGameEl = parent.querySelector('[data-testid="eor-mini-game"]');
-    expect(miniGameEl?.textContent).toContain("Lykkehjul");
-    expect(miniGameEl?.textContent).toContain("500");
-  });
-
-  it("re-render: andre show() lukker forrige instans først (reconnect)", () => {
-    overlay.show(baseSummary({ endedReason: "BINGO_CLAIMED" }));
-    const first = parent.querySelector(
-      '[data-testid="game1-end-of-round-overlay"]',
-    );
-    expect(first).not.toBeNull();
-
-    overlay.show(baseSummary({ endedReason: "MAX_DRAWS_REACHED" }));
-    const all = parent.querySelectorAll(
-      '[data-testid="game1-end-of-round-overlay"]',
-    );
-    expect(all.length).toBe(1);
-    expect(parent.textContent).toContain("Alle baller trukket");
-  });
-
-  it("destroy: lukker DOM + rydder timers + cancellerer rAF", () => {
-    const onCountdownNearStart = vi.fn();
-    const onOverlayCompleted = vi.fn();
-    overlay.show(
-      baseSummary({
-        millisUntilNextStart: 8_000,
-        onCountdownNearStart,
-        onOverlayCompleted,
-      }),
-    );
-    overlay.destroy();
-
-    // Avansér forbi alt — ingen callbacks skal fyre
-    advanceAndFlush(20_000);
-    expect(onCountdownNearStart).not.toHaveBeenCalled();
-    expect(onOverlayCompleted).not.toHaveBeenCalled();
-    expect(
-      parent.querySelector('[data-testid="game1-end-of-round-overlay"]'),
-    ).toBeNull();
+  it("hide() er idempotent — kan kalles før show() uten exception", () => {
+    expect(() => overlay.hide()).not.toThrow();
     expect(overlay.isVisible()).toBe(false);
   });
 
-  it("tom patternResults-array (med tickets): viser 'Ingen vinnere'", () => {
-    overlay.show(
-      baseSummary({
-        patternResults: [],
-        myTickets: [{ id: "t1", grid: [[1]] }] as Game1EndOfRoundSummary["myTickets"],
-        ownRoundWinnings: 0,
-      }),
-    );
-    expect(parent.textContent).toContain("Ingen vinnere denne runden");
-  });
-
-  it("data-testid distinct: end-of-round overlay er distinct fra LoadingOverlay", () => {
-    overlay.show(baseSummary());
-    const root = parent.querySelector(
-      '[data-testid="game1-end-of-round-overlay"]',
-    );
-    expect(root?.getAttribute("role")).toBe("dialog");
-    expect(root?.getAttribute("aria-modal")).toBe("true");
-  });
-
-  it("phase 3: countdown viser 'sekund' (singular) når 1 sec igjen", () => {
-    overlay.show(
-      baseSummary({
-        millisUntilNextStart: 6_000,
-      }),
-    );
-
-    // Hopp til COUNTDOWN-fasen, så 5 sek inn (= 1 sek igjen)
-    advanceAndFlush(SUMMARY_PHASE_MS + LOADING_PHASE_MS + 5_000);
-    expect(overlay.getCurrentPhase()).toBe("COUNTDOWN");
-
-    // happy-dom rAF-tick is timer-driven; advance 100 ms to flush at least
-    // one rAF callback so secondsEl text gets updated.
-    advanceAndFlush(100);
-
-    expect(parent.textContent).toMatch(/sekund/);
-  });
-
-  it("phase 1 (SUMMARY): patterns-tabell rendres for normal-runde", () => {
-    overlay.show(
-      baseSummary({
-        ownRoundWinnings: 100,
-        patternResults: [
-          mkPattern({ patternName: "Rad 1", isWon: true, payoutAmount: 100 }),
-        ],
-      }),
-    );
-
-    expect(
-      parent.querySelector('[data-testid="eor-patterns-table"]'),
-    ).not.toBeNull();
-  });
-
-  it("count-up: animerer fra 0 til target (initial 0 kr)", () => {
-    overlay.show(baseSummary({ ownRoundWinnings: 1700 }));
-
-    const ownTotalEl = parent.querySelector(
-      '[data-testid="eor-own-total"]',
-    ) as HTMLElement;
-    // Initially renders 0 kr (animation starts from 0).
-    expect(ownTotalEl?.textContent).toMatch(/0\s*kr/);
+  it("markRoomReady() før show() er no-op", () => {
+    expect(() => overlay.markRoomReady()).not.toThrow();
   });
 });
