@@ -91,8 +91,15 @@ export class WinPopup {
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      background: "rgba(10, 4, 4, 0.72)",
-      backdropFilter: "blur(4px)",
+      // BLINK-FIX (round 8, hazard #1): Erstattet `backdrop-filter: blur(4px)`
+      // med tett rgba(10,4,4,0.92). backdrop-filter er den dyreste paint-
+      // operasjonen mulig — Chrome må re-blure regionen hver gang Pixi-canvas
+      // re-promoterer composite-treet (dvs. hver draw/animation-tick under
+      // ball-trekning). Dette ga vedvarende blink når WinPopup vises midt i
+      // ball-rotasjonen. Identisk fix-pattern som blink-runde 7 på Spillvett-
+      // pause-modal (PR #672). Solid rgba er GPU-cheap kompositering uten
+      // paint-overhead.
+      background: "rgba(10, 4, 4, 0.92)",
       opacity: "0",
       transition: "opacity 220ms ease-out",
     });
@@ -246,7 +253,13 @@ export class WinPopup {
       cursor: "pointer",
       letterSpacing: "0.02em",
       boxShadow: "0 6px 20px rgba(245,184,65,0.25)",
-      transition: "all 180ms ease",
+      // BLINK-FIX (round 8, hazard #2): Fjernet `transition: all 180ms ease`.
+      // `all` inkluderer paint-properties (background, box-shadow) — kombinert
+      // med `.wp-btn-primary:hover` som endrer `background` og `box-shadow`,
+      // gir det re-paint-kaskade ved hver hover-event. Identisk pattern som
+      // Game1BuyPopup blink-fix (PR #530). Knappen har fortsatt transform i
+      // hover-state, men transform er composite-only og trenger ikke transition
+      // for å oppfattes som responsiv (snap-to-state er fint).
     });
     closeBtn.addEventListener("click", () => {
       this.hide();
