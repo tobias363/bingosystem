@@ -5,13 +5,13 @@ import type { GameState } from "../../bridge/GameBridge.js";
 import type {
   MiniGameActivatedPayload,
   MiniGameTriggerPayload,
+  MiniGameResultPayload,
   PatternWonPayload,
   BetRejectedEvent,
   WalletLossStateEvent,
 } from "@spillorama/shared-types/socket-events";
 import { telemetry } from "../../telemetry/Telemetry.js";
 import { PlayScreen } from "./screens/PlayScreen.js";
-import { EndScreen } from "../game2/screens/EndScreen.js";
 import { LuckyNumberPicker } from "./components/LuckyNumberPicker.js";
 import { LoadingOverlay } from "../../components/LoadingOverlay.js";
 import { preloadGameAssets } from "../../core/preloadGameAssets.js";
@@ -19,6 +19,11 @@ import { ToastNotification } from "./components/ToastNotification.js";
 import { PauseOverlay } from "./components/PauseOverlay.js";
 import { WinPopup } from "./components/WinPopup.js";
 import { WinScreenV2 } from "./components/WinScreenV2.js";
+import {
+  Game1EndOfRoundOverlay,
+  DEFAULT_AUTO_DISMISS_MS as END_OF_ROUND_DEFAULT_MS,
+  type Game1EndOfRoundSummary,
+} from "./components/Game1EndOfRoundOverlay.js";
 import { classifyPhaseFromPatternName, Spill1Phase } from "@spillorama/shared-types/spill1-patterns";
 
 /** Map Spill1Phase-enum til rad-antall (1-4 for linje-vinn). */
@@ -39,8 +44,17 @@ import { Game1SocketActions } from "./logic/SocketActions.js";
 import { Game1ReconnectFlow } from "./logic/ReconnectFlow.js";
 import type { Phase } from "./logic/Phase.js";
 
-/** Auto-dismiss delay for end screen before transitioning to waiting (ms). */
-const END_SCREEN_AUTO_DISMISS_MS = 5000;
+/**
+ * Auto-dismiss delay for end-of-round overlay before transitioning to
+ * WAITING. Tobias 2026-04-29 prod-incident-fix:
+ *
+ *   - Tidligere `END_SCREEN_AUTO_DISMISS_MS = 5000` (Game 2-style EndScreen).
+ *     Overskygget i HTML-overlay-modus av `END_OF_ROUND_DEFAULT_MS = 10000`
+ *     for retail-bingo (mer leselid på oppsummeringen).
+ *   - Beholder verdien for legacy-fallback-pathen (transitionTo("WAITING")
+ *     timer som kjører hvis overlay ble lukket før auto-dismiss).
+ */
+const END_SCREEN_AUTO_DISMISS_MS = END_OF_ROUND_DEFAULT_MS;
 
 /**
  * Game 1 (Classic Bingo) controller — orchestration only.
@@ -60,7 +74,6 @@ class Game1Controller implements GameController {
   private phase: Phase = "LOADING";
   private currentScreen: Container | null = null;
   private playScreen: PlayScreen | null = null;
-  private endScreen: EndScreen | null = null;
   private myPlayerId: string | null = null;
   private actualRoomCode: string = "";
   private unsubs: (() => void)[] = [];
@@ -74,6 +87,21 @@ class Game1Controller implements GameController {
   private winPopup: WinPopup | null = null;
   /** Fullt Hus fullskjerm-scene (Bong-design, port av WinScreenV2.jsx). */
   private winScreen: WinScreenV2 | null = null;
+  /**
+   * Tobias 2026-04-29 prod-incident-fix: end-of-round retail-overlay som
+   * erstatter den tidligere Game 2-style {@link EndScreen}-Pixi-skjermen
+   * for Spill 1. Vises etter Fullt Hus-claim eller MAX_DRAWS_REACHED med
+   * komplett oppsummering + to CTA-knapper. HTML-basert (i likhet med
+   * WinScreenV2/WinPopup) for full kontroll over knapper + click-events.
+   */
+  private endOfRoundOverlay: Game1EndOfRoundOverlay | null = null;
+  /**
+   * Tobias 2026-04-29: Siste mottatte mini-game-resultat. Lagres her slik at
+   * end-of-round-overlay kan vise mini-game-utfallet sammen med
+   * pattern-summary (mini-game-result kommer som separat socket-event,
+   * ofte før eller samtidig som ENDED-state).
+   */
+  private lastMiniGameResult: MiniGameResultPayload | null = null;
   private settingsPanel: SettingsPanel | null = null;
   private markerBgPanel: MarkerBackgroundPanel | null = null;
   private gamePlanPanel: GamePlanPanel | null = null;
@@ -134,6 +162,7 @@ class Game1Controller implements GameController {
     this.pauseOverlay = new PauseOverlay(overlayContainer);
     this.winPopup = new WinPopup(overlayContainer);
     this.winScreen = new WinScreenV2(overlayContainer);
+    this.endOfRoundOverlay = new Game1EndOfRoundOverlay(overlayContainer);
     this.settingsPanel = new SettingsPanel(overlayContainer);
     // Wire settings panel to AudioManager
     this.syncSettingsToAudio(this.settingsPanel.getSettings());
@@ -255,7 +284,12 @@ class Game1Controller implements GameController {
       bridge.on("patternWon", (result, state) => this.onPatternWon(result, state)),
       // BIN-690 PR-M6: scheduled-games mini-game protocol.
       bridge.on("miniGameTrigger", (data) => this.handleMiniGameTrigger(data)),
-      bridge.on("miniGameResult", (data) => this.miniGame?.onResult(data)),
+      bridge.on("miniGameResult", (data) => {
+        // Tobias 2026-04-29: lagre mini-game-resultat for visning i
+        // end-of-round-overlay. Reset i onGameStarted (ny runde).
+        this.lastMiniGameResult = data;
+        this.miniGame?.onResult(data);
+      }),
       // Tobias prod-incident 2026-04-29: legacy `minigame:activated` for
       // auto-claim Spill 1 mini-games. Routes through LegacyMiniGameAdapter
       // which renders the existing overlays with synthesized M6 trigger
@@ -305,6 +339,13 @@ class Game1Controller implements GameController {
       } else {
         this.transitionTo("SPECTATING", state);
       }
+    } else if (state.gameStatus === "ENDED") {
+      // Tobias 2026-04-29 disconnect-resilience: bruker har koblet til
+      // (eller re-koblet) i en ENDED-tilstand. Vis end-of-round-overlay
+      // så de ser oppsummeringen i stedet for tom WAITING-skjerm uten
+      // kontekst. Dette dekker også reload-mid-overlay-scenariet.
+      this.transitionTo("ENDED", state);
+      this.showEndOfRoundOverlayForState(state);
     } else {
       this.transitionTo("WAITING", state);
     }
@@ -330,6 +371,9 @@ class Game1Controller implements GameController {
     this.winPopup = null;
     this.winScreen?.destroy();
     this.winScreen = null;
+    this.endOfRoundOverlay?.destroy();
+    this.endOfRoundOverlay = null;
+    this.lastMiniGameResult = null;
     this.settingsPanel?.destroy();
     this.settingsPanel = null;
     this.markerBgPanel?.destroy();
@@ -388,12 +432,11 @@ class Game1Controller implements GameController {
       }
 
       case "ENDED":
-        this.endScreen = new EndScreen(w, h);
-        this.endScreen.setOnDismiss(() => {
-          this.transitionTo("WAITING", this.deps.bridge.getState());
-        });
-        this.endScreen.show(state);
-        this.setScreen(this.endScreen);
+        // Tobias 2026-04-29 prod-incident-fix: ENDED-fasen viser ikke lenger
+        // en Pixi-skjerm — i stedet bruker vi `Game1EndOfRoundOverlay` (HTML)
+        // som monteres i onGameEnded(). Vi clearScreen()-er bare slik at
+        // PlayScreen-instansen ikke ligger igjen og lekker mens overlay vises.
+        // No-op her er bevisst.
         break;
     }
   }
@@ -411,12 +454,29 @@ class Game1Controller implements GameController {
         clearTimeout(this.endScreenTimer);
         this.endScreenTimer = null;
       }
+      // Tobias 2026-04-29: lukk end-of-round-overlay før transition.
+      this.endOfRoundOverlay?.hide();
       if (state.myTickets.length > 0) {
         this.transitionTo("PLAYING", state);
       } else {
         this.transitionTo("SPECTATING", state);
       }
       return;
+    }
+
+    // Tobias 2026-04-29 disconnect-resilience: hvis vi er i ENDED-fase
+    // (overlay var oppe) og bare nettopp re-syncede etter reconnect,
+    // sørg for at overlay fortsatt vises. Game1ReconnectFlow kan ha
+    // forsynt en applySnapshot som triggrer denne stateChanged uten
+    // at gameEnded-eventen fyrer på nytt.
+    if (
+      this.phase === "ENDED" &&
+      state.gameStatus === "ENDED" &&
+      this.endOfRoundOverlay &&
+      !this.endOfRoundOverlay.isVisible() &&
+      !this.isWinScreenActive
+    ) {
+      this.showEndOfRoundOverlayForState(state);
     }
 
     // Single update() entry point. Replaces the old three-way split
@@ -463,8 +523,16 @@ class Game1Controller implements GameController {
       this.endScreenTimer = null;
     }
 
+    // Tobias 2026-04-29 prod-incident-fix: lukk end-of-round-overlay hvis
+    // ny runde starter mens den fortsatt er åpen (rask auto-round).
+    // Spilleren vil ellers se overlay-en oppå ny runde-state.
+    this.endOfRoundOverlay?.hide();
+    this.shouldShowEndOfRoundOnWinScreenDismiss = false;
+
     // FIXED-PRIZE-FIX: reset round-accumulated winnings ved ny runde.
     this.roundAccumulatedWinnings = 0;
+    // Tobias 2026-04-29: reset mini-game-result for ny runde.
+    this.lastMiniGameResult = null;
 
     this.buyMoreDisabled = false;
     // BIN-409 (D2): Ny runde — reset buy-more button til enabled state.
@@ -487,7 +555,8 @@ class Game1Controller implements GameController {
   }
 
   private onGameEnded(state: GameState): void {
-    // Dismiss any active mini-game overlay so it doesn't block the EndScreen.
+    // Dismiss any active mini-game overlay so it doesn't block the
+    // end-of-round overlay.
     //
     // PIXI-P0-002 (Bølge 2A, 2026-04-28): use the graceful dismiss so we
     // briefly wait for any in-flight `mini_game:choice` ack before tearing
@@ -495,8 +564,8 @@ class Game1Controller implements GameController {
     // game ended would lose their choice silently. Backend remains
     // idempotent on choice (orchestrator `completed_at` lock) so a late
     // ack after the wait doesn't double-pay; the wait just shrinks the
-    // user-visible loss window. Fire-and-forget — EndScreen / WAITING
-    // transition below doesn't depend on the overlay being gone yet.
+    // user-visible loss window. Fire-and-forget — overlay-show below
+    // doesn't depend on the mini-game overlay being gone yet.
     void this.miniGame?.dismissAfterPendingChoices();
     // Tobias prod-incident 2026-04-29: legacy adapter doesn't have a
     // pending-choice drain (legacy `minigame:play` is fire-and-ack with no
@@ -521,16 +590,141 @@ class Game1Controller implements GameController {
 
     if (this.phase === "PLAYING") {
       this.transitionTo("ENDED", state);
-      this.endScreenTimer = setTimeout(() => {
-        this.endScreenTimer = null;
-        if (this.phase === "ENDED") {
-          this.transitionTo("WAITING", this.deps.bridge.getState());
-        }
-      }, END_SCREEN_AUTO_DISMISS_MS);
+      // Tobias 2026-04-29 prod-incident-fix: vis end-of-round-overlay
+      // i stedet for Pixi-EndScreen. Hvis WinScreenV2 (Fullt Hus-fontene)
+      // er aktiv, holder vi tilbake overlay til den lukkes — slik at
+      // animasjonen får ferdig-spille uten å bli klippet av summary-
+      // vinduet.
+      if (this.isWinScreenActive) {
+        // WinScreenV2.onDismiss kaller flushPendingMiniGameTrigger som
+        // vi her utvider til også å vise end-of-round-overlay. Vi
+        // bruker en flag siden vi ikke vil endre WinScreenV2-API-en.
+        this.shouldShowEndOfRoundOnWinScreenDismiss = true;
+      } else {
+        this.showEndOfRoundOverlayForState(state);
+      }
     } else {
       this.transitionTo("WAITING", state);
     }
   }
+
+  /**
+   * Tobias 2026-04-29 prod-incident-fix: åpne end-of-round-overlay med
+   * komplett oppsummering av runden. Kalt fra `onGameEnded` (PLAYING-fase)
+   * eller fra `flushPendingMiniGameTrigger` etter at WinScreenV2 er lukket.
+   *
+   * Auto-dismiss-callback transitionerer til WAITING og kjører `update()`
+   * på en ny PlayScreen — uten å auto-arme bonger (delayed-render-mønster
+   * fra PR #725). Bruker ser pre-round-buy-popup som vanlig.
+   */
+  private showEndOfRoundOverlayForState(state: GameState): void {
+    const overlay = this.endOfRoundOverlay;
+    if (!overlay) return;
+
+    // Backend-flagg: i auto-round-modus viser server `millisUntilNextStart`
+    // i scheduler. Hvis aktiv (>0) viser vi countdown og bruker den som
+    // auto-dismiss-tidspunkt. Ellers: 10s default, og bruker MÅ klikke
+    // "Klar for neste runde" for å gå videre (non-auto-round-modus).
+    const millis = state.millisUntilNextStart ?? null;
+    const showCountdown =
+      typeof millis === "number" && millis > 0 && millis < END_SCREEN_AUTO_DISMISS_MS * 4;
+    const autoDismissMs = showCountdown
+      ? Math.max(2000, Math.min(millis, END_SCREEN_AUTO_DISMISS_MS * 4))
+      : END_SCREEN_AUTO_DISMISS_MS;
+
+    const summary: Game1EndOfRoundSummary = {
+      endedReason: state.gameStatus === "ENDED" ? this.endedReasonFromState(state) : "MANUAL_END",
+      patternResults: state.patternResults,
+      myPlayerId: this.myPlayerId,
+      myTickets: state.myTickets,
+      miniGameResult: this.lastMiniGameResult,
+      luckyNumber: state.myLuckyNumber,
+      ownRoundWinnings: this.roundAccumulatedWinnings,
+      autoDismissMs,
+      showAutoRoundCountdown: showCountdown,
+      onReadyForNextRound: () => this.dismissEndOfRoundAndReturnToWaiting(),
+      onAutoDismiss: () => this.dismissEndOfRoundAndReturnToWaiting(),
+      onBackToLobby: () => {
+        // Lukk overlay + emit window-event som lobby/router kan lytte til.
+        // Eksisterende lobby-shell håndterer `spillorama:returnToLobby`
+        // som standard-navigasjon (samme channel som returnToShellLobby
+        // i Unity-host).
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("spillorama:returnToLobby"));
+        }
+        this.dismissEndOfRoundAndReturnToWaiting();
+      },
+    };
+    overlay.show(summary);
+    telemetry.trackEvent("end_of_round_overlay_shown", {
+      endedReason: summary.endedReason ?? "UNKNOWN",
+      ownTotal: this.roundAccumulatedWinnings,
+      autoDismissMs,
+      autoRoundCountdown: showCountdown,
+    });
+  }
+
+  /**
+   * Tobias 2026-04-29: cleanup-path når overlay lukkes (klikk eller auto-
+   * dismiss). Transitionerer til WAITING med fersk state, og hvis state
+   * allerede har gått over til RUNNING (auto-round race) plukker
+   * onStateChanged opp recovery-pathen.
+   */
+  private dismissEndOfRoundAndReturnToWaiting(): void {
+    if (this.endScreenTimer) {
+      clearTimeout(this.endScreenTimer);
+      this.endScreenTimer = null;
+    }
+    const freshState = this.deps.bridge.getState();
+    // Hvis ny runde allerede er i gang (rask auto-round), hopp direkte
+    // til PLAYING/SPECTATING. Ellers: WAITING viser pre-round-buy-popup
+    // som vanlig.
+    if (freshState.gameStatus === "RUNNING") {
+      if (freshState.myTickets.length > 0) {
+        this.transitionTo("PLAYING", freshState);
+      } else {
+        this.transitionTo("SPECTATING", freshState);
+      }
+    } else {
+      this.transitionTo("WAITING", freshState);
+    }
+  }
+
+  /**
+   * Tobias 2026-04-29: Hent endedReason fra current GameSnapshot. Bridge
+   * eksponerer ikke endedReason direkte i sin GameState, men reason kommer
+   * via roomSnapshot's currentGame. Vi bruker bridge.getState() og leter
+   * etter et heuristikk: "BINGO_CLAIMED" hvis Fullt Hus er vunnet (den
+   * eneste pattern med claimType=BINGO som typisk finnes i Spill 1), ellers
+   * "MAX_DRAWS_REACHED" som fallback.
+   *
+   * NB: dette er en best-effort tolkning siden GameState ikke har
+   * `endedReason`-feltet. For mer presist svar kan backend pushe det i
+   * en framtidig wire-utvidelse, men for retail-UX-tekst er dette
+   * tilstrekkelig.
+   */
+  private endedReasonFromState(state: GameState): string {
+    const bingoPattern = state.patternResults.find(
+      (r) => r.claimType === "BINGO" && r.isWon,
+    );
+    if (bingoPattern) return "BINGO_CLAIMED";
+    if (
+      state.drawnNumbers.length > 0 &&
+      state.totalDrawCapacity > 0 &&
+      state.drawnNumbers.length >= state.totalDrawCapacity
+    ) {
+      return "MAX_DRAWS_REACHED";
+    }
+    return "MANUAL_END";
+  }
+
+  /**
+   * Tobias 2026-04-29: flagg som settes i onGameEnded når WinScreenV2
+   * (Fullt Hus) er aktiv. Når WinScreenV2 lukkes (Tilbake-klikk eller
+   * 10.8s auto-close), kaller vi `flushPendingMiniGameTrigger()` som har
+   * blitt utvidet til også å vise end-of-round-overlay.
+   */
+  private shouldShowEndOfRoundOnWinScreenDismiss = false;
 
   private onNumberDrawn(number: number, drawIndex: number, state: GameState): void {
     if (this.phase === "PLAYING" && this.playScreen) {
@@ -712,20 +906,63 @@ class Game1Controller implements GameController {
     this.legacyMiniGame?.onActivated(payload);
   }
 
-  /** Spill av evt. pending trigger. Kalles fra WinScreenV2.onDismiss. */
+  /**
+   * Spill av evt. pending mini-game-trigger + åpne end-of-round-overlay
+   * dersom det ble holdt tilbake av WinScreenV2.
+   *
+   * Tobias 2026-04-29 prod-incident-fix: WinScreenV2 (Fullt Hus-fontene)
+   * er en stor scene som kjører ~10.8s. Hvis end-of-round-overlay viser
+   * seg samtidig blir WinScreenV2 klippet av (ulik z-index, samme
+   * overlay-container). Vi venter til WinScreenV2 er lukket FØR vi
+   * monterer end-of-round-overlay. Det samme prinsippet gjelder for
+   * pending mini-game-trigger som backend fyrer POST-Fullt Hus.
+   *
+   * Rekkefølge:
+   *   1. WinScreenV2 lukket (klikk eller 10.8s auto-close)
+   *   2. Mini-game-overlay vises hvis pending (M6 + legacy)
+   *   3. Mini-game-resultat fyrer (lagres i lastMiniGameResult)
+   *   4. Mini-game-overlay lukkes — eller hvis ingen mini-game var pending,
+   *      kjør direkte til steg 5
+   *   5. End-of-round-overlay vises (fra denne flushen, eller fra
+   *      mini-game-overlay-onDismiss-pathen)
+   */
   private flushPendingMiniGameTrigger(): void {
+    let hasPending = false;
     const pending = this.pendingMiniGameTrigger;
     if (pending) {
       this.pendingMiniGameTrigger = null;
       this.miniGame?.onTrigger(pending);
+      hasPending = true;
     }
-    // Tobias prod-incident 2026-04-29: also flush pending legacy trigger.
-    // Both protocols share the WinScreen queue but each routes to its own
-    // overlay-manager.
+    // Tobias prod-incident 2026-04-29: også flush pending legacy trigger.
+    // Begge protokoller deler WinScreen-køen men ruter til hver sin overlay-
+    // manager.
     const pendingLegacy = this.pendingLegacyMiniGame;
     if (pendingLegacy) {
       this.pendingLegacyMiniGame = null;
       this.legacyMiniGame?.onActivated(pendingLegacy);
+      hasPending = true;
+    }
+    if (hasPending) {
+      // Mini-game tar over scenen — vi viser end-of-round-overlay etter
+      // at brukeren har gjort sitt valg (mini-game-router/legacy-adapter
+      // emitter result-event som vi capturer i lastMiniGameResult). Show-
+      // call gjøres når mini-game-overlay lukkes (eller når brukeren
+      // returnerer til ENDED-state uten aktivt mini-game via
+      // onStateChanged-pathen).
+      return;
+    }
+    // Ingen pending mini-game — vis end-of-round-overlay nå hvis runden
+    // faktisk er ENDED (kan ha endret seg mens vi ventet).
+    if (this.shouldShowEndOfRoundOnWinScreenDismiss) {
+      this.shouldShowEndOfRoundOnWinScreenDismiss = false;
+      const freshState = this.deps.bridge.getState();
+      if (this.phase === "ENDED" || freshState.gameStatus === "ENDED") {
+        this.showEndOfRoundOverlayForState(freshState);
+      } else {
+        // Race: en ny runde startet mens WinScreenV2 var oppe — gå direkte.
+        this.dismissEndOfRoundAndReturnToWaiting();
+      }
     }
   }
 
@@ -778,7 +1015,9 @@ class Game1Controller implements GameController {
       this.currentScreen = null;
     }
     this.playScreen = null;
-    this.endScreen = null;
+    // endScreen-feltet ble fjernet i Tobias 2026-04-29 prod-incident-fix —
+    // ENDED-fasen bruker nå Game1EndOfRoundOverlay (HTML) i stedet for en
+    // Pixi-basert EndScreen.
   }
 
   /**
