@@ -9,7 +9,7 @@
  * PDF 13 §13.5 og PDF 15 §15.8 (se MachineBreakdownTypes nedenfor).
  */
 
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
   emptyMachineBreakdown,
   type MachineBreakdown,
@@ -104,7 +104,12 @@ export interface ListSettlementFilter {
 }
 
 export interface AgentSettlementStore {
-  insert(input: InsertSettlementInput): Promise<AgentSettlement>;
+  /**
+   * HV-9 (audit §3.9): valgfri `client?` lar `closeDay` binde INSERT til
+   * samme PG-tx som `markShiftSettled` + `hallCash.applyCashTx`. Atomic
+   * close-day forhindrer at shift markeres settled uten settlement-rad.
+   */
+  insert(input: InsertSettlementInput, client?: PoolClient): Promise<AgentSettlement>;
   getById(id: string): Promise<AgentSettlement | null>;
   getByShiftId(shiftId: string): Promise<AgentSettlement | null>;
   list(filter: ListSettlementFilter): Promise<AgentSettlement[]>;
@@ -250,8 +255,11 @@ export class PostgresAgentSettlementStore implements AgentSettlementStore {
     this.tableName = `"${schema}"."app_agent_settlements"`;
   }
 
-  async insert(input: InsertSettlementInput): Promise<AgentSettlement> {
-    const { rows } = await this.pool.query<Row>(
+  async insert(input: InsertSettlementInput, client?: PoolClient): Promise<AgentSettlement> {
+    // HV-9: når caller kjører innenfor runInTransaction må INSERT bindes
+    // til samme PG-tx — bruk passert client. Default = pool (egen tx).
+    const exec = client ?? this.pool;
+    const { rows } = await exec.query<Row>(
       `INSERT INTO ${this.tableName}
         (id, shift_id, agent_user_id, hall_id, business_date,
          daily_balance_at_start, daily_balance_at_end, reported_cash_count,
@@ -417,7 +425,10 @@ export class PostgresAgentSettlementStore implements AgentSettlementStore {
 export class InMemoryAgentSettlementStore implements AgentSettlementStore {
   private readonly rows = new Map<string, AgentSettlement>();
 
-  async insert(input: InsertSettlementInput): Promise<AgentSettlement> {
+  async insert(input: InsertSettlementInput, _client?: PoolClient): Promise<AgentSettlement> {
+    // HV-9: client-arg ignoreres for in-memory (single-threaded JS, ingen
+    // tx-grenser). Tester som verifiserer rollback-semantikk må mocke
+    // store-metoder direkte.
     // Enforce UNIQUE(shift_id) — mirror Postgres constraint
     for (const r of this.rows.values()) {
       if (r.shiftId === input.shiftId) {

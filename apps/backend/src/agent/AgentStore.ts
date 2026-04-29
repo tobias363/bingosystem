@@ -167,8 +167,17 @@ export interface AgentStore {
    * BIN-583 B3.3: marker shift som settled (close-day fullført). Etter
    * dette nekter AgentTransactionService alle mutation-paths med
    * SHIFT_SETTLED. Idempotent feiler hvis allerede settled.
+   *
+   * HV-9 (audit §3.9): tar valgfri `client?` slik at caller kan binde
+   * UPDATE-en til samme PG-tx som settlement-INSERT + hall-cash-applies.
+   * Uten dette ville et crash midt i closeDay etterlate shift settled
+   * uten settlement-rad og uten cash-bevegelse.
    */
-  markShiftSettled(shiftId: string, settledByUserId: string): Promise<AgentShift>;
+  markShiftSettled(
+    shiftId: string,
+    settledByUserId: string,
+    client?: PoolClient,
+  ): Promise<AgentShift>;
 }
 
 export interface ShiftCashDelta {
@@ -679,8 +688,15 @@ export class PostgresAgentStore implements AgentStore {
     return this.mapShift(rows[0]);
   }
 
-  async markShiftSettled(shiftId: string, settledByUserId: string): Promise<AgentShift> {
-    const { rows } = await this.pool.query<ShiftRow>(
+  async markShiftSettled(
+    shiftId: string,
+    settledByUserId: string,
+    client?: PoolClient,
+  ): Promise<AgentShift> {
+    // HV-9: optional `client` lar closeDay binde UPDATE til samme tx som
+    // settlement-INSERT + hall-cash-applies (atomic close-day).
+    const exec = client ?? this.pool;
+    const { rows } = await exec.query<ShiftRow>(
       `UPDATE ${this.shifts()}
        SET settled_at = now(),
            settled_by_user_id = $2,
@@ -1058,7 +1074,16 @@ export class InMemoryAgentStore implements AgentStore {
     return { ...s };
   }
 
-  async markShiftSettled(shiftId: string, settledByUserId: string): Promise<AgentShift> {
+  async markShiftSettled(
+    shiftId: string,
+    settledByUserId: string,
+    _client?: PoolClient,
+  ): Promise<AgentShift> {
+    // HV-9: client-arg ignoreres for in-memory (single-threaded JS, ingen
+    // tx-grenser). I tester kan vi simulere mid-tx-feil ved å la callback
+    // til runInTransaction kaste — InMemory rollback er en no-op fordi
+    // mutasjoner skjer in-place; tester må derfor mocke store-metoder
+    // for å verifisere rollback-semantikk.
     const s = this.shifts.get(shiftId);
     if (!s) throw new Error("[BIN-583] shift not found");
     if (s.settledAt) throw new Error("[BIN-583] shift already settled");
