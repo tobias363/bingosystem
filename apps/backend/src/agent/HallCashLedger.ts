@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 export type HallCashTxType =
   | "DAILY_BALANCE_TRANSFER"
@@ -51,8 +51,15 @@ export interface HallCashLedger {
   /**
    * Atomisk: muter app_halls.cash_balance + skriv tx-rad. Returnerer
    * tx-rad med previous/after-snapshot.
+   *
+   * HV-9 (audit §3.9): valgfri `client?` lar `closeDay` binde mutasjonen
+   * til samme PG-tx som `markShiftSettled` + settlement-INSERT. Når
+   * `client` er satt antas BEGIN allerede åpnet av caller — `applyCashTx`
+   * kjører bare SELECT FOR UPDATE + UPDATE + INSERT uten egen
+   * BEGIN/COMMIT/ROLLBACK. Når `client` er undefined faller den
+   * tilbake til selvstendig tx (legacy-flow for andre call-sites).
    */
-  applyCashTx(input: ApplyCashTxInput): Promise<HallCashTransaction>;
+  applyCashTx(input: ApplyCashTxInput, client?: PoolClient): Promise<HallCashTransaction>;
 
   /** Les running cash + dropsafe balance for hall. */
   getHallBalances(hallId: string): Promise<{ cashBalance: number; dropsafeBalance: number }>;
@@ -122,49 +129,70 @@ export class PostgresHallCashLedger implements HallCashLedger {
   private hallsTable(): string { return `"${this.schema}"."app_halls"`; }
   private txTable(): string { return `"${this.schema}"."app_hall_cash_transactions"`; }
 
-  async applyCashTx(input: ApplyCashTxInput): Promise<HallCashTransaction> {
+  async applyCashTx(
+    input: ApplyCashTxInput,
+    externalClient?: PoolClient,
+  ): Promise<HallCashTransaction> {
+    // HV-9: hvis caller har gitt oss en aktiv client (fra runInTransaction),
+    // hopp over egen BEGIN/COMMIT/ROLLBACK — closeDay eier ytre tx.
+    // Ellers får vi vår egen client + lifecycle.
+    if (externalClient) {
+      return this.runApply(input, externalClient);
+    }
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      // Lock + read current balance
-      const { rows: hallRows } = await client.query<{ cash_balance: string | number }>(
-        `SELECT cash_balance FROM ${this.hallsTable()} WHERE id = $1 FOR UPDATE`,
-        [input.hallId]
-      );
-      if (!hallRows[0]) {
-        throw new Error("[BIN-583] hall not found");
-      }
-      const previousBalance = asNumber(hallRows[0].cash_balance);
-      const delta = input.direction === "CREDIT" ? input.amount : -input.amount;
-      const afterBalance = previousBalance + delta;
-
-      await client.query(
-        `UPDATE ${this.hallsTable()} SET cash_balance = $2, updated_at = now() WHERE id = $1`,
-        [input.hallId, afterBalance]
-      );
-      const id = `hcashtx-${randomUUID()}`;
-      const { rows } = await client.query<TxRow>(
-        `INSERT INTO ${this.txTable()}
-          (id, hall_id, agent_user_id, shift_id, settlement_id,
-           tx_type, direction, amount, previous_balance, after_balance,
-           notes, other_data)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
-         RETURNING *`,
-        [
-          id, input.hallId, input.agentUserId ?? null, input.shiftId ?? null,
-          input.settlementId ?? null, input.txType, input.direction, input.amount,
-          previousBalance, afterBalance, input.notes ?? null,
-          JSON.stringify(input.otherData ?? {}),
-        ]
-      );
+      const result = await this.runApply(input, client);
       await client.query("COMMIT");
-      return this.map(rows[0]!);
+      return result;
     } catch (err) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // best-effort rollback
+      }
       throw err;
     } finally {
       client.release();
     }
+  }
+
+  private async runApply(
+    input: ApplyCashTxInput,
+    client: PoolClient,
+  ): Promise<HallCashTransaction> {
+    // Lock + read current balance
+    const { rows: hallRows } = await client.query<{ cash_balance: string | number }>(
+      `SELECT cash_balance FROM ${this.hallsTable()} WHERE id = $1 FOR UPDATE`,
+      [input.hallId]
+    );
+    if (!hallRows[0]) {
+      throw new Error("[BIN-583] hall not found");
+    }
+    const previousBalance = asNumber(hallRows[0].cash_balance);
+    const delta = input.direction === "CREDIT" ? input.amount : -input.amount;
+    const afterBalance = previousBalance + delta;
+
+    await client.query(
+      `UPDATE ${this.hallsTable()} SET cash_balance = $2, updated_at = now() WHERE id = $1`,
+      [input.hallId, afterBalance]
+    );
+    const id = `hcashtx-${randomUUID()}`;
+    const { rows } = await client.query<TxRow>(
+      `INSERT INTO ${this.txTable()}
+        (id, hall_id, agent_user_id, shift_id, settlement_id,
+         tx_type, direction, amount, previous_balance, after_balance,
+         notes, other_data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+       RETURNING *`,
+      [
+        id, input.hallId, input.agentUserId ?? null, input.shiftId ?? null,
+        input.settlementId ?? null, input.txType, input.direction, input.amount,
+        previousBalance, afterBalance, input.notes ?? null,
+        JSON.stringify(input.otherData ?? {}),
+      ]
+    );
+    return this.map(rows[0]!);
   }
 
   async getHallBalances(hallId: string): Promise<{ cashBalance: number; dropsafeBalance: number }> {
@@ -232,7 +260,12 @@ export class InMemoryHallCashLedger implements HallCashLedger {
     this.balances.set(hallId, { cashBalance, dropsafeBalance });
   }
 
-  async applyCashTx(input: ApplyCashTxInput): Promise<HallCashTransaction> {
+  async applyCashTx(
+    input: ApplyCashTxInput,
+    _client?: PoolClient,
+  ): Promise<HallCashTransaction> {
+    // HV-9: client-arg ignoreres for in-memory (single-threaded JS, ingen
+    // tx-grenser). Tester for rollback-semantikk må mocke direkte.
     const balances = this.balances.get(input.hallId) ?? { cashBalance: 0, dropsafeBalance: 0 };
     const previousBalance = balances.cashBalance;
     const delta = input.direction === "CREDIT" ? input.amount : -input.amount;

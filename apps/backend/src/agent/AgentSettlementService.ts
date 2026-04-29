@@ -247,71 +247,115 @@ export class AgentSettlementService {
       }
     }
 
-    // Aggregér transaksjoner for snapshot.
+    // Aggregér transaksjoner for snapshot. Trygt utenfor tx — ren read.
     const aggregate = await this.txs.aggregateByShift(shift.id);
 
-    // Mark shift settled (atomisk i Postgres; in-memory har samme effekt).
-    const settledShift = await this.store.markShiftSettled(shift.id, input.agentUserId);
+    // ── HV-9 (audit §3.9): atomic close-day ──────────────────────────────
+    //
+    // Tidligere (buggy):
+    //   Step 1: markShiftSettled                  (egen tx)
+    //   Step 2: settlements.insert                (egen tx)
+    //   Step 3: hallCash.applyCashTx (daily-bal)  (egen tx)
+    //   Step 4: hallCash.applyCashTx (diff)       (egen tx, betinget)
+    //
+    // Crash mellom step 1 og 2 → shift `settled=true` uten settlement-rad.
+    // Agent kan ikke re-attempt close-day (shift settled), kan ikke se
+    // settlement (ingen rad), og kan ikke trigge cash-bevegelse på nytt.
+    // Manuell DB-intervensjon er eneste recovery.
+    //
+    // Fix: Alle fire writes wrapped i felles PG-tx via
+    // `agentStore.runInTransaction`. Hvis NOEN av dem kaster:
+    //   • shift forblir IKKE settled
+    //   • ingen settlement-rad opprettes
+    //   • hall.cash_balance er uendret
+    // Agent kan trygt re-attempte close-day.
+    //
+    // Pattern speiler `AgentTransactionService.processCashOp`. In-memory-
+    // store kjører callback med null-client (single-threaded JS — ingen
+    // reell tx). PG-impl wrapper i ekte BEGIN/COMMIT/ROLLBACK.
+    // ─────────────────────────────────────────────────────────────────────
 
     const settlementId = `sett-${randomUUID()}`;
-    const businessDate = new Date(settledShift.startedAt).toISOString().slice(0, 10);
 
-    const settlement = await this.settlements.insert({
-      id: settlementId,
-      shiftId: shift.id,
-      agentUserId: shift.userId,
-      hallId: shift.hallId,
-      businessDate,
-      dailyBalanceAtStart: 0,
-      dailyBalanceAtEnd,
-      reportedCashCount: round2(input.reportedCashCount),
-      dailyBalanceDifference: diff,
-      settlementToDropSafe: round2(input.settlementToDropSafe ?? 0),
-      withdrawFromTotalBalance: round2(input.withdrawFromTotalBalance ?? 0),
-      totalDropSafe: round2(input.totalDropSafe ?? 0),
-      shiftCashInTotal: round2(aggregate.cashIn),
-      shiftCashOutTotal: round2(aggregate.cashOut),
-      shiftCardInTotal: round2(aggregate.cardIn),
-      shiftCardOutTotal: round2(aggregate.cardOut),
-      settlementNote: input.settlementNote?.trim() || null,
-      closedByUserId: input.agentUserId,
-      isForced: severity === "FORCE_REQUIRED",
-      otherData: {
-        ...input.otherData,
-        diffSeverity: severity,
-        diffPct,
-        aggregate,
-      },
-      machineBreakdown: breakdown,
-      bilagReceipt: receipt ?? null,
+    const settlement = await this.store.runInTransaction(async (client) => {
+      // Step 1: mark shift settled — fail-fast hvis allerede settled
+      // (ON CONFLICT-style WHERE settled_at IS NULL gir no row → throw).
+      const settledShift = await this.store.markShiftSettled(
+        shift.id,
+        input.agentUserId,
+        client ?? undefined,
+      );
+      const businessDate = new Date(settledShift.startedAt).toISOString().slice(0, 10);
+
+      // Step 2: insert settlement-rad i samme tx.
+      const inserted = await this.settlements.insert(
+        {
+          id: settlementId,
+          shiftId: shift.id,
+          agentUserId: shift.userId,
+          hallId: shift.hallId,
+          businessDate,
+          dailyBalanceAtStart: 0,
+          dailyBalanceAtEnd,
+          reportedCashCount: round2(input.reportedCashCount),
+          dailyBalanceDifference: diff,
+          settlementToDropSafe: round2(input.settlementToDropSafe ?? 0),
+          withdrawFromTotalBalance: round2(input.withdrawFromTotalBalance ?? 0),
+          totalDropSafe: round2(input.totalDropSafe ?? 0),
+          shiftCashInTotal: round2(aggregate.cashIn),
+          shiftCashOutTotal: round2(aggregate.cashOut),
+          shiftCardInTotal: round2(aggregate.cardIn),
+          shiftCardOutTotal: round2(aggregate.cardOut),
+          settlementNote: input.settlementNote?.trim() || null,
+          closedByUserId: input.agentUserId,
+          isForced: severity === "FORCE_REQUIRED",
+          otherData: {
+            ...input.otherData,
+            diffSeverity: severity,
+            diffPct,
+            aggregate,
+          },
+          machineBreakdown: breakdown,
+          bilagReceipt: receipt ?? null,
+        },
+        client ?? undefined,
+      );
+
+      // Step 3: daily-balance-transfer til hall.cash_balance hvis non-zero.
+      if (dailyBalanceAtEnd !== 0) {
+        await this.hallCash.applyCashTx(
+          {
+            hallId: shift.hallId,
+            agentUserId: input.agentUserId,
+            shiftId: shift.id,
+            settlementId: inserted.id,
+            txType: "DAILY_BALANCE_TRANSFER",
+            direction: dailyBalanceAtEnd > 0 ? "CREDIT" : "DEBIT",
+            amount: Math.abs(dailyBalanceAtEnd),
+            notes: `Close-day transfer for shift ${shift.id}`,
+          },
+          client ?? undefined,
+        );
+      }
+      // Step 4: diff registrert som SHIFT_DIFFERENCE hvis non-zero.
+      if (diff !== 0) {
+        await this.hallCash.applyCashTx(
+          {
+            hallId: shift.hallId,
+            agentUserId: input.agentUserId,
+            shiftId: shift.id,
+            settlementId: inserted.id,
+            txType: "SHIFT_DIFFERENCE",
+            direction: diff > 0 ? "CREDIT" : "DEBIT",
+            amount: Math.abs(diff),
+            notes: input.settlementNote?.trim() || null,
+          },
+          client ?? undefined,
+        );
+      }
+
+      return inserted;
     });
-
-    // Transferer daily-balance til hall cash hvis non-zero.
-    if (dailyBalanceAtEnd !== 0) {
-      await this.hallCash.applyCashTx({
-        hallId: shift.hallId,
-        agentUserId: input.agentUserId,
-        shiftId: shift.id,
-        settlementId: settlement.id,
-        txType: "DAILY_BALANCE_TRANSFER",
-        direction: dailyBalanceAtEnd > 0 ? "CREDIT" : "DEBIT",
-        amount: Math.abs(dailyBalanceAtEnd),
-        notes: `Close-day transfer for shift ${shift.id}`,
-      });
-    }
-    // Hvis cash-diff != 0, registrer som SHIFT_DIFFERENCE.
-    if (diff !== 0) {
-      await this.hallCash.applyCashTx({
-        hallId: shift.hallId,
-        agentUserId: input.agentUserId,
-        shiftId: shift.id,
-        settlementId: settlement.id,
-        txType: "SHIFT_DIFFERENCE",
-        direction: diff > 0 ? "CREDIT" : "DEBIT",
-        amount: Math.abs(diff),
-        notes: input.settlementNote?.trim() || null,
-      });
-    }
 
     return settlement;
   }
