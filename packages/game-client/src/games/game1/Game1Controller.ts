@@ -212,6 +212,11 @@ class Game1Controller implements GameController {
         console.warn("[Game1Controller] mini-game choice lost", { resultId });
       },
     });
+    // Demo-blocker-fix 2026-04-29: når mini-game-overlay dismisses (etter
+    // brukerens valg + animasjon), vis end-of-round-overlay hvis runden
+    // er ENDED. Dette løser at vinneren tidligere mistet mini-game-popup
+    // mens MAX_DRAWS-trekningen kjørte i bakgrunnen.
+    this.miniGame.setOnAfterDismiss(() => this.onMiniGameDismissed());
     // Tobias prod-incident 2026-04-29: legacy `minigame:activated` adapter
     // for the auto-claim path (PR #727 emit chain). Server still emits
     // legacy events for Spill 1 auto-rounds; this adapter wraps them onto
@@ -222,6 +227,7 @@ class Game1Controller implements GameController {
       socket,
       bridge,
     });
+    this.legacyMiniGame.setOnAfterDismiss(() => this.onMiniGameDismissed());
     this.actions = new Game1SocketActions({
       socket,
       bridge,
@@ -489,12 +495,23 @@ class Game1Controller implements GameController {
     // sørg for at overlay fortsatt vises. Game1ReconnectFlow kan ha
     // forsynt en applySnapshot som triggrer denne stateChanged uten
     // at gameEnded-eventen fyrer på nytt.
+    //
+    // Demo-blocker-fix 2026-04-29: hold tilbake overlay hvis mini-game
+    // er aktiv eller står i kø — vinneren MÅ få spille mini-game ferdig
+    // før vi viser end-of-round-summary.
+    const miniGameActive =
+      this.miniGame?.isActive() === true ||
+      this.legacyMiniGame?.isActive() === true ||
+      this.pendingMiniGameTrigger !== null ||
+      this.pendingLegacyMiniGame !== null;
+
     if (
       this.phase === "ENDED" &&
       state.gameStatus === "ENDED" &&
       this.endOfRoundOverlay &&
       !this.endOfRoundOverlay.isVisible() &&
-      !this.isWinScreenActive
+      !this.isWinScreenActive &&
+      !miniGameActive
     ) {
       this.showEndOfRoundOverlayForState(state);
     }
@@ -596,24 +613,45 @@ class Game1Controller implements GameController {
   }
 
   private onGameEnded(state: GameState): void {
-    // Dismiss any active mini-game overlay so it doesn't block the
-    // end-of-round overlay.
+    // Demo-blocker-fix 2026-04-29: mini-game-overlay må PERSIST etter
+    // game-end ved Fullt Hus. Tidligere ble overlay revet ned umiddelbart
+    // i `onGameEnded` slik at vinneren ikke fikk se Mystery / Wheel /
+    // Chest / ColorDraft (server hadde aktivert mini-game POST-Fullt-Hus
+    // men runden var allerede ENDED når klient mottok pattern:won).
     //
-    // PIXI-P0-002 (Bølge 2A, 2026-04-28): use the graceful dismiss so we
-    // briefly wait for any in-flight `mini_game:choice` ack before tearing
-    // the overlay down. Without this, a player who clicked just before the
-    // game ended would lose their choice silently. Backend remains
-    // idempotent on choice (orchestrator `completed_at` lock) so a late
-    // ack after the wait doesn't double-pay; the wait just shrinks the
-    // user-visible loss window. Fire-and-forget — overlay-show below
-    // doesn't depend on the mini-game overlay being gone yet.
-    void this.miniGame?.dismissAfterPendingChoices();
-    // Tobias prod-incident 2026-04-29: legacy adapter doesn't have a
-    // pending-choice drain (legacy `minigame:play` is fire-and-ack with no
-    // intermediate state), so a synchronous dismiss is correct. The
-    // overlay is destroyed if active.
-    this.legacyMiniGame?.dismiss();
-    this.pendingLegacyMiniGame = null;
+    // Sjekk om en mini-game er aktiv eller står i kø — hvis så, hopp
+    // over dismiss-en. Mini-game-overlay tar ansvar for sin egen lifecycle:
+    //   - Wheel/Chest/ColorDraft/Mystery: overlay-en kaller `dismiss`
+    //     etter resultat-animasjon er ferdig.
+    //   - End-of-round-overlay holdes tilbake (via mini-game-router /
+    //     legacy-adapter sin onDismiss-callback) til mini-game er ferdig.
+    //
+    // Hvis ingen mini-game er aktiv (typisk MAX_DRAWS_REACHED uten Fullt
+    // Hus, eller cancellation-path), dismiss som før.
+    const miniGameActive =
+      this.miniGame?.isActive() === true ||
+      this.legacyMiniGame?.isActive() === true ||
+      this.pendingMiniGameTrigger !== null ||
+      this.pendingLegacyMiniGame !== null;
+
+    if (!miniGameActive) {
+      // Ingen mini-game i bildet — trygt å dismisse evt. zombie-overlay.
+      // PIXI-P0-002 (Bølge 2A, 2026-04-28): use the graceful dismiss so we
+      // briefly wait for any in-flight `mini_game:choice` ack before tearing
+      // the overlay down. Without this, a player who clicked just before the
+      // game ended would lose their choice silently. Backend remains
+      // idempotent on choice (orchestrator `completed_at` lock) so a late
+      // ack after the wait doesn't double-pay; the wait just shrinks the
+      // user-visible loss window. Fire-and-forget — overlay-show below
+      // doesn't depend on the mini-game overlay being gone yet.
+      void this.miniGame?.dismissAfterPendingChoices();
+      // Tobias prod-incident 2026-04-29: legacy adapter doesn't have a
+      // pending-choice drain (legacy `minigame:play` is fire-and-ack with no
+      // intermediate state), so a synchronous dismiss is correct. The
+      // overlay is destroyed if active.
+      this.legacyMiniGame?.dismiss();
+      this.pendingLegacyMiniGame = null;
+    }
 
     this.deps.audio.resetAnnouncedNumbers();
     this.deps.audio.stopAll();
@@ -641,10 +679,25 @@ class Game1Controller implements GameController {
       // er aktiv, holder vi tilbake overlay til den lukkes — slik at
       // animasjonen får ferdig-spille uten å bli klippet av summary-
       // vinduet.
+      //
+      // Demo-blocker-fix 2026-04-29: hvis mini-game er aktiv (eller
+      // pending), holdes end-of-round tilbake også. Mini-game-overlay
+      // kaller vår onResult/onDismiss-hook når den er ferdig, og da
+      // viser end-of-round-overlay seg via onStateChanged-recovery-pathen.
       if (this.isWinScreenActive) {
         // WinScreenV2.onDismiss kaller flushPendingMiniGameTrigger som
         // vi her utvider til også å vise end-of-round-overlay. Vi
         // bruker en flag siden vi ikke vil endre WinScreenV2-API-en.
+        this.shouldShowEndOfRoundOnWinScreenDismiss = true;
+      } else if (
+        this.miniGame?.isActive() === true ||
+        this.legacyMiniGame?.isActive() === true ||
+        this.pendingMiniGameTrigger !== null ||
+        this.pendingLegacyMiniGame !== null
+      ) {
+        // Mini-game vises eller står i kø — utsett end-of-round-overlay
+        // til mini-game-routeren/legacy-adapteren melder fra at brukeren
+        // er ferdig (overlay.onDismiss → onStateChanged-recovery).
         this.shouldShowEndOfRoundOnWinScreenDismiss = true;
       } else {
         this.showEndOfRoundOverlayForState(state);
@@ -972,6 +1025,38 @@ class Game1Controller implements GameController {
       return;
     }
     this.legacyMiniGame?.onActivated(payload);
+  }
+
+  /**
+   * Demo-blocker-fix 2026-04-29: callback fra MiniGameRouter /
+   * LegacyMiniGameAdapter når mini-game-overlay er dismissed (etter
+   * brukervalg + animasjon). Hvis runden er ENDED og end-of-round-
+   * overlay var holdt tilbake (`shouldShowEndOfRoundOnWinScreenDismiss`),
+   * vis det nå.
+   *
+   * Hvorfor denne pathen er nødvendig: MAX_DRAWS-fixen i server hindrer
+   * trekninger etter Fullt Hus, men klient-side blir mini-game-overlay
+   * fortsatt revet ned hvis vi blindt dismisser i `onGameEnded`. Vi
+   * holder mini-game oppe inntil overlay selv signaliserer at den er
+   * ferdig, og DA viser vi end-of-round-overlay som rapporten brukeren
+   * skal se.
+   */
+  private onMiniGameDismissed(): void {
+    // Bare relevant hvis vi faktisk satt flagget (Fullt Hus + game ENDED-
+    // path). Ellers: ingen end-of-round å vise — dismiss var bare en
+    // normal cleanup mid-round.
+    if (!this.shouldShowEndOfRoundOnWinScreenDismiss) return;
+    if (this.isWinScreenActive) return; // WinScreenV2 vil flushe selv
+
+    this.shouldShowEndOfRoundOnWinScreenDismiss = false;
+    const freshState = this.deps.bridge.getState();
+    if (this.phase === "ENDED" || freshState.gameStatus === "ENDED") {
+      this.showEndOfRoundOverlayForState(freshState);
+    } else {
+      // Race: ny runde startet mens mini-game var oppe — gå direkte til
+      // WAITING/PLAYING (samme recovery-pathing som overlay's onClickKlar).
+      this.dismissEndOfRoundAndReturnToWaiting();
+    }
   }
 
   /**

@@ -336,6 +336,21 @@ export class LegacyMiniGameAdapter {
   constructor(private readonly deps: LegacyMiniGameAdapterDeps) {}
 
   /**
+   * True hvis adapter har et aktivt overlay som spilleren kan interagere
+   * med. Brukes av Game1Controller.onGameEnded for å avgjøre om mini-game
+   * skal beholdes når runden avsluttes (Fullt Hus + mini-game = vinneren
+   * må fortsatt få fullføre selv om game.status=ENDED).
+   *
+   * Demo-blocker-fix 2026-04-29: før denne accessor-en returnerte adapter
+   * ingen state om det fantes en aktiv overlay, så onGameEnded måtte
+   * blint kalle dismiss() — som klippet mini-game-overlay i det øyeblikket
+   * Fullt Hus-runden endte, før spilleren fikk se Mystery / Wheel / Chest.
+   */
+  isActive(): boolean {
+    return this.overlay !== null;
+  }
+
+  /**
    * Handle legacy `minigame:activated`. Synthesizes an M6-shaped trigger
    * payload, instantiates the matching overlay, and wires the choice
    * handler to route through the legacy `minigame:play` server event.
@@ -488,14 +503,42 @@ export class LegacyMiniGameAdapter {
    * don't block the EndScreen.
    */
   dismiss(): void {
+    const wasActive = this.overlay !== null;
     this.overlay?.destroy({ children: true });
     this.overlay = null;
     this.activePayload = null;
     this.activeTriggerPayload = null;
     this.lastChosenIndex = undefined;
+    // Demo-blocker-fix 2026-04-29: notify controller når mini-game er
+    // dismissed slik at end-of-round-overlay kan vises etter at vinneren
+    // har spilt mini-game ferdig. Hooken fyrer kun hvis det faktisk var
+    // et aktivt overlay (idempotent — gjentatt dismiss er no-op).
+    if (wasActive && this.onAfterDismiss) {
+      try {
+        this.onAfterDismiss();
+      } catch (err) {
+        console.error("[LegacyMiniGameAdapter] onAfterDismiss threw:", err);
+      }
+    }
   }
 
+  /**
+   * Set callback fired AFTER overlay has been dismissed. Used by
+   * `Game1Controller` to trigger end-of-round-overlay show when the
+   * mini-game (Mystery / Wheel / Chest / ColorDraft) is completed.
+   * Demo-blocker-fix 2026-04-29.
+   */
+  setOnAfterDismiss(fn: (() => void) | null): void {
+    this.onAfterDismiss = fn;
+  }
+
+  private onAfterDismiss: (() => void) | null = null;
+
   destroy(): void {
+    // Clear onAfterDismiss BEFORE dismiss() så vi ikke trigger end-of-round
+    // overlay-show under controller-destroy (overlayet destroyes parallelt
+    // i samme cleanup-pathing).
+    this.onAfterDismiss = null;
     this.dismiss();
   }
 }

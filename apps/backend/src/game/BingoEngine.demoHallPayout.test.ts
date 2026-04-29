@@ -200,14 +200,26 @@ test(
       variantConfig: DEFAULT_NORSK_BINGO_CONFIG,
     });
 
-    // Trekk alle 24 ikke-nullceller → Fullt Hus oppnås men runden skal
-    // fortsette pga test-hall-bypass.
+    // Trekk alle 24 ikke-nullceller → alle 5 faser vinnes; Fullt Hus
+    // avslutter runden atomært (revisjon 2026-04-29 — mini-game-fix).
     const allAlice: number[] = [];
     for (const row of ALICE_GRID) for (const n of row) if (n !== 0) allAlice.push(n);
     prioritiseDrawBag(engine, roomCode, allAlice);
 
     for (let i = 0; i < 24; i += 1) {
-      await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
+      try {
+        await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
+      } catch (err) {
+        const { DomainError } = await import("../errors/DomainError.js");
+        if (
+          err instanceof DomainError &&
+          err.code === "GAME_NOT_RUNNING"
+        ) {
+          // Runden ble avsluttet via Fullt Hus — naturlig stopp.
+          break;
+        }
+        throw err;
+      }
     }
 
     const game = engine.getRoomSnapshot(roomCode).currentGame!;
