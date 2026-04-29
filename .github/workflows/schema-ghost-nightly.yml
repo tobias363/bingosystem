@@ -1,0 +1,238 @@
+name: Schema Ghost Detection (nightly)
+
+# Catches the case where someone applies SQL to prod (or staging) by hand
+# without adding a migration file. The schema-CI gate (schema-ci.yml)
+# only checks migration-files-vs-baseline at PR time; this nightly job
+# checks shadow-DB-after-migrate vs the LIVE staging/prod schema.
+#
+# How it works:
+#   1. Spin up a fresh shadow Postgres.
+#   2. Run all migrations from apps/backend/migrations on it.
+#   3. Read-only pg_dump the staging (or prod) schema.
+#   4. Diff the two schemas.
+#   5. Any divergence = a ghost. Open a GitHub issue.
+#
+# Read-only is critical: this job NEVER mutates the target DB. It only
+# pg_dumps the schema. The shadow DB is fully isolated.
+#
+# Required GitHub repository secrets:
+#   STAGING_PG_READONLY_URL  postgresql://readonly_user:pw@host:port/db
+#   (For prod-comparison, use a separate STAGING-only credential — never
+#    grant the CI runner direct prod access.)
+#
+# Background:
+#   docs/audit/SCHEMA_DIVERGENCE_AUDIT_2026-04-29.md §3 listed 9 ghost
+#   migrations and 1 schema-ahead column. Yesterday's repair was applied
+#   manually with idempotent SQL. The schema-CI gate prevents future
+#   ghosts at PR time, but if someone applies SQL to prod directly
+#   (incident response, etc.) the file-vs-baseline check passes while the
+#   prod schema drifts. This job catches that case.
+
+on:
+  schedule:
+    # 03:30 UTC = 04:30 / 05:30 Oslo time. After nightly deploys, before
+    # business hours.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    # Allow manual trigger for ad-hoc verification.
+
+concurrency:
+  group: schema-ghost-nightly
+  cancel-in-progress: false  # Don't cancel an in-progress nightly check
+
+permissions:
+  # Required for gh issue create / comment / label create.
+  issues: write
+  contents: read
+
+jobs:
+  detect-ghosts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    # Skip silently if the staging DB secret isn't configured (e.g. on a
+    # fork). The job is opt-in via repo secrets.
+    if: ${{ github.repository == 'tobias363/Spillorama-system' }}
+
+    services:
+      postgres:
+        # Match prod (PostgreSQL 18.3 on Render).
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: shadow
+          POSTGRES_PASSWORD: shadow
+          POSTGRES_DB: shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shadow"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - name: Install postgresql-client-18
+        run: |
+          # Match prod's pg version (18.3) so pg_dump output matches the
+          # baseline byte-for-byte. Ubuntu's default postgresql-client is
+          # v14 — too old.
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsS \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          UBUNTU_CODENAME=$(lsb_release -cs)
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $UBUNTU_CODENAME-pgdg main" | \
+            sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-18
+
+      - name: Install apps/backend dependencies
+        run: npm --prefix apps/backend ci
+
+      - name: Run migrations on shadow DB
+        env:
+          SHADOW_PG_CONNECTION_STRING: postgresql://shadow:shadow@localhost:5432/shadow
+        run: |
+          CONN=$(bash scripts/schema-ci/run-shadow-migrations.sh | tail -1)
+          echo "shadow_conn=${CONN}" >> "$GITHUB_ENV"
+
+      - name: Dump shadow schema
+        run: |
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
+          bash scripts/schema-ci/dump-schema.sh "$shadow_conn" /tmp/shadow-schema.sql
+
+      - name: Skip if STAGING_PG_READONLY_URL is not set
+        id: check_secret
+        env:
+          STAGING_PG_READONLY_URL: ${{ secrets.STAGING_PG_READONLY_URL }}
+        run: |
+          if [[ -z "${STAGING_PG_READONLY_URL:-}" ]]; then
+            echo "STAGING_PG_READONLY_URL secret is not set; skipping ghost-detection. Set it in repo Settings → Secrets to enable nightly drift checks." >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dump staging schema (read-only)
+        if: steps.check_secret.outputs.skip != 'true'
+        env:
+          STAGING_PG_READONLY_URL: ${{ secrets.STAGING_PG_READONLY_URL }}
+        run: |
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
+          bash scripts/schema-ci/dump-schema.sh "$STAGING_PG_READONLY_URL" /tmp/staging-schema.sql
+
+      - name: Diff shadow vs staging
+        if: steps.check_secret.outputs.skip != 'true'
+        id: diff
+        run: |
+          if bash scripts/schema-ci/diff-schema.sh \
+              /tmp/shadow-schema.sql \
+              /tmp/staging-schema.sql \
+              --label-expected "shadow-after-migrate" \
+              --label-actual "staging-live"; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            # Surface diff truncated to issue body length
+            diff -U 3 \
+              --label "shadow-after-migrate" \
+              --label "staging-live" \
+              /tmp/shadow-schema.sql /tmp/staging-schema.sql \
+              > /tmp/staging-diff.patch || true
+            head -c 30000 /tmp/staging-diff.patch > /tmp/staging-diff-truncated.patch || true
+            echo "diff stored at /tmp/staging-diff.patch ($(wc -l < /tmp/staging-diff.patch) lines)"
+          fi
+
+      - name: Upload schemas (always for archive)
+        if: steps.check_secret.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: schemas-${{ github.run_id }}
+          path: |
+            /tmp/shadow-schema.sql
+            /tmp/staging-schema.sql
+            /tmp/staging-diff.patch
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Open GitHub issue if drift detected
+        if: steps.check_secret.outputs.skip != 'true' && steps.diff.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Ensure labels exist (idempotent: ignore failure if already present).
+          gh label create "schema-drift" \
+            --color "B60205" \
+            --description "Auto-detected divergence between migrations and staging/prod schema" \
+            2>/dev/null || true
+          gh label create "ops" \
+            --color "FBCA04" \
+            --description "Operational issues / on-call work" \
+            2>/dev/null || true
+
+          # De-dupe: skip if an open issue with the same title already exists.
+          TITLE="Schema drift detected $(date -u +%Y-%m-%d)"
+          EXISTING=$(gh issue list --state open --label "schema-drift" --search "$TITLE in:title" --json number --jq '.[0].number' || echo "")
+          RUN_URL="${SERVER_URL}/${REPO}/actions/runs/${RUN_ID}"
+
+          if [[ -n "$EXISTING" ]]; then
+            echo "Issue #$EXISTING already exists for today's drift. Adding comment instead."
+            gh issue comment "$EXISTING" --body "Re-detected drift on workflow run [#${RUN_ID}](${RUN_URL})."
+            exit 0
+          fi
+
+          # Build the issue body in a tempfile so we don't have to worry
+          # about heredoc expansion vs gh-template variable interpretation.
+          {
+            echo "Nightly schema-drift check detected divergence between the live"
+            echo "staging DB and the schema produced by running all migrations"
+            echo "against a fresh shadow Postgres."
+            echo ""
+            echo "**What this means:**"
+            echo "Either (a) someone applied SQL to staging without adding a"
+            echo "migration file (a ghost), or (b) the migration files don't"
+            echo "fully reproduce the staging schema (a partial-application)."
+            echo ""
+            echo "**Workflow run:** ${RUN_URL}"
+            echo ""
+            echo "**First 30 KB of diff:**"
+            echo ""
+            echo '```diff'
+            cat /tmp/staging-diff-truncated.patch
+            echo ""
+            echo '```'
+            echo ""
+            echo "Full schemas + full diff are attached as workflow artifacts (\"schemas-${RUN_ID}\")."
+            echo ""
+            echo "**Next steps:**"
+            echo "1. Look at the diff to identify which objects differ."
+            echo "2. If the change is intentional, add a migration file in"
+            echo "   \`apps/backend/migrations/\` that produces the same effect"
+            echo "   (use \`IF NOT EXISTS\` / \`DO \$\$\` guards for idempotency"
+            echo "   since the change is already in staging)."
+            echo "3. Then refresh the schema-baseline:"
+            echo "   \`\`\`"
+            echo "   npm run schema:snapshot"
+            echo "   git add apps/backend/schema/baseline.sql"
+            echo "   \`\`\`"
+            echo "4. Open a PR and merge."
+            echo ""
+            echo "See \`docs/operations/SCHEMA_CI_RUNBOOK.md\` for details."
+          } > /tmp/issue-body.md
+
+          gh issue create \
+            --title "$TITLE" \
+            --label "schema-drift,ops" \
+            --body-file /tmp/issue-body.md

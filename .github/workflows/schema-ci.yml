@@ -1,0 +1,140 @@
+name: Schema CI Gate
+
+# Prevents ghost-migrations and undocumented schema drift.
+#
+# Runs `npm run migrate` against a fresh shadow Postgres on every PR and
+# every push to main, then diffs the resulting schema against the
+# checked-in baseline at apps/backend/schema/baseline.sql.
+# Any divergence fails the build.
+#
+# Background:
+#   docs/audit/SCHEMA_DIVERGENCE_AUDIT_2026-04-29.md found 9 ghost
+#   migrations in prod (registered as run, schema effect missing) and 1
+#   schema-ahead column that no migration declared. With 128+ migrations
+#   and growing, the next ghost is a question of when, not if. This gate
+#   catches both "I added SQL to prod by hand" (ghost) and "I forgot to
+#   commit the migration file" (drift) at PR time, BEFORE deploy.
+#
+# How to fix a failing build:
+#   1. If you intended to change the schema: refresh the baseline locally
+#      with `npm run schema:snapshot` (requires Docker), commit the
+#      updated apps/backend/schema/baseline.sql, and push.
+#   2. If you didn't intend to change the schema: figure out which file
+#      altered the migration set and adjust. Don't apply SQL directly to
+#      prod; add a new migration file instead.
+#
+# See docs/operations/SCHEMA_CI_RUNBOOK.md for full debugging guidance.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "apps/backend/migrations/**"
+      - "apps/backend/schema/**"
+      - "scripts/schema-ci/**"
+      - ".github/workflows/schema-ci.yml"
+      - "apps/backend/package.json"
+      - "apps/backend/package-lock.json"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/backend/migrations/**"
+      - "apps/backend/schema/**"
+      - "scripts/schema-ci/**"
+      - ".github/workflows/schema-ci.yml"
+      - "apps/backend/package.json"
+      - "apps/backend/package-lock.json"
+
+concurrency:
+  group: schema-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  schema-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5  # Hard ceiling — keeps developer feedback fast
+
+    services:
+      postgres:
+        # Match prod (PostgreSQL 18.3 on Render). Using a different major
+        # version would produce subtly different pg_dump output and false
+        # diffs against the prod-derived baseline.
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: shadow
+          POSTGRES_PASSWORD: shadow
+          POSTGRES_DB: shadow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shadow"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/backend/package-lock.json
+
+      - name: Install postgresql-client-18 (for psql + pg_dump)
+        run: |
+          # Ubuntu runners ship pg client v14 by default. We need v18 to
+          # match the postgres:18-alpine service container so pg_dump
+          # output is byte-stable against the prod-derived baseline.
+          # The PostgreSQL APT repo carries v18.
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsS \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          UBUNTU_CODENAME=$(lsb_release -cs)
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $UBUNTU_CODENAME-pgdg main" | \
+            sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-18
+          # Sanity: pg_dump --version must report 18.x
+          /usr/lib/postgresql/18/bin/pg_dump --version
+
+      - name: Install apps/backend dependencies
+        run: npm --prefix apps/backend ci
+
+      - name: Run migrations on shadow DB
+        env:
+          SHADOW_PG_CONNECTION_STRING: postgresql://shadow:shadow@localhost:5432/shadow
+        run: |
+          # run-shadow-migrations.sh prints the connection string on the
+          # last line of stdout; everything else goes to stderr.
+          CONN=$(bash scripts/schema-ci/run-shadow-migrations.sh | tail -1)
+          echo "Shadow DB ready: ${CONN}"
+          echo "shadow_conn=${CONN}" >> "$GITHUB_ENV"
+
+      - name: Dump shadow schema
+        run: |
+          # Use the v18 client we installed, not whatever pg_dump comes
+          # bundled with the Ubuntu runner (often v14).
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
+          bash scripts/schema-ci/dump-schema.sh "$shadow_conn" /tmp/shadow-schema.sql
+
+      - name: Diff against checked-in baseline
+        run: |
+          bash scripts/schema-ci/diff-schema.sh \
+            apps/backend/schema/baseline.sql \
+            /tmp/shadow-schema.sql \
+            --label-expected "checked-in-baseline" \
+            --label-actual "shadow-after-migrate"
+
+      - name: Upload shadow schema (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow-schema-after-migrate
+          path: /tmp/shadow-schema.sql
+          retention-days: 7
