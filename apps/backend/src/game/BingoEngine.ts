@@ -1775,7 +1775,16 @@ export class BingoEngine {
     // forskriften §11 gjelder kun reelle haller; test-hallens 100k-house-
     // saldo er dekning nok for alle default-gevinster i én runde.
     // Single-prize-cap (2500 kr) og house-balance-cap beholdes som defens.
-    const budgetCappedPayout = room.isTestHall === true
+    //
+    // Note: bypass-en er gated på BÅDE `room.isTestHall=true` OG env-flagget
+    // `BINGO_TEST_HALL_BYPASS_RTP_CAP=true` (default true i prod). Tester
+    // som spesifikt vil verifisere RTP-cap-oppførsel kan sette env-flagget
+    // til "false" via process.env-mock og dermed beholde isTestHall-rommets
+    // multi-phase-progression-bypass uten at RTP-cap-bypass kicker inn.
+    const isTestHallRtpBypass =
+      room.isTestHall === true
+      && process.env.BINGO_TEST_HALL_BYPASS_RTP_CAP !== "false";
+    const budgetCappedPayout = isTestHallRtpBypass
       ? requestedAfterPolicyAndPool
       : Math.min(
           requestedAfterPolicyAndPool,
@@ -2628,11 +2637,16 @@ export class BingoEngine {
       // Se kommentar i `payoutPhaseWinner` for fullt rasjonale.
       //
       // TEST-HALL-BYPASS 2026-04-29: test-haller skipper RTP-budget-cap
-      // (default-gevinster utbetales uavhengig av buy-in-pool).
+      // (default-gevinster utbetales uavhengig av buy-in-pool). Gated på
+      // `BINGO_TEST_HALL_BYPASS_RTP_CAP !== "false"` slik at PR #733-tester
+      // kan deaktivere bypass for å verifisere RTP-cap-oppførsel.
       const requestedAfterPolicyAndPool = lineIsFixedPrize
         ? cappedLinePayout.cappedAmount
         : Math.min(cappedLinePayout.cappedAmount, game.remainingPrizePool);
-      const budgetCappedLinePayout = room.isTestHall === true
+      const lineIsTestHallRtpBypass =
+        room.isTestHall === true
+        && process.env.BINGO_TEST_HALL_BYPASS_RTP_CAP !== "false";
+      const budgetCappedLinePayout = lineIsTestHallRtpBypass
         ? requestedAfterPolicyAndPool
         : Math.min(
             requestedAfterPolicyAndPool,
@@ -2900,11 +2914,15 @@ export class BingoEngine {
       // `payoutPhaseWinner` for fullt rasjonale.
       //
       // TEST-HALL-BYPASS 2026-04-29: test-haller skipper RTP-budget-cap
-      // (default-gevinster utbetales uavhengig av buy-in-pool).
+      // (default-gevinster utbetales uavhengig av buy-in-pool). Gated på
+      // env-flagget som over.
       const requestedAfterPolicyAndPool = bingoIsFixedPrize
         ? cappedBingoPayout.cappedAmount
         : Math.min(cappedBingoPayout.cappedAmount, game.remainingPrizePool);
-      const budgetCappedBingoPayout = room.isTestHall === true
+      const bingoIsTestHallRtpBypass =
+        room.isTestHall === true
+        && process.env.BINGO_TEST_HALL_BYPASS_RTP_CAP !== "false";
+      const budgetCappedBingoPayout = bingoIsTestHallRtpBypass
         ? requestedAfterPolicyAndPool
         : Math.min(
             requestedAfterPolicyAndPool,
