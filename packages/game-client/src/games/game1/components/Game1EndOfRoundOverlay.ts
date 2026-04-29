@@ -1,49 +1,41 @@
 /**
- * Spill 1 end-of-round fluid 3-phase overlay.
+ * Spill 1 end-of-round overlay — combined Summary + Loading.
  *
- * Tobias UX-mandate 2026-04-29 17:50 (option C): erstatt PR #729's summary-
- * overlay-med-CTA-knapper med ÉN flytende full-screen overlay som transitions
- * naturlig gjennom 3 faser uten popup-stacking eller flicker:
+ * Tobias UX-mandate 2026-04-29 (revised post-PR #734): drop COUNTDOWN-fasen
+ * helt. Den spilte ned til en svart skjerm med teller — bruker så IKKE live-
+ * elementer (pattern-animasjon, neste planlagt spill, gevinster) før de selv
+ * måtte refreshe siden. Ny flyt:
  *
- *   1. SUMMARY (3 sek for normal-runde, 1 sek hvis spilleren var spectator):
+ *   1. SUMMARY (combined Summary + Loading):
  *      - Header varierer på endedReason (BINGO_CLAIMED / MAX_DRAWS / MANUAL).
  *      - Stort sentrert tall: "X kr" — animert count-up fra 0 til total.
  *      - Kompakt patterns-tabell (5 phases × vinner/payout).
  *      - Mini-game-resultat hvis vunnet.
  *      - Egen total ("Du vant" / "Du vant ikke") basert på akkumulerte vinninger.
- *      - Auto-fade-transition til fase 2.
+ *      - Persistent spinner + soft tekst ("Forbereder rommet...") nederst i
+ *        kortet — signaliserer at vi venter på live-state.
+ *      - Forblir oppe inntil BÅDE (a) min-display-tid er passert, OG
+ *        (b) controller har kalt `markRoomReady()`.
+ *      - Når begge betingelser er møtt → fade ut og kall `onOverlayCompleted`.
  *
- *   2. LOADING (1 sek):
- *      - "Forbereder neste runde..." soft tekst + subtil spinner.
- *      - Føles som naturlig transition, ikke en venting.
- *      - Auto-fade-transition til fase 3.
+ * Hovedforskjell fra PR #734 (3-fase-overlay):
+ *   - Ingen automatisk transition til LOADING/COUNTDOWN på timer.
+ *   - Ingen countdown-skjerm; bruker går direkte fra summary til selve rommet.
+ *   - Bruker ser live-state (pattern-animasjon, neste-spill-info, gevinster)
+ *     umiddelbart ved ankomst — ingen refresh nødvendig.
+ *   - Loading-spinner er INNE i summary-kortet, ikke separat fase.
+ *   - Ingen buy-popup-trigger i overlay — rom-state åpner buy-popup nativt
+ *     når WAITING-fasen aktiverer.
  *
- *   3. COUNTDOWN:
- *      - Stor sentral display: "Neste runde om X sekunder".
- *      - Telles ned basert på `millisUntilNextStart - elapsed_since_round_end`.
- *      - Progress bar i bunn som visualiserer gjenstående tid.
- *      - "Tilbake til lobby"-knapp er fortsatt tilgjengelig (sekundær,
- *        low-contrast).
- *      - Når countdown når 5 sek igjen → buy-popup åpner SMIDIG ON TOP av
- *        countdown (eksisterende buy-popup med loss-state-header fra PR #725).
- *      - Når ny runde starter (room:update status=WAITING → RUNNING) →
- *        overlay dismisses helt.
- *
- * Distinct fra `LoadingOverlay` (RECONNECTING/RESYNCING) — radial-rød
- * bakgrunn signaliserer "round done — vinner-scene" og er visuelt
- * forskjellig fra reconnect-spinner-bakgrunnen (semi-transparent svart).
- *
- * "Tilbake til lobby"-knappen er PERMANENT tilgjengelig gjennom alle 3 faser
- * (sekundær low-contrast i hjørnet) slik at spilleren kan forlate når som
- * helst uten å vente på phase-transitions.
+ * "Tilbake til lobby"-knappen er PERMANENT tilgjengelig slik at spilleren kan
+ * forlate når som helst uten å vente.
  *
  * HTML-basert (ikke Pixi) for samme grunn som WinScreenV2: full kontroll
  * over knapper + click-events uten Pixi event-batch-quirks.
  *
  * Disconnect-resilience: hvis bruker reconnecter midt i overlay, kalles
- * `show()` igjen med `joinedAt`-flag som hopper rett til riktig fase
- * basert på elapsed time fra round-end (caller forsyner `roundEndedAt`
- * timestamp). Bruker som joinet midt i countdown ser IKKE phase 1 igjen.
+ * `show()` igjen og rebuilder overlay fra scratch. Min-display-tid + ready-
+ * gating gjelder igjen (3s + neste room-update fra controller).
  */
 
 import type {
@@ -56,35 +48,25 @@ const SPILLORAMA_LOGO_URL =
   "/web/games/assets/game1/design/spillorama-logo.png";
 
 /**
- * Phase 1 (SUMMARY) duration. Normal-runde har 3s leselid for vinnerne.
- * Spectator-runde (0 tickets armed) reduseres til 1s siden det ikke er
- * noen egne winnings å feire.
+ * Minimum-display-tid for SUMMARY-fasen. Brukerne skal ha tid til å lese
+ * vinnings-summary før overlay kan dismisses. 3s er standard for normal-
+ * runde; spectator (0 tickets) reduseres til 1s siden det ikke er noen
+ * egne winnings å feire.
+ *
+ * Denne tida er nedre grense — overlay forblir oppe lengre hvis controller
+ * ikke har kalt `markRoomReady()` ennå.
  */
-export const SUMMARY_PHASE_MS = 3_000;
-export const SUMMARY_PHASE_SPECTATOR_MS = 1_000;
+export const MIN_DISPLAY_MS = 3_000;
+export const MIN_DISPLAY_MS_SPECTATOR = 1_000;
 
 /**
- * Phase 2 (LOADING) duration. 1s er lange nok til at brukeren registrerer
- * "noe skjer" men kort nok til å føles som en naturlig transition og ikke
- * et venting-vindu.
+ * @deprecated SUMMARY_PHASE_MS er erstattet av MIN_DISPLAY_MS. Beholdes for
+ * kompatibilitet med eksisterende tester; vil fjernes neste oppdatering.
  */
-export const LOADING_PHASE_MS = 1_000;
+export const SUMMARY_PHASE_MS = MIN_DISPLAY_MS;
+export const SUMMARY_PHASE_SPECTATOR_MS = MIN_DISPLAY_MS_SPECTATOR;
 
-/**
- * Phase 3 (COUNTDOWN) trigger-threshold for buy-popup. Når gjenstående
- * countdown er ≤ 5 sek, åpner buy-popup smidig ON TOP av countdown slik
- * at brukeren har tid til å velge bonger før neste runde starter.
- */
-export const BUY_POPUP_TRIGGER_REMAINING_MS = 5_000;
-
-/**
- * Default countdown total hvis caller ikke har `millisUntilNextStart`.
- * Brukes f.eks. når server ikke kjører auto-round (manuell modus); da
- * faller bruker tilbake til "Tilbake til lobby"-knapp etter timeout.
- */
-export const DEFAULT_COUNTDOWN_MS = 30_000;
-
-/** CSS phase-transition (opacity fade) i ms — keep ≤ 300ms for snap-feel. */
+/** CSS fade-transition (opacity) i ms — keep ≤ 300ms for snap-feel. */
 const PHASE_FADE_MS = 300;
 
 /**
@@ -210,8 +192,11 @@ function formatMiniGameLabel(result: MiniGameResultPayload | null): string {
 }
 
 /**
- * Phase identifier — eksponert for testing og for at controller kan
- * skille mellom fasene ved reconnect-handling.
+ * Phase identifier. Etter Tobias-mandat 2026-04-29 er COUNTDOWN/LOADING
+ * fjernet — overlay har bare SUMMARY-fase som forblir oppe inntil
+ * controller signalerer ready via `markRoomReady()`. LOADING/COUNTDOWN
+ * forblir i typen for backward-kompatibilitet med eksisterende tester,
+ * men setter aldri av seg.
  */
 export type EndOfRoundPhase = "SUMMARY" | "LOADING" | "COUNTDOWN";
 
@@ -234,34 +219,31 @@ export interface Game1EndOfRoundSummary {
    */
   ownRoundWinnings?: number;
   /**
-   * Server-flag fra `currentGame.scheduler.millisUntilNextStart`. Hvis
-   * gitt og > 0 driver phase 3 countdown; ellers fall tilbake til
-   * DEFAULT_COUNTDOWN_MS. Den effektive countdown er hvor mye tid som
-   * gjenstår NÅ — overlay starter med å trekke fra summary+loading-fasene
-   * automatisk hvis caller ikke har gjort det.
+   * @deprecated Ubrukt etter Tobias-mandat 2026-04-29 — overlay har ikke
+   * lenger countdown. Beholdes i typen for backward-kompatibilitet.
    */
   millisUntilNextStart?: number | null;
   /**
    * Antall ms som allerede har passert siden runden endet. Brukes ved
-   * reconnect — caller passer `Date.now() - roundEndedAt` slik at
-   * overlay starter i riktig fase.
+   * reconnect for å regne min-display-tid riktig (hvis bruker har vært
+   * synlig i overlay i 4s allerede, gjør vi ikke en ny 3s-pause).
    */
   elapsedSinceEndedMs?: number;
   /**
    * "Tilbake til lobby" → emit lobby-navigation. Tilgjengelig gjennom
-   * alle 3 faser.
+   * hele overlay-tida.
    */
   onBackToLobby: () => void;
   /**
-   * Kalles når countdown når BUY_POPUP_TRIGGER_REMAINING_MS gjenstående.
-   * Caller åpner buy-popup ON TOP av countdown. Kalles én gang per
-   * `show()`; idempotent guard er på controller-siden.
+   * @deprecated Ubrukt — overlay åpner ikke lenger buy-popup direkte.
+   * Buy-popup vises av selve rommet når WAITING-fasen aktiverer.
+   * Beholdes i typen for backward-kompatibilitet med eksisterende callere.
    */
   onCountdownNearStart?: () => void;
   /**
-   * Kalles når overlay skulle dismisses (countdown ferdig eller
-   * round transition). Caller kan bruke dette til å rydde opp
-   * (f.eks. transition fra ENDED til WAITING).
+   * Kalles når overlay er klar til å dismisses (min-display-tid passert
+   * OG controller har signalert ready via `markRoomReady()`). Caller bruker
+   * dette til å transitionere fra ENDED til neste fase i selve rommet.
    */
   onOverlayCompleted?: () => void;
 }
@@ -269,17 +251,27 @@ export interface Game1EndOfRoundSummary {
 interface ActiveSession {
   summary: Game1EndOfRoundSummary;
   startedAt: number;
-  /** Total countdown duration computed from millisUntilNextStart. */
-  countdownTotalMs: number;
   /** Phase-fields rebuilt per show() call so re-render is clean. */
   phaseHostEl: HTMLDivElement;
   /** Currently-mounted phase content (replaced on transition). */
   currentPhaseEl: HTMLDivElement | null;
   currentPhase: EndOfRoundPhase;
-  /** Has buy-popup-trigger fired? (Idempotent.) */
+  /**
+   * @deprecated Ubrukt etter rewrite — kompatibilitet for typer.
+   */
   hasFiredBuyPopupTrigger: boolean;
   /** Has overlay-completed fired? (Idempotent.) */
   hasFiredCompleted: boolean;
+  /**
+   * Har controller kalt `markRoomReady()`? Overlay dismisses ikke før dette
+   * er sant OG min-display-tid er passert.
+   */
+  isRoomReady: boolean;
+  /**
+   * Har min-display-timeren utløpt? Overlay dismisses ikke før dette er
+   * sant OG controller har kalt markRoomReady.
+   */
+  minDisplayElapsed: boolean;
 }
 
 export class Game1EndOfRoundOverlay {
@@ -432,59 +424,96 @@ export class Game1EndOfRoundOverlay {
     this.parent.appendChild(root);
     this.root = root;
 
-    // ── Compute initial phase from elapsed time ───────────────────────
+    // ── Compute min-display-tid og setup session ──────────────────────
     const isSpectator =
       (summary.myTickets?.length ?? 0) === 0
         && this.computeOwnTotal(summary) === 0;
-    const summaryPhaseMs = isSpectator
-      ? SUMMARY_PHASE_SPECTATOR_MS
-      : SUMMARY_PHASE_MS;
+    const minDisplayMs = isSpectator
+      ? MIN_DISPLAY_MS_SPECTATOR
+      : MIN_DISPLAY_MS;
     const elapsed = Math.max(0, summary.elapsedSinceEndedMs ?? 0);
-
-    // Compute countdown total: prefer server's `millisUntilNextStart`
-    // (already represents NOW → next-start), else default. Subtract the
-    // elapsed time that's already passed since round-ended in case caller
-    // did NOT subtract it themselves.
-    const rawCountdownMs =
-      typeof summary.millisUntilNextStart === "number"
-        && summary.millisUntilNextStart > 0
-        ? summary.millisUntilNextStart
-        : DEFAULT_COUNTDOWN_MS;
-    // Total countdown = raw - (time already elapsed beyond summary+loading).
-    // If caller passed elapsed=0 (fresh end), it's just the raw value.
-    const countdownTotalMs = Math.max(
-      BUY_POPUP_TRIGGER_REMAINING_MS,
-      rawCountdownMs,
-    );
+    // Disconnect-resilience: hvis bruker reconnecter med elapsed > min-
+    // display-tid har den allerede sett summary-en lenge nok. Vi setter
+    // `minDisplayElapsed=true` med en gang, slik at neste `markRoomReady`
+    // umiddelbart kan dismisse.
+    const minDisplayAlreadyElapsed = elapsed >= minDisplayMs;
 
     this.session = {
       summary,
       startedAt: Date.now(),
-      countdownTotalMs,
       phaseHostEl: phaseHost,
       currentPhaseEl: null,
       currentPhase: "SUMMARY",
       hasFiredBuyPopupTrigger: false,
       hasFiredCompleted: false,
+      isRoomReady: false,
+      minDisplayElapsed: minDisplayAlreadyElapsed,
     };
 
-    // Decide initial phase based on elapsed time. The thresholds ensure
-    // disconnect-resilience: a player joining mid-countdown skips ahead
-    // to phase 3 (sees countdown), NOT phase 1 again.
-    if (elapsed < summaryPhaseMs) {
-      const remaining = summaryPhaseMs - elapsed;
-      this.enterSummary(remaining, isSpectator);
-    } else if (elapsed < summaryPhaseMs + LOADING_PHASE_MS) {
-      const remaining = summaryPhaseMs + LOADING_PHASE_MS - elapsed;
-      this.enterLoading(remaining);
+    // Alltid SUMMARY — COUNTDOWN/LOADING-fasene er fjernet (Tobias-mandat
+    // 2026-04-29). Min-display-tid håndteres via `phaseTimer` under.
+    this.enterSummary(minDisplayMs, isSpectator);
+
+    if (!minDisplayAlreadyElapsed) {
+      const remaining = Math.max(0, minDisplayMs - elapsed);
+      this.phaseTimer = setTimeout(() => {
+        const session = this.session;
+        if (!session) return;
+        session.minDisplayElapsed = true;
+        this.tryDismiss();
+      }, remaining);
     } else {
-      const countdownElapsed = elapsed - summaryPhaseMs - LOADING_PHASE_MS;
-      const remainingCountdown = Math.max(
-        0,
-        countdownTotalMs - countdownElapsed,
-      );
-      this.enterCountdown(remainingCountdown);
+      // Reconnect-bruker har allerede sett overlay i ≥ min-display-tid.
+      // Hvis controller umiddelbart kaller markRoomReady, dismiss med en
+      // gang.
+      // (Ingen timer trengs.)
     }
+  }
+
+  /**
+   * Signal fra controller om at rommets live-state er ferdig lastet og
+   * brukeren kan returneres til rommet. Idempotent — kall flere ganger
+   * uten effekt etter første call.
+   *
+   * Overlay dismisses ikke før BÅDE markRoomReady er kalt OG min-display-
+   * tid er passert. Dette sikrer at brukeren ser vinnings-summary minst
+   * 3s før de føres tilbake (1s for spectator).
+   */
+  markRoomReady(): void {
+    const session = this.session;
+    if (!session) return;
+    if (session.isRoomReady) return;
+    session.isRoomReady = true;
+    this.tryDismiss();
+  }
+
+  /**
+   * Sjekker om overlay kan dismisses og fader ut hvis ja. Kalles fra
+   * (a) markRoomReady-call og (b) min-display-timer-utløp. Idempotent
+   * via hasFiredCompleted-flagget.
+   */
+  private tryDismiss(): void {
+    const session = this.session;
+    if (!session) return;
+    if (session.hasFiredCompleted) return;
+    if (!session.isRoomReady || !session.minDisplayElapsed) return;
+    session.hasFiredCompleted = true;
+    // Fade ut root, kall completion etter fade-tid.
+    if (this.root) {
+      this.root.style.transition = `opacity ${PHASE_FADE_MS}ms ease`;
+      this.root.style.opacity = "0";
+    }
+    setTimeout(() => {
+      try {
+        session.summary.onOverlayCompleted?.();
+      } catch (err) {
+        console.warn(
+          "[Game1EndOfRoundOverlay] onOverlayCompleted threw:",
+          err,
+        );
+      }
+      this.hide();
+    }, PHASE_FADE_MS);
   }
 
   hide(): void {
@@ -623,221 +652,46 @@ export class Game1EndOfRoundOverlay {
       }
     }
 
-    this.swapPhase(phaseEl);
-
-    // Schedule transition to LOADING.
-    this.phaseTimer = setTimeout(() => {
-      this.enterLoading(LOADING_PHASE_MS);
-    }, Math.max(0, remainingMs));
-  }
-
-  // ── Phase 2: LOADING ──────────────────────────────────────────────
-  private enterLoading(remainingMs: number): void {
-    if (!this.session) return;
-    this.session.currentPhase = "LOADING";
-
-    const phaseEl = document.createElement("div");
-    phaseEl.className = "eor-phase";
-    phaseEl.setAttribute("data-testid", "eor-phase-loading");
-    phaseEl.setAttribute("data-state", "entering");
-    Object.assign(phaseEl.style, {
+    // Persistent loading-indikator — signaliserer at vi venter på live-
+    // state fra rommet. Plassert nederst i kortet slik at den ikke
+    // forstyrrer summary-lesing.
+    const loadingWrap = document.createElement("div");
+    loadingWrap.setAttribute("data-testid", "eor-loading-indicator");
+    Object.assign(loadingWrap.style, {
       display: "flex",
-      flexDirection: "column",
+      flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
-      gap: "16px",
-      padding: "60px 0",
+      gap: "10px",
+      marginTop: "20px",
+      color: "rgba(244,232,208,0.55)",
+      fontSize: "12px",
+      fontWeight: "500",
     });
-
-    // Subtle spinner
     const spinner = document.createElement("div");
     spinner.setAttribute("aria-hidden", "true");
     Object.assign(spinner.style, {
-      width: "32px",
-      height: "32px",
-      border: "3px solid rgba(245,184,65,0.18)",
+      width: "14px",
+      height: "14px",
+      border: "2px solid rgba(245,184,65,0.18)",
       borderTopColor: "#f5b841",
       borderRadius: "50%",
       animation: "eor-spin 0.9s linear infinite",
     });
-    phaseEl.appendChild(spinner);
-
-    // "Forbereder neste runde..."
-    const msg = document.createElement("div");
-    msg.id = "eor-title";
-    msg.textContent = "Forbereder neste runde...";
-    Object.assign(msg.style, {
-      fontSize: "15px",
-      fontWeight: "600",
-      color: "rgba(244,232,208,0.78)",
-      letterSpacing: "0.02em",
-    });
-    phaseEl.appendChild(msg);
+    loadingWrap.appendChild(spinner);
+    const loadingMsg = document.createElement("span");
+    loadingMsg.textContent = "Forbereder rommet...";
+    loadingWrap.appendChild(loadingMsg);
+    phaseEl.appendChild(loadingWrap);
 
     this.swapPhase(phaseEl);
 
-    this.phaseTimer = setTimeout(() => {
-      const session = this.session;
-      if (!session) return;
-      this.enterCountdown(session.countdownTotalMs);
-    }, Math.max(0, remainingMs));
+    // Min-display-timer settes i show() — ingen transition til LOADING/
+    // COUNTDOWN her. Overlay dismisses kun via tryDismiss() når
+    // markRoomReady + minDisplayElapsed er satt.
+    void remainingMs;
   }
 
-  // ── Phase 3: COUNTDOWN ────────────────────────────────────────────
-  private enterCountdown(remainingMs: number): void {
-    if (!this.session) return;
-    this.session.currentPhase = "COUNTDOWN";
-
-    const phaseEl = document.createElement("div");
-    phaseEl.className = "eor-phase";
-    phaseEl.setAttribute("data-testid", "eor-phase-countdown");
-    phaseEl.setAttribute("data-state", "entering");
-    Object.assign(phaseEl.style, {
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
-      gap: "12px",
-      paddingTop: "40px",
-    });
-
-    const titleEl = document.createElement("h2");
-    titleEl.id = "eor-title";
-    Object.assign(titleEl.style, {
-      margin: "0",
-      fontSize: "16px",
-      fontWeight: "600",
-      color: "rgba(244,232,208,0.7)",
-      letterSpacing: "0.04em",
-      textTransform: "uppercase",
-    });
-    titleEl.textContent = "Neste runde om";
-    phaseEl.appendChild(titleEl);
-
-    const secondsEl = document.createElement("div");
-    secondsEl.setAttribute("data-testid", "eor-countdown-seconds");
-    Object.assign(secondsEl.style, {
-      fontSize: "72px",
-      fontWeight: "900",
-      color: "#f5c842",
-      lineHeight: "1",
-      letterSpacing: "-0.04em",
-      textShadow: "0 4px 28px rgba(245,184,65,0.35)",
-    });
-    const initialSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
-    secondsEl.textContent = `${initialSeconds}`;
-    phaseEl.appendChild(secondsEl);
-
-    const unitEl = document.createElement("div");
-    Object.assign(unitEl.style, {
-      fontSize: "13px",
-      fontWeight: "600",
-      color: "rgba(244,232,208,0.55)",
-      letterSpacing: "0.04em",
-      textTransform: "uppercase",
-      marginTop: "-4px",
-    });
-    unitEl.textContent = initialSeconds === 1 ? "sekund" : "sekunder";
-    phaseEl.appendChild(unitEl);
-
-    // Progress bar in bottom — visualizes time-remaining as a shrinking bar.
-    // Use scaleX transform (GPU-accelerated, no layout thrash) instead of
-    // width animation. Ratio = remaining / total.
-    const progressTrack = document.createElement("div");
-    progressTrack.setAttribute("data-testid", "eor-progress-track");
-    Object.assign(progressTrack.style, {
-      width: "100%",
-      maxWidth: "320px",
-      height: "4px",
-      marginTop: "24px",
-      background: "rgba(255,255,255,0.06)",
-      borderRadius: "999px",
-      overflow: "hidden",
-    });
-    const progressBar = document.createElement("div");
-    progressBar.className = "eor-progress-bar";
-    progressBar.setAttribute("data-testid", "eor-progress-bar");
-    const session = this.session;
-    const initialRatio =
-      session.countdownTotalMs > 0
-        ? Math.max(0, Math.min(1, remainingMs / session.countdownTotalMs))
-        : 0;
-    Object.assign(progressBar.style, {
-      width: "100%",
-      height: "100%",
-      background: "linear-gradient(90deg, #f5b841, #c88922)",
-      transformOrigin: "left center",
-      transform: `scaleX(${initialRatio})`,
-    });
-    progressTrack.appendChild(progressBar);
-    phaseEl.appendChild(progressTrack);
-
-    this.swapPhase(phaseEl);
-
-    // Drive countdown via rAF so we update once per frame and never lag
-    // behind reality. setTimeout for second-tick would risk under-counting
-    // when the tab throttles.
-    const countdownStart = Date.now();
-    const countdownEndAt = countdownStart + remainingMs;
-
-    const tick = (): void => {
-      if (!this.session) return;
-      const now = Date.now();
-      const ms = Math.max(0, countdownEndAt - now);
-      const seconds = Math.ceil(ms / 1000);
-      const ratio =
-        session.countdownTotalMs > 0
-          ? Math.max(0, Math.min(1, ms / session.countdownTotalMs))
-          : 0;
-
-      // Update DOM only when seconds visually change (avoid rAF text-thrash).
-      if (secondsEl.textContent !== `${seconds}`) {
-        secondsEl.textContent = `${seconds}`;
-        unitEl.textContent = seconds === 1 ? "sekund" : "sekunder";
-      }
-      progressBar.style.transform = `scaleX(${ratio})`;
-
-      // Trigger buy-popup at threshold (idempotent).
-      if (
-        !session.hasFiredBuyPopupTrigger
-        && ms <= BUY_POPUP_TRIGGER_REMAINING_MS
-        && ms > 0
-      ) {
-        session.hasFiredBuyPopupTrigger = true;
-        try {
-          session.summary.onCountdownNearStart?.();
-        } catch (err) {
-          // Swallow — overlay must remain visible even if caller throws.
-          console.warn(
-            "[Game1EndOfRoundOverlay] onCountdownNearStart threw:",
-            err,
-          );
-        }
-      }
-
-      if (ms <= 0) {
-        // Countdown fully done — overlay yields. The new round-start event
-        // will dismiss us via Game1Controller, but if it doesn't arrive
-        // (e.g. manual mode), fire onOverlayCompleted as fallback.
-        if (!session.hasFiredCompleted) {
-          session.hasFiredCompleted = true;
-          try {
-            session.summary.onOverlayCompleted?.();
-          } catch (err) {
-            console.warn(
-              "[Game1EndOfRoundOverlay] onOverlayCompleted threw:",
-              err,
-            );
-          }
-        }
-        return;
-      }
-
-      this.countdownRaf = requestAnimationFrame(tick);
-    };
-
-    this.countdownRaf = requestAnimationFrame(tick);
-  }
 
   // ── Phase utilities ───────────────────────────────────────────────
   /**
