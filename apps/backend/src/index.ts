@@ -89,6 +89,11 @@ import { Game1ScheduleTickService } from "./game/Game1ScheduleTickService.js";
 import { Game1PayoutService } from "./game/Game1PayoutService.js";
 import { Game1JackpotService } from "./game/Game1JackpotService.js";
 import { Game1JackpotStateService } from "./game/Game1JackpotStateService.js";
+// HV2-B4: per-hall Spill 1 prize-floor service. Wired post-construction
+// inn i ScheduleService for å håndheve `subVariant.minPrize ≥ hall-default`
+// ved schedule-create/update. Servicen leverer DB-backed lookup og caches
+// per hall-id; ScheduleService duck-typer mot Spill1PrizeDefaultsLookup.
+import { Spill1PrizeDefaultsService } from "./game/Spill1PrizeDefaultsService.js";
 import { Game1AutoDrawTickService } from "./game/Game1AutoDrawTickService.js";
 import { Game1TransferHallService } from "./game/Game1TransferHallService.js";
 import { Game1TransferExpiryTickService } from "./game/Game1TransferExpiryTickService.js";
@@ -1087,6 +1092,29 @@ const auditLogService = new AuditLogService(auditLogStore);
 // every successful online top-up emits payment.online.completed
 // (regulatorisk pengespillforskriften-trail).
 swedbankPayService.setAuditLogger(auditLogService);
+
+// HV2-B4 (2026-04-30): per-hall Spill 1 prize-floor lookup + ScheduleService
+// floor-håndhevelse. `Spill1PrizeDefaultsService` er duck-typed inn i
+// ScheduleService.setSpill1PrizeDefaults — service-instans må konstrueres
+// her etter `auditLogService` siden begge injiseres post-construction
+// (chicken-egg fra ScheduleService konstruksjon på linje ~921 før
+// auditLogService finnes).
+//
+// Validering aktiveres kun når Schedule-create/update inneholder
+// `subGames[i].spill1Overrides`-felter som mapper til 5-fase-modellen
+// (TV Extra fullHouseYellow → phase 5; Spillerness2 minimumPrize → phase 1).
+// Override < hall-default → DomainError("MIN_PRIZE_BELOW_HALL_DEFAULT")
+// + audit-event `schedule.create_failed.minprize_below_default`.
+//
+// HV2-B1+B2 leverte service-klassen og engine-overlay; HV2-B3 leverer
+// admin-UI for å redigere defaults. HV2-B4 (denne endringen) lukker
+// override-grense-håndhevelsen ved schedule-opprettelse/edit.
+const spill1PrizeDefaultsService = new Spill1PrizeDefaultsService({
+  pool: sharedPool,
+  schema: pgSchema,
+});
+scheduleService.setSpill1PrizeDefaults(spill1PrizeDefaultsService);
+scheduleService.setAuditLogService(auditLogService);
 
 // BIN-720: Profile Settings API — service (router wires mot slutten av
 // filen, sammen med andre app.use-kall). Tilgjengelig kun når
