@@ -365,6 +365,13 @@ function renderState(target: HTMLElement, state: TvGameState): void {
   // istedenfor å erstatte hele skjermen med en tom melding. Dette speiler
   // legacy BingoHallDisplay.cs som viser layouten kontinuerlig og kun
   // bytter dataene som oppdateres.
+  //
+  // Wireframe PDF 16 §16.5: tre KPI-bokser (Total Numbers Withdrawn /
+  // Full House Winners / Patterns Won) ligger over patterns-tabellen og
+  // oppdateres ved hver poll. Pattern-tabellen har "Hall Belongs To"-kolonne
+  // som viser hvilken hall vinneren av hver fase tilhører (eller "—" hvis
+  // ingen vunnet ennå). Multi-hall-vinnere (group-of-halls) listes komma-
+  // separert; sortert i backend så rekkefølgen er stabil mellom polls.
   const game = state.currentGame;
   const activePatternName = findActivePatternName(state);
   const isEmptyState = !game && state.status === "waiting";
@@ -372,12 +379,14 @@ function renderState(target: HTMLElement, state: TvGameState): void {
   target.className = "tv-screen-body";
   target.innerHTML = `
     <section class="tv-screen-left">
+      ${renderKpiRow(state)}
       <table class="tv-patterns-table">
         <thead>
           <tr>
             <th>Pattern</th>
             <th>Players Won</th>
             <th>Prize</th>
+            <th>Hall Belongs To</th>
           </tr>
         </thead>
         <tbody>
@@ -388,6 +397,7 @@ function renderState(target: HTMLElement, state: TvGameState): void {
               <td>${escapeHtml(p.name)}</td>
               <td>${p.playersWon}</td>
               <td>${formatPrize(p.prize)}</td>
+              <td data-testid="tv-pattern-hall">${formatHallNames(p.hallNames)}</td>
             </tr>
           `
             )
@@ -419,6 +429,47 @@ function renderState(target: HTMLElement, state: TvGameState): void {
       ${isEmptyState ? `<div class="tv-waiting-notice" data-testid="tv-waiting-notice">Venter på neste spill...</div>` : renderCountdown(state)}
     </section>
   `;
+}
+
+/**
+ * Wireframe PDF 16 §16.5: tre KPI-bokser øverst i venstre kolonne.
+ * Tallene oppdateres ved hver poll og speiler verdier fra Winners-siden
+ * mellom spill — slik er live-skjermen og winners-siden visuelt konsistente.
+ *
+ * Kilder:
+ *   - drawnCount      → state.drawnCount (Total Numbers Withdrawn)
+ *   - fullHouseWinners → state.fullHouseWinners
+ *   - patternsWon      → state.patternsWon
+ */
+function renderKpiRow(state: TvGameState): string {
+  return `
+    <div class="tv-kpi-row" data-testid="tv-kpi-row">
+      <div class="tv-kpi-box" data-testid="tv-kpi-numbers">
+        <span class="tv-kpi-value" data-testid="tv-kpi-numbers-value">${state.drawnCount}</span>
+        <span class="tv-kpi-label">Total Numbers Withdrawn</span>
+      </div>
+      <div class="tv-kpi-box" data-testid="tv-kpi-fullhouse">
+        <span class="tv-kpi-value" data-testid="tv-kpi-fullhouse-value">${state.fullHouseWinners}</span>
+        <span class="tv-kpi-label">Full House Winners</span>
+      </div>
+      <div class="tv-kpi-box" data-testid="tv-kpi-patterns">
+        <span class="tv-kpi-value" data-testid="tv-kpi-patterns-value">${state.patternsWon}</span>
+        <span class="tv-kpi-label">Patterns Won</span>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Wireframe PDF 16 §16.5: "Hall Belongs To"-kolonne — tom liste rendres
+ * som "—" (em-dash) for å matche WinnersPage og signalisere "ingen vinner
+ * ennå". Multi-hall-listen (sortert i backend) joines med ", ". Hver
+ * verdi escapes med escapeHtml så injeksjons-payloads i hall-navn er
+ * trygge å rendre som tekst (ikke markup).
+ */
+function formatHallNames(hallNames: string[]): string {
+  if (!hallNames || hallNames.length === 0) return "—";
+  return hallNames.map((n) => escapeHtml(n)).join(", ");
 }
 
 /**
@@ -575,12 +626,24 @@ function showNextBanner(
   if (!next) {
     // Ingen flere i køen — rydd opp.
     bannerEl.classList.add("tv-phase-banner-hidden");
+    // Wireframe PDF 16 §16.5: fullhouse-fanfare-class fjernes når banner-
+    // køen tømmes så neste vanlige BINGO ikke arver Full House-styling.
+    bannerEl.classList.remove("tv-phase-banner-fullhouse");
     bannerEl.setAttribute("aria-hidden", "true");
     bannerEl.innerHTML = "";
     bodyEl.classList.remove("tv-phase-banner-active");
     return;
   }
   bannerEl.classList.remove("tv-phase-banner-hidden");
+  // Wireframe PDF 16 §16.5: phase 5 (Full House) får ekstra fanfare-class
+  // så CSS kan rendre større/sterkere effekt enn vanlig Row-vinning. Andre
+  // faser nullstiller class'en (re-vist banner skal ikke arve Full House-
+  // styling fra forrige rad).
+  if (next.phase === 5) {
+    bannerEl.classList.add("tv-phase-banner-fullhouse");
+  } else {
+    bannerEl.classList.remove("tv-phase-banner-fullhouse");
+  }
   bannerEl.setAttribute("aria-hidden", "false");
   bannerEl.setAttribute("data-phase", String(next.phase));
   bannerEl.innerHTML = `

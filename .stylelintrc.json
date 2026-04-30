@@ -25,7 +25,8 @@
           "pattern-won-flash",
           "ball-spin",
           "ball-bounce",
-          "tv-active-pattern-pulse"
+          "tv-active-pattern-pulse",
+          "tv-phase-banner-fullhouse-pulse"
         ]
       }
     ],
