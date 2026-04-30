@@ -1084,17 +1084,34 @@ test("K4: createRoomLifecycleStore factory: 'redis' provider connects + returns 
 });
 
 test("K4: createRoomLifecycleStore factory: unreachable Redis throws on connect", async () => {
-  const { createRoomLifecycleStore } = await import("../createRoomLifecycleStore.js");
-  // Point at a port nothing listens on. Must throw, not silently degrade.
+  const { buildRoomLifecycleStoreSync, connectRoomLifecycleStore, shutdownRoomLifecycleStore } =
+    await import("../createRoomLifecycleStore.js");
+  // Use the split sync-construct + async-connect API so we keep a reference
+  // to the failing store and can `shutdown()` it after the assertion. The
+  // monolithic `createRoomLifecycleStore` throws away the store on connect-
+  // failure — leaving the underlying ioredis client retrying ENOTFOUND in
+  // the background, which keeps the event loop alive forever and hangs
+  // node:test process exit (see PR #738 backend-CI 6h timeout).
+  //
+  // KNOWN PRODUCTION BUG (NOT FIXED HERE — see follow-up):
+  // `createRoomLifecycleStore()` in `createRoomLifecycleStore.ts` should
+  // shutdown the store on connect-failure before rethrowing, so callers
+  // don't leak the ioredis reconnect loop. Filed as separate PR — kept
+  // out of K4 scope per task brief ("DO NOT touch production source").
+  //
   // Use an invalid hostname so DNS fails immediately rather than waiting
   // for a TCP timeout (which would slow down the test).
-  await assert.rejects(
-    () => createRoomLifecycleStore({
-      provider: "redis",
-      redisUrl: "redis://k4-test-this-host-does-not-exist.invalid:6379",
-    }),
-    /failed to connect to Redis/,
-  );
+  const store = buildRoomLifecycleStoreSync({
+    provider: "redis",
+    redisUrl: "redis://k4-test-this-host-does-not-exist.invalid:6379",
+  });
+  try {
+    await assert.rejects(() => connectRoomLifecycleStore(store), /failed to connect to Redis/);
+  } finally {
+    // Tear down the lingering ioredis client so its reconnect loop stops.
+    // Without this, node:test's process-exit watcher times out (CI 6h hang).
+    await shutdownRoomLifecycleStore(store);
+  }
 });
 
 test("K4: resolveProviderFromEnv defaults to memory when unset", async () => {
