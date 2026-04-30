@@ -1942,7 +1942,15 @@ const tvScreenService = new TvScreenService({
     },
   },
 });
-app.use(createTvScreenRouter({ platformService, tvScreenService }));
+app.use(
+  createTvScreenRouter({
+    platformService,
+    tvScreenService,
+    // Fase 1 MVP §24 — Screen Saver-konfig + bilde-carousel for TV-klient.
+    screenSaverService,
+    settingsService,
+  })
+);
 
 app.use(createAuthRouter({
   platformService,
