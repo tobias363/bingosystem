@@ -293,7 +293,9 @@ import { createMiniGameSocketWire } from "./sockets/miniGameSocketWire.js";
 import { initSentry, setSocketSentryContext, addBreadcrumb, captureError, flushSentry } from "./observability/sentry.js";
 import { errorReporter } from "./middleware/errorReporter.js";
 import { traceIdMiddleware } from "./middleware/traceId.js";
+import { securityHeadersMiddleware } from "./middleware/securityHeaders.js";
 import { socketTraceMiddleware, wrapSocketEventHandlers } from "./middleware/socketTraceId.js";
+import { createCspReportRouter } from "./routes/cspReport.js";
 import { setTraceField } from "./util/traceContext.js";
 import { sweepStaleNonCanonicalRooms } from "./util/staleRoomBootSweep.js";
 import { PostgresChatMessageStore, type ChatMessageStore } from "./store/ChatMessageStore.js";
@@ -347,6 +349,11 @@ const corsOrigins: string[] | "*" = corsAllowedOriginsRaw
 // might log so the traceId is included in every log line for the request.
 // Sets the X-Trace-Id response header so clients can correlate.
 app.use(traceIdMiddleware());
+// BIN-776: Strict security headers (CSP, HSTS, COOP, etc.). Must run BEFORE
+// cors() and any router so headers are set on every response, including
+// CORS-preflight 204s. Defaults to CSP_MODE=report-only — flip to "enforce"
+// in env once the report stream is verified empty in staging.
+app.use(securityHeadersMiddleware());
 app.use(cors({ origin: corsOrigins, credentials: true }));
 // LAV-3: 100 KB for all endpoints, except registration which carries compressed photo IDs (~2 * 100KB base64)
 // PT1: static-ticket CSV-import kan ha opptil ~50k rader (~10MB raw), derfor 15mb limit.
@@ -366,6 +373,14 @@ app.use((req, _res, next) => {
     },
   })(req, _res, next);
 });
+
+// BIN-776: CSP-violation report endpoint (`POST /api/csp-report`). Mounted
+// BEFORE the global rate-limiter — browsers emit reports as a side-effect
+// of policy violations, often in bursts, and blocking them with 429s would
+// silently drop the visibility we need during the report-only rollout.
+// The router owns its own body parser scoped to `application/csp-report`
+// + `application/reports+json` content-types.
+app.use(createCspReportRouter());
 
 // BIN-277: REST API rate limiting — sliding-window per IP per route tier
 const httpRateLimiter = new HttpRateLimiter();
