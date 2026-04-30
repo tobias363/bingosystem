@@ -109,6 +109,7 @@ import { PrizePolicyManager } from "./PrizePolicyManager.js";
 import type { PrizeGameType, PrizePolicySnapshot, ExtraDrawDenialAudit } from "./PrizePolicyManager.js";
 import { PayoutAuditTrail } from "./PayoutAuditTrail.js";
 import type { PayoutAuditEvent } from "./PayoutAuditTrail.js";
+import { PhasePayoutService } from "./PhasePayoutService.js";
 import { ComplianceLedger } from "./ComplianceLedger.js";
 import type { LedgerGameType, LedgerChannel, ComplianceLedgerEntry, DailyComplianceReport, RangeComplianceReport, GameStatisticsReport, OrganizationAllocationInput, OverskuddDistributionBatch, RevenueSummary, TimeSeriesReport, TimeSeriesGranularity, TopPlayersReport, GameSessionsReport } from "./ComplianceLedger.js";
 import { ledgerGameTypeForSlug } from "./ledgerGameTypeForSlug.js";
@@ -490,6 +491,13 @@ export class BingoEngine {
   protected readonly prizePolicy: PrizePolicyManager;
   protected readonly payoutAudit: PayoutAuditTrail;
   protected readonly ledger: ComplianceLedger;
+  /**
+   * F2-A (REFACTOR_AUDIT_PRE_PILOT_2026-04-29 §3.3 / HV-3): extracted the
+   * cap-and-transfer flow that was duplicated in 3 places (`payoutPhaseWinner`,
+   * `submitClaim` LINE branch, `submitClaim` BINGO branch) into a stand-alone
+   * service. Caller still owns state mutations + ledger/audit-trail writes.
+   */
+  protected readonly phasePayoutService: PhasePayoutService;
   private readonly drawBagFactory?: (size: number) => number[];
   /**
    * BIN-615 / PR-C1: Per-room variantConfig cache for hook access (e.g. onDrawCompleted
@@ -610,6 +618,10 @@ export class BingoEngine {
       walletAdapter: this.walletAdapter,
       persistence: options.persistence
     });
+
+    // F2-A: shared cap-and-transfer flow used by all 3 payout call-sites.
+    // Constructed AFTER walletAdapter + prizePolicy so dependencies are wired.
+    this.phasePayoutService = new PhasePayoutService(this.walletAdapter, this.prizePolicy);
 
     // BIN-251: Wire external room state store if provided
     this.roomStateStore = options.roomStateStore;
@@ -1765,6 +1777,12 @@ export class BingoEngine {
    * up with the same ledger trail.
    *
    * `prizePerWinner` is already the split amount (totalPhasePrize ÷ N).
+   *
+   * F2-A (REFACTOR_AUDIT_PRE_PILOT_2026-04-29 §3.3 / HV-3): cap-and-transfer
+   * extracted to {@link PhasePayoutService.computeAndPayPhase}. The remaining
+   * code here owns: claim creation, state mutations on game/room, ledger
+   * + audit-event writes, and checkpoint persistence. Behavior is unchanged
+   * — same idempotency-key, same ledger ordering, same logging fields.
    */
   private async payoutPhaseWinner(
     room: RoomState,
@@ -1780,91 +1798,42 @@ export class BingoEngine {
     const channel: LedgerChannel = "INTERNET";
     const houseAccountId = this.ledger.makeHouseAccountId(room.hallId, gameType, channel);
 
-    const rtpBudgetBefore = roundCurrency(Math.max(0, game.remainingPayoutBudget));
-
-    // RTP-cap-bug-fix 2026-04-29 (Tobias-incident game `057c0502`):
-    //
-    // **Tidligere flyt:** fixed-prize-patterns bypass-et pool/RTP-cap
-    // ("huset garanterer annonserte premier"). Det førte til at 1 Rad
-    // face=100 kr drenerte hele round-bufferen (80 kr RTP-budget) og
-    // ladet 28 påfølgende claim-forsøk fra mini-game-rotasjonen som
-    // alle kastet "Wallet house-... mangler saldo" og endte med at
-    // runden bare betalte 1 Rad.
-    //
-    // **Ny regel (REGULATORISK fail-safe):**
-    //   payoutAmount = min(face, remainingPayoutBudget, houseBalance)
-    //
-    // Pengespillforskriften §11 har 80 % RTP cap som ABSOLUTT regulatorisk
-    // krav — vi kan ikke garantere fixed-prize-faces over RTP-budget uten
-    // å bryte loven. Hvis house-balance også er lav, capper vi til det
-    // som faktisk er trygt å betale.
-    //
-    // For `payout=0` markeres fasen som vunnet (state-mutasjoner skjer
-    // lenger ned uavhengig av payout) og `payoutSkipped: true` settes så
-    // klient kan rendre "Fasen vunnet — ingen premie igjen".
-    //
-    // Subsequent phases fortsetter å evaluere — engine STOPPER IKKE
-    // runden bare fordi budsjettet er tomt.
-    const capped = this.prizePolicy.applySinglePrizeCap({
+    // F2-A: cap calculation + wallet transfer + house-balance lookup. State
+    // mutations (claim creation, pool decrement, ledger writes, audit events)
+    // remain inline below so the post-transfer ordering matches the
+    // pre-extraction implementation exactly. See PhasePayoutService.ts for
+    // the rationale + RTP-cap-bug-fix history (game `057c0502`-incident).
+    const phaseResult = await this.phasePayoutService.computeAndPayPhase({
       hallId: room.hallId,
-      gameType: "DATABINGO",
-      amount: prizePerWinner,
+      roomCode: room.code,
+      gameId: game.id,
+      isTestHall: room.isTestHall === true,
+      pattern,
+      prizePerWinner,
+      remainingPrizePool: game.remainingPrizePool,
+      remainingPayoutBudget: game.remainingPayoutBudget,
+      houseAccountId,
+      walletId: player.walletId,
+      transferMemo: `${pattern.name} prize ${room.code}`,
+      idempotencyKey: IdempotencyKeys.adhocPhase({
+        patternId: patternResult.patternId,
+        gameId: game.id,
+        playerId: player.id,
+      }),
+      phase: "PHASE",
     });
-    const isFixedPrize = isFixedPrizePattern(pattern);
-    const requestedAfterPolicyAndPool = isFixedPrize
-      ? capped.cappedAmount
-      : Math.min(capped.cappedAmount, game.remainingPrizePool);
-    // RTP-budget-gating gjelder ALLTID — fixed-prize-bypass fjernet.
-    //
-    // TEST-HALL-BYPASS 2026-04-29 (Tobias-mandate): test-haller skal alltid
-    // betale ut default-gevinster uavhengig av RTP-budget. Vi tester her
-    // kun at flyten er korrekt, ikke regulatorisk RTP-cap. Pengespill-
-    // forskriften §11 gjelder kun reelle haller; test-hallens 100k-house-
-    // saldo er dekning nok for alle default-gevinster i én runde.
-    // Single-prize-cap (2500 kr) og house-balance-cap beholdes som defens.
-    //
-    // Note: bypass-en er gated på BÅDE `room.isTestHall=true` OG env-flagget
-    // `BINGO_TEST_HALL_BYPASS_RTP_CAP=true` (default true i prod). Tester
-    // som spesifikt vil verifisere RTP-cap-oppførsel kan sette env-flagget
-    // til "false" via process.env-mock og dermed beholde isTestHall-rommets
-    // multi-phase-progression-bypass uten at RTP-cap-bypass kicker inn.
-    const isTestHallRtpBypass =
-      room.isTestHall === true
-      && process.env.BINGO_TEST_HALL_BYPASS_RTP_CAP !== "false";
-    const budgetCappedPayout = isTestHallRtpBypass
-      ? requestedAfterPolicyAndPool
-      : Math.min(
-          requestedAfterPolicyAndPool,
-          Math.max(0, game.remainingPayoutBudget),
-        );
-    // House-balance-gating: les available house-saldo og cap mot den.
-    // Bruker getAvailableBalance når tilgjengelig (PR-W3+) ellers fall
-    // tilbake til getBalance. Best-effort — hvis lookup feiler bruker vi
-    // budgetCappedPayout uendret (defensivt: heller betal litt for mye
-    // enn å henge runden ved transient wallet-tjeneste-feil).
-    let houseAvailableBalance = Number.POSITIVE_INFINITY;
-    try {
-      houseAvailableBalance = this.walletAdapter.getAvailableBalance
-        ? await this.walletAdapter.getAvailableBalance(houseAccountId)
-        : await this.walletAdapter.getBalance(houseAccountId);
-    } catch (err) {
-      logger.warn(
-        { err, houseAccountId, gameId: game.id, roomCode: room.code },
-        "house-balance-lookup feilet under payout-cap-evaluering — fortsetter med budget-cap",
-      );
-    }
-    const payout = roundCurrency(
-      Math.max(
-        0,
-        Math.min(budgetCappedPayout, houseAvailableBalance),
-      ),
-    );
-    const payoutWasSkipped = payout === 0 && requestedAfterPolicyAndPool > 0;
-    const payoutSkippedReason: "budget-exhausted" | "house-balance-low" | undefined = payoutWasSkipped
-      ? (budgetCappedPayout === 0
-          ? "budget-exhausted"
-          : "house-balance-low")
-      : undefined;
+    const {
+      payout,
+      payoutSkipped: payoutWasSkipped,
+      payoutSkippedReason,
+      rtpCapped,
+      rtpBudgetBefore,
+      requestedAfterPolicyAndPool,
+      houseAvailableBalance,
+      walletTransfer: transfer,
+      policy,
+      houseDeficit,
+    } = phaseResult;
 
     const claim: ClaimRecord = {
       id: randomUUID(),
@@ -1877,22 +1846,7 @@ export class BingoEngine {
     };
     game.claims.push(claim);
 
-    if (payout > 0) {
-      // PR-W3 wallet-split: payout er gevinst → krediter winnings-siden.
-      const transfer = await this.walletAdapter.transfer(
-        houseAccountId,
-        player.walletId,
-        payout,
-        `${pattern.name} prize ${room.code}`,
-        {
-          idempotencyKey: IdempotencyKeys.adhocPhase({
-            patternId: patternResult.patternId,
-            gameId: game.id,
-            playerId: player.id,
-          }),
-          targetSide: "winnings",
-        },
-      );
+    if (payout > 0 && transfer) {
       // Hot-fix Tobias 2026-04-26: bytt optimistisk `player.balance += payout`
       // mot autoritativ refresh fra wallet-adapter. Optimistisk += taper
       // deposit/winnings-split-info → stale balance i room:update på 2.+ vinn.
@@ -1911,9 +1865,6 @@ export class BingoEngine {
       // pool-andel (huset finansierte differansen).
       const poolBeforePayout = game.remainingPrizePool;
       const budgetBeforePayout = game.remainingPayoutBudget;
-      const houseDeficit = isFixedPrize
-        ? Math.max(0, roundCurrency(payout - poolBeforePayout))
-        : 0;
       game.remainingPrizePool = roundCurrency(Math.max(0, poolBeforePayout - payout));
       game.remainingPayoutBudget = roundCurrency(Math.max(0, budgetBeforePayout - payout));
       await this.compliance.recordLossEntry(player.walletId, room.hallId, {
@@ -1934,7 +1885,7 @@ export class BingoEngine {
         walletId: player.walletId,
         sourceAccountId: transfer.fromTx.accountId,
         targetAccountId: transfer.toTx.accountId,
-        policyVersion: capped.policy.id,
+        policyVersion: policy.id,
         // GAP #28: tag the slug so per-slug reports can match prizes to
         // their game-type without joining `game_sessions`.
         metadata: {
@@ -1960,7 +1911,7 @@ export class BingoEngine {
             playerId: player.id,
             walletId: player.walletId,
             sourceAccountId: houseAccountId,
-            policyVersion: capped.policy.id,
+            policyVersion: policy.id,
             metadata: {
               reason: "FIXED_PRIZE_HOUSE_GUARANTEE",
               patternName: pattern.name,
@@ -1982,7 +1933,7 @@ export class BingoEngine {
         gameId: game.id,
         roomCode: room.code,
         hallId: room.hallId,
-        policyVersion: capped.policy.id,
+        policyVersion: policy.id,
         amount: payout,
         walletId: player.walletId,
         playerId: player.id,
@@ -2000,7 +1951,7 @@ export class BingoEngine {
 
     const rtpBudgetAfter = roundCurrency(Math.max(0, game.remainingPayoutBudget));
     claim.payoutAmount = payout;
-    claim.payoutPolicyVersion = capped.policy.id;
+    claim.payoutPolicyVersion = policy.id;
     claim.payoutWasCapped = payout < prizePerWinner;
     claim.rtpBudgetBefore = rtpBudgetBefore;
     claim.rtpBudgetAfter = rtpBudgetAfter;
@@ -2008,7 +1959,7 @@ export class BingoEngine {
     // er capped under requestedAfterPolicyAndPool. Tidligere ble fixed-prize
     // bypass-et — det førte til at prod-loggen viste rtpCapped=false selv når
     // payout=100 mot et budsjett på 80 (game `057c0502`).
-    claim.rtpCapped = payout < requestedAfterPolicyAndPool;
+    claim.rtpCapped = rtpCapped;
     // RTP-cap-bug-fix 2026-04-29: speil faktisk paid amount på patternResult
     // og claimId-link slik at klient/audit ser korrekt payout. Tidligere
     // skrev `evaluateActivePhase` over med `prizePerWinner` (pre-cap) etter
@@ -2673,60 +2624,48 @@ export class BingoEngine {
       const requestedPayout = lineIsFixedPrize
         ? Math.max(0, linePattern!.prize1 ?? 0)
         : Math.floor(game.prizePool * (linePattern?.prizePercent ?? 30) / 100);
-      // K2-A CRIT-1 note: PrizePolicyManager.PrizeGameType er fortsatt kun
-      // "DATABINGO" sentralt — egen task åpner den for MAIN_GAME. Inntil da
-      // bruker single-prize-cap-API-et "DATABINGO" som policy-key (samme
-      // 2500 kr-cap gjelder begge regulatoriske kategoriene). Ledger-event
-      // bruker korrekt MAIN_GAME via `gameType` over.
-      const cappedLinePayout = this.prizePolicy.applySinglePrizeCap({
-        hallId: room.hallId,
-        gameType: "DATABINGO",
-        amount: requestedPayout
-      });
-      // RTP-cap-bug-fix 2026-04-29: payout cappes alltid mot
-      // remainingPayoutBudget OG house-balance — fixed-prize-bypass fjernet.
-      // Se kommentar i `payoutPhaseWinner` for fullt rasjonale.
+
+      // F2-A: cap calculation + wallet transfer + house-balance lookup. State
+      // mutations (game.lineWinnerId, pool decrement, ledger writes via CRIT-6
+      // audit-trail recovery) remain inline so behavior is unchanged. See
+      // PhasePayoutService.ts for the rationale.
       //
-      // TEST-HALL-BYPASS 2026-04-29: test-haller skipper RTP-budget-cap
-      // (default-gevinster utbetales uavhengig av buy-in-pool). Gated på
-      // `BINGO_TEST_HALL_BYPASS_RTP_CAP !== "false"` slik at PR #733-tester
-      // kan deaktivere bypass for å verifisere RTP-cap-oppførsel.
-      const requestedAfterPolicyAndPool = lineIsFixedPrize
-        ? cappedLinePayout.cappedAmount
-        : Math.min(cappedLinePayout.cappedAmount, game.remainingPrizePool);
-      const lineIsTestHallRtpBypass =
-        room.isTestHall === true
-        && process.env.BINGO_TEST_HALL_BYPASS_RTP_CAP !== "false";
-      const budgetCappedLinePayout = lineIsTestHallRtpBypass
-        ? requestedAfterPolicyAndPool
-        : Math.min(
-            requestedAfterPolicyAndPool,
-            Math.max(0, game.remainingPayoutBudget),
-          );
-      let lineHouseAvailableBalance = Number.POSITIVE_INFINITY;
-      try {
-        lineHouseAvailableBalance = this.walletAdapter.getAvailableBalance
-          ? await this.walletAdapter.getAvailableBalance(houseAccountId)
-          : await this.walletAdapter.getBalance(houseAccountId);
-      } catch (err) {
-        logger.warn(
-          { err, houseAccountId, gameId: game.id, roomCode: room.code, phase: "LINE" },
-          "house-balance-lookup feilet (LINE) — fortsetter med budget-cap",
-        );
-      }
-      const payout = roundCurrency(
-        Math.max(
-          0,
-          Math.min(budgetCappedLinePayout, lineHouseAvailableBalance),
-        ),
-      );
-      const linePayoutWasSkipped = payout === 0 && requestedAfterPolicyAndPool > 0;
-      const linePayoutSkippedReason: "budget-exhausted" | "house-balance-low" | undefined =
-        linePayoutWasSkipped
-          ? (budgetCappedLinePayout === 0
-              ? "budget-exhausted"
-              : "house-balance-low")
-          : undefined;
+      // K2-A CRIT-1 note: PrizePolicyManager.PrizeGameType is currently
+      // "DATABINGO"-only (same 2500-cap applies to MAIN_GAME); ledger-event
+      // uses correct MAIN_GAME via `gameType` below.
+      const linePhaseResult = await this.phasePayoutService.computeAndPayPhase({
+        hallId: room.hallId,
+        roomCode: room.code,
+        gameId: game.id,
+        isTestHall: room.isTestHall === true,
+        // Pass a synthetic pattern-shape if linePattern is missing (legacy
+        // configurations without explicit pattern config) so the service
+        // still gets the correct fixed-prize signal.
+        pattern: linePattern ?? { winningType: undefined, name: undefined },
+        prizePerWinner: requestedPayout,
+        remainingPrizePool: game.remainingPrizePool,
+        remainingPayoutBudget: game.remainingPayoutBudget,
+        houseAccountId,
+        walletId: player.walletId,
+        transferMemo: `Line prize ${room.code}`,
+        idempotencyKey: IdempotencyKeys.adhocLinePrize({
+          gameId: game.id,
+          claimId: claim.id,
+        }),
+        phase: "LINE",
+      });
+      const {
+        payout,
+        payoutSkipped: linePayoutWasSkipped,
+        payoutSkippedReason: linePayoutSkippedReason,
+        rtpCapped: lineRtpCapped,
+        requestedAfterPolicyAndPool,
+        houseAvailableBalance: lineHouseAvailableBalance,
+        walletTransfer: transfer,
+        policy: linePolicy,
+        houseDeficit: lineHouseDeficit,
+      } = linePhaseResult;
+
       // PILOT-EMERGENCY 2026-04-28 (testbruker-diagnose): state-mutasjonene
       // (lineWinnerId + linePatternResult.isWon) MÅ skje uavhengig av
       // payout-beløp. Tidligere var de inne i `if (payout > 0)` slik at en
@@ -2735,26 +2674,10 @@ export class BingoEngine {
       // wallet.transfer + audit-events forblir gated på payout > 0 fordi
       // de er bare meningsfulle ved faktisk pengeoverføring.
       let transferredTxIds: [string, string] | null = null;
-      if (payout > 0) {
-        // CRIT-6: I/O FIRST — wallet transfer er den eneste rever-
-        // sible operasjonen. Hvis denne feiler kaster vi videre uten
-        // å mutere state. Idempotency-key sikrer at retry ikke
-        // dobbel-betaler.
-        // BIN-239: idempotencyKey prevents double payout if client retries.
-        // PR-W3 wallet-split: payout er gevinst → krediter winnings-siden.
-        const transfer = await this.walletAdapter.transfer(
-          houseAccountId,
-          player.walletId,
-          payout,
-          `Line prize ${room.code}`,
-          {
-            idempotencyKey: IdempotencyKeys.adhocLinePrize({
-              gameId: game.id,
-              claimId: claim.id,
-            }),
-            targetSide: "winnings",
-          }
-        );
+      if (payout > 0 && transfer) {
+        // CRIT-6: I/O FIRST — wallet transfer is committed by the service.
+        // BIN-239 idempotencyKey prevents double payout on retry.
+        // PR-W3 wallet-split: payout is winning → credited to winnings-side.
 
         // Hot-fix Tobias 2026-04-26: autoritativ wallet-refresh i stedet
         // for optimistisk `player.balance += payout`. Optimistisk += taper
@@ -2769,11 +2692,10 @@ export class BingoEngine {
             "submitClaim LINE: wallet refresh feilet (best-effort)",
           );
         }
-        // FIXED-PRIZE-FIX: track house-deficit for audit-event under.
+        // FIXED-PRIZE-FIX: track linePoolBeforePayout for audit-event before
+        // we mutate the pool. Service already returned `lineHouseDeficit`
+        // computed against the pre-mutation pool.
         const linePoolBeforePayout = game.remainingPrizePool;
-        const lineHouseDeficit = lineIsFixedPrize
-          ? Math.max(0, roundCurrency(payout - linePoolBeforePayout))
-          : 0;
         game.remainingPrizePool = roundCurrency(Math.max(0, game.remainingPrizePool - payout));
         game.remainingPayoutBudget = roundCurrency(Math.max(0, game.remainingPayoutBudget - payout));
         // BIN-45: Store transaction IDs for idempotency tracking
@@ -2797,7 +2719,7 @@ export class BingoEngine {
               playerId: player.id,
               walletId: player.walletId,
               sourceAccountId: houseAccountId,
-              policyVersion: cappedLinePayout.policy.id,
+              policyVersion: linePolicy.id,
               metadata: {
                 reason: "FIXED_PRIZE_HOUSE_GUARANTEE",
                 phase: "LINE",
@@ -2833,7 +2755,7 @@ export class BingoEngine {
           houseAccountId,
           gameType,
           channel,
-          policyVersion: cappedLinePayout.policy.id,
+          policyVersion: linePolicy.id,
         });
         claim.auditTrailStatus = auditResult.status;
       }
@@ -2863,13 +2785,13 @@ export class BingoEngine {
       void transferredTxIds;
       const rtpBudgetAfter = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       claim.payoutAmount = payout;
-      claim.payoutPolicyVersion = cappedLinePayout.policy.id;
+      claim.payoutPolicyVersion = linePolicy.id;
       claim.payoutWasCapped = payout < requestedPayout;
       claim.rtpBudgetBefore = rtpBudgetBefore;
       claim.rtpBudgetAfter = rtpBudgetAfter;
       // RTP-cap-bug-fix 2026-04-29: rtpCapped settes ALLTID når payout faktisk
       // er capped — fixed-prize-bypass fjernet (game `057c0502`-incident).
-      claim.rtpCapped = payout < requestedAfterPolicyAndPool;
+      claim.rtpCapped = lineRtpCapped;
       if (linePayoutWasSkipped) {
         claim.payoutSkipped = true;
         if (linePayoutSkippedReason) {
@@ -2941,7 +2863,6 @@ export class BingoEngine {
       // sikrer at retry ikke dobbel-betaler.
       const endedAtMs = Date.now();
       const endedAt = new Date(endedAtMs);
-      const rtpBudgetBefore = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       // FIXED-PRIZE-FIX: For BINGO/Fullt Hus med fixed-prize finner vi
       // pattern-konfigurasjonen og bruker `prize1` direkte. Variable BINGO
       // (legacy 100% av rest-pool) bruker fortsatt `game.remainingPrizePool`.
@@ -2953,92 +2874,68 @@ export class BingoEngine {
       const requestedPayout = bingoIsFixedPrize
         ? Math.max(0, bingoPattern!.prize1 ?? 0)
         : game.remainingPrizePool;
-      // K2-A CRIT-1 note: same som over — PrizeGameType-svartelist åpnes
-      // i egen task. 2500-cap er identisk uansett gameType.
-      const cappedBingoPayout = this.prizePolicy.applySinglePrizeCap({
-        hallId: room.hallId,
-        gameType: "DATABINGO",
-        amount: requestedPayout
-      });
-      // RTP-cap-bug-fix 2026-04-29: payout cappes alltid mot
-      // remainingPayoutBudget OG house-balance. Se kommentar i
-      // `payoutPhaseWinner` for fullt rasjonale.
+
+      // F2-A: cap calculation + wallet transfer + house-balance lookup. State
+      // mutations (game.status="ENDED", game.bingoWinnerId already set as
+      // race-mutex above, pool decrement, ledger writes via CRIT-6 audit-
+      // trail recovery) remain inline so behavior is unchanged. See
+      // PhasePayoutService.ts for the rationale.
       //
-      // TEST-HALL-BYPASS 2026-04-29: test-haller skipper RTP-budget-cap
-      // (default-gevinster utbetales uavhengig av buy-in-pool). Gated på
-      // env-flagget som over.
-      const requestedAfterPolicyAndPool = bingoIsFixedPrize
-        ? cappedBingoPayout.cappedAmount
-        : Math.min(cappedBingoPayout.cappedAmount, game.remainingPrizePool);
-      const bingoIsTestHallRtpBypass =
-        room.isTestHall === true
-        && process.env.BINGO_TEST_HALL_BYPASS_RTP_CAP !== "false";
-      const budgetCappedBingoPayout = bingoIsTestHallRtpBypass
-        ? requestedAfterPolicyAndPool
-        : Math.min(
-            requestedAfterPolicyAndPool,
-            Math.max(0, game.remainingPayoutBudget),
-          );
-      let bingoHouseAvailableBalance = Number.POSITIVE_INFINITY;
+      // RTP-cap-bug-fix 2026-04-29: hvis transfer feiler MÅ vi rulle tilbake
+      // `game.bingoWinnerId` siden vi satte den synkront tidlig som race-
+      // mutex. CRIT-6-kontrakten lover at state forblir uendret ved transfer-
+      // feil — denne try/catch garanterer det.
+      let bingoPhaseResult;
       try {
-        bingoHouseAvailableBalance = this.walletAdapter.getAvailableBalance
-          ? await this.walletAdapter.getAvailableBalance(houseAccountId)
-          : await this.walletAdapter.getBalance(houseAccountId);
+        bingoPhaseResult = await this.phasePayoutService.computeAndPayPhase({
+          hallId: room.hallId,
+          roomCode: room.code,
+          gameId: game.id,
+          isTestHall: room.isTestHall === true,
+          // Pass synthetic pattern-shape if bingoPattern missing (legacy)
+          // so the service still gets the correct fixed-prize signal.
+          pattern: bingoPattern ?? { winningType: undefined, name: undefined },
+          prizePerWinner: requestedPayout,
+          remainingPrizePool: game.remainingPrizePool,
+          remainingPayoutBudget: game.remainingPayoutBudget,
+          houseAccountId,
+          walletId: player.walletId,
+          transferMemo: `Bingo prize ${room.code}`,
+          idempotencyKey: IdempotencyKeys.adhocBingoPrize({
+            gameId: game.id,
+            claimId: claim.id,
+          }),
+          phase: "BINGO",
+        });
       } catch (err) {
-        logger.warn(
-          { err, houseAccountId, gameId: game.id, roomCode: room.code, phase: "BINGO" },
-          "house-balance-lookup feilet (BINGO) — fortsetter med budget-cap",
-        );
+        // CRIT-6 partial-state-protection: rull tilbake mutex-låsen så
+        // retry kan komme inn, og slik at en feilet transfer ikke
+        // markerer runden som vunnet i state-snapshot.
+        game.bingoWinnerId = undefined;
+        throw err;
       }
-      const payout = roundCurrency(
-        Math.max(
-          0,
-          Math.min(budgetCappedBingoPayout, bingoHouseAvailableBalance),
-        ),
-      );
-      const bingoPayoutWasSkipped = payout === 0 && requestedAfterPolicyAndPool > 0;
-      const bingoPayoutSkippedReason: "budget-exhausted" | "house-balance-low" | undefined =
-        bingoPayoutWasSkipped
-          ? (budgetCappedBingoPayout === 0
-              ? "budget-exhausted"
-              : "house-balance-low")
-          : undefined;
+      const {
+        payout,
+        payoutSkipped: bingoPayoutWasSkipped,
+        payoutSkippedReason: bingoPayoutSkippedReason,
+        rtpCapped: bingoRtpCapped,
+        rtpBudgetBefore,
+        requestedAfterPolicyAndPool,
+        houseAvailableBalance: bingoHouseAvailableBalance,
+        walletTransfer: transfer,
+        policy: bingoPolicy,
+        houseDeficit: bingoHouseDeficit,
+      } = bingoPhaseResult;
+
       // PILOT-EMERGENCY 2026-04-28 (testbruker-diagnose): vinner-marker
       // (game.bingoWinnerId) MÅ settes uavhengig av payout-beløp slik at
       // duplikat-claim-guard (linje ~2360) avviser doble innsendinger og
       // engine vet hvem som vant. wallet.transfer + audit-events forblir
       // gated på payout > 0.
-      if (payout > 0) {
-        // CRIT-6: wallet-transfer FIRST — single-source-of-truth.
-        // BIN-239: idempotencyKey prevents double payout if client retries.
-        // PR-W3 wallet-split: payout er gevinst → krediter winnings-siden.
-        //
-        // RTP-cap-bug-fix 2026-04-29: hvis transfer feiler MÅ vi rulle
-        // tilbake `game.bingoWinnerId` siden vi satte den synkront tidlig
-        // som race-mutex. CRIT-6-kontrakten lover at state forblir uendret
-        // ved transfer-feil — denne try/catch garanterer det.
-        let transfer: WalletTransferResult;
-        try {
-          transfer = await this.walletAdapter.transfer(
-            houseAccountId,
-            player.walletId,
-            payout,
-            `Bingo prize ${room.code}`,
-            {
-              idempotencyKey: IdempotencyKeys.adhocBingoPrize({
-                gameId: game.id,
-                claimId: claim.id,
-              }),
-              targetSide: "winnings",
-            }
-          );
-        } catch (err) {
-          // CRIT-6 partial-state-protection: rull tilbake mutex-låsen så
-          // retry kan komme inn, og slik at en feilet transfer ikke
-          // markerer runden som vunnet i state-snapshot.
-          game.bingoWinnerId = undefined;
-          throw err;
-        }
+      if (payout > 0 && transfer) {
+        // CRIT-6: wallet-transfer is committed by the service.
+        // BIN-239 idempotencyKey prevents double payout on retry.
+        // PR-W3 wallet-split: payout is winning → credited to winnings-side.
 
         // Hot-fix Tobias 2026-04-26: autoritativ wallet-refresh — se
         // kommentar i LINE-grenen over for begrunnelse (stale balance
@@ -3057,11 +2954,9 @@ export class BingoEngine {
         // FIXED-PRIZE-FIX: HOUSE_DEFICIT audit-event når faste premier
         // overgår tilgjengelig pool. Best-effort. Pool-mutasjonen for
         // BINGO-grenen skjer etter audit (linje under), så
-        // game.remainingPrizePool er fortsatt pre-payout her.
+        // game.remainingPrizePool er fortsatt pre-payout her — service
+        // computed `bingoHouseDeficit` against that pre-mutation value.
         const bingoPoolBeforePayout = game.remainingPrizePool;
-        const bingoHouseDeficit = bingoIsFixedPrize
-          ? Math.max(0, roundCurrency(payout - bingoPoolBeforePayout))
-          : 0;
         if (bingoHouseDeficit > 0) {
           try {
             await this.ledger.recordComplianceLedgerEvent({
@@ -3076,7 +2971,7 @@ export class BingoEngine {
               playerId: player.id,
               walletId: player.walletId,
               sourceAccountId: houseAccountId,
-              policyVersion: cappedBingoPayout.policy.id,
+              policyVersion: bingoPolicy.id,
               metadata: {
                 reason: "FIXED_PRIZE_HOUSE_GUARANTEE",
                 phase: "BINGO",
@@ -3108,7 +3003,7 @@ export class BingoEngine {
           houseAccountId,
           gameType,
           channel,
-          policyVersion: cappedBingoPayout.policy.id,
+          policyVersion: bingoPolicy.id,
         });
         claim.auditTrailStatus = auditResult.status;
       }
@@ -3132,13 +3027,13 @@ export class BingoEngine {
       await this.writeGameEndCheckpoint(room, game); // BIN-248: final state after payout settled
       const rtpBudgetAfter = roundCurrency(Math.max(0, game.remainingPayoutBudget));
       claim.payoutAmount = payout;
-      claim.payoutPolicyVersion = cappedBingoPayout.policy.id;
+      claim.payoutPolicyVersion = bingoPolicy.id;
       claim.payoutWasCapped = payout < requestedPayout;
       claim.rtpBudgetBefore = rtpBudgetBefore;
       claim.rtpBudgetAfter = rtpBudgetAfter;
       // RTP-cap-bug-fix 2026-04-29: rtpCapped settes ALLTID når payout faktisk
       // er capped — fixed-prize-bypass fjernet (game `057c0502`-incident).
-      claim.rtpCapped = payout < requestedAfterPolicyAndPool;
+      claim.rtpCapped = bingoRtpCapped;
       // Record pattern result for the first unclaimed BINGO pattern
       const bingoPatternResult = game.patternResults?.find((r) => r.claimType === "BINGO" && !r.isWon);
       if (bingoPatternResult) {
