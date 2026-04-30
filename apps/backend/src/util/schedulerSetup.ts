@@ -12,6 +12,7 @@ import { logger as rootLogger } from "./logger.js";
 import { logRoomEvent } from "./roomLogVerbose.js";
 import type { RoomUpdatePayload } from "./roomHelpers.js";
 import type { RoomSnapshot } from "../game/types.js";
+import { walletRoomKey } from "../sockets/walletStatePusher.js";
 
 const schedulerLogger = rootLogger.child({ module: "scheduler" });
 
@@ -201,6 +202,14 @@ export function createSchedulerCallbacks(deps: SchedulerCallbackDeps) {
           .filter((r) => r.isWon)
           .map((r) => r.patternId),
       );
+      // Tobias prod-incident 2026-04-30: snapshot mini-game-state PRE-draw
+      // så vi kan detektere at `evaluateActivePhase` aktiverte mini-game
+      // (Fullt Hus auto-claim → `onAutoClaimedFullHouse`). Auto-round-flyten
+      // mangler denne detection-en (kun `draw:next`-socket-handler hadde
+      // den). Resultat: mini-game-state ble mutert i engine men aldri
+      // broadcast til klient — så Mystery Joker / Wheel / Chest dukket
+      // ikke opp i auto-runder. Symmetrisk løsning som drawEvents.ts:96-110.
+      const miniGameBefore = deps.engine.getCurrentMiniGame(roomCode);
       try {
         const { number, drawIndex, gameId } = await deps.engine.drawNextNumber({ roomCode, actorPlayerId: hostPlayerId });
         deps.io.to(roomCode).emit("draw:new", { number, source: "auto", drawIndex, gameId });
@@ -230,6 +239,39 @@ export function createSchedulerCallbacks(deps: SchedulerCallbackDeps) {
             winnerIds,
             winnerCount: winnerIds.length,
           });
+        }
+      }
+      // Tobias prod-incident 2026-04-30: emit `minigame:activated` når
+      // engine aktiverte mini-game i `evaluateActivePhase` (auto-claim av
+      // Fullt Hus). Mirror av drawEvents.ts:84-110 (manuell draw:next-handler).
+      // Emit-target: `wallet:<walletId>`-rommet for vinneren — mini-game-popup
+      // skal kun vises for vinneren, ikke alle observers.
+      const miniGameAfter = deps.engine.getCurrentMiniGame(roomCode);
+      if (
+        miniGameAfter &&
+        (!miniGameBefore || miniGameBefore.playerId !== miniGameAfter.playerId)
+      ) {
+        const winner = postDrawSnapshot.players.find(
+          (p) => p.id === miniGameAfter.playerId,
+        );
+        if (winner?.walletId) {
+          deps.io.to(walletRoomKey(winner.walletId)).emit("minigame:activated", {
+            gameId: postDrawSnapshot.currentGame?.id,
+            playerId: miniGameAfter.playerId,
+            type: miniGameAfter.type,
+            prizeList: miniGameAfter.prizeList,
+          });
+          logRoomEvent(
+            schedulerLogger,
+            {
+              roomCode,
+              gameId: postDrawSnapshot.currentGame?.id,
+              action: "minigame-activated",
+              playerId: miniGameAfter.playerId,
+              type: miniGameAfter.type,
+            },
+            "auto.round.tick",
+          );
         }
       }
       if (postDrawSnapshot.currentGame?.status !== "RUNNING") {
