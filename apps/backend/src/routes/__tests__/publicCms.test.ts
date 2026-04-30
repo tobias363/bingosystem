@@ -376,6 +376,40 @@ test("public-cms: ingen Authorization-header kreves (offentlig endepunkt)", asyn
   }
 });
 
+test("public-cms: GET /api/cms/about (alias) returnerer publisert aboutus", async () => {
+  const ctx = await startServer({
+    content: { aboutus: "Om Spillorama" },
+  });
+  try {
+    const { status, body } = await getJson<{
+      slug: string;
+      content: string;
+    }>(`${ctx.baseUrl}/api/cms/about`);
+    assert.equal(status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.data?.slug, "aboutus");
+    assert.equal(body.data?.content, "Om Spillorama");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("public-cms: GET /api/cms/about-us (alias) returnerer publisert aboutus", async () => {
+  const ctx = await startServer({
+    content: { aboutus: "Om oss" },
+  });
+  try {
+    const { status, body } = await getJson<{
+      slug: string;
+      content: string;
+    }>(`${ctx.baseUrl}/api/cms/about-us`);
+    assert.equal(status, 200);
+    assert.equal(body.data?.slug, "aboutus");
+  } finally {
+    await ctx.close();
+  }
+});
+
 test("public-cms: aliaser case-insensitive — /api/cms/TERMS-OF-SERVICE → terms", async () => {
   const ctx = await startServer({
     content: { terms: "Vilkår" },

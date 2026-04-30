@@ -29,6 +29,12 @@ tags:
     description: Player wallet, top-ups, and transfers
   - name: Spillevett
     description: Responsible gaming — reports, loss limits, pauses, self-exclusion
+  - name: CMS — Public
+    description: |
+      Public (un-authenticated) read-endpoints for static content (FAQ, Terms,
+      About Us, Responsible Gaming, Support, Links). Player-app uses these to
+      show static pages BEFORE login. GAP #22 + #33 — see
+      docs/architecture/BACKEND_1TO1_GAP_AUDIT_2026-04-24.md.
   - name: Payments
     description: Swedbank Pay payment intents and callbacks
   - name: Admin — Auth
@@ -831,6 +837,29 @@ components:
         totalPaidOutNok: { type: number }
         ticketCount: { type: integer }
         voidCount: { type: integer }
+
+    # ── CMS — Public (GAP #22 + #33) ──────────────────────────────────────
+    PublicCmsContent:
+      type: object
+      description: |
+        Published CMS content for public consumption. Stripped down vs.
+        admin-view: no `updatedByUserId`, no `createdAt` — only the live
+        content + `publishedAt`.
+      required: [slug, content, publishedAt]
+      properties:
+        slug:
+          type: string
+          enum: [aboutus, terms, support, links, responsible-gaming]
+          description: Canonical slug (after alias resolution).
+        content:
+          type: string
+          description: Published content (HTML or plain-text).
+        publishedAt:
+          type: string
+          format: date-time
+          description: |
+            For regulatoriske slugs: live-versjonens `publishedAt`. For
+            ikke-regulatoriske: `app_cms_content.updatedAt`.
 
 security:
   - BearerAuth: []
@@ -2074,6 +2103,171 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiSuccess"
+
+  # ── CMS — Public (GAP #22 + #33) ─────────────────────────────────────────
+  #
+  # Un-authenticated read-endpoints for static content. Player-app uses
+  # these to show static pages BEFORE login (no auth required). Cache:
+  # `public, max-age=300` på 200-svar; `no-store` på 404.
+  #
+  # Implementasjon: apps/backend/src/routes/publicCms.ts. Slugs er
+  # whitelisted (CMS_SLUGS i CmsService) og støtter aliaser:
+  #   /api/cms/about        → aboutus
+  #   /api/cms/about-us     → aboutus
+  #   /api/cms/terms-of-service → terms
+  #   /api/cms/tos          → terms
+  #
+  # Regulatoriske slugs (responsible-gaming) krever live-versjon — draft
+  # eller approved-versjoner returneres ALDRI utad. Tom-streng-innhold på
+  # ikke-regulatoriske slugs gir også 404 (ikke publisert).
+
+  /api/cms/faq:
+    get:
+      tags: [CMS — Public]
+      summary: List published FAQ entries (public, no auth)
+      description: |
+        Returns FAQ entries sorted by `sortOrder` ASC, `createdAt` ASC.
+        Admin-only fields (`createdByUserId`, `updatedByUserId`,
+        timestamps) are stripped from the public response.
+      security: []
+      responses:
+        "200":
+          description: FAQ list (may be empty)
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "public, max-age=300"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [faqs, count]
+                        properties:
+                          faqs:
+                            type: array
+                            items:
+                              type: object
+                              required: [question, answer, sortOrder]
+                              properties:
+                                question:
+                                  type: string
+                                answer:
+                                  type: string
+                                sortOrder:
+                                  type: integer
+                                  minimum: 0
+                          count:
+                            type: integer
+
+  /api/cms/terms:
+    get:
+      tags: [CMS — Public]
+      summary: Get published Terms & Conditions (public, no auth)
+      description: |
+        Alias `/api/cms/terms-of-service` and `/api/cms/tos` map to the
+        same canonical slug `terms`. Returns the published content;
+        empty/unpublished content returns 404 with `CMS_NOT_PUBLISHED`.
+      security: []
+      responses:
+        "200":
+          description: Published Terms content
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "public, max-age=300"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PublicCmsContent"
+        "404":
+          description: |
+            CMS_NOT_PUBLISHED (slug exists but no published content) /
+            CMS_SLUG_NOT_FOUND (unknown slug)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/cms/responsible-gaming:
+    get:
+      tags: [CMS — Public]
+      summary: Get published Responsible Gaming text (public, no auth)
+      description: |
+        Regulatorisk slug — krever LIVE-versjon (BIN-680 versjons-flyt).
+        Draft/review/approved-versjoner returneres aldri utad. Hvis det
+        ikke finnes en live-versjon → 404 `CMS_NOT_PUBLISHED`.
+
+        Pengespillforskriften krever at spillere kan lese
+        ansvarlig-spill-info FØR innlogging.
+      security: []
+      responses:
+        "200":
+          description: Published Responsible Gaming content
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "public, max-age=300"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PublicCmsContent"
+        "404":
+          description: CMS_NOT_PUBLISHED (no live version yet)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/cms/about:
+    get:
+      tags: [CMS — Public]
+      summary: Get published About Us text (public, no auth)
+      description: |
+        Alias for canonical slug `aboutus`. Player-app/frontend bruker
+        `/api/cms/about` for naturlig URL-form. `/api/cms/aboutus` og
+        `/api/cms/about-us` mapper til samme innhold.
+      security: []
+      responses:
+        "200":
+          description: Published About Us content
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: "public, max-age=300"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PublicCmsContent"
+        "404":
+          description: CMS_NOT_PUBLISHED / CMS_SLUG_NOT_FOUND
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 
   # ── Payments ──────────────────────────────────────────────────────────────
 

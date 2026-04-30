@@ -55,6 +55,10 @@ const logger = rootLogger.child({ module: "public-cms" });
  * Player-app-vennlige aliaser for slugs som har ulik form i URL og DB.
  * Holdes eksplisitt slik at det er trivielt å legge til nye aliaser uten
  * å trenge en migrering.
+ *
+ * Player-app/frontend bruker mer naturlige URL-segmenter (`about`,
+ * `terms-of-service`) enn de korte CMS-DB-sluggene (`aboutus`, `terms`).
+ * Aliasene mapper begge til samme canonical slug.
  */
 const SLUG_ALIASES: Record<string, CmsSlug> = {
   "terms-of-service": "terms",
@@ -62,6 +66,8 @@ const SLUG_ALIASES: Record<string, CmsSlug> = {
   "responsible-gaming": "responsible-gaming",
   "support": "support",
   "aboutus": "aboutus",
+  "about": "aboutus",
+  "about-us": "aboutus",
   "links": "links",
   "terms": "terms",
 };
