@@ -73,6 +73,11 @@ tags:
     description: Metronia ekstern-maskin-integrasjon — ticket create/topup/payout/void + rapporter. BIN-583 B3.4.
   - name: Agent — OK Bingo
     description: OK Bingo ekstern-maskin-integrasjon (SQL Server polling) — ticket create/topup/payout/void + open-day + rapporter. BIN-583 B3.5.
+  - name: Security
+    description: |
+      Browser-emitted security telemetry (CSP-violation reports, etc.). These
+      endpoints are unauthenticated by design — browsers send them as a side-
+      effect of policy violations. BIN-776.
 
 components:
   securitySchemes:
@@ -6854,3 +6859,74 @@ paths:
                           perHall:
                             type: array
                             items: { $ref: "#/components/schemas/MetroniaSalesAggregate" }
+
+  # ── Security (BIN-776) ────────────────────────────────────────────────────
+
+  /api/csp-report:
+    post:
+      tags: [Security]
+      summary: Receive CSP-violation reports from browsers (BIN-776)
+      description: |
+        Endpoint that browsers POST to when a resource violates the
+        `Content-Security-Policy` (or `-Report-Only`) header set by
+        `securityHeadersMiddleware`. Always returns 204 — the response
+        body is intentionally empty so it cannot be turned into a
+        reflected-XSS sink.
+
+        **Authentication:** none. Browsers send violation reports as a
+        side-effect and cannot include cookies/Bearer tokens for cross-
+        origin reports.
+
+        **Content types accepted:**
+          - `application/csp-report` (legacy `report-uri` shape)
+          - `application/reports+json` (modern Reporting API shape)
+          - `application/json` (developer/curl convenience)
+
+        **Body limit:** 16 KB. Any field longer than 2048 chars is
+        clipped before logging to prevent log flooding.
+
+        **Logging:** each parsed violation is emitted as a structured
+        warn-level event (`module=csp-report`, message=`csp.violation`)
+        so it shows up in Render logs and Sentry breadcrumbs.
+
+        **Rate limiting:** this route is mounted *before* the global
+        HTTP rate-limiter so violation bursts during the report-only
+        rollout are not silently dropped as 429s.
+      security: []
+      requestBody:
+        required: true
+        description: |
+          Either the legacy `{ "csp-report": {...} }` envelope or the
+          Reporting API array form `[{ type, body, ... }]`. Both are
+          parsed; malformed bodies are logged as `malformed` and still
+          return 204.
+        content:
+          application/csp-report:
+            schema:
+              type: object
+              properties:
+                csp-report:
+                  type: object
+                  additionalProperties: true
+          application/reports+json:
+            schema:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  properties:
+                    csp-report:
+                      type: object
+                      additionalProperties: true
+                - type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+      responses:
+        "204":
+          description: Acknowledged. No response body — never echo back the
+            untrusted report payload.
