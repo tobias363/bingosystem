@@ -97,7 +97,31 @@ export async function createRoomLifecycleStore(
   options: CreateRoomLifecycleStoreOptions = {},
 ): Promise<RoomLifecycleStore> {
   const store = buildRoomLifecycleStoreSync(options);
-  await connectRoomLifecycleStore(store);
+  try {
+    await connectRoomLifecycleStore(store);
+  } catch (err) {
+    // K4 follow-up 2026-04-30: when `connectRoomLifecycleStore` throws
+    // (DNS-failure, Redis unreachable, auth-fail, etc.) the underlying
+    // `ioredis` client constructed by `buildRoomLifecycleStoreSync` continues
+    // retrying connection in the background, keeping the event loop alive.
+    // In normal prod-boot the rethrow crashes the process and the leak dies
+    // with it, but a robust factory must not depend on that — production
+    // callers that catch the error and try to continue (or test harnesses
+    // that re-attempt) would otherwise leak a reconnect-loop per attempt.
+    //
+    // Shutdown errors are swallowed because the connect-failure is the
+    // primary error we want to propagate; a failing shutdown after a failed
+    // connect is uninteresting and would mask the root cause.
+    try {
+      await shutdownRoomLifecycleStore(store);
+    } catch (shutdownErr) {
+      factoryLog.warn(
+        { err: shutdownErr },
+        "shutdownRoomLifecycleStore failed during connect-failure cleanup — ignoring",
+      );
+    }
+    throw err;
+  }
   return store;
 }
 
