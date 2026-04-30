@@ -41,6 +41,13 @@ export interface TvPatternRow {
   prize: number;
   /** true hvis fasen nettopp ble vunnet (current_phase − 1 i state-maskinen). */
   highlighted: boolean;
+  /**
+   * Wireframe PDF 16 §16.5: "Hall Belongs To" — navn på hall(ene) hvor
+   * vinneren(e) av fasen kommer fra. Tom array når fasen ikke er vunnet
+   * ennå. Multi-hall scenarios (group-of-halls): vinnere kan komme fra
+   * flere haller i samme group, så vi returnerer en sortert liste.
+   */
+  hallNames: string[];
 }
 
 /**
@@ -92,6 +99,19 @@ export interface TvGameState {
    * scheduled_game.game_config_json; ellers default 75 for Game 1.
    */
   totalBalls: number;
+  /**
+   * Wireframe PDF 16 §16.5 (KPI-row på live TV-skjerm): antall Full
+   * House-vinnere i pågående/siste runde. Speiler `getWinners`-summary
+   * men er tilgjengelig under live spill (ikke bare mellom spill).
+   * 0 hvis ingen har vunnet FH ennå.
+   */
+  fullHouseWinners: number;
+  /**
+   * Wireframe PDF 16 §16.5: antall pattern-rader vunnet totalt i
+   * pågående/siste runde (sum playersWon over alle phases). Speiler
+   * `getWinners.patternsWon` men live.
+   */
+  patternsWon: number;
   /**
    * Bølge 1: neste planlagte spill for hallen (navn + start). Brukes til
    * "Spiller nå / Neste: X kl. HH:MM"-sub-header. Null hvis ingen
@@ -225,6 +245,8 @@ export class TvScreenService {
           patterns: this.emptyPatterns(),
           drawnCount: 0,
           totalBalls: DEFAULT_GAME1_TOTAL_BALLS,
+          fullHouseWinners: 0,
+          patternsWon: 0,
           nextGame: null,
           countdownToNextGame: null,
           status: "waiting",
@@ -266,6 +288,8 @@ export class TvScreenService {
         patterns: this.emptyPatterns(),
         drawnCount: 0,
         totalBalls: DEFAULT_GAME1_TOTAL_BALLS,
+        fullHouseWinners: 0,
+        patternsWon: 0,
         nextGame,
         countdownToNextGame: null,
         status: "waiting",
@@ -280,7 +304,25 @@ export class TvScreenService {
       this.loadPhaseWinners(gameId),
     ]);
 
-    const patterns = this.buildPatternRows(winners, state?.current_phase ?? 1);
+    // Wireframe PDF 16 §16.5: load hall-names so per-pattern hallNames-kolonne
+    // kan rendres på live TV. Tomt map hvis ingen vinnere ennå (winners=[]).
+    // Fail-soft: feiler navnlookup-en (app_halls mangler), bygger vi pattern-
+    // rows uten hall-attribusjon (hallNames=[]) i stedet for å 500'e.
+    let hallNamesMap = new Map<string, string>();
+    try {
+      hallNamesMap = await this.loadHallNames(winnersHallIds(winners));
+    } catch (err) {
+      log.warn(
+        { err, gameId },
+        "loadHallNames failed for live TV state — falling back to empty hallNames"
+      );
+    }
+
+    const patterns = this.buildPatternRows(
+      winners,
+      state?.current_phase ?? 1,
+      hallNamesMap
+    );
 
     // Last 5 balls (draws er i rekkefølge — backend gir dem sortert).
     // Bølge 1: drawnCount = full length, NOT siste 5 — gir "X / 75"-telleren.
@@ -288,6 +330,13 @@ export class TvScreenService {
     const ballsDrawn = draws.slice(-5);
     const lastBall = draws.length > 0 ? draws[draws.length - 1]! : null;
     const totalBalls = this.extractTotalBalls(fallbackRow.game_config_json);
+
+    // Wireframe PDF 16 §16.5: KPI-felt på live TV-skjerm.
+    //   fullHouseWinners = antall winners på phase=5
+    //   patternsWon      = antall winners totalt (sum over alle phases)
+    // Begge er 0 i pre-game / ingen-treff-tilstand.
+    const fullHouseWinners = winners.filter((w) => w.phase === 5).length;
+    const patternsWon = winners.length;
 
     const isActive = activeRow !== null;
     const status: TvGameState["status"] = isActive
@@ -329,6 +378,8 @@ export class TvScreenService {
       patterns,
       drawnCount,
       totalBalls,
+      fullHouseWinners,
+      patternsWon,
       nextGame,
       countdownToNextGame: countdown,
       status,
