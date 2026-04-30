@@ -563,19 +563,28 @@ export async function evaluateActivePhase(
     }
   }
 
-  // Demo Hall bypass (Tobias 2026-04-27): test-haller skal kjøre runden
-  // helt igjennom uten å pause på fase-vinn eller avslutte på Fullt Hus.
-  // Operatøren vil verifisere mini-game-rotasjon, jackpot-akkumulering og
-  // bong-evaluering på tvers av alle faser. Payout har allerede skjedd
-  // over (linje 405-453); vi hopper bare over end-of-round / pause-flyten.
-  // MAX_DRAWS_REACHED / DRAW_BAG_EMPTY i drawNextNumber stopper runden
-  // når alle baller er trukket — regulatorisk forsvarlig fordi flagget
-  // kun påvirker pause/end-on-pattern, ikke ball-uttrekk eller payout.
-  if (room.isTestHall === true) {
-    if (activePattern.claimType === "BINGO" && !game.bingoWinnerId) {
-      game.bingoWinnerId = firstWinnerId;
-    }
-    if (activePattern.claimType === "LINE" && !game.lineWinnerId) {
+  // Demo Hall bypass (Tobias 2026-04-27, revised demo-blocker 2026-04-29):
+  // test-haller skal hoppe over master-resume-pausen mellom fase 1-4 slik
+  // at operatør får verifisert multi-phase-progresjonen i samme draw uten
+  // å måtte trykke Resume manuelt mellom hver fase. Bypassen gjelder KUN
+  // LINE-faser (1-4); Fullt Hus (BINGO) faller gjennom til normal end-of-
+  // round-branchen under slik at:
+  //   1) Runden faktisk avsluttes på Fullt Hus (status=ENDED, endedReason=
+  //      BINGO_CLAIMED) i stedet for å fortsette til MAX_DRAWS_REACHED.
+  //   2) `onAutoClaimedFullHouse` (over på linje 551) trigger mini-game
+  //      som skal vises til vinneren — uten å bli klippet av når MAX_DRAWS
+  //      ankommer 75 baller senere.
+  //
+  // Tidligere bypass-versjon (PR #677) lot også BINGO falle gjennom her,
+  // som gjorde at trekningen fortsatte i bakgrunnen mens spilleren prøvde
+  // å fullføre Mystery / Wheel / Chest. Når MAX_DRAWS ankom 10+ sek senere
+  // ble end-of-round-overlay reist og mini-game-overlay revet ned før
+  // spilleren rakk å gjøre sitt valg → ingen mini-game-gevinst.
+  //
+  // Regulatorisk: payout for ALLE 5 faser skjedde allerede over (linje
+  // 405-453). Bypassen påvirker kun pause/end-flyten, ikke wallet-credit.
+  if (room.isTestHall === true && activePattern.claimType === "LINE") {
+    if (!game.lineWinnerId) {
       game.lineWinnerId = firstWinnerId;
     }
     logger.info(
@@ -587,10 +596,10 @@ export async function evaluateActivePhase(
         claimType: activePattern.claimType,
         firstWinnerId,
       },
-      "[demo-hall-bypass] phase won — hopper over end/pause (test-hall)",
+      "[demo-hall-bypass] LINE-phase won — hopper over master-resume-pause (test-hall)",
     );
     // Same-draw multi-phase wins: behold rekursjons-semantikken slik at
-    // alle faser blir paid out i samme draw.
+    // alle LINE-faser blir paid out i samme draw.
     await evaluateActivePhase(callbacks, room, game);
     return;
   }

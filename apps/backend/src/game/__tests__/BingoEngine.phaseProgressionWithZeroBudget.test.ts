@@ -240,15 +240,16 @@ test(
       );
     }
 
-    // ── Assertion 4: Game endedReason — depends on Fullt Hus claim path ──
-    // For test hall, Fullt Hus auto-claim does NOT end the game (bypass
-    // continues drawing). Game ends via MAX_DRAWS_REACHED / DRAW_BAG_EMPTY
-    // when bag is exhausted (75 balls drawn). bingoWinnerId must be set
-    // so client can show winner popup.
+    // ── Assertion 4: Game endedReason — Fullt Hus avslutter runden ────────
+    // Demo-blocker-revisjon 2026-04-29: test-hall avslutter runden atomært
+    // på Fullt Hus (samme oppførsel som prod-hall) slik at vinneren får
+    // sett mini-game-overlay uten å bli klippet av MAX_DRAWS-trekning i
+    // bakgrunnen. LINE-faser bypasser fortsatt master-resume-pausen.
     assert.equal(game.status, "ENDED", "Spillet skal være avsluttet");
-    assert.ok(
-      game.endedReason === "MAX_DRAWS_REACHED" || game.endedReason === "DRAW_BAG_EMPTY",
-      `Test-hall: endedReason=${game.endedReason} skal være MAX_DRAWS_REACHED eller DRAW_BAG_EMPTY (test-hall fortsetter etter Fullt Hus)`,
+    assert.equal(
+      game.endedReason,
+      "BINGO_CLAIMED",
+      `Test-hall demo-blocker-revisjon 2026-04-29: endedReason=${game.endedReason} skal være BINGO_CLAIMED — Fullt Hus avslutter runden atomært i test-hall`,
     );
     assert.equal(
       game.bingoWinnerId,

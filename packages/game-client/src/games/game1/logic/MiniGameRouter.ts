@@ -128,6 +128,16 @@ export class MiniGameRouter {
   constructor(private readonly deps: MiniGameRouterDeps) {}
 
   /**
+   * True hvis router har en aktiv overlay som spilleren kan interagere
+   * med. Demo-blocker-fix 2026-04-29: brukes av Game1Controller.onGameEnded
+   * for å avgjøre om mini-game-overlay skal beholdes etter Fullt Hus
+   * (vinneren MÅ få fullføre selv om game.status=ENDED).
+   */
+  isActive(): boolean {
+    return this.overlay !== null;
+  }
+
+  /**
    * Server → Client: handle `mini_game:trigger`. Instantiates the overlay for
    * `miniGameType`, wires callbacks, and displays it. If an overlay is
    * already active it's destroyed (no animation) before the new one shows —
@@ -337,12 +347,37 @@ export class MiniGameRouter {
    * `mini_game:choice` acks so the player doesn't lose their pick.
    */
   dismiss(): void {
+    const wasActive = this.overlay !== null;
     this.overlay?.destroy({ children: true });
     this.overlay = null;
     this.activeResultId = null;
+    // Demo-blocker-fix 2026-04-29: notify controller når mini-game er
+    // dismissed slik at end-of-round-overlay kan vises etter at vinneren
+    // har spilt mini-game ferdig. Idempotent — gjentatt dismiss er no-op.
+    if (wasActive && this.onAfterDismiss) {
+      try {
+        this.onAfterDismiss();
+      } catch (err) {
+        console.error("[MiniGameRouter] onAfterDismiss threw:", err);
+      }
+    }
   }
 
+  /**
+   * Set callback fired AFTER overlay has been dismissed. Used by
+   * `Game1Controller` to trigger end-of-round-overlay show when the
+   * mini-game is completed. Demo-blocker-fix 2026-04-29.
+   */
+  setOnAfterDismiss(fn: (() => void) | null): void {
+    this.onAfterDismiss = fn;
+  }
+
+  private onAfterDismiss: (() => void) | null = null;
+
   destroy(): void {
+    // Clear onAfterDismiss BEFORE dismiss() så vi ikke trigger end-of-round
+    // overlay-show under controller-destroy.
+    this.onAfterDismiss = null;
     this.dismiss();
     this.inFlightChoices.clear();
   }

@@ -135,8 +135,12 @@ test(
  * Positiv test — full phase-progression for Demo Hall (isTestHall=true).
  */
 test(
-  "demo-hall — Spill 1 + isTestHall=true: progresserer alle 5 faser uten pause",
+  "demo-hall — Spill 1 + isTestHall=true: progresserer alle 5 faser uten pause, ender på Fullt Hus",
   async () => {
+    // Demo-blocker-revisjon 2026-04-29: LINE-faser bypasser fortsatt
+    // master-resume-pausen, men Fullt Hus avslutter runden atomært slik
+    // at vinneren får sett mini-game-overlay uten å bli klippet av
+    // MAX_DRAWS-trekning i bakgrunnen.
     const engine = new BingoEngine(
       new FixedGridAdapter(),
       new InMemoryWalletAdapter(),
@@ -163,21 +167,33 @@ test(
     for (const row of ALICE_GRID) for (const n of row) if (n !== 0) allAlice.push(n);
     prioritiseDrawBag(engine, roomCode, allAlice);
 
+    // Trekk inntil runden enten avsluttes (etter Fullt Hus) eller alle
+    // 24 baller er trukket. Verifiser at mens RUNNING, skal aldri
+    // game.isPaused være true (LINE-bypass virker).
     let drawAttempts = 0;
     for (let i = 0; i < 24; i += 1) {
       const game = engine.getRoomSnapshot(roomCode).currentGame!;
+      if (game.status !== "RUNNING") {
+        // Runden er avsluttet på Fullt Hus — bryt løkken.
+        break;
+      }
       assert.notEqual(
         game.isPaused,
         true,
         `Demo Hall skal ikke pause — sjekk #${i + 1} (drew ${drawAttempts}/24)`,
       );
-      assert.equal(
-        game.status,
-        "RUNNING",
-        `Demo Hall skal forbli RUNNING — sjekk #${i + 1}`,
-      );
-      await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
-      drawAttempts += 1;
+      try {
+        await engine.drawNextNumber({ roomCode, actorPlayerId: hostId! });
+        drawAttempts += 1;
+      } catch (err) {
+        if (
+          err instanceof DomainError &&
+          err.code === "GAME_NOT_RUNNING"
+        ) {
+          break;
+        }
+        throw err;
+      }
     }
 
     const finalGame = engine.getRoomSnapshot(roomCode).currentGame!;
@@ -189,8 +205,13 @@ test(
     );
     assert.equal(
       finalGame.status,
-      "RUNNING",
-      "Demo Hall: status forblir RUNNING selv etter Fullt Hus",
+      "ENDED",
+      "Demo Hall: runden ENDER atomært på Fullt Hus (revisjon 2026-04-29)",
+    );
+    assert.equal(
+      finalGame.endedReason,
+      "BINGO_CLAIMED",
+      "Demo Hall: endedReason skal være BINGO_CLAIMED, ikke MAX_DRAWS_REACHED",
     );
   },
 );

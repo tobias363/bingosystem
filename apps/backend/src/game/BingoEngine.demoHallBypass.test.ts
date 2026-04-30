@@ -1,22 +1,30 @@
 /**
- * Demo Hall bypass — Tobias 2026-04-27.
+ * Demo Hall bypass — Tobias 2026-04-27 (revised demo-blocker 2026-04-29).
  *
  *   "Vi har satt at spillet stopper når man treffer 1 rad, kan du endre
  *    at når den står på hallen som er Demo Hall (lokal testing) så stopper
  *    den ikke? det er da kun for å teste spillet."
  *
  * Når `RoomState.isTestHall === true` skal Spill 1 ad-hoc-engine
- * (BingoEnginePatternEval.evaluateActivePhase) IKKE auto-pause på phase-won
- * og IKKE avslutte runden på Fullt Hus. Runden går helt til alle baller
- * er trukket (MAX_DRAWS_REACHED / DRAW_BAG_EMPTY i drawNextNumber).
+ * (BingoEnginePatternEval.evaluateActivePhase) hoppe over master-resume-
+ * pausen mellom LINE-faser (1-4) slik at operatør får testet multi-phase-
+ * progresjonen i samme draw uten å trykke Resume manuelt.
+ *
+ * Demo-blocker-revisjon 2026-04-29: Fullt Hus (BINGO) MÅ avslutte runden
+ * normalt selv i test-hall — ellers fortsetter MAX_DRAWS-trekningen i
+ * bakgrunnen mens vinneren prøver å spille mini-game (Mystery / Wheel /
+ * Chest), og overlay-en blir revet ned før spilleren rakk å fullføre.
  *
  * Dekning:
  *   1) Spill 1 + isTestHall=true: fase 1 vunnet → game.isPaused IKKE satt,
  *      drawNextNumber kan kalles videre.
- *   2) Spill 1 + isTestHall=true: Fullt Hus vunnet → game.status forblir
- *      RUNNING, bingoWinnerId settes (klient kan vise pop-up).
- *   3) Spill 1 + isTestHall=true: runden ender til slutt via NO_MORE_NUMBERS
- *      (MAX_DRAWS_REACHED når draw-bag er tom).
+ *   2) Spill 1 + isTestHall=true: Fullt Hus vunnet → game.status=ENDED,
+ *      endedReason=BINGO_CLAIMED (samme oppførsel som prod-hall — demo-
+ *      blocker 2026-04-29 — så mini-game får tid til å fullføres uten å
+ *      bli klippet av MAX_DRAWS).
+ *   3) Spill 1 + isTestHall=true: runden ender på Fullt Hus, IKKE
+ *      MAX_DRAWS — verifiserer at LINE-faser går automatisk men BINGO
+ *      avslutter atomært.
  *   4) Spill 1 UTEN isTestHall: pause + end-on-Fullt-Hus uendret (regresjon).
  */
 
@@ -130,7 +138,12 @@ test("demo-hall-bypass — Spill 1 + isTestHall=true: fase 1 vunnet → INGEN au
   );
 });
 
-test("demo-hall-bypass — Spill 1 + isTestHall=true: Fullt Hus vunnet → IKKE end-of-round", async () => {
+test("demo-hall-bypass — Spill 1 + isTestHall=true: Fullt Hus vunnet → ender runden (mini-game-fix 2026-04-29)", async () => {
+  // Demo-blocker-revisjon 2026-04-29: Fullt Hus skal AVSLUTTE runden også
+  // i test-hall slik at vinneren faktisk får sett mini-game-overlay uten
+  // å bli klippet av MAX_DRAWS-trekning i bakgrunnen. LINE-faser
+  // (1 Rad → 4 Rader) bypasser fortsatt master-resume-pausen, men BINGO
+  // (Fullt Hus) faller gjennom til normal end-of-round-flyten.
   const { engine, roomCode, hostId } = await setupSpill1TestHallRoom();
   await engine.startGame({
     roomCode,
@@ -142,16 +155,29 @@ test("demo-hall-bypass — Spill 1 + isTestHall=true: Fullt Hus vunnet → IKKE 
     variantConfig: DEFAULT_NORSK_BINGO_CONFIG,
   });
 
-  // Trekk alle 24 ikke-nullceller → Fullt Hus oppnås men runden skal
-  // fortsette pga test-hall-bypass.
+  // Trekk alle 24 ikke-nullceller — ingen pause mellom LINE-faser, og
+  // Fullt Hus avslutter runden atomært på siste ball.
   const allAlice: number[] = [];
   for (const row of PLAYER_A_GRID) for (const n of row) if (n !== 0) allAlice.push(n);
   prioritiseDrawBag(engine, roomCode, allAlice);
 
-  // Trekk alle 24 baller. Test-hall: ingen pause mellom faser, ingen end
-  // på Fullt Hus.
+  // Trekk baller helt til runden enten avsluttes eller alle 24 er trukket.
+  let drawsTaken = 0;
   for (let i = 0; i < 24; i += 1) {
-    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
+    try {
+      await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
+      drawsTaken += 1;
+    } catch (err) {
+      // Etter Fullt Hus skal status=ENDED og videre draw skal kaste
+      // GAME_NOT_RUNNING.
+      if (
+        err instanceof DomainError &&
+        err.code === "GAME_NOT_RUNNING"
+      ) {
+        break;
+      }
+      throw err;
+    }
   }
 
   const game = engine.getRoomSnapshot(roomCode).currentGame!;
@@ -161,22 +187,32 @@ test("demo-hall-bypass — Spill 1 + isTestHall=true: Fullt Hus vunnet → IKKE 
   assert.equal(fullHus?.isWon, true, "Fullt Hus skal være vunnet");
   assert.equal(
     game.status,
-    "RUNNING",
-    "test-hall skal IKKE settes til ENDED på Fullt Hus",
+    "ENDED",
+    "test-hall: Fullt Hus avslutter runden (samme oppførsel som prod-hall)",
   );
   assert.equal(
     game.bingoWinnerId,
     hostId,
     "bingoWinnerId skal settes så klient kan vise vinner-popup",
   );
-  assert.notEqual(
+  assert.equal(
     game.endedReason,
     "BINGO_CLAIMED",
-    "endedReason skal ikke settes — runden er ikke avsluttet ennå",
+    "endedReason skal være BINGO_CLAIMED — runden avsluttet via Fullt Hus, ikke MAX_DRAWS",
+  );
+  // Sanity: alle 5 LINE-faser skal være vunnet før Fullt Hus (LINE-bypass).
+  const wonPhases = game.patternResults?.filter((r) => r.isWon).length ?? 0;
+  assert.equal(
+    wonPhases,
+    5,
+    `alle 5 faser skal være vunnet (1 Rad → Fullt Hus). Faktisk: ${wonPhases}. Trekk: ${drawsTaken}`,
   );
 });
 
-test("demo-hall-bypass — Spill 1 + isTestHall=true: runden ender til slutt via NO_MORE_NUMBERS", async () => {
+test("demo-hall-bypass — Spill 1 + isTestHall=true: alle LINE-faser progresserer uten pause før Fullt Hus", async () => {
+  // Demo-blocker-revisjon 2026-04-29: LINE-bypass virker fortsatt — alle
+  // 5 fasene er vunnet ved Fullt Hus, og runden avsluttes på BINGO-
+  // patternet uten å traversere MAX_DRAWS_REACHED.
   const { engine, roomCode, hostId } = await setupSpill1TestHallRoom();
   await engine.startGame({
     roomCode,
@@ -188,11 +224,10 @@ test("demo-hall-bypass — Spill 1 + isTestHall=true: runden ender til slutt via
     variantConfig: DEFAULT_NORSK_BINGO_CONFIG,
   });
 
-  // Trekk så mange ganger som engine tillater. Engine har default
-  // maxDrawsPerRound=30; etter draw 30 settes game.status=ENDED med
-  // endedReason="MAX_DRAWS_REACHED" (post-draw branch i drawNextNumber).
-  // Test-hall skal IKKE ha endedReason="BINGO_CLAIMED" — det ville bety
-  // bypassen ikke virket.
+  const allAlice: number[] = [];
+  for (const row of PLAYER_A_GRID) for (const n of row) if (n !== 0) allAlice.push(n);
+  prioritiseDrawBag(engine, roomCode, allAlice);
+
   let draws = 0;
   for (let i = 0; i < 100; i += 1) {
     try {
@@ -203,10 +238,7 @@ test("demo-hall-bypass — Spill 1 + isTestHall=true: runden ender til slutt via
         err instanceof DomainError &&
         (err.code === "NO_MORE_NUMBERS" || err.code === "GAME_NOT_RUNNING")
       ) {
-        // Begge utfall betyr at runden er over på en naturlig måte:
-        //   - NO_MORE_NUMBERS: pre-draw MAX-sjekk eller bag-tom-sjekk
-        //   - GAME_NOT_RUNNING: runden ble ENDED i forrige iter via
-        //     post-draw MAX_DRAWS_REACHED-grenen
+        // GAME_NOT_RUNNING = forventet etter Fullt Hus i revised demo-bypass.
         break;
       }
       throw err;
@@ -219,15 +251,13 @@ test("demo-hall-bypass — Spill 1 + isTestHall=true: runden ender til slutt via
     "ENDED",
     `status skal være ENDED til slutt. Trekk gjennomført: ${draws}`,
   );
-  assert.ok(
-    game.endedReason === "MAX_DRAWS_REACHED" ||
-      game.endedReason === "DRAW_BAG_EMPTY",
-    `endedReason skal være MAX_DRAWS_REACHED eller DRAW_BAG_EMPTY (fikk ${game.endedReason}). Bypass virker hvis ikke "BINGO_CLAIMED".`,
-  );
-  assert.notEqual(
+  // Demo-blocker-revisjon 2026-04-29: BINGO_CLAIMED er nå forventet utfall
+  // (mini-game trenger end-of-round). MAX_DRAWS_REACHED er fortsatt mulig
+  // hvis ingen vinner Fullt Hus, men her vinner Alice alle 5 fasene.
+  assert.equal(
     game.endedReason,
     "BINGO_CLAIMED",
-    "test-hall skal IKKE ende på BINGO_CLAIMED",
+    `endedReason skal være BINGO_CLAIMED i test-hall (revisjon 2026-04-29). Faktisk: ${game.endedReason}. Trekk: ${draws}`,
   );
 });
 
