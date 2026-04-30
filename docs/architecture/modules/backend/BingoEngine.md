@@ -1,6 +1,6 @@
 # BingoEngine
 
-**File:** `apps/backend/src/game/BingoEngine.ts` (4434 LOC)
+**File:** `apps/backend/src/game/BingoEngine.ts` (4364 LOC)
 **Owner-area:** game-runtime
 **Last reviewed:** 2026-04-30
 
@@ -74,6 +74,7 @@ export { DomainError }
 - `WalletAdapter` — buy-in transfer, payout transfer, refund. Always with `idempotencyKey` + `targetSide`. Phase-payout transfer is now routed via `PhasePayoutService` (F2-A).
 - `PhasePayoutService.computeAndPayPhase` (F2-A) — extracted cap-and-transfer flow used by `payoutPhaseWinner` (auto-claim path) and `ClaimSubmitterService` LINE/BINGO branches.
 - `ClaimSubmitterService.submitClaim` (F2-B) — extracted claim-submission flow (validation, LINE/BINGO branches, post-transfer audit-trail). Engine method `submitClaim` is now a thin delegate that resolves `room`/`game` and forwards to the service.
+- `RoomLifecycleService.createRoom` / `joinRoom` / `destroyRoom` / `listRoomSummaries` / `getRoomSnapshot` (F2-C) — extracted room-lifecycle flow. The engine retains ownership of the per-room caches (variantConfigByRoom, luckyNumbersByPlayer, drawLocksByRoom, lastDrawAtByRoom, roomLastRoundStartMs) which the service evicts via `cleanupRoomLocalCaches` callback on `destroyRoom`.
 - `ComplianceManager` — pre-armament check (block/limit/pause), `recordLossEntry({type:"BUYIN"|"PAYOUT", amount})`, play-session bookkeeping.
 - `ComplianceLedger` — `recordComplianceLedgerEvent` for STAKE/PRIZE/EXTRA_PRIZE/HOUSE_RETAINED + `makeHouseAccountId(hallId, gameType, channel)`.
 - `PrizePolicyManager` — single-prize-cap (2500 kr §11), extra-draw policy lookups, denial audit. (Also injected into `PhasePayoutService` so the service applies the same cap.)
@@ -144,7 +145,8 @@ Common failures + how to diagnose:
 
 ## Recent significant changes
 
-- F2-B `refactor/f2b-extract-claim-submitter` (this PR): extracted the full `submitClaim` flow (validation, LINE/BINGO branches, post-transfer audit-trail, recovery-event helper) into a new `ClaimSubmitterService`. BingoEngine.ts: 5330 → 4434 LOC (-659). The engine method `submitClaim` is now a thin delegate (~10 lines: resolve room+game, forward). Behavior unchanged — all idempotency-keys, ledger ordering, PR #741 test-hall semantics, and PILOT-EMERGENCY 2026-04-28 unconditional state-mutation preserved. See `docs/architecture/modules/backend/ClaimSubmitterService.md`.
+- F2-C `refactor/f2c-extract-room-lifecycle-service` (this PR): extracted the room-lifecycle flow (`createRoom` / `joinRoom` / `destroyRoom` / `listRoomSummaries` / `getRoomSnapshot`) into a new `RoomLifecycleService`. BingoEngine.ts: 4434 → 4364 LOC (-70). The engine methods are now thin delegates; the K2 lifecycleStore plumbing is hidden behind `releaseAndForgetEviction` / `disarmAllPlayersForRoom` callbacks, and per-room cache eviction (variantConfigByRoom, luckyNumbersByPlayer, drawLocksByRoom, lastDrawAtByRoom, roomLastRoundStartMs) is decoupled via `cleanupRoomLocalCaches`. Behavior unchanged. See `docs/architecture/modules/backend/RoomLifecycleService.md`.
+- F2-B `refactor/f2b-extract-claim-submitter` (#749): extracted the full `submitClaim` flow (validation, LINE/BINGO branches, post-transfer audit-trail, recovery-event helper) into a new `ClaimSubmitterService`. BingoEngine.ts: 5330 → 4434 LOC (-659). The engine method `submitClaim` is now a thin delegate (~10 lines: resolve room+game, forward). Behavior unchanged — all idempotency-keys, ledger ordering, PR #741 test-hall semantics, and PILOT-EMERGENCY 2026-04-28 unconditional state-mutation preserved. See `docs/architecture/modules/backend/ClaimSubmitterService.md`.
 - F2-A `refactor/f2a-extract-phase-payout-service` (#743): extracted the cap-and-transfer flow from `payoutPhaseWinner` + `submitClaim` LINE/BINGO branches into a new `PhasePayoutService`. BingoEngine.ts: 5436 → 5330 LOC (-106). Behavior unchanged — same idempotency-keys, cap order, logging fields. See `docs/architecture/modules/backend/PhasePayoutService.md`.
 - PR #735 (`dc0acfc1`, K3 Bølge): added `assertSpill1NotAdHoc` guard so production retail cannot start a scheduled Spill 1 on the ad-hoc engine — fail-closes regulatorily.
 - PR #732 (`7a2c0991`, K2 Bølge): atomic `RoomLifecycleStore` replaces three separate Maps that could drift.
@@ -166,9 +168,10 @@ Common failures + how to diagnose:
 
 ## Refactor status (audit-rapport REFACTOR_AUDIT_PRE_PILOT_2026-04-29.md)
 
-- HV-3 in progress: BingoEngine reduced from 5436 → 4434 LOC across F2-A (-106) and F2-B (-659) — a **14% engine-size reduction** in two iterations. Engine is still the largest module in the repo but the high-leverage submitClaim+payout chain is now isolated in dedicated services. Audit recommends further extracting (a) the lifecycle/admin section (loss-limits, self-exclusion, prize-policy, daily-report) into a dedicated `BingoEngineComplianceFacade`.
+- HV-3 in progress: BingoEngine reduced from 5436 → 4364 LOC across F2-A (-106), F2-B (-659), and F2-C (-70) — a **20% engine-size reduction** in three iterations. Engine is still the largest module in the repo but the high-leverage submitClaim+payout chain and the room-lifecycle entry-points are now isolated in dedicated services. Audit recommends further extracting (a) the compliance/admin section (loss-limits, self-exclusion, prize-policy, daily-report) into a dedicated `BingoEngineComplianceFacade`.
 - F2-A complete: `PhasePayoutService` extracted (cap-and-transfer flow shared across `payoutPhaseWinner`, `submitClaim` LINE, `submitClaim` BINGO). See `docs/architecture/modules/backend/PhasePayoutService.md`.
 - F2-B complete: `ClaimSubmitterService` extracted (validation + LINE/BINGO branches + post-transfer audit-trail). Engine method is now a thin delegate that owns only `requireRoom` + `requireRunningGame`. See `docs/architecture/modules/backend/ClaimSubmitterService.md`.
+- F2-C complete: `RoomLifecycleService` extracted (createRoom + joinRoom + destroyRoom + read-side projections). Engine methods are now thin delegates; the K2 atomic destroy flow is preserved via callbacks. See `docs/architecture/modules/backend/RoomLifecycleService.md`.
 - **TODO future bølge:** harmonize `Game1DrawEngineService.Game1PayoutService` with `PhasePayoutService` so scheduled retail games and ad-hoc games share the same cap chain.
 - Method `_drawNextNumberLocked` is ~290 LOC and would benefit from being broken into smaller phases (pre-draw guards, draw-from-bag, post-draw evaluation, broadcast).
 
