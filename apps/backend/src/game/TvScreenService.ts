@@ -602,16 +602,35 @@ export class TvScreenService {
     return halls;
   }
 
+  /**
+   * Wireframe PDF 16 §16.5: per-pattern `hallNames` bygges fra winners-rad
+   * via `hall_id` → name-lookup (hallNamesMap). Tom map (eller manglende
+   * navn) → `hallNames` blir tom array — fail-soft (TV viser "—" istedet).
+   *
+   * Sortering: `localeCompare("nb-NO")` så multi-hall-listen (group-of-halls
+   * scenario) er stabil mellom polls.
+   */
   private buildPatternRows(
-    winners: Array<{ phase: number; prize_amount_cents: number; total_phase_prize_cents: number }>,
-    currentPhase: number
+    winners: Array<{
+      phase: number;
+      prize_amount_cents: number;
+      total_phase_prize_cents: number;
+      hall_id: string;
+    }>,
+    currentPhase: number,
+    hallNamesMap: Map<string, string>
   ): TvPatternRow[] {
-    const byPhase = new Map<number, { playersWon: number; prize: number }>();
+    const byPhase = new Map<
+      number,
+      { playersWon: number; prize: number; hallIds: Set<string> }
+    >();
     for (const w of winners) {
-      const cur = byPhase.get(w.phase) ?? { playersWon: 0, prize: 0 };
+      const cur =
+        byPhase.get(w.phase) ?? { playersWon: 0, prize: 0, hallIds: new Set<string>() };
       cur.playersWon += 1;
       // Total prize pot for fasen (alle vinner-rader har samme total_phase_prize_cents).
       cur.prize = Math.max(cur.prize, w.total_phase_prize_cents);
+      cur.hallIds.add(w.hall_id);
       byPhase.set(w.phase, cur);
     }
 
@@ -620,12 +639,19 @@ export class TvScreenService {
 
     return [1, 2, 3, 4, 5].map((phase) => {
       const agg = byPhase.get(phase);
+      const hallNames = agg
+        ? [...agg.hallIds]
+            .map((id) => hallNamesMap.get(id) ?? "")
+            .filter((n) => n.length > 0)
+            .sort((a, b) => a.localeCompare(b, "nb-NO"))
+        : [];
       return {
         name: PHASE_NAMES[phase] ?? `Phase ${phase}`,
         phase,
         playersWon: agg?.playersWon ?? 0,
         prize: agg?.prize ?? 0,
         highlighted: phase === highlightPhase && (agg?.playersWon ?? 0) > 0,
+        hallNames,
       };
     });
   }
@@ -637,6 +663,7 @@ export class TvScreenService {
       playersWon: 0,
       prize: 0,
       highlighted: false,
+      hallNames: [],
     }));
   }
 

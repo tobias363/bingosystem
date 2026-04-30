@@ -15,6 +15,12 @@ export interface TvPatternRow {
   playersWon: number;
   prize: number;
   highlighted: boolean;
+  /**
+   * Wireframe PDF 16 §16.5: "Hall Belongs To"-attribusjon. Tom array når
+   * fasen ikke er vunnet ennå. Multi-hall-scenarier (group-of-halls) kan
+   * inneholde flere hall-navn som rendres komma-separert i UI.
+   */
+  hallNames: string[];
 }
 
 /**
@@ -45,6 +51,16 @@ export interface TvGameState {
   drawnCount: number;
   /** Bølge 1: ballpool-størrelse, typisk 75 for Spill 1 / Kvikkis. */
   totalBalls: number;
+  /**
+   * Wireframe PDF 16 §16.5 (KPI-row på live TV-skjerm): antall Full
+   * House-vinnere i pågående/siste runde. 0 hvis ingen har vunnet FH ennå.
+   */
+  fullHouseWinners: number;
+  /**
+   * Wireframe PDF 16 §16.5: antall pattern-rader vunnet totalt i
+   * pågående/siste runde (sum playersWon over alle phases).
+   */
+  patternsWon: number;
   /** Bølge 1: "Neste spill"-sub-header — null hvis ingen planlagte. */
   nextGame: {
     name: string;
