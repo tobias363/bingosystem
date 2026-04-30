@@ -76,8 +76,8 @@ export type PhasePayoutSkippedReason = "budget-exhausted" | "house-balance-low"
 
 **Called by (upstream):**
 - `BingoEngine.payoutPhaseWinner` (auto-claim phase-win path).
-- `BingoEngine.submitClaim` LINE branch.
-- `BingoEngine.submitClaim` BINGO branch (Fullt Hus). Wrapped in try/catch so race-mutex `game.bingoWinnerId` rolls back on transfer failure (CRIT-6 partial-state-protection).
+- `ClaimSubmitterService.submitClaim` LINE branch (F2-B — was inline in `BingoEngine.submitClaim`).
+- `ClaimSubmitterService.submitClaim` BINGO branch (Fullt Hus). Wrapped in try/catch so race-mutex `game.bingoWinnerId` rolls back on transfer failure (CRIT-6 partial-state-protection).
 
 ## Invariants
 
