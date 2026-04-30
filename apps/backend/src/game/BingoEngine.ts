@@ -112,6 +112,10 @@ import {
   ClaimSubmitterService,
   type ClaimSubmitterCallbacks,
 } from "./ClaimSubmitterService.js";
+import {
+  RoomLifecycleService,
+  type RoomLifecycleCallbacks,
+} from "./RoomLifecycleService.js";
 import { ComplianceLedger } from "./ComplianceLedger.js";
 import type { LedgerGameType, LedgerChannel, ComplianceLedgerEntry, DailyComplianceReport, RangeComplianceReport, GameStatisticsReport, OrganizationAllocationInput, OverskuddDistributionBatch, RevenueSummary, TimeSeriesReport, TimeSeriesGranularity, TopPlayersReport, GameSessionsReport } from "./ComplianceLedger.js";
 import { ledgerGameTypeForSlug } from "./ledgerGameTypeForSlug.js";
@@ -545,6 +549,14 @@ export class BingoEngine {
    * Game2Engine/Game3Engine inheritance + Socket.IO wiring stays unchanged.
    */
   protected readonly claimSubmitterService: ClaimSubmitterService;
+  /**
+   * F2-C (REFACTOR_AUDIT_PRE_PILOT_2026-04-29 §3.3 / HV-3): extracted the
+   * room-lifecycle flow (`createRoom` / `joinRoom` / `destroyRoom` /
+   * `listRoomSummaries` / `getRoomSnapshot`) into a stand-alone service.
+   * The matching public methods on this engine are now thin delegates so
+   * Game2Engine/Game3Engine inheritance + Socket.IO wiring stays unchanged.
+   */
+  protected readonly roomLifecycleService: RoomLifecycleService;
   private readonly drawBagFactory?: (size: number) => number[];
   /**
    * BIN-615 / PR-C1: Per-room variantConfig cache for hook access (e.g. onDrawCompleted
@@ -700,6 +712,17 @@ export class BingoEngine {
     // route eviction through the store so orphan reservations are always
     // released atomically. Test harnesses that don't need this can omit.
     this.lifecycleStore = options.lifecycleStore;
+
+    // F2-C: shared room-lifecycle flow (createRoom/joinRoom/destroyRoom +
+    // read-side listRoomSummaries/getRoomSnapshot). Constructed AFTER
+    // walletAdapter, rooms, and lifecycleStore so the destroyRoom path can
+    // route through `releaseAndForgetEviction` (which depends on
+    // `this.lifecycleStore`).
+    this.roomLifecycleService = new RoomLifecycleService(
+      this.walletAdapter,
+      this.rooms,
+      this.buildRoomLifecycleCallbacks(),
+    );
 
     // K3 (2026-04-29): production-runtime-flagget. Default false — tester
     // og dev-miljø beholder eksisterende ad-hoc Spill 1-pathway. I prod
@@ -883,146 +906,30 @@ export class BingoEngine {
     };
   }
 
+  /**
+   * F2-C (REFACTOR_AUDIT_PRE_PILOT_2026-04-29 §3.3 / HV-3): create-room flow
+   * extracted to {@link RoomLifecycleService.createRoom}. This method is now
+   * a thin delegate so:
+   *   - Public API (and Game2Engine/Game3Engine inheritance) stays unchanged.
+   *   - The engine retains ownership of the per-room caches and assertion
+   *     helpers used by the service callbacks.
+   *
+   * Behavior is byte-identical to the pre-extraction inline implementation
+   * (same wallet-flow, same room-code generation, same log fields).
+   */
   async createRoom(input: CreateRoomInput): Promise<{ roomCode: string; playerId: string }> {
-    const hallId = this.assertHallId(input.hallId);
-    const playerId = randomUUID();
-    const walletId = input.walletId?.trim() || `wallet-${playerId}`;
-    logger.debug({ hallId, walletId, playerName: input.playerName }, "createRoom start");
-    this.assertWalletAllowedForGameplay(walletId, Date.now());
-    this.assertWalletNotInRunningGame(walletId);
-    try {
-      logger.debug({ walletId }, "ensureAccount start");
-      await this.walletAdapter.ensureAccount(walletId);
-      logger.debug({ walletId }, "ensureAccount OK");
-    } catch (err) {
-      logger.error({ walletId, err }, "ensureAccount FAILED");
-      throw err;
-    }
-    let balance: number;
-    try {
-      // BIN-693: bruker available_balance så klient-visning matcher det som
-      // faktisk er tilgjengelig (total − sum av aktive reservations).
-      logger.debug({ walletId }, "getAvailableBalance start");
-      balance = this.walletAdapter.getAvailableBalance
-        ? await this.walletAdapter.getAvailableBalance(walletId)
-        : await this.walletAdapter.getBalance(walletId);
-      logger.debug({ walletId, balance }, "getAvailableBalance OK");
-    } catch (err) {
-      logger.error({ walletId, err }, "getAvailableBalance FAILED");
-      throw err;
-    }
-
-    const player: Player = {
-      id: playerId,
-      name: this.assertPlayerName(input.playerName),
-      walletId,
-      balance,
-      socketId: input.socketId,
-      hallId,
-    };
-
-    const existingCodes = new Set(this.rooms.keys());
-    const code = input.roomCode && !existingCodes.has(input.roomCode)
-      ? input.roomCode
-      : makeRoomCode(existingCodes);
-    // Tobias 2026-04-27: Spill 2/3 sender `effectiveHallId: null` for shared
-    // global rooms. Vi beholder opprettende hall i `room.hallId` (audit) men
-    // setter `isHallShared=true` så `joinRoom` skipper HALL_MISMATCH.
-    const isHallShared = input.effectiveHallId === null;
-    // Demo Hall bypass (Tobias 2026-04-27): caller (typisk join-handler i
-    // socket-laget) sender flagget basert på PlatformService.getHall.isTestHall.
-    // Engine selv slår ikke opp i DB her — vi holder createRoom synkron mot
-    // wallet og lar caller composere hall-info.
-    const isTestHall = input.isTestHall === true;
-    const room: RoomState = {
-      code,
-      hallId,
-      hostPlayerId: playerId,
-      // BIN-672: gameSlug is REQUIRED on RoomState. Default to "bingo" when
-      // caller omitted — matches game_sessions.game_slug DB default and
-      // reflects that this platform only ships Bingo right now.
-      gameSlug: input.gameSlug?.trim() || "bingo",
-      createdAt: new Date().toISOString(),
-      players: new Map([[playerId, player]]),
-      gameHistory: [],
-      ...(isHallShared ? { isHallShared: true } : {}),
-      ...(isTestHall ? { isTestHall: true } : {}),
-    };
-
-    this.rooms.set(code, room);
-    this.syncRoomToStore(room); // BIN-251
-    // LIVE_ROOM_OBSERVABILITY 2026-04-29: structured INFO-log slik at ops kan
-    // grep room.created i Render-loggen og se hvem som åpnet rommet, hall,
-    // canonical-kode + om det er test-hall. Tidligere ble dette begravd bak
-    // logger.debug — useless ved post-mortem av prod-incident.
-    logRoomEvent(
-      logger,
-      {
-        roomCode: code,
-        hallId,
-        gameSlug: room.gameSlug,
-        hostPlayerId: playerId,
-        walletId,
-        isTestHall: isTestHall || undefined,
-        isHallShared: isHallShared || undefined,
-      },
-      "room.created",
-    );
-    logRoomEvent(
-      logger,
-      {
-        roomCode: code,
-        playerId,
-        walletId,
-        socketId: input.socketId ?? null,
-        hallId,
-        role: "host",
-      },
-      "room.player.joined",
-    );
-    return { roomCode: code, playerId };
+    return this.roomLifecycleService.createRoom(input);
   }
 
+  /**
+   * F2-C: join-room flow extracted to {@link RoomLifecycleService.joinRoom}.
+   * Same 1:1 contract as the inline implementation — HALL_MISMATCH-guard,
+   * wallet KYC/cross-room/within-room dup checks, balance lookup via
+   * `getBalance` (NOT `getAvailableBalance`, preserved for backward compat),
+   * and the single `room.player.joined` log event.
+   */
   async joinRoom(input: JoinRoomInput): Promise<{ roomCode: string; playerId: string }> {
-    const roomCode = input.roomCode.trim().toUpperCase();
-    const hallId = this.assertHallId(input.hallId);
-    const room = this.requireRoom(roomCode);
-    // Tobias 2026-04-27: shared rooms (Spill 2/3 — ROCKET / MONSTERBINGO) er
-    // GLOBALE og deles av alle haller — skip HALL_MISMATCH-sjekken.
-    if (!room.isHallShared && room.hallId !== hallId) {
-      throw new DomainError("HALL_MISMATCH", "Rommet tilhører en annen hall.");
-    }
-
-    const playerId = randomUUID();
-    const walletId = input.walletId?.trim() || `wallet-${playerId}`;
-    this.assertWalletAllowedForGameplay(walletId, Date.now());
-    this.assertWalletNotInRunningGame(walletId, roomCode);
-    this.assertWalletNotAlreadyInRoom(room, walletId);
-    await this.walletAdapter.ensureAccount(walletId);
-    const balance = await this.walletAdapter.getBalance(walletId);
-
-    room.players.set(playerId, {
-      id: playerId,
-      name: this.assertPlayerName(input.playerName),
-      walletId,
-      balance,
-      socketId: input.socketId,
-      hallId,
-    });
-
-    logRoomEvent(
-      logger,
-      {
-        roomCode,
-        playerId,
-        walletId,
-        socketId: input.socketId ?? null,
-        hallId,
-        role: "guest",
-      },
-      "room.player.joined",
-    );
-    return { roomCode, playerId };
+    return this.roomLifecycleService.joinRoom(input);
   }
 
   /**
@@ -1863,6 +1770,53 @@ export class BingoEngine {
         this.writeGameEndCheckpoint(room, game),
       writePayoutCheckpointWithRetry: (room, game, claimId, payout, txIds, phase) =>
         this.writePayoutCheckpointWithRetry(room, game, claimId, payout, txIds, phase),
+    };
+  }
+
+  /**
+   * F2-C: bygger callback-porten som {@link RoomLifecycleService} trenger
+   * for å håndheve assertion-helpers (hallId, playerName, wallet-guards) og
+   * for å rydde opp atomic K2 lifecycle-state + per-room caches på destroy.
+   * Samme mønster som {@link buildClaimSubmitterCallbacks} +
+   * {@link buildEvaluatePhaseCallbacks}.
+   *
+   * `releaseAndForgetEviction` no-ops internally når `this.lifecycleStore`
+   * mangler (test-harnesses uten reservation flow), så vi kan trygt fyre
+   * den uten guard. Det matcher pre-extraction-oppførselen i `destroyRoom`
+   * (som tidligere hadde sin egen `if (this.lifecycleStore)`-guard).
+   *
+   * `disarmAllPlayersForRoom` wrapper `this.lifecycleStore?.disarmAllPlayers`
+   * i `void` for fire-and-forget (orphan arm-cycle ryddes asynkront — om
+   * det feiler kommer neste boot-sweep og rydder opp).
+   */
+  private buildRoomLifecycleCallbacks(): RoomLifecycleCallbacks {
+    return {
+      assertHallId: (hallId) => this.assertHallId(hallId),
+      assertPlayerName: (playerName) => this.assertPlayerName(playerName),
+      assertWalletAllowedForGameplay: (walletId, nowMs) =>
+        this.assertWalletAllowedForGameplay(walletId, nowMs),
+      assertWalletNotInRunningGame: (walletId, exceptRoomCode) =>
+        this.assertWalletNotInRunningGame(walletId, exceptRoomCode),
+      assertWalletNotAlreadyInRoom: (room, walletId) =>
+        this.assertWalletNotAlreadyInRoom(room, walletId),
+      serializeRoom: (room) => this.serializeRoom(room),
+      syncRoomToStore: (room) => this.syncRoomToStore(room),
+      releaseAndForgetEviction: (roomCode, playerId, walletId) =>
+        this.releaseAndForgetEviction(roomCode, playerId, walletId),
+      disarmAllPlayersForRoom: (roomCode) => {
+        if (this.lifecycleStore) {
+          void this.lifecycleStore.disarmAllPlayers({ roomCode });
+        }
+      },
+      cleanupRoomLocalCaches: (roomCode) => {
+        this.roomLastRoundStartMs.delete(roomCode);
+        this.lastDrawAtByRoom.delete(roomCode);
+        this.drawLocksByRoom.delete(roomCode); // HIGH-5
+        this.variantConfigByRoom.delete(roomCode); // BIN-615 / PR-C1
+        this.variantGameTypeByRoom.delete(roomCode);
+        this.luckyNumbersByPlayer.delete(roomCode); // BIN-615 / PR-C3
+        this.roomStateStore?.delete(roomCode); // BIN-251
+      },
     };
   }
 
@@ -3049,9 +3003,13 @@ export class BingoEngine {
     logger.info({ roomCode, gameId: game.id }, "Game resumed");
   }
 
+  /**
+   * F2-C: read-side snapshot via {@link RoomLifecycleService.getRoomSnapshot}.
+   * Engine retains ownership of `serializeRoom` (game-projection helper)
+   * which is wired via the lifecycle-service callbacks.
+   */
   getRoomSnapshot(roomCode: string): RoomSnapshot {
-    const room = this.requireRoom(roomCode.trim().toUpperCase());
-    return this.serializeRoom(room);
+    return this.roomLifecycleService.getRoomSnapshot(roomCode);
   }
 
   /**
@@ -3175,56 +3133,33 @@ export class BingoEngine {
     };
   }
 
+  /**
+   * F2-C: read-side projection delegated to
+   * {@link RoomLifecycleService.listRoomSummaries}.
+   */
   listRoomSummaries(): RoomSummary[] {
-    return [...this.rooms.values()]
-      .map((room) => {
-        const gameStatus: RoomSummary["gameStatus"] = room.currentGame
-          ? room.currentGame.status
-          : "NONE";
-        return {
-          code: room.code,
-          hallId: room.hallId,
-          hostPlayerId: room.hostPlayerId,
-          gameSlug: room.gameSlug,
-          playerCount: room.players.size,
-          createdAt: room.createdAt,
-          gameStatus
-        };
-      })
-      .sort((a, b) => a.code.localeCompare(b.code));
+    return this.roomLifecycleService.listRoomSummaries();
   }
 
+  /**
+   * F2-C: destroy-room flow extracted to {@link RoomLifecycleService.destroyRoom}.
+   * The engine still owns the per-room cache list (variantConfigByRoom,
+   * luckyNumbersByPlayer, drawLocksByRoom, lastDrawAtByRoom,
+   * roomLastRoundStartMs, roomStateStore.delete) — those are evicted via
+   * `cleanupRoomLocalCaches` callback so the service stays decoupled from
+   * the concrete Map list.
+   *
+   * K2 atomic cleanup (per-player eviction + arm-cycle disarm) is preserved
+   * via `releaseAndForgetEviction` and `disarmAllPlayersForRoom` callbacks.
+   */
   destroyRoom(roomCode: string): void {
+    this.roomLifecycleService.destroyRoom(roomCode);
+    // K5 (2026-04-30): clear circuit-breaker state on room destroy. Lever
+    // utenfor RoomLifecycleService fordi `roomErrorCounter` er en engine-
+    // intern bekymring (engine eier breaker-state per HV-3-port-modellen).
+    // Idempotent — `reset` på en ukjent room-code er no-op.
     const code = roomCode.trim().toUpperCase();
-    const room = this.rooms.get(code);
-    if (!room) {
-      throw new DomainError("ROOM_NOT_FOUND", `Rom ${code} finnes ikke.`);
-    }
-    if (room.currentGame && room.currentGame.status === "RUNNING") {
-      throw new DomainError("GAME_IN_PROGRESS", `Kan ikke slette rom ${code} mens en runde pågår.`);
-    }
-    // K2 (2026-04-29) — FORHANDSKJOP §7.5: pre-K2 destroyRoom evicted from
-    // engine.rooms but never touched RoomStateManager / lifecycleStore,
-    // leaving armed-state + reservation-mappings + arm-cycle stranded
-    // until process restart. Now we evict each player atomically before
-    // deleting the room, releasing any orphan reservations along the way.
-    if (this.lifecycleStore) {
-      for (const player of room.players.values()) {
-        this.releaseAndForgetEviction(code, player.id, player.walletId);
-      }
-      // Clear arm-cycle for the room (no public API for this — disarm-all
-      // via the store handles it as a side effect).
-      void this.lifecycleStore.disarmAllPlayers({ roomCode: code });
-    }
-    this.rooms.delete(code);
-    this.roomLastRoundStartMs.delete(code);
-    this.lastDrawAtByRoom.delete(code);
-    this.drawLocksByRoom.delete(code); // HIGH-5
-    this.variantConfigByRoom.delete(code); // BIN-615 / PR-C1
-    this.variantGameTypeByRoom.delete(code);
-    this.luckyNumbersByPlayer.delete(code); // BIN-615 / PR-C3
-    this.roomStateStore?.delete(code); // BIN-251
-    this.roomErrorCounter.reset(code); // K5: clear circuit-breaker state
+    this.roomErrorCounter.reset(code);
   }
 
   getPlayerCompliance(walletId: string, hallId?: string): PlayerComplianceSnapshot {

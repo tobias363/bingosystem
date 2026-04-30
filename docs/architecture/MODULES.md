@@ -75,12 +75,13 @@ graph TD
   end
 
   subgraph GameRuntime["Game Runtime"]
-    BE[BingoEngine 4434 LOC]
+    BE[BingoEngine 4364 LOC]
     GDES[Game1DrawEngineService]
     BPE[BingoEnginePatternEval]
     BMG[BingoEngineMiniGames]
     PPS[PhasePayoutService]
     CSS[ClaimSubmitterService]
+    RLC[RoomLifecycleService]
     G3[Game3Engine]
     HRS[Game1HallReadyService]
     DJP[Game1DrawEngineDailyJackpot]
@@ -88,6 +89,7 @@ graph TD
     BE --> BMG
     BE --> PPS
     BE --> CSS
+    BE --> RLC
     CSS --> PPS
     GDES --> BPE
     GDES --> DJP
@@ -183,7 +185,7 @@ graph TD
 ```
 
 **Color-key:**
-- 🔴 Red = legacy / refactor-candidate (BingoEngine — 4434 LOC after F2-A + F2-B extractions, HV-3 candidate)
+- 🔴 Red = legacy / refactor-candidate (BingoEngine — 4364 LOC after F2-A + F2-B + F2-C extractions, HV-3 candidate)
 - 🟢 Green = canonical retail-Spill 1 path (Game1DrawEngineService, post-K3-quarantine)
 - 🔵 Blue = compliance-critical (wallet, ledger, audit) — touch with extreme care
 
@@ -197,13 +199,14 @@ Click into each per-module README for purpose, public API, dependencies, invaria
 
 | Module | LOC | Role | README |
 |---|---:|---|---|
-| `BingoEngine` | 4434 | Multi-game ad-hoc engine (Spill 2/3 + test-hall Spill 1 post-K3) | [📄](./modules/backend/BingoEngine.md) |
+| `BingoEngine` | 4364 | Multi-game ad-hoc engine (Spill 2/3 + test-hall Spill 1 post-K3) | [📄](./modules/backend/BingoEngine.md) |
 | `Game1DrawEngineService` | 3103 | Scheduled-engine for prod retail Spill 1 | [📄](./modules/backend/Game1DrawEngineService.md) |
 | `BingoEnginePatternEval` | 1100+ | Pattern-evaluator + auto-claim multi-phase | [📄](./modules/backend/BingoEnginePatternEval.md) |
 | `BingoEngineMiniGames` | 380 | Mini-game integration (wheel/chest/colordraft/mystery/oddsen) | [📄](./modules/backend/BingoEngineMiniGames.md) |
 | `BingoEngineRecovery` | 290 | Round-recovery after server-restart | [📄](./modules/backend/BingoEngineRecovery.md) |
 | `PhasePayoutService` | 318 | Cap-and-transfer flow (extracted F2-A — used by `BingoEngine` + `ClaimSubmitterService`) | [📄](./modules/backend/PhasePayoutService.md) |
 | `ClaimSubmitterService` | 1158 | Claim-submission flow (validation + LINE/BINGO + post-transfer audit-trail; extracted F2-B from `BingoEngine`) | [📄](./modules/backend/ClaimSubmitterService.md) |
+| `RoomLifecycleService` | 471 | Room-lifecycle flow (createRoom/joinRoom/destroyRoom + read-side projections; extracted F2-C from `BingoEngine`) | [📄](./modules/backend/RoomLifecycleService.md) |
 | `Game3Engine` | TBD | Spill 3 (alternative game variant) | [📄](./modules/backend/Game3Engine.md) |
 | `Game1AutoDrawTickService` | 400 | Auto-draw tick-loop for scheduled Spill 1 | [📄](./modules/backend/Game1AutoDrawTickService.md) |
 | `Game1HallReadyService` | 950 | Multi-hall ready-state machine | [📄](./modules/backend/Game1HallReadyService.md) |
@@ -549,12 +552,13 @@ This script SHOULD be wired to a CI gate (TODO Bølge F1 follow-up): `if any new
 | `apps/backend/src/draw-engine/DrawWatchdog.ts` | 172 | 🟡 missing |
 | `apps/backend/src/draw-engine/index.ts` | 5 | 🟡 missing |
 | `apps/backend/src/game/AdminGame1Broadcaster.ts` | 182 | 🟡 missing |
-| `apps/backend/src/game/BingoEngine.ts` | 4434 | ✅ |
+| `apps/backend/src/game/BingoEngine.ts` | 4364 | ✅ |
 | `apps/backend/src/game/BingoEngineMiniGames.ts` | 388 | ✅ |
 | `apps/backend/src/game/BingoEnginePatternEval.ts` | 959 | ✅ |
 | `apps/backend/src/game/BingoEngineRecovery.ts` | 332 | ✅ |
 | `apps/backend/src/game/PhasePayoutService.ts` | 318 | ✅ |
 | `apps/backend/src/game/ClaimSubmitterService.ts` | 1158 | ✅ |
+| `apps/backend/src/game/RoomLifecycleService.ts` | 471 | ✅ |
 | `apps/backend/src/game/BingoEngineRecoveryIntegrityCheck.ts` | 250 | 🟡 missing |
 | `apps/backend/src/game/compliance.ts` | 25 | 🟡 missing |
 | `apps/backend/src/game/ComplianceDateHelpers.ts` | 27 | 🟡 missing |
