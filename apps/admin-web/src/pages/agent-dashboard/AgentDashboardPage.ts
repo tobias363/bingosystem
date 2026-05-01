@@ -121,8 +121,17 @@ function schedule(): void {
 
 function render(container: HTMLElement, state: PageState): void {
   const data = state.data;
-  const groupHallLabel = data?.shift?.hallId ?? "—";
-  const hallNameLabel = data?.shift?.hallId ?? "—";
+  // Bug #3 (audit 2026-05-01): header viste hall-UUID i stedet for hall-navn.
+  // Etter PR #795 populerer fetchMe `session.hall[0]` med både `name` og
+  // `groupName` via /api/agent/context, så vi resolver header-labels fra
+  // session i stedet for `data.shift.hallId` (som er en UUID). UUID-en
+  // beholdes som siste fallback (defensive — bør aldri trigges når session
+  // har en hall-tildeling).
+  const session = getSession();
+  const primaryHall = session?.hall?.[0];
+  const groupHallLabel =
+    primaryHall?.groupName ?? primaryHall?.name ?? data?.shift?.hallId ?? "—";
+  const hallNameLabel = primaryHall?.name ?? data?.shift?.hallId ?? "—";
 
   container.innerHTML = `
     ${contentHeader(groupHallLabel, hallNameLabel)}
