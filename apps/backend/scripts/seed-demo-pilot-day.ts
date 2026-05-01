@@ -245,7 +245,10 @@ interface PilotPlayer {
 
 // 12 spillere — 3 per hall (1-3 → hall-001, 4-6 → hall-002, ...).
 // Stable IDs `demo-pilot-spiller-N` så de ikke kolliderer med Profil A's
-// `demo-user-spiller-N`-spillere.
+// `demo-user-spiller-N`-spillere. Email-prefiks `demo-pilot-spiller-` for
+// å unngå email-kollisjon med Profil A (`demo-spiller-1..3@example.com`)
+// — `upsertUser` slår opp på email + id, så delt email ville endt med
+// at pilot-INSERT oppdaterer Profil A-raden i stedet for å lage en ny.
 const PILOT_PLAYERS: readonly PilotPlayer[] = (() => {
   const out: PilotPlayer[] = [];
   for (let hallIdx = 0; hallIdx < PILOT_HALLS.length; hallIdx += 1) {
@@ -254,7 +257,7 @@ const PILOT_PLAYERS: readonly PilotPlayer[] = (() => {
       const num = hallIdx * 3 + p;
       out.push({
         id: `demo-pilot-spiller-${num}`,
-        email: `demo-spiller-${num}@example.com`,
+        email: `demo-pilot-spiller-${num}@example.com`,
         displayName: `Demo Pilot Spiller ${num}`,
         hallId: hall.id,
       });
@@ -1114,6 +1117,25 @@ async function upsertSubGame(
   // som spilles, men labelen synliggjør hva sub-gamen representerer).
   const extraJson = { miniGameSlug: sg.miniGameSlug };
 
+  // Self-healing for legacy seed-data: tidligere seed-versjoner brukte
+  // andre IDer (f.eks. `demo-sg-wof` for "Wheel of Fortune" i stedet for
+  // `demo-sg-wheel`). Indeksene `uq_app_sub_games_name_per_type` og
+  // `uq_app_sub_games_sub_game_number` (begge partial WHERE deleted_at
+  // IS NULL) blokkerer da en ren INSERT med samme name/number men ny id.
+  // Vi tømmer derfor "stale" demo-rader med samme name eller number men
+  // ulik id før vi kjører UPSERT. Trygt: ingen FK peker til
+  // app_sub_games.id (verifisert mot pg_constraint 2026-05-01) — kun
+  // JSONB-felt i app_daily_schedules refererer ID-en, og dette seed-
+  // scriptet overskriver subgames_json til å peke på ny id i samme run.
+  await client.query(
+    `DELETE FROM app_sub_games
+       WHERE id <> $1
+         AND id LIKE 'demo-%'
+         AND game_type_id = 'bingo'
+         AND (name = $2 OR sub_game_number = $3)`,
+    [sg.id, sg.name, sg.number],
+  );
+
   await client.query(
     `INSERT INTO app_sub_games
        (id, game_type_id, game_name, name, sub_game_number,
@@ -1126,6 +1148,7 @@ async function upsertSubGame(
      ON CONFLICT (id) DO UPDATE
        SET name = EXCLUDED.name,
            game_name = EXCLUDED.game_name,
+           sub_game_number = EXCLUDED.sub_game_number,
            pattern_rows_json = EXCLUDED.pattern_rows_json,
            ticket_colors_json = EXCLUDED.ticket_colors_json,
            extra_json = EXCLUDED.extra_json,
