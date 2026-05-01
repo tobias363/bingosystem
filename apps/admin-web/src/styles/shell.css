@@ -25,6 +25,18 @@ body.skin-blue .wrapper {
   min-height: 100vh;
 }
 
+/* Login-page (og register-page) skal fylle hele viewport med konsistent
+   mørk bakgrunn — ingen grå striper top/bunn. AdminLTE setter
+   `.login-page { background: #1a2226 }` allerede, men body's
+   `min-height: 100%` (av html, som ikke har eksplisitt height) faller
+   tilbake til auto/content-height. Når innholdet er kortere enn viewport
+   vises html's lyse bakgrunn. Pinning til 100vh fjerner gappen. */
+body.login-page,
+body.register-page {
+  background-color: #1a2226;
+  min-height: 100vh;
+}
+
 /* Pilot-fix 2026-04-27 (Tobias): Fjerner det svarte sidebar-elementet som
    gikk for tett opptil/under whitebox-content på korte sider (f.eks.
    /agent/cashinout med tomme placeholders).
