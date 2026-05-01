@@ -183,6 +183,24 @@ test("BIN-587 B3-security: assertAdminPermission kaster for HALL_OPERATOR", () =
   assert.throws(() => assertAdminPermission("PLAYER", "SECURITY_WRITE"));
 });
 
+// ── Withdrawal QA P1 (2026-05-01): WITHDRAW_EMAIL_{READ,WRITE} ─────────
+
+test("Withdrawal QA P1: WITHDRAW_EMAIL_READ tillatt for ADMIN + HALL_OPERATOR + AGENT", () => {
+  assert.equal(canAccessAdminPermission("ADMIN", "WITHDRAW_EMAIL_READ"), true);
+  assert.equal(canAccessAdminPermission("HALL_OPERATOR", "WITHDRAW_EMAIL_READ"), true);
+  assert.equal(canAccessAdminPermission("AGENT", "WITHDRAW_EMAIL_READ"), true);
+  assert.equal(canAccessAdminPermission("SUPPORT", "WITHDRAW_EMAIL_READ"), false);
+  assert.equal(canAccessAdminPermission("PLAYER", "WITHDRAW_EMAIL_READ"), false);
+});
+
+test("Withdrawal QA P1: WITHDRAW_EMAIL_WRITE tillatt for ADMIN + HALL_OPERATOR + AGENT", () => {
+  assert.equal(canAccessAdminPermission("ADMIN", "WITHDRAW_EMAIL_WRITE"), true);
+  assert.equal(canAccessAdminPermission("HALL_OPERATOR", "WITHDRAW_EMAIL_WRITE"), true);
+  assert.equal(canAccessAdminPermission("AGENT", "WITHDRAW_EMAIL_WRITE"), true);
+  assert.equal(canAccessAdminPermission("SUPPORT", "WITHDRAW_EMAIL_WRITE"), false);
+  assert.equal(canAccessAdminPermission("PLAYER", "WITHDRAW_EMAIL_WRITE"), false);
+});
+
 // ── BIN-587 B4a: physical-ticket permission ─────────────────────────────
 
 test("BIN-587 B4a: PHYSICAL_TICKET_WRITE tillatt for ADMIN + HALL_OPERATOR, ikke SUPPORT/PLAYER", () => {
