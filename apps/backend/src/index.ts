@@ -2658,6 +2658,7 @@ app.use(createAgentSettlementRouter({
   platformService,
   agentService,
   agentSettlementService,
+  agentShiftService,
   auditLogService,
 }));
 
