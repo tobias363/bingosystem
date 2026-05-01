@@ -65,6 +65,19 @@ const ADMIN_ACCESS_POLICY_DEFINITION = {
   SECURITY_WRITE: ["ADMIN", "SUPPORT"],
   AUDIT_LOG_READ: ["ADMIN", "SUPPORT"],
   /**
+   * Withdrawal QA P1 (2026-05-01): mottaker-allowlist for daglig XML-utsending
+   * av bank-uttak til regnskap. Hall-operator + bingovert (AGENT) skal kunne
+   * legge til/fjerne regnskaps-mottakere siden de eier den operative
+   * kontakten mot regnskap. SUPPORT er bevisst utelatt — drift, ikke
+   * compliance-review.
+   *
+   * Listen er global (ikke hall-scoped) — XML-utsending grupperes per hall i
+   * AccountingEmailService; allowlist-en er felles. Hall-scope kan legges til
+   * i en senere PR hvis regnskaps-flyten differensieres per hall.
+   */
+  WITHDRAW_EMAIL_READ:  ["ADMIN", "HALL_OPERATOR", "AGENT"],
+  WITHDRAW_EMAIL_WRITE: ["ADMIN", "HALL_OPERATOR", "AGENT"],
+  /**
    * BIN-583 B3.1: agent-CRUD (admin/hall-operator-side).
    *   - AGENT_READ: liste + hent agent-profil. SUPPORT inkludert for
    *     compliance-innsyn.
