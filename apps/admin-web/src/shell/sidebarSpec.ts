@@ -349,6 +349,16 @@ export const agentSidebar: SidebarNode[] = [
     labelKey: "agent_game_management",
     children: [
       { kind: "leaf", id: "agent-games-overview", path: "/agent/games", icon: "fa fa-circle-o", labelKey: "agent_games_overview" },
+      // Wireframe Role Management-matrise (PDF 8 §8.3 rad 2):
+      // Schedule Management er AGENT-tilgjengelig (`SCHEDULE_READ/WRITE` har
+      // AGENT i AdminAccessPolicy). Eksponer leaf slik at bingoverten kan
+      // åpne dagens plan uten å kjenne URL-en. (PR #823 audit, gap #2.)
+      { kind: "leaf", id: "agent-schedules", path: "/schedules", icon: "fa fa-circle-o", labelKey: "schedule_management" },
+      // Wireframe Role Management-matrise (PDF 8 §8.3 rad 4):
+      // Saved Game List er AGENT-tilgjengelig (`SAVED_GAME_READ/WRITE` har
+      // AGENT). Master-hall-agenter har default-access per legacy-spec.
+      // (PR #823 audit, gap #4.)
+      { kind: "leaf", id: "agent-saved-game-list", path: "/savedGameList", icon: "fa fa-circle-o", labelKey: "saved_game_list" },
     ],
   },
   {
@@ -374,6 +384,32 @@ export const agentSidebar: SidebarNode[] = [
   // av agent. Bruker `/agent/sold-tickets`-aliaset slik at routes-guarden
   // tillater AGENT/HALL_OPERATOR-tilgang.
   { kind: "leaf", id: "agent-sold-tickets", path: "/agent/sold-tickets", icon: "fa fa-list", labelKey: "sold_tickets" },
+  // Rapport- og regnskaps-administrasjon. PR #823 audit (rad 7, 12, 14, 15):
+  // backend RBAC har AGENT på `MACHINE_REPORT_READ`, `AGENT_TX_READ`,
+  // `PAYOUT_AUDIT_READ`, og hall-account/specific report har ingen explicit
+  // perm (read-flyt). Pages eksisterer (`pages/reports/*`,
+  // `hallAccountReport/*`, `payout/*`) — vi eksponerer leaves her slik at
+  // bingoverten kan avstemme uten URL-kunnskap.
+  {
+    kind: "group",
+    id: "agent-report-management",
+    icon: "fa fa-bar-chart",
+    labelKey: "report_management",
+    children: [
+      // Wireframe Role Management-matrise rad 7 (Report Management) — Spill 1
+      // er pilot-fokus, derfor eksponerer vi kun reportGame1 i agent-sidebar.
+      // Andre game-rapporter er fortsatt URL-tilgjengelige men ikke synlige.
+      { kind: "leaf", id: "agent-report-game1", path: "/reportGame1", icon: "fa fa-circle-o", labelKey: "report_management_game1" },
+      // Wireframe rad 14 — Hall Account Specific Report.
+      { kind: "leaf", id: "agent-hall-specific-report", path: "/hallSpecificReport", icon: "fa fa-circle-o", labelKey: "hall_specific_reports" },
+      // Wireframe rad 12 — Hall Account Report (skift-oversikt; pilot-blokk
+      // per audit-rapportens "kritiske gap" #1 og §17.38 wireframe).
+      { kind: "leaf", id: "agent-hall-account-report", path: "/hallAccountReport", icon: "fa fa-circle-o", labelKey: "hall_account_report" },
+      // Wireframe rad 15 — Payout Management. AGENT har `PAYOUT_AUDIT_READ`
+      // i RBAC; `EXTRA_PRIZE_AWARD` er ADMIN-only og blokkeres av backend.
+      { kind: "leaf", id: "agent-payout-player", path: "/payoutPlayer", icon: "fa fa-circle-o", labelKey: "payout_for_players" },
+    ],
+  },
 ];
 
 export function sidebarFor(role: Role): SidebarNode[] {
