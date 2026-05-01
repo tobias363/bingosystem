@@ -76,7 +76,14 @@ function buildAuthCheck(pool: Pool): ComponentCheck {
       // Auth-tjenesten avhenger av at sesjons-tabellen er lesbar. Vi gjør
       // en lightweight LIMIT 1-spørring (ikke COUNT — det blir tregt på
       // store tabeller).
-      await pool.query("SELECT 1 FROM app_user_sessions LIMIT 1");
+      //
+      // BIN-PILOT-DAY P0-1 (2026-05-01): tabellen heter `app_sessions`, ikke
+      // `app_user_sessions`. Tidligere stavemåte førte til at `/api/status`
+      // rapporterte `auth: outage` i prod fordi tabellen ikke fantes
+      // (relation does not exist). Skjemaet er definert i
+      // `migrations/20260413000001_initial_schema.sql:78` og utvides av
+      // `20260910000000_user_2fa_and_session_metadata.sql` for REQ-132.
+      await pool.query("SELECT 1 FROM app_sessions LIMIT 1");
       return operational();
     } catch (err) {
       return outage(err instanceof Error ? err.message : "Auth utilgjengelig");
