@@ -2511,12 +2511,12 @@ app.use(createAdminGameOversightRouter({
 }));
 
 // BIN-583 B3.1: agent auth/shift + admin agent-CRUD.
-app.use(createAgentRouter({
-  platformService,
-  agentService,
-  agentShiftService,
-  auditLogService,
-}));
+//
+// P0-2 (REGULATORISK — pengespillforskriften): `createAgentRouter` er flyttet
+// ned til etter `agentSettlementService` er konstruert (~100 linjer ned),
+// siden /shift/end + /shift/logout nå må kunne sjekke om settlement finnes
+// før termination. Søk etter "P0-2-wired createAgentRouter" for det faktiske
+// app.use-kallet. Admin-CRUD-routeren ligger her som før.
 app.use(createAdminAgentsRouter({
   platformService,
   agentService,
@@ -2611,6 +2611,21 @@ const agentSettlementService = new AgentSettlementService({
   settlementStore: agentSettlementStore,
   hallCashLedger,
 });
+
+// P0-2-wired createAgentRouter: passer `agentSettlementService` så
+// `/shift/end` og `/shift/logout` blokkerer termination dersom
+// settlement-rad mangler for inneværende skift (pengespillforskriften
+// krever Settlement Report før termination). Audit-event
+// `agent.shift.terminate_blocked_no_settlement` skrives når blokkering
+// trer i kraft (Lotteritilsynet-bevis).
+app.use(createAgentRouter({
+  platformService,
+  agentService,
+  agentShiftService,
+  agentSettlementService,
+  auditLogService,
+}));
+
 app.use(createAgentSettlementRouter({
   platformService,
   agentService,
