@@ -55,6 +55,8 @@ import {
   fetchAgentGame1CurrentGame,
   startAgentGame1,
   resumeAgentGame1,
+  markHallReadyForGame,
+  unmarkHallReadyForGame,
   type Spill1CurrentGameResponse,
 } from "../../api/agent-game1.js";
 import {
@@ -581,11 +583,16 @@ function renderSpill1Block(): string {
   const excludedHallIds = spill1.halls
     .filter((h) => h.excludedFromGame)
     .map((h) => h.hallId);
+  // 2026-05-02: Finn ready-status for agentens egen hall så Klar-knappen
+  // viser riktig label (Marker som Klar / Angre Klar).
+  const selfHall = spill1.halls.find((h) => h.hallId === spill1.hallId);
   const controlsHtml = renderSpill1AgentControls({
     currentGame: spill1.currentGame,
     isMasterAgent: spill1.isMasterAgent,
     allReady: spill1.allReady,
     excludedHallIds,
+    selfHallReady: selfHall?.isReady ?? false,
+    selfHallId: spill1.hallId,
   });
   const errorBanner = state.spill1Error
     ? `<div class="alert alert-warning" data-marker="spill1-error-banner">
@@ -633,6 +640,22 @@ function renderErrorBanner(): string {
 function renderNoRoom(): string {
   if (state.activeRoom) return "";
   if (state.lastFetchError) return "";
+  // 2026-05-02 (Tobias UX-feedback): skjul "Ingen aktivt bingo-rom"-meldingen
+  // når en scheduled Spill 1-game eksisterer i en aktiv state. Master har
+  // ikke startet rommet enda, og tomme-state-meldingen er forvirrende —
+  // brukeren ser allerede master-handlinger-boksen og venter på Start.
+  // Active states: purchase_open, ready_to_start, running, paused. Det er
+  // KUN når det ikke finnes scheduled-game OG ikke noe room at meldingen
+  // er reelt informativ ("kontakt systemansvarlig").
+  const spill1Status = state.spill1?.currentGame?.status;
+  if (
+    spill1Status === "purchase_open" ||
+    spill1Status === "ready_to_start" ||
+    spill1Status === "running" ||
+    spill1Status === "paused"
+  ) {
+    return "";
+  }
   return `
     <div class="box box-default" data-marker="agent-ng-no-room">
       <div class="box-body text-center" style="padding:32px;">
@@ -901,6 +924,41 @@ function wireSpill1Buttons(container: HTMLElement): void {
     "click",
     () => { void onSpill1Resume(); },
   );
+  // 2026-05-02: Klar/Angre-Klar-knapper for non-master agent
+  container.querySelector<HTMLButtonElement>('[data-action="spill1-mark-ready"]')?.addEventListener(
+    "click",
+    () => { void onSpill1MarkReady(); },
+  );
+  container.querySelector<HTMLButtonElement>('[data-action="spill1-unmark-ready"]')?.addEventListener(
+    "click",
+    () => { void onSpill1UnmarkReady(); },
+  );
+}
+
+async function onSpill1MarkReady(): Promise<void> {
+  const spill1 = state.spill1;
+  if (!spill1 || !spill1.currentGame || !spill1.hallId) return;
+  try {
+    await markHallReadyForGame(spill1.hallId, spill1.currentGame.id);
+    Toast.success("Hallen er nå markert som Klar.");
+    await refreshSpill1();
+  } catch (err) {
+    const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
+    Toast.error(`Kunne ikke markere som Klar: ${msg}`);
+  }
+}
+
+async function onSpill1UnmarkReady(): Promise<void> {
+  const spill1 = state.spill1;
+  if (!spill1 || !spill1.currentGame || !spill1.hallId) return;
+  try {
+    await unmarkHallReadyForGame(spill1.hallId, spill1.currentGame.id);
+    Toast.success("Hallen er nå markert som Ikke klar.");
+    await refreshSpill1();
+  } catch (err) {
+    const msg = err instanceof ApiError ? err.message : err instanceof Error ? err.message : String(err);
+    Toast.error(`Kunne ikke angre Klar: ${msg}`);
+  }
 }
 
 async function onSpill1Start(): Promise<void> {

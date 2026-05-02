@@ -121,3 +121,33 @@ export async function resumeAgentGame1(): Promise<Spill1ActionResponse> {
     { method: "POST", auth: true, body: {} }
   );
 }
+
+/**
+ * 2026-05-02 (Tobias UX-feedback): non-master agent kan markere egen hall
+ * som klar. Backend-rute er admin-side (`/api/admin/game1/halls/:hallId/ready`)
+ * men AGENT har `GAME1_HALL_READY_WRITE`-permission + hall-scope.
+ */
+export async function markHallReadyForGame(
+  hallId: string,
+  gameId: string,
+  digitalTicketsSold?: number
+): Promise<unknown> {
+  const body: Record<string, unknown> = { gameId };
+  if (typeof digitalTicketsSold === "number") {
+    body.digitalTicketsSold = digitalTicketsSold;
+  }
+  return apiRequest<unknown>(
+    `/api/admin/game1/halls/${encodeURIComponent(hallId)}/ready`,
+    { method: "POST", auth: true, body }
+  );
+}
+
+export async function unmarkHallReadyForGame(
+  hallId: string,
+  gameId: string
+): Promise<unknown> {
+  return apiRequest<unknown>(
+    `/api/admin/game1/halls/${encodeURIComponent(hallId)}/unready`,
+    { method: "POST", auth: true, body: { gameId } }
+  );
+}
