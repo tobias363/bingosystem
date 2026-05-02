@@ -300,6 +300,7 @@ import { socketTraceMiddleware, wrapSocketEventHandlers } from "./middleware/soc
 import { createCspReportRouter } from "./routes/cspReport.js";
 import { setTraceField } from "./util/traceContext.js";
 import { sweepStaleNonCanonicalRooms } from "./util/staleRoomBootSweep.js";
+import { bootstrapHallGroupRooms } from "./boot/bootstrapHallGroupRooms.js";
 import { PostgresChatMessageStore, type ChatMessageStore } from "./store/ChatMessageStore.js";
 import { createAdminDisplayHandlers } from "./sockets/adminDisplayEvents.js";
 import { createAdminHallHandlers } from "./sockets/adminHallEvents.js";
@@ -3742,6 +3743,43 @@ const PORT = Number(process.env.PORT ?? 4000);
     }
   } catch (err) {
     console.error("[boot-sweep] stale-room sweep failed:", err);
+  }
+
+  // 2026-05-02 (Tobias UX): bootstrap kanonisk rom per aktiv group-of-halls.
+  // Sikrer at "Pågående spill"-siden viser rommet umiddelbart etter
+  // server-restart uten at admin må opprette manuelt. Idempotent + soft-fail.
+  try {
+    const bootstrapResult = await bootstrapHallGroupRooms({
+      engine,
+      hallGroupService,
+      bindVariantConfigForRoom: (code, opts) =>
+        roomState.bindVariantConfigForRoom(code, {
+          gameSlug: opts.gameSlug,
+          ...(opts.gameManagementId !== undefined
+            ? { gameManagementId: opts.gameManagementId }
+            : {}),
+        }),
+      bindDefaultVariantConfig: (code, slug) =>
+        roomState.bindDefaultVariantConfig(code, slug),
+    });
+    if (bootstrapResult.created.length > 0) {
+      console.log(
+        `[boot-bootstrap] Created ${bootstrapResult.created.length} hall-group rooms: ${bootstrapResult.created.join(", ")}`,
+      );
+    }
+    if (bootstrapResult.skipped.length > 0) {
+      console.log(
+        `[boot-bootstrap] Skipped ${bootstrapResult.skipped.length} existing rooms`,
+      );
+    }
+    if (bootstrapResult.errors.length > 0) {
+      console.warn(
+        `[boot-bootstrap] ${bootstrapResult.errors.length} hall-groups failed:`,
+        bootstrapResult.errors,
+      );
+    }
+  } catch (err) {
+    console.error("[boot-bootstrap] hall-group room bootstrap failed:", err);
   }
 
   server.listen(PORT, () => {
