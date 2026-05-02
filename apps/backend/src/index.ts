@@ -2959,6 +2959,16 @@ app.use(createAdminRouter({
   clearDisplayTicketCache: (code) => roomState.clearDisplayTicketCache(code),
   roomConfiguredEntryFeeByRoom: roomState.roomConfiguredEntryFeeByRoom,
   getPrimaryRoomForHall: (hallId) => getPrimaryRoomForHall(hallId, engine.listRoomSummaries()),
+  // 2026-05-02 (Tobias UX): én rom per group-of-halls — admin-routes
+  // bruker dette til å derivere kanonisk rom-kode + filtrere shared rooms.
+  getHallGroupIdForHall: async (hallId: string): Promise<string | null> => {
+    try {
+      const groups = await hallGroupService.list({ hallId, limit: 1, status: "active" });
+      return groups[0]?.id ?? null;
+    } catch {
+      return null;
+    }
+  },
   resolveBingoHallGameConfigForRoom,
   // BIN-694: wire default variant-config (5-phase Norsk bingo for Game 1)
   // at admin room-create so `meetsPhaseRequirement` gets the correct
