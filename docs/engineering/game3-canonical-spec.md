@@ -201,7 +201,7 @@ Samme som G1/G2/G5. Shared infrastruktur fra BIN-502.
 
 | Feature | Status | Plan |
 |---------|--------|------|
-| Perpetual loop (auto-restart etter Coverall) | 🟡 Engine signaliserer ENDED + endedReason="G3_FULL_HOUSE", men auto-restart-tikk er ikke implementert | Egen oppfølger — krever scheduler eller cron-tick som triggerer ny `startGame` |
+| Perpetual loop (auto-restart etter Coverall) | ✅ Implementert via `PerpetualRoundService` (apps/backend/src/game/PerpetualRoundService.ts) — wired på `bingoAdapter.onGameEnded` i index.ts. Default delay 5 sek, env-flagg `PERPETUAL_LOOP_ENABLED` / `PERPETUAL_LOOP_DELAY_MS` / `PERPETUAL_LOOP_DISABLED_SLUGS`. | — |
 | Schedule-håndtering | 🟡 Spill 3 antas å være "alltid på" — ingen schedule-restriksjon | Egen oppfølger hvis Tobias trenger schedule-vinduer |
 | Visuell pixel-paritet med Spill 1 | 🟡 Bruker Spill 1-komponenter, men ikke alle (mini-grid, full pattern-display, etc.) | Iterativ polish post-pilot |
 

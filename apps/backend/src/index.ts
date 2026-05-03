@@ -19,6 +19,7 @@ import { BingoEngine } from "./game/BingoEngine.js";
 import { DomainError } from "./errors/DomainError.js";
 import { runRecoveryIntegrityCheck } from "./game/BingoEngineRecoveryIntegrityCheck.js";
 import { Game3Engine } from "./game/Game3Engine.js";
+import { PerpetualRoundService } from "./game/PerpetualRoundService.js";
 import { PostgresResponsibleGamingStore } from "./game/PostgresResponsibleGamingStore.js";
 import type { GameSnapshot, Player, RoomSnapshot } from "./game/types.js";
 import { PlatformService } from "./platform/PlatformService.js";
@@ -506,6 +507,7 @@ const {
   jobIdempotencyCleanupEnabled, jobIdempotencyCleanupIntervalMs, jobIdempotencyCleanupRunAtHour,
   jobIdempotencyCleanupRetentionDays, jobIdempotencyCleanupBatchSize,
   jobWalletAuditVerifyEnabled, jobWalletAuditVerifyIntervalMs, jobWalletAuditVerifyRunAtHour,
+  perpetualLoopEnabled, perpetualLoopDelayMs, perpetualLoopDisabledSlugs,
   usePostgresBingoAdapter, checkpointConnectionString, roomStateProvider, redisUrl, useRedisLock,
   kycMinAge, kycProvider, pgSsl, pgSchema, sessionTtlHours,
 } = cfg;
@@ -2320,12 +2322,39 @@ app.use(createAgentGame2ChooseTicketsRouter({
   },
 }));
 
+// Spill 2/3 perpetual auto-restart (Tobias-direktiv 2026-05-03).
+// Service henger på `bingoAdapter.onGameEnded` (chained nedenfor) og
+// schedulerer `engine.startGame` i ROCKET / MONSTERBINGO etter en kort
+// delay slik at runden "aldri stopper". Spill 1 (`bingo`-slug) er IKKE
+// perpetual og påvirkes ikke av tjenesten.
+const perpetualRoundService = new PerpetualRoundService({
+  enabled: perpetualLoopEnabled,
+  delayMs: perpetualLoopDelayMs,
+  disabledSlugs: perpetualLoopDisabledSlugs,
+  engine,
+  variantLookup: roomState,
+  defaultTicketsPerPlayer: runtimeBingoSettings.autoRoundTicketsPerPlayer,
+  defaultPayoutPercent: runtimeBingoSettings.payoutPercent,
+  defaultEntryFee: runtimeBingoSettings.autoRoundEntryFee,
+  emitRoomUpdate: async (roomCode) => {
+    await emitRoomUpdate(roomCode);
+  },
+});
+
 // 2026-12-06 (v2): game-end cleanup-hook. Slett pool fra in-memory cache + DB
 // når runden er over så vi ikke akkumulerer foreldede pools. Vi monkey-patcher
 // `localBingoAdapter.onGameEnded` her (etter pool-service er konstruert) for
 // å unngå konstruksjons-rekkefølge-problemer (engine konstrueres på linje 603,
 // før poolen finnes). Wrapping bevarer eksisterende adapter-oppførsel
 // (game_sessions UPDATE for PostgresBingoSystemAdapter, no-op for Local).
+//
+// 2026-05-03: chained perpetual-loop-trigger inn samme wrapper. Rekkefølge:
+//   1) underlying adapter (game_sessions UPDATE)
+//   2) Spill 2 ticket-pool cleanup
+//   3) PerpetualRoundService.handleGameEnded (scheduler ny runde for Spill 2/3)
+// Alle tre er fail-soft. Perpetual er sist så pool-cleanup skjer FØR vi
+// scheduler ny runde — det betyr at spillere som vil delta i neste Spill 2
+// runde må besøke Choose Tickets på nytt (forrige pool er borte).
 {
   const originalOnGameEnded = localBingoAdapter.onGameEnded?.bind(localBingoAdapter);
   // Always set — vi vil at hooken skal trigge selv om underlying adapter
@@ -2345,6 +2374,13 @@ app.use(createAgentGame2ChooseTicketsRouter({
       await game2TicketPoolService.deletePoolForGame(input.gameId);
     } catch (err) {
       console.warn("[game2-ticket-pool] deletePoolForGame failed in onGameEnded", err);
+    }
+    // Perpetual auto-restart for Spill 2/3 — fail-soft synchronous trigger
+    // (selve restart-en er asynkron via setTimeout inni servicen).
+    try {
+      perpetualRoundService.handleGameEnded(input);
+    } catch (err) {
+      console.warn("[perpetual-round] handleGameEnded failed", err);
     }
   };
 }
