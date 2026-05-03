@@ -309,6 +309,7 @@ import { setTraceField } from "./util/traceContext.js";
 import { sweepStaleNonCanonicalRooms } from "./util/staleRoomBootSweep.js";
 import { StaleRoomBootSweepService } from "./game/StaleRoomBootSweepService.js";
 import { bootstrapHallGroupRooms } from "./boot/bootstrapHallGroupRooms.js";
+import { resetTestPlayers } from "./scripts/resetTestPlayers.js";
 import { PostgresChatMessageStore, type ChatMessageStore } from "./store/ChatMessageStore.js";
 import { createAdminDisplayHandlers } from "./sockets/adminDisplayEvents.js";
 import { createAdminHallHandlers } from "./sockets/adminHallEvents.js";
@@ -4006,6 +4007,34 @@ const PORT = Number(process.env.PORT ?? 4000);
     }
   } catch (err) {
     console.error("[boot-bootstrap] hall-group room bootstrap failed:", err);
+  }
+
+  // 2026-05-03 (Tobias-direktiv, Agent EE): clean-slate test-spillere ved
+  // boot når env-var er satt. Default no-op. PM aktiverer ved å sette
+  // `RESET_TEST_PLAYERS=true` på Render → trigge deploy → fjerne env-var
+  // etterpå så scriptet ikke kjører igjen.
+  //
+  // Sletter ALLE rader med role='PLAYER' (unntatt test@spillorama.no) og
+  // oppretter/oppdaterer test@spillorama.no med VERIFIED kyc + 5000 kr
+  // balance i hall demo-hall-001. AGENT/ADMIN/HALL_OPERATOR/SUPPORT-rader
+  // bevares uendret. Idempotent + fail-soft — feil her skal IKKE krasje
+  // boot.
+  if ((process.env.RESET_TEST_PLAYERS ?? "").trim().toLowerCase() === "true") {
+    try {
+      const result = await resetTestPlayers({
+        pool: platformService.getPool(),
+        schema: pgSchema,
+      });
+      console.log(
+        `[reset-test-players] sletter ${result.deletedCount} player-rader, ${result.testUser.created ? "oppretter" : "oppdaterer"} ${result.testUser.email} med ${result.testUser.depositKr} kr (hall ${result.testUser.hallId})`,
+      );
+    } catch (err) {
+      // Fail-soft: logg men la boot fortsette. Pilot-skjemaet er viktigere
+      // enn at script-en alltid lykkes — feilen er sannsynligvis FK-RESTRICT
+      // (test-spiller med faktisk compliance-historikk) eller manglende
+      // pilot-hall i DB (hvis seed-demo-pilot-day ikke har kjørt ennå).
+      console.error("[reset-test-players] script feilet — boot fortsetter:", err);
+    }
   }
 
   server.listen(PORT, () => {
