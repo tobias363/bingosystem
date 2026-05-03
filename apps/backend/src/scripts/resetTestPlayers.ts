@@ -225,13 +225,15 @@ export async function resetTestPlayers(
       log.info("Opprettet ny test-bruker (TX1)", { userId: userIdEarly, walletId: walletIdEarly, hallId: resolvedHallId });
     }
 
+    // 2026-05-04 fix: `balance` er GENERATED-kolonne (computed:
+    // deposit_balance + winnings_balance). INSERT/UPDATE må ikke
+    // referere den direkte. Setter kun deposit_balance + winnings_balance.
     await client.query(
       `INSERT INTO ${walletAccountsTable}
-         (id, balance, deposit_balance, winnings_balance, is_system, created_at, updated_at)
-       VALUES ($1, $2, $2, 0, false, now(), now())
+         (id, deposit_balance, winnings_balance, is_system, created_at, updated_at)
+       VALUES ($1, $2, 0, false, now(), now())
        ON CONFLICT (id) DO UPDATE
-         SET balance = EXCLUDED.balance,
-             deposit_balance = EXCLUDED.deposit_balance,
+         SET deposit_balance = EXCLUDED.deposit_balance,
              winnings_balance = 0,
              updated_at = now()`,
       [walletIdEarly, TEST_PLAYER_DEPOSIT_AMOUNT_KR],
