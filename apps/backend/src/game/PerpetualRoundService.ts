@@ -190,6 +190,23 @@ export class PerpetualRoundService {
       setTimeoutFn: config.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms)),
       clearTimeoutFn: config.clearTimeoutFn ?? ((h) => clearTimeout(h)),
     };
+    // Debug-bug 2026-05-03: bekreft at perpetual-service er instansiert med
+    // riktig konfig på boot. Tidligere var det ingen måte å verifisere
+    // service-state utenom kode-inspeksjon — særlig om enabled-flagget var
+    // satt feil i Render-env, eller om defaultEntryFee/payoutPercent ble
+    // tatt fra runtime-defaults i stedet for env.
+    logger.info(
+      {
+        enabled: this.config.enabled,
+        delayMs: this.config.delayMs,
+        disabledSlugs: [...this.config.disabledSlugs],
+        defaultTicketsPerPlayer: this.config.defaultTicketsPerPlayer,
+        defaultPayoutPercent: this.config.defaultPayoutPercent,
+        defaultEntryFee: this.config.defaultEntryFee,
+        perpetualSlugs: [...PERPETUAL_SLUGS],
+      },
+      "perpetual: service initialized",
+    );
   }
 
   /**
@@ -200,14 +217,28 @@ export class PerpetualRoundService {
    * cleanup-flyt brytes.
    */
   handleGameEnded(input: GameEndedInput): void {
-    if (!this.config.enabled) return;
+    if (!this.config.enabled) {
+      logger.info(
+        { roomCode: input.roomCode, gameId: input.gameId, reason: "service_disabled" },
+        "perpetual: skip restart",
+      );
+      return;
+    }
 
     let snapshot;
     try {
       snapshot = this.config.engine.getRoomSnapshot(input.roomCode);
     } catch (err) {
       // Rommet kan være destroyed mellom game.ended og denne callbacken.
-      logger.debug({ roomCode: input.roomCode, err }, "perpetual: room not found, skip");
+      // Debug-bug 2026-05-03: bumpet til info for prod-synlighet.
+      logger.info(
+        {
+          roomCode: input.roomCode,
+          gameId: input.gameId,
+          err: err instanceof Error ? { message: err.message, code: (err as Error & { code?: string }).code } : String(err),
+        },
+        "perpetual: skip restart (room not found)",
+      );
       return;
     }
 
@@ -242,8 +273,10 @@ export class PerpetualRoundService {
     // ikke schedule på nytt. (Dual onGameEnded-fire eks. via wrapping.)
     const existing = this.pendingByRoom.get(input.roomCode);
     if (existing && existing.gameId === input.gameId) {
-      logger.debug(
-        { roomCode: input.roomCode, gameId: input.gameId },
+      // Debug-bug 2026-05-03: bumpet til info så vi ser duplicate-fire
+      // pattern i prod (kan signalisere bug i adapter-wrapping).
+      logger.info(
+        { roomCode: input.roomCode, gameId: input.gameId, reason: "duplicate_trigger" },
         "perpetual: duplicate trigger ignored (idempotent)",
       );
       return;
@@ -421,13 +454,28 @@ export class PerpetualRoundService {
    * siden får oppdatert `currentGame` med en gang.
    */
   async spawnFirstRoundIfNeeded(roomCode: string): Promise<boolean> {
-    if (!this.config.enabled) return false;
+    if (!this.config.enabled) {
+      // Debug-bug 2026-05-03: tidligere skipset vi stille. Ops kunne ikke
+      // se om service var disabled vs. snapshot-fail uten kode-inspeksjon.
+      // Bumpet til info så hver join logger faktisk hvorfor spawn skipset.
+      logger.info(
+        { roomCode, reason: "service_disabled" },
+        "perpetual: skip first-round spawn",
+      );
+      return false;
+    }
 
     let snapshot;
     try {
       snapshot = this.config.engine.getRoomSnapshot(roomCode);
     } catch (err) {
-      logger.debug({ roomCode, err }, "perpetual: room not found in spawnFirstRoundIfNeeded");
+      // Debug-bug 2026-05-03: tidligere debug-only — usynlig i prod der
+      // LOG_LEVEL=info er default. Bumpet til info så vi ser at rommet
+      // ikke fantes i engine ved spawn-tidspunkt (timing race vs. join).
+      logger.info(
+        { roomCode, err: err instanceof Error ? { message: err.message, code: (err as Error & { code?: string }).code } : String(err) },
+        "perpetual: skip first-round spawn (room not found in engine)",
+      );
       return false;
     }
 
@@ -449,7 +497,11 @@ export class PerpetualRoundService {
     // venter på å fyre `engine.startGame` etter en game-end, ikke
     // dupliser. Ny runde kommer av seg selv.
     if (this.pendingByRoom.has(roomCode)) {
-      logger.debug(
+      // Debug-bug 2026-05-03: tidligere debug-only. Bumpet til info så
+      // ops kan se at perpetual-restart fra forrige runde fortsatt venter
+      // (dette er en gyldig skip-grunn, ikke et problem — men det skal
+      // være synlig i logs).
+      logger.info(
         { roomCode, slug, reason: "restart_pending" },
         "perpetual: skip first-round spawn (auto-restart pending)",
       );
@@ -463,7 +515,11 @@ export class PerpetualRoundService {
     // betyr engine.startGame vil archive den og lage ny.
     const currentStatus = snapshot.currentGame?.status;
     if (currentStatus === "WAITING" || currentStatus === "RUNNING") {
-      logger.debug(
+      // Debug-bug 2026-05-03: tidligere debug-only. Bumpet til info så
+      // ops ser når noen joiner et rom som allerede har en aktiv runde
+      // (forventet ofte, men nyttig for å diagnostisere "henger på status
+      // NONE i /api/rooms"-typen feil).
+      logger.info(
         {
           roomCode,
           slug,
@@ -486,6 +542,20 @@ export class PerpetualRoundService {
       );
       return false;
     }
+
+    // Debug-bug 2026-05-03: signal at vi har bestått alle skip-checks og
+    // skal kjøre engine.startGame. Hvis denne logges men "spawn succeeded"
+    // ikke gjør det, vet ops at startGame kastet (warn-log under).
+    logger.info(
+      {
+        roomCode,
+        slug,
+        currentStatus: currentStatus ?? "NONE",
+        playerCount: snapshot.players.length,
+        actorPlayerId: snapshot.hostPlayerId,
+      },
+      "perpetual: attempting first-round spawn",
+    );
 
     const variantInfo = this.config.variantLookup.getVariantConfig(roomCode);
     const startInput: Parameters<PerpetualEngine["startGame"]>[0] = {
@@ -529,11 +599,13 @@ export class PerpetualRoundService {
     } catch (err) {
       // Samme failure-paths som auto-restart — fail-soft.
       // PLAYER_ALREADY_IN_RUNNING_GAME / NOT_ENOUGH_PLAYERS / ROUND_START_TOO_SOON
-      // er forventede skip-conditions. Logger på warn for sjelden / uventet
-      // failure (INVALID_ENTRY_FEE etc.).
+      // / NOT_HOST (host left mens spawn ble forberedt) er forventede
+      // skip-conditions. Logger på warn med strukturert err-kode så ops
+      // kan filtrere på spesifikke failure-modes uten å parse melding.
       logger.warn(
         {
           roomCode,
+          slug,
           err: err instanceof Error
             ? { message: err.message, code: (err as Error & { code?: string }).code }
             : String(err),

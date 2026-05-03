@@ -236,7 +236,12 @@ class Game2Controller implements GameController {
         // 32-pool i stedet for å la systemet random-allotte.
         this.lobbyScreen.setOnChooseTickets(() => this.openChooseTicketsScreen());
         this.lobbyScreen.update(state);
-        this.lobbyScreen.showBuyPopup(state.entryFee || 10);
+        // 2026-05-03 (Agent O fix): IKKE auto-vis BuyPopup i LOBBY-fase.
+        // Per PR #866 + #867 design: LobbyScreen har egen "Velg brett for
+        // neste runde"-CTA som åpner ChooseTicketsScreen, og BuyPopup er
+        // forbeholdt mid-runde (PLAYING/SPECTATING) via
+        // `maybeShowBuyPopupForNextRound`. Tidligere `showBuyPopup`-kall
+        // her skapte en duplikat-popup oppå redesignet LobbyScreen.
         this.setScreen(this.lobbyScreen);
         break;
 
