@@ -400,9 +400,19 @@ export const DEFAULT_GAME2_CONFIG: GameVariantConfig = {
   maxBallValue: 21,
   drawBagSize: 21,
   patternEvalMode: "auto-claim-on-draw",
+  // 2026-05-03 (Tobias-direktiv): stigende-jackpot-skala portert fra
+  // legacy `seed_staging_lobby_bootstrap.js`. Filosofi: spillere belønnes
+  // for tålmodighet — sent vinst gir større jackpot. Hver hall kan
+  // overstyre via `hall_game_schedules.variant_config` JSONB.
+  // Slot-semantikk: nøkkel = exact draw-count når full plate vinnes;
+  // "1421" matcher draw-count i [14..21]-intervallet.
   jackpotNumberTable: {
-    "9":    { price: 25000, isCash: true },
-    "1421": { price: 5,     isCash: false }, // 5% of (ticketCount × ticketPrice)
+    "9":    { price: 50,   isCash: true },
+    "10":   { price: 100,  isCash: true },
+    "11":   { price: 250,  isCash: true },
+    "12":   { price: 500,  isCash: true },
+    "13":   { price: 1000, isCash: true },
+    "1421": { price: 2500, isCash: true },
   },
 };
 
