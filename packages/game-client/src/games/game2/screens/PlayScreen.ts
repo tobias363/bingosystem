@@ -88,6 +88,9 @@ export class PlayScreen extends Container {
   private onLuckyNumber: ((n: number) => void) | null = null;
   private onChooseTickets: (() => void) | null = null;
   private onBuyForNextRound: ((count: number) => void) | null = null;
+  /** Siste kjente entryFee fra state — brukes av `openBuyPopupModal` så
+   *  popup viser korrekt billettpris uavhengig av når brukeren klikker. */
+  private currentEntryFee = 20;
   /** Nedtellings-driver — vi oppdaterer hvert sekund fra
    *  `state.millisUntilNextStart` og decreases lokalt mellom snapshots. */
   private countdownDeadline: number | null = null;
@@ -140,7 +143,9 @@ export class PlayScreen extends Container {
     // setOnLuckyNumber er beholdt no-op for backward-compat; popup-flyt
     // tar over (klikk på Lykketall-kolonnen → popup → onLuckyNumber).
     this.comboPanel.setOnLuckyClick(() => this.lykketallPopup.show(this.currentLuckyNumber));
-    this.comboPanel.setOnBuyMore(() => this.onChooseTickets?.());
+    // 2026-05-03 (Agent T, PR #873): "Kjøp flere brett"-pill åpner BuyPopup
+    // som modal i stedet for å navigere til ChooseTicketsScreen.
+    this.comboPanel.setOnBuyMore(() => this.openBuyPopupModal());
     this.addChild(this.comboPanel);
 
     // 2026-05-03 (Agent S, v2): mellom-runde buy-popup. Vises auto når
@@ -215,6 +220,16 @@ export class PlayScreen extends Container {
     this.buyPopup.hide();
   }
 
+  /**
+   * 2026-05-03 (Agent T, fix/spill2-pixel-match-design-v2): åpne
+   * BuyPopup som modal overlay når brukeren klikker "Kjøp flere brett"
+   * i Hovedspill-kolonnen i ComboPanel. Bruker siste kjente entryFee
+   * fra `currentEntryFee` så popup viser korrekt billettpris.
+   */
+  private openBuyPopupModal(): void {
+    this.showBuyPopupForNextRound(this.currentEntryFee);
+  }
+
   /** Returner true hvis popup er synlig. Brukes av controller for trigger-gating. */
   isBuyPopupVisible(): boolean {
     return this.buyPopup.visible;
@@ -223,6 +238,9 @@ export class PlayScreen extends Container {
   /** Bygg bong-kort fra game state. Erstatter forrige sett. */
   buildTickets(state: GameState): void {
     this.clearBongs();
+    if (state.entryFee != null && state.entryFee > 0) {
+      this.currentEntryFee = state.entryFee;
+    }
     this.comboPanel.setCurrentDrawCount(state.drawnNumbers.length);
     this.comboPanel.setPlayerCount(state.playerCount ?? 0);
 
@@ -282,6 +300,9 @@ export class PlayScreen extends Container {
     if (state.myLuckyNumber != null) {
       this.currentLuckyNumber = state.myLuckyNumber;
       this.comboPanel.setLuckyNumber(state.myLuckyNumber);
+    }
+    if (state.entryFee != null && state.entryFee > 0) {
+      this.currentEntryFee = state.entryFee;
     }
     this.comboPanel.setPlayerCount(state.playerCount ?? 0);
     this.ballTube.setDrawCount(state.drawnNumbers.length, state.totalDrawCapacity);
