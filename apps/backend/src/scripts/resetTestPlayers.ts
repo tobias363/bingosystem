@@ -238,7 +238,7 @@ export async function resetTestPlayers(
     );
 
     await client.query("COMMIT");
-    log.info(`TX1 ferdig: ${createdEarly ? "opprettet" : "oppdaterte"} ${TEST_PLAYER_EMAIL} med ${TEST_PLAYER_DEPOSIT_AMOUNT_KR} kr i hall ${TEST_PLAYER_HALL_ID}`);
+    log.info(`TX1 ferdig: ${createdEarly ? "opprettet" : "oppdaterte"} ${TEST_PLAYER_EMAIL} med ${TEST_PLAYER_DEPOSIT_AMOUNT_KR} kr i hall ${resolvedHallId}`);
 
     // ── TX2: best-effort cleanup av andre test-spillere ─────────────────────
     let deletedCount = 0;
@@ -254,7 +254,7 @@ export async function resetTestPlayers(
         id: userIdEarly,
         email: TEST_PLAYER_EMAIL,
         walletId: walletIdEarly,
-        hallId: TEST_PLAYER_HALL_ID,
+        hallId: resolvedHallId,
         depositKr: TEST_PLAYER_DEPOSIT_AMOUNT_KR,
         created: createdEarly,
       },
