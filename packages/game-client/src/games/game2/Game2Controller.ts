@@ -35,15 +35,6 @@ class Game2Controller implements GameController {
   private actualRoomCode: string = "";
   private unsubs: (() => void)[] = [];
   private loader: LoadingOverlay | null = null;
-  /**
-   * 2026-05-03 (Agent L): tracker om vi allerede har armed bet for neste
-   * runde. Brukes til å unngå at mellom-runde buy-popup vises på nytt
-   * etter et vellykket kjøp innenfor samme countdown-vindu. Resettes
-   * når neste runde faktisk starter (`onGameStarted`).
-   */
-  private armedForNextRound = false;
-  /** Terskel (ms) for når mellom-runde buy-popup auto-vises. */
-  private readonly BUY_POPUP_TRIGGER_MS = 30_000;
 
   constructor(deps: GameDeps) {
     this.deps = deps;
@@ -294,16 +285,18 @@ class Game2Controller implements GameController {
     }
     if ((this.phase === "PLAYING" || this.phase === "SPECTATING") && this.playScreen) {
       this.playScreen.updateInfo(state);
-      this.maybeShowBuyPopupForNextRound(state);
+      // 2026-05-03 (Agent T, fix/spill2-pixel-match-design-v2): auto-vis
+      // av BuyPopup mid-runde fjernet. Per Tobias-direktiv: BuyPopup skal
+      // KUN vises når spilleren ELSPLISITT klikker "Kjøp flere brett" i
+      // ComboPanel — ingen overlay i midten av PlayScreen som dekker
+      // bong-grid og BallTube.
     }
   }
 
   private onGameStarted(state: GameState): void {
     console.log("[Game2] Game started, tickets:", state.myTickets.length);
-    // 2026-05-03 (Agent L): reset arm-flag og skjul popup når neste runde
-    // faktisk starter — spilleren skal kunne kjøpe på nytt for runden
-    // _etter_ denne.
-    this.armedForNextRound = false;
+    // 2026-05-03 (Agent T): popup styres nå kun av eksplisitt klikk; vi
+    // skjuler likevel ved ny runde-start i tilfelle den var åpen.
     this.playScreen?.hideBuyPopupForNextRound();
 
     if (state.myTickets.length > 0) {
@@ -315,21 +308,6 @@ class Game2Controller implements GameController {
       console.log("[Game2] → SPECTATING (no tickets, round is running)");
       this.transitionTo("SPECTATING", state);
     }
-  }
-
-  /**
-   * 2026-05-03 (Agent L): vis mellom-runde buy-popup auto når countdown
-   * til neste runde er <= BUY_POPUP_TRIGGER_MS, vi er i PLAYING/SPECTATING,
-   * og vi ikke allerede har armed for neste runde. Idempotent.
-   */
-  private maybeShowBuyPopupForNextRound(state: GameState): void {
-    if (this.armedForNextRound) return;
-    if (!this.playScreen) return;
-    if (this.phase !== "PLAYING" && this.phase !== "SPECTATING") return;
-    const ms = state.millisUntilNextStart;
-    if (ms == null || ms <= 0 || ms > this.BUY_POPUP_TRIGGER_MS) return;
-    const ticketPrice = state.entryFee || 10;
-    this.playScreen.showBuyPopupForNextRound(ticketPrice);
   }
 
   private onGameEnded(state: GameState): void {
@@ -347,9 +325,8 @@ class Game2Controller implements GameController {
   private onNumberDrawn(number: number, drawIndex: number, state: GameState): void {
     if ((this.phase === "PLAYING" || this.phase === "SPECTATING") && this.playScreen) {
       this.playScreen.onNumberDrawn(number, drawIndex, state);
-      // 2026-05-03 (Agent L): nye trekninger oppdaterer
-      // millisUntilNextStart — sjekk popup-trigger.
-      this.maybeShowBuyPopupForNextRound(state);
+      // 2026-05-03 (Agent T): ingen auto-popup-trigger her — BuyPopup
+      // styres kun av eksplisitt klikk på "Kjøp flere brett".
     }
   }
 
@@ -383,26 +360,23 @@ class Game2Controller implements GameController {
   }
 
   /**
-   * 2026-05-03 (Agent L): kjøp utløst fra mellom-runde buy-popup i
-   * PlayScreen. Samme bet:arm-flyt som lobby-kjøp; setter
-   * `armedForNextRound = true` ved suksess for å hindre re-trigger
-   * innen samme countdown-vindu. Når neste runde starter resettes
-   * flagget i `onGameStarted` og spilleren ser sine kjøpte bonger
-   * via den eksisterende `buildTickets`-pipeline.
+   * 2026-05-03 (Agent L → Agent T): kjøp utløst fra BuyPopup som åpnes
+   * eksplisitt via "Kjøp flere brett"-pill i ComboPanel. Auto-trigger er
+   * fjernet — popup er nå en ren modal som spilleren selv åpner. Samme
+   * bet:arm-flyt som lobby-kjøp.
    */
   private async handleBuyForNextRound(_count: number): Promise<void> {
-    console.log("[Game2] Arming bet for next round (mid-round popup), roomCode:", this.actualRoomCode);
+    console.log("[Game2] Arming bet for next round (modal popup), roomCode:", this.actualRoomCode);
     const result = await this.deps.socket.armBet({
       roomCode: this.actualRoomCode,
       armed: true,
     });
 
     if (result.ok) {
-      console.log("[Game2] Armed successfully (next-round popup)");
-      this.armedForNextRound = true;
+      console.log("[Game2] Armed successfully (modal popup)");
       this.playScreen?.hideBuyPopupForNextRound();
     } else {
-      console.error("[Game2] Arm failed (next-round popup):", result.error);
+      console.error("[Game2] Arm failed (modal popup):", result.error);
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");
     }
   }

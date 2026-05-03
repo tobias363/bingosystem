@@ -74,6 +74,9 @@ export class PlayScreen extends Container {
   private onBuyForNextRound: ((count: number) => void) | null = null;
   private lineAlreadyWon = false;
   private bingoAlreadyWon = false;
+  /** Siste kjente entryFee fra state — brukes av `openBuyPopupModal` så
+   *  popup viser korrekt billettpris uavhengig av når brukeren klikker. */
+  private currentEntryFee = 20;
   /** Nedtellings-driver — vi oppdaterer hvert sekund fra
    *  `state.millisUntilNextStart` og decreases lokalt mellom snapshots. */
   private countdownDeadline: number | null = null;
@@ -110,7 +113,11 @@ export class PlayScreen extends Container {
     this.comboPanel.x = this.stageX;
     this.comboPanel.y = STAGE_PADDING_TOP;
     this.comboPanel.setOnLuckyNumber((n) => this.onLuckyNumber?.(n));
-    this.comboPanel.setOnBuyMore(() => this.onChooseTickets?.());
+    // 2026-05-03 (Agent T, fix/spill2-pixel-match-design-v2): "Kjøp flere
+    // brett"-pill i Hovedspill-kolonnen åpner nå BuyPopup som modal
+    // overlay i stedet for å navigere til ChooseTicketsScreen. Per
+    // Tobias-direktiv: BuyPopup skal kun vises ved eksplisitt klikk.
+    this.comboPanel.setOnBuyMore(() => this.openBuyPopupModal());
     this.addChild(this.comboPanel);
 
     // ── glass-tube (drawn balls + counter) ───────────────────────────────
@@ -205,6 +212,16 @@ export class PlayScreen extends Container {
     this.buyPopup.hide();
   }
 
+  /**
+   * 2026-05-03 (Agent T, fix/spill2-pixel-match-design-v2): åpne
+   * BuyPopup som modal overlay når brukeren klikker "Kjøp flere brett"
+   * i Hovedspill-kolonnen i ComboPanel. Bruker siste kjente entryFee
+   * fra `currentEntryFee` så popup viser korrekt billettpris.
+   */
+  private openBuyPopupModal(): void {
+    this.showBuyPopupForNextRound(this.currentEntryFee);
+  }
+
   /** Returner true hvis popup er synlig. Brukes av controller for trigger-gating. */
   isBuyPopupVisible(): boolean {
     return this.buyPopup.visible;
@@ -215,6 +232,9 @@ export class PlayScreen extends Container {
     this.clearBongs();
     this.lineAlreadyWon = false;
     this.bingoAlreadyWon = false;
+    if (state.entryFee != null && state.entryFee > 0) {
+      this.currentEntryFee = state.entryFee;
+    }
     this.comboPanel.setCurrentDrawCount(state.drawnNumbers.length);
 
     // Restore won-flags fra snapshot (late-joiner support).
@@ -289,6 +309,9 @@ export class PlayScreen extends Container {
     // lucky-number for å speile state-endringer fra serveren.
     if (state.myLuckyNumber != null) {
       this.comboPanel.setLuckyNumber(state.myLuckyNumber);
+    }
+    if (state.entryFee != null && state.entryFee > 0) {
+      this.currentEntryFee = state.entryFee;
     }
     this.ballTube.setDrawCount(state.drawnNumbers.length, state.totalDrawCapacity);
     this.startCountdown(state.millisUntilNextStart);
