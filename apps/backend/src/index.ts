@@ -3279,6 +3279,53 @@ app.get("/health/draw-engine", (_req, res) => {
   apiSuccess(res, drawScheduler.healthSummary(true));
 });
 
+/**
+ * 2026-05-03 (Tobias-direktiv) — Manual reset-test-user endpoint.
+ *
+ * Boot-script via RESET_TEST_PLAYERS=true env-var fungerer ikke på
+ * Render-prod (logene kommer ikke ut, og scriptet feiler stille). Denne
+ * HTTP-routen lar Tobias trigge reset manuelt og se nøyaktig hva som
+ * skjer i HTTP-responsen.
+ *
+ * Sikkerhet: krever match på POST-body `{token}` mot
+ * `RESET_TEST_PLAYERS_TOKEN`-env-var. Kun på prod; ingen rate-limit.
+ */
+app.post("/api/_dev/reset-test-user", async (req, res) => {
+  const expectedToken = process.env.RESET_TEST_PLAYERS_TOKEN ?? "";
+  const providedToken = typeof req.body?.token === "string" ? req.body.token : "";
+  if (!expectedToken || providedToken !== expectedToken) {
+    res.status(403).json({ ok: false, error: { code: "FORBIDDEN", message: "Invalid token" } });
+    return;
+  }
+  try {
+    const result = await resetTestPlayers({
+      pool: platformService.getPool(),
+      schema: pgSchema,
+    });
+    res.json({
+      ok: true,
+      data: {
+        deleted: result.deletedCount,
+        testUser: {
+          email: result.testUser.email,
+          hallId: result.testUser.hallId,
+          deposit: result.testUser.depositKr,
+          created: result.testUser.created,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: {
+        code: "RESET_FAILED",
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack?.split("\n").slice(0, 10) : undefined,
+      },
+    });
+  }
+});
+
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
 
 // BIN-494: Redis adapter for multi-node fanout. Required for horizontal scaling —
