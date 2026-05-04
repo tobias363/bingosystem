@@ -34,10 +34,15 @@ const AMOUNT_GAP = 4;
 const LABEL_H = 12;
 const AMOUNT_H = 13;
 
-/** Gull-border på alle slots (alpha=0.85). Aktiv slot får mer markert gull. */
-const BORDER_DEFAULT_COLOR = 0xffd97a;
+/**
+ * Tobias-direktiv 2026-05-04 (target-design-paritet): tynn hvit/cream
+ * border på sirklene (var tykk gull etter forrige iterasjon). Gull-border
+ * lever fortsatt på YTTRE panel (i ComboPanel) — sirklene har subtil
+ * cream-stroke for visuell ro.
+ */
+const BORDER_DEFAULT_COLOR = 0xeae0d2;
 const BORDER_DEFAULT_ALPHA = 0.85;
-const BORDER_ACTIVE_COLOR = 0xffd97a;
+const BORDER_ACTIVE_COLOR = 0xffd97a; // aktiv slot beholder gull-aksent
 const BORDER_ACTIVE_ALPHA = 1.0;
 const FILL_DEFAULT_COLOR = 0x501216;
 const FILL_DEFAULT_ALPHA = 0.55;
@@ -225,14 +230,14 @@ export class JackpotsRow extends Container {
       slot.circle
         .circle(CIRCLE_SIZE * 0.5, CIRCLE_SIZE * 0.45, CIRCLE_SIZE * 0.42)
         .fill({ color: 0xffffff, alpha: 0.10 });
-      // GULL-BORDER på ALLE slots (Tobias-direktiv 2026-05-04).
-      // Aktiv slot får tykkere + sterkere gull-stroke.
+      // Tynn cream-border på alle slots (target-design-paritet).
+      // Aktiv slot får gull-aksent + litt tykkere stroke som highlight.
       slot.circle
         .circle(CIRCLE_SIZE / 2, CIRCLE_SIZE / 2, CIRCLE_SIZE / 2)
         .stroke({
           color: isActive ? BORDER_ACTIVE_COLOR : BORDER_DEFAULT_COLOR,
           alpha: isActive ? BORDER_ACTIVE_ALPHA : BORDER_DEFAULT_ALPHA,
-          width: isActive ? 2.5 : 1.5,
+          width: isActive ? 1.8 : 1.0,
         });
     }
   }

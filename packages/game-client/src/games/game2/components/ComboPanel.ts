@@ -345,10 +345,14 @@ export class ComboPanel extends Container {
     this.bg
       .roundRect(0, 0, this.panelW, this.panelH, RADIUS)
       .fill({ color: 0x140508, alpha: 0.55 });
+    // Tobias-direktiv 2026-05-04: gull-border rundt hele bunn-panelet
+    // (matcher target-design). Tidligere hvit-alpha 0.18 — endret til
+    // gull (0xffd97a) med moderat alpha for å gi tydelig men ikke
+    // dominerende kontur.
     this.bg
       .roundRect(0, 0, this.panelW, this.panelH, RADIUS)
-      .stroke({ color: 0xffffff, alpha: 0.18, width: 1.5 });
-    // Topp-highlight (matcher `inset 0 1px 0 rgba(255,255,255,.08)`).
+      .stroke({ color: 0xffd97a, alpha: 0.40, width: 1.0 });
+    // Topp-highlight (subtil hvit på øvre kant).
     this.bg
       .roundRect(2, 2, this.panelW - 4, 2, 1)
       .fill({ color: 0xffffff, alpha: 0.08 });
