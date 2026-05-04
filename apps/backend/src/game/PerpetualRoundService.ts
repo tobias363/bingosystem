@@ -46,6 +46,7 @@
 
 import { logger as rootLogger } from "../util/logger.js";
 import type { GameEndedInput } from "../adapters/BingoSystemAdapter.js";
+import { resolveRoundPauseMs } from "./variantConfig.js";
 
 const logger = rootLogger.child({ module: "perpetual-round" });
 
@@ -366,13 +367,26 @@ export class PerpetualRoundService {
       this.pendingByRoom.delete(input.roomCode);
     }
 
+    // Tobias 2026-05-04: per-game-konfigurerbar runde-pause. Resolusjons-
+    // rekkefølge: variantConfig.roundPauseMs (admin-konfig fra DB) → env-
+    // var-fallback (this.config.delayMs). Slik kan admin sette ulik tempo
+    // per spill uten å berøre Render-env-vars. Ugyldig per-game-verdi
+    // faller stille til env-fallback (resolveRoundPauseMs validerer).
+    const variantInfo = this.config.variantLookup.getVariantConfig(input.roomCode);
+    const delayMs = resolveRoundPauseMs(
+      variantInfo?.config,
+      this.config.delayMs,
+    );
+
     const roomCode = input.roomCode;
     const gameId = input.gameId;
     // 2026-05-04 (Bug 1 fix): record the scheduled-fire-at timestamp so
     // `buildRoomSchedulerState` kan surface countdown via room:update.
     // Beregnes FØR setTimeoutFn slik at clock-skew mellom Date.now() og
-    // setTimeout-arming er minimal (én tick, samme prosess).
-    const nextRoundAtMs = Date.now() + this.config.delayMs;
+    // setTimeout-arming er minimal (én tick, samme prosess). Bruker
+    // `delayMs` (per-game-resolved fra #907) ikke `this.config.delayMs`
+    // (env-default) — slik at countdown matcher faktisk pause.
+    const nextRoundAtMs = Date.now() + delayMs;
     const handle = this.config.setTimeoutFn(() => {
       // Fjern pending FØR start så en ny game-end (etter at restart er
       // kjørt) kan schedule på nytt. Hvis startRound feiler vil pending
@@ -380,16 +394,25 @@ export class PerpetualRoundService {
       // pending blokkerer fremtidige triggers.
       this.pendingByRoom.delete(roomCode);
       void this.startNextRound(roomCode, gameId);
-    }, this.config.delayMs);
+    }, delayMs);
     this.pendingByRoom.set(roomCode, { handle, gameId, nextRoundAtMs });
 
+    // Logger kilden så vi kan diagnose admin-config vs env-default i prod.
+    // `variantConfig` betyr at admin-konfigurert roundPauseMs ble brukt;
+    // `envFallback` betyr at variantConfig manglet feltet eller var
+    // ugyldig (resolveRoundPauseMs falt tilbake til env-default).
+    const delayMsSource =
+      delayMs === Math.floor(variantInfo?.config?.roundPauseMs ?? -1)
+        ? "variantConfig"
+        : "envFallback";
     logger.info(
       {
         roomCode,
         slug,
         endedGameId: gameId,
         endedReason: input.endedReason,
-        delayMs: this.config.delayMs,
+        delayMs,
+        delayMsSource,
       },
       "perpetual: scheduled auto-restart",
     );
