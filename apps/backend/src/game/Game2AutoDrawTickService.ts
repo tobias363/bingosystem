@@ -86,6 +86,13 @@ export interface AutoDrawEngine {
     code: string;
     hostPlayerId: string;
     gameSlug?: string;
+    /**
+     * Tobias 2026-05-04 (host-fallback fix): tilstede-spillere brukes til å
+     * sjekke om `hostPlayerId` fortsatt er i rommet. Hvis original-host har
+     * disconnected, faller `tickOnce` tilbake til første tilgjengelige
+     * spiller som actor for `drawNextNumber`. Skipper hvis ingen er igjen.
+     */
+    players?: Array<{ id: string }>;
     currentGame?: {
       status: string;
       drawnNumbers: number[];
@@ -431,11 +438,44 @@ export class Game2AutoDrawTickService {
         continue;
       }
 
+      // Tobias 2026-05-04 (host-fallback fix — pilot-blokker):
+      // `snapshot.hostPlayerId` settes kun ved `RoomLifecycleService.createRoom`
+      // og reassignes ALDRI når original-host disconnecter (fane-refresh,
+      // Wi-Fi-blip, fanelukking). Auto-draw-cron-en feilet derfor 100% med
+      // "Spiller finnes ikke i rommet." og rommet ble permanent stuck til
+      // manuelt force-end. Verifisert av E2E-test 2026-05-04.
+      //
+      // Fix: sjekk om host fortsatt er i rommet. Hvis ikke, velg første
+      // tilgjengelige player som actor for denne ticken. Hvis ingen er
+      // connected (helt tomt rom), skip ticken stille — det finnes ingen
+      // spillere som kan motta `draw:new`-event uansett.
+      const players = snapshot.players ?? [];
+      const hostStillPresent = players.some((p) => p.id === snapshot.hostPlayerId);
+      const actorId = hostStillPresent
+        ? snapshot.hostPlayerId
+        : players[0]?.id ?? null;
+      if (!actorId) {
+        skipped++;
+        continue;
+      }
+      if (!hostStillPresent) {
+        log.info(
+          {
+            event: "auto_draw_host_fallback",
+            roomCode: summary.code,
+            oldHostId: snapshot.hostPlayerId,
+            newHostId: actorId,
+            reason: "host_disconnected",
+          },
+          "[game2-auto-draw] host fallback — original host not in players list",
+        );
+      }
+
       this.currentlyProcessing.add(summary.code);
       try {
         const result = await this.engine.drawNextNumber({
           roomCode: summary.code,
-          actorPlayerId: snapshot.hostPlayerId,
+          actorPlayerId: actorId,
         });
         this.lastDrawAtByRoom.set(summary.code, Date.now());
         drawsTriggered++;

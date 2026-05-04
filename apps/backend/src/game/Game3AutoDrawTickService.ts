@@ -218,11 +218,38 @@ export class Game3AutoDrawTickService {
         continue;
       }
 
+      // Tobias 2026-05-04 (host-fallback fix — pilot-blokker):
+      // `snapshot.hostPlayerId` reassignes ALDRI når original-host
+      // disconnecter. Auto-draw-cron-en feilet derfor 100% med
+      // "Spiller finnes ikke i rommet." og rommet ble permanent stuck.
+      // Samme bug som Spill 2 — fix delt mønster.
+      const players = snapshot.players ?? [];
+      const hostStillPresent = players.some((p) => p.id === snapshot.hostPlayerId);
+      const actorId = hostStillPresent
+        ? snapshot.hostPlayerId
+        : players[0]?.id ?? null;
+      if (!actorId) {
+        skipped++;
+        continue;
+      }
+      if (!hostStillPresent) {
+        log.info(
+          {
+            event: "auto_draw_host_fallback",
+            roomCode: summary.code,
+            oldHostId: snapshot.hostPlayerId,
+            newHostId: actorId,
+            reason: "host_disconnected",
+          },
+          "[game3-auto-draw] host fallback — original host not in players list",
+        );
+      }
+
       this.currentlyProcessing.add(summary.code);
       try {
         const result = await this.engine.drawNextNumber({
           roomCode: summary.code,
-          actorPlayerId: snapshot.hostPlayerId,
+          actorPlayerId: actorId,
         });
         this.lastDrawAtByRoom.set(summary.code, Date.now());
         drawsTriggered++;
