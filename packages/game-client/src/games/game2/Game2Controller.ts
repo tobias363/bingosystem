@@ -322,6 +322,15 @@ class Game2Controller implements GameController {
 
   private onGameEnded(state: GameState): void {
     console.log("[Game2] Game ended");
+    // 2026-05-04 (Tobias-direktiv): rydd bong-display + animasjoner FØR
+    // transition slik at gamle bonger fra forrige runde aldri henger igjen
+    // mellom runder. transitionTo destroyer playScreen uansett, men
+    // eksplisitt `reset()` her sikrer at GSAP-tweens (CenterBallPop, BongCard
+    // mark-flip) stoppes umiddelbart i samme tick som game-end-eventet
+    // ankommer — uten dette kunne en pågående mark-animasjon fortsette på
+    // en stale BongCard mens EndScreen tonet inn.
+    this.playScreen?.reset();
+
     if (this.phase === "PLAYING") {
       this.transitionTo("ENDED", state);
     } else {

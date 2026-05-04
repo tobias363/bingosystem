@@ -4,6 +4,20 @@ import gsap from "gsap";
 /**
  * Between-rounds ticket purchase popup.
  * Player adjusts ticket count and clicks buy → triggers bet:arm.
+ *
+ * 2026-05-04 (Tobias-direktiv): popup støtter to faser, speilet av Spill 1:
+ *   - **LOBBY/WAITING/ENDED**: kjøp gjelder for kommende runde — tittel
+ *     "Neste spill".
+ *   - **RUNNING (mid-round)**: aktiv runde pågår; kjøp armer for **neste**
+ *     runde (forhåndskjøp). Tittel "Forhåndskjøp – neste runde" gjør det
+ *     eksplisitt for spilleren at de IKKE kan delta i den pågående
+ *     trekningen.
+ *
+ * Caller (PlayScreen / LobbyScreen) sender `forNextRound`-flagget basert
+ * på `state.gameStatus`. Flagget endrer KUN tittelen — hele kjøpsflyten
+ * (BuyPopup → setOnBuy → bet:arm) er uendret. Backend håndterer fortsatt
+ * forhåndskjøpet identisk; pre-round-armed-state carry-overes til neste
+ * runde av PerpetualRoundService (PR #894).
  */
 export class BuyPopup extends Container {
   private bg: Graphics;
@@ -25,9 +39,10 @@ export class BuyPopup extends Container {
     this.bg.stroke({ color: 0x790001, width: 2 });
     this.addChild(this.bg);
 
-    // Title
+    // Title — settes til "Neste spill" eller "Forhåndskjøp – neste runde"
+    // i `show()` basert på fase-flagget.
     this.titleText = new Text({
-      text: "Kjøp billetter",
+      text: "Neste spill",
       style: { fontFamily: "Arial, Helvetica, sans-serif", fontSize: 22, fontWeight: "bold", fill: 0xffe83d },
     });
     this.titleText.x = width / 2;
@@ -81,10 +96,23 @@ export class BuyPopup extends Container {
     this.visible = false;
   }
 
-  show(ticketPrice: number, maxTickets = 30): void {
+  /**
+   * Vis popup-en med pris-info.
+   *
+   * @param ticketPrice — pris per brett (kr) for total-beregning.
+   * @param maxTickets — kapsel for +/- knapper. Default 30 (server-cap).
+   * @param forNextRound — true når aktiv runde pågår og kjøp armer for
+   *   NESTE runde. Endrer tittelen til "Forhåndskjøp – neste runde" så
+   *   spilleren forstår at de IKKE kan delta i den pågående trekningen.
+   *   Default false (LOBBY/WAITING — "Neste spill").
+   */
+  show(ticketPrice: number, maxTickets = 30, forNextRound = false): void {
     this.ticketPrice = ticketPrice;
     this.maxTickets = maxTickets;
     this.ticketCount = 1;
+    this.titleText.text = forNextRound
+      ? "Forhåndskjøp – neste runde"
+      : "Neste spill";
     this.updateDisplay();
     this.visible = true;
     this.alpha = 0;

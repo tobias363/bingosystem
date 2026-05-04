@@ -99,6 +99,16 @@ export class PlayScreen extends Container {
   /** Siste kjente entryFee fra state — brukes av `openBuyPopupModal` så
    *  popup viser korrekt billettpris uavhengig av når brukeren klikker. */
   private currentEntryFee = 20;
+  /**
+   * Sist kjente gameStatus — brukes av `openBuyPopupModal` for å sette
+   * riktig BuyPopup-tittel ("Forhåndskjøp – neste runde" mid-RUNNING vs.
+   * "Neste spill" i LOBBY/WAITING). Speiler Spill 1's pattern hvor
+   * pre-round-kjøp er eksplisitt merket som forhåndskjøp under aktiv
+   * trekning så spilleren forstår at de IKKE deltar i pågående runde.
+   * Default "NONE" — første state-update fra controller setter den
+   * korrekt før noen popup-trigger.
+   */
+  private currentGameStatus: GameState["gameStatus"] = "NONE";
   /** Nedtellings-driver — vi oppdaterer hvert sekund fra
    *  `state.millisUntilNextStart` og decreases lokalt mellom snapshots. */
   private countdownDeadline: number | null = null;
@@ -230,10 +240,16 @@ export class PlayScreen extends Container {
    * Vis mellom-runde buy-popup. Idempotent — gjør ingenting hvis allerede
    * synlig. Brukes av Game2Controller når countdown < 30 s og spilleren
    * ikke allerede har armed for neste runde.
+   *
+   * 2026-05-04 (Tobias-direktiv): bruker `currentGameStatus` til å sette
+   * `forNextRound`-flagget på BuyPopup. Når gameStatus === "RUNNING" er
+   * popup-tittelen "Forhåndskjøp – neste runde" så spilleren forstår at
+   * trekningen IKKE er en del av kjøpet (mirror Spill 1).
    */
   showBuyPopupForNextRound(ticketPrice: number, maxTickets = 30): void {
     if (this.buyPopup.visible) return;
-    this.buyPopup.show(ticketPrice, maxTickets);
+    const forNextRound = this.currentGameStatus === "RUNNING";
+    this.buyPopup.show(ticketPrice, maxTickets, forNextRound);
   }
 
   /** Skjul mellom-runde buy-popup. Idempotent. */
@@ -263,29 +279,34 @@ export class PlayScreen extends Container {
     if (state.entryFee != null && state.entryFee > 0) {
       this.currentEntryFee = state.entryFee;
     }
+    // 2026-05-04 (Tobias-direktiv): cache gameStatus for BuyPopup-tittel-
+    // valg + RUNNING-aware ticket-display. Speiler Spill 1's pattern.
+    this.currentGameStatus = state.gameStatus;
     this.comboPanel.setCurrentDrawCount(state.drawnNumbers.length);
     this.comboPanel.setPlayerCount(state.playerCount ?? 0);
 
-    // 2026-05-04 (Agent LL, fix/spill2-ticket-render-and-ball-anim):
-    // BUG-FIX bonger rendret aldri. Tobias-rapport: "fortsatt ingen bonger
-    // som vises". Server (jf. /api/_dev/game2-state) bekreftet at spilleren
-    // hadde tickets, men `state.myTickets.length` var 0 i klient-state.
+    // 2026-05-04 (Tobias-direktiv: speiler Spill 1's runde-syklus): velg
+    // ticket-sett basert på gameStatus så bongs ALDRI henger fra forrige
+    // runde mellom rounds.
     //
-    // Rot-årsak: under SPECTATING (RUNNING-runde, sen-joiner som har armed
-    // for NESTE runde) populerer GameBridge bare `state.preRoundTickets`,
-    // ikke `state.myTickets`. PlayScreen så bare på `state.myTickets` →
-    // tom liste → ingen render.
+    //   - RUNNING + myTickets > 0   → vis myTickets (aktive, markable)
+    //   - RUNNING + ingen myTickets → vis preRoundTickets (SPECTATING-
+    //     preview for sen-joiner som har armed for neste runde)
+    //   - non-RUNNING (LOBBY/WAITING/ENDED/NONE) → vis preRoundTickets
+    //     KUN (forrige rundes myTickets er stale og må ikke rendres)
     //
-    // Fix: speil Spill 1's pattern (game1/screens/PlayScreen.ts:422-425) —
-    // hvis aktive `myTickets` mangler men `preRoundTickets` finnes, vis
-    // dem i samme grid. De rendres uten marks (de starter neste runde, så
-    // ingen av currently-drawn-balls gjelder). buildTickets kalles på nytt
-    // ved hver state-change så snart aktive tickets dukker opp på round-
-    // start, vil disse erstatte preRoundTickets-previewen.
-    const activeTickets = state.myTickets.length > 0
-      ? state.myTickets
+    // Speiler Spill 1's `running ? myTickets : preRoundTickets`-logikk
+    // (packages/game-client/src/games/game1/screens/PlayScreen.ts:433-436).
+    // Tidligere fallback `myTickets > 0 ? myTickets : preRoundTickets` lot
+    // myTickets vises også etter at runden var ENDED → bonger hang igjen
+    // mellom runder fordi `game.tickets[playerId]` ikke clearer på
+    // ENDED-snapshot (kun ved gameStarted med ny gameId).
+    const running = state.gameStatus === "RUNNING";
+    const activeTickets = running
+      ? (state.myTickets.length > 0 ? state.myTickets : (state.preRoundTickets ?? []))
       : (state.preRoundTickets ?? []);
-    const isPreRoundPreview = state.myTickets.length === 0 && activeTickets.length > 0;
+    const isPreRoundPreview =
+      !running || (running && state.myTickets.length === 0 && activeTickets.length > 0);
 
     for (let i = 0; i < activeTickets.length; i++) {
       const ticket = activeTickets[i];
@@ -357,20 +378,23 @@ export class PlayScreen extends Container {
     if (state.entryFee != null && state.entryFee > 0) {
       this.currentEntryFee = state.entryFee;
     }
+    // 2026-05-04 (Tobias-direktiv): hold `currentGameStatus` synkronisert
+    // mellom snapshot-tikker. Brukes av `openBuyPopupModal` for å sette
+    // riktig BuyPopup-tittel.
+    this.currentGameStatus = state.gameStatus;
     this.comboPanel.setPlayerCount(state.playerCount ?? 0);
     this.ballTube.setDrawCount(state.drawnNumbers.length, state.totalDrawCapacity);
     this.startCountdown(state.millisUntilNextStart);
 
-    // 2026-05-04 (Agent LL, fix/spill2-ticket-render-and-ball-anim):
-    // Late-joiner / mid-round arm: hvis antall bonger som SKAL vises har
-    // endret seg siden forrige render, bygg på nytt. Dekker bl.a.
-    // SPECTATING-spiller som armer mellom trekninger og får
-    // `state.preRoundTickets` populert på neste room:update.
-    //
-    // Logikken matcher buildTickets sin valg-strategi: vis aktive tickets
-    // hvis vi har dem, ellers pre-round-preview.
-    const expectedTickets = state.myTickets.length > 0
-      ? state.myTickets.length
+    // Late-joiner / mid-round arm: bygg på nytt hvis antall bonger som
+    // SKAL vises har endret seg siden forrige render. Logikken matcher
+    // buildTickets sin RUNNING-aware valg-strategi (Tobias-direktiv
+    // 2026-05-04): under RUNNING bruker vi myTickets med fallback til
+    // preRoundTickets; utenfor RUNNING bruker vi KUN preRoundTickets så
+    // forrige rundes myTickets ikke henger igjen mellom runder.
+    const running = state.gameStatus === "RUNNING";
+    const expectedTickets = running
+      ? (state.myTickets.length > 0 ? state.myTickets.length : (state.preRoundTickets?.length ?? 0))
       : (state.preRoundTickets?.length ?? 0);
     if (expectedTickets !== this.bongs.length) {
       this.buildTickets(state);
