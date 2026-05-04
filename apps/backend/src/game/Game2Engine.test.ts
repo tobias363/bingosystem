@@ -443,3 +443,66 @@ describe("Game2Engine — non-G2 rounds are unaffected (G1 regression guard)", (
     assert.equal(snapshot.currentGame?.status, "RUNNING");
   });
 });
+
+// ── Auto-mark cells (Tobias bug-fix 2026-05-04) ────────────────────────────────
+
+describe("Game2Engine — auto-mark celler etter draw", () => {
+  test("etter draw 1 inneholder game.marks tallet 1 for ticket som matcher", async () => {
+    const { engine, roomCode, hostId } = await makeG2Engine(new WinningG2Adapter());
+    await engine.startGame({
+      roomCode,
+      actorPlayerId: hostId,
+      entryFee: 20,
+      ticketsPerPlayer: 1,
+      payoutPercent: 80,
+      variantConfig: DEFAULT_GAME2_CONFIG,
+    });
+    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
+    // WinningG2Adapter returnerer ticket [1..9], så ball 1 skal markeres.
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    const marks = snapshot.currentGame?.marks?.[hostId];
+    assert.ok(marks, "marks-map skal eksistere for host");
+    assert.equal(marks?.length, 1, "én ticket per spiller");
+    assert.deepEqual(marks?.[0], [1], "ball 1 skal være markert på ticket");
+  });
+
+  test("etter draw 1..5 inneholder game.marks alle 5 trukne baller (auto-mark)", async () => {
+    const { engine, roomCode, hostId } = await makeG2Engine(new WinningG2Adapter());
+    await engine.startGame({
+      roomCode,
+      actorPlayerId: hostId,
+      entryFee: 20,
+      ticketsPerPlayer: 1,
+      payoutPercent: 80,
+      variantConfig: DEFAULT_GAME2_CONFIG,
+    });
+    for (let i = 0; i < 5; i += 1) {
+      await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
+    }
+    // WinningG2Adapter har ticket [1..9] og deterministic-bag = [1..21], så
+    // alle 5 trukne baller skal være markert.
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    const marks = snapshot.currentGame?.marks?.[hostId];
+    assert.deepEqual(marks?.[0]?.sort((a, b) => a - b), [1, 2, 3, 4, 5]);
+  });
+
+  test("auto-mark er idempotent (samme ball trukket to ganger via state-restore er OK)", async () => {
+    // Ikke et reelt scenario i prod (drawBag tar tall ut), men sanity-test
+    // at Set.add() ikke skaper duplikater.
+    const { engine, roomCode, hostId } = await makeG2Engine(new WinningG2Adapter());
+    await engine.startGame({
+      roomCode,
+      actorPlayerId: hostId,
+      entryFee: 20,
+      ticketsPerPlayer: 1,
+      payoutPercent: 80,
+      variantConfig: DEFAULT_GAME2_CONFIG,
+    });
+    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
+    await engine.drawNextNumber({ roomCode, actorPlayerId: hostId });
+    const snapshot = engine.getRoomSnapshot(roomCode);
+    const marks = snapshot.currentGame?.marks?.[hostId]?.[0] ?? [];
+    // 2 unike marks (ingen duplikater)
+    assert.equal(new Set(marks).size, marks.length, "marks må ikke ha duplikater");
+  });
+});

@@ -41,6 +41,7 @@
 
 import { randomUUID } from "node:crypto";
 import { BingoEngine } from "./BingoEngine.js";
+import { autoMarkPlayerCells } from "./Game2Engine.js";
 import { IdempotencyKeys } from "./idempotency.js";
 import {
   PatternCycler,
@@ -182,6 +183,14 @@ export class Game3Engine extends BingoEngine {
     await super.onDrawCompleted(ctx);
     const { room, game, lastBall, drawIndex, variantConfig } = ctx;
     if (!this.isGame3Round(room, variantConfig)) return;
+
+    // 2026-05-04 (Tobias bug-fix): auto-mark celler som matcher `lastBall`
+    // på alle aktive tickets. Spill 3 evaluerer pattern-completion via
+    // `buildTicketMask(t, drawnSet)` som bruker `drawnNumbers` direkte —
+    // marks brukes ikke for vinner-deteksjon. Men `game.marks` skal
+    // fortsatt holdes synkronisert for audit/recovery/late-joiner. Samme
+    // util som Spill 2 bruker; idempotent.
+    autoMarkPlayerCells(game, lastBall);
 
     const cycler = this.getOrCreateCycler(room, game);
     const step = cycler.step(drawIndex);
