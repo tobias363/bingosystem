@@ -353,11 +353,32 @@ class Game2Controller implements GameController {
 
   // ── User actions ──────────────────────────────────────────────────────
 
-  private async handleBuy(_count: number): Promise<void> {
-    console.log("[Game2] Arming bet, roomCode:", this.actualRoomCode);
+  /**
+   * 2026-05-04 (Tobias-direktiv): bygg synthetic ticketSelections for Spill 2
+   * så backend ikke clamper count ned til `ticketsPerPlayer`-default (4).
+   *
+   * Bakgrunn: BingoEngine.startGame har to paths:
+   *   - Med selections → bruker count direkte (`hasSelections=true`)
+   *   - Uten selections → `Math.min(count, ticketsPerPlayer)` clamp
+   *
+   * Spill 2 har én ticket-type ("Standard" / `game2-3x3`) per
+   * `DEFAULT_GAME2_CONFIG`. Vi speiler PR #899's
+   * `armRocketPlayerFromPool`-pattern her i frontend så count overlever
+   * round-tripen til engine. Cap til 30 (samme som BuyPopup og backend
+   * `bet:arm`-handler).
+   */
+  private buildSpill2Selections(count: number): Array<{ type: string; qty: number; name: string }> {
+    const safeCount = Math.max(1, Math.min(30, Math.round(count)));
+    return [{ type: "game2-3x3", qty: safeCount, name: "Standard" }];
+  }
+
+  private async handleBuy(count: number): Promise<void> {
+    const selections = this.buildSpill2Selections(count);
+    console.log("[Game2] Arming bet, roomCode:", this.actualRoomCode, "count:", selections[0].qty);
     const result = await this.deps.socket.armBet({
       roomCode: this.actualRoomCode,
       armed: true,
+      ticketSelections: selections,
     });
 
     if (result.ok) {
@@ -375,11 +396,13 @@ class Game2Controller implements GameController {
    * fjernet — popup er nå en ren modal som spilleren selv åpner. Samme
    * bet:arm-flyt som lobby-kjøp.
    */
-  private async handleBuyForNextRound(_count: number): Promise<void> {
-    console.log("[Game2] Arming bet for next round (modal popup), roomCode:", this.actualRoomCode);
+  private async handleBuyForNextRound(count: number): Promise<void> {
+    const selections = this.buildSpill2Selections(count);
+    console.log("[Game2] Arming bet for next round (modal popup), roomCode:", this.actualRoomCode, "count:", selections[0].qty);
     const result = await this.deps.socket.armBet({
       roomCode: this.actualRoomCode,
       armed: true,
+      ticketSelections: selections,
     });
 
     if (result.ok) {
