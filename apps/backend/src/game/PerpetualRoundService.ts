@@ -220,13 +220,19 @@ export class PerpetualRoundService {
 
   /**
    * Pending-state per rom. Key = roomCode (e.g. "ROCKET").
-   * Value: handle + gameId som trigget restart-en. gameId brukes til
-   * idempotens-sjekk: hvis samme gameId trigger igjen (duplicate
-   * onGameEnded-fire), no-op.
+   * Value: handle + gameId som trigget restart-en + planlagt fyringspunkt
+   * (epoch ms). gameId brukes til idempotens-sjekk: hvis samme gameId
+   * trigger igjen (duplicate onGameEnded-fire), no-op.
+   *
+   * 2026-05-04 (Tobias bug-fix Bug 1): `nextRoundAtMs` lagres så
+   * `buildRoomSchedulerState` kan surface `millisUntilNextStart` for
+   * perpetual-rom mellom runder. Tidligere var dette null fordi
+   * `runtimeBingoSettings.autoRoundStartEnabled` er false for Spill 2/3
+   * (de bruker perpetual-loop, ikke DrawScheduler), og UI viste "—:—".
    */
   private readonly pendingByRoom = new Map<
     string,
-    { handle: ReturnType<typeof setTimeout>; gameId: string }
+    { handle: ReturnType<typeof setTimeout>; gameId: string; nextRoundAtMs: number }
   >();
 
   constructor(config: PerpetualRoundServiceConfig) {
@@ -374,6 +380,13 @@ export class PerpetualRoundService {
 
     const roomCode = input.roomCode;
     const gameId = input.gameId;
+    // 2026-05-04 (Bug 1 fix): record the scheduled-fire-at timestamp so
+    // `buildRoomSchedulerState` kan surface countdown via room:update.
+    // Beregnes FØR setTimeoutFn slik at clock-skew mellom Date.now() og
+    // setTimeout-arming er minimal (én tick, samme prosess). Bruker
+    // `delayMs` (per-game-resolved fra #907) ikke `this.config.delayMs`
+    // (env-default) — slik at countdown matcher faktisk pause.
+    const nextRoundAtMs = Date.now() + delayMs;
     const handle = this.config.setTimeoutFn(() => {
       // Fjern pending FØR start så en ny game-end (etter at restart er
       // kjørt) kan schedule på nytt. Hvis startRound feiler vil pending
@@ -382,7 +395,7 @@ export class PerpetualRoundService {
       this.pendingByRoom.delete(roomCode);
       void this.startNextRound(roomCode, gameId);
     }, delayMs);
-    this.pendingByRoom.set(roomCode, { handle, gameId });
+    this.pendingByRoom.set(roomCode, { handle, gameId, nextRoundAtMs });
 
     // Logger kilden så vi kan diagnose admin-config vs env-default i prod.
     // `variantConfig` betyr at admin-konfigurert roundPauseMs ble brukt;
@@ -747,6 +760,24 @@ export class PerpetualRoundService {
    */
   pendingRestartGameId(roomCode: string): string | null {
     return this.pendingByRoom.get(roomCode)?.gameId ?? null;
+  }
+
+  /**
+   * 2026-05-04 (Bug 1 fix): hent planlagt fyringspunkt (epoch ms) for
+   * pending auto-restart i et rom. Brukes av `buildRoomSchedulerState`
+   * (apps/backend/src/util/roomHelpers.ts) til å surface
+   * `millisUntilNextStart` i room:update for Spill 2/3, slik at klientens
+   * countdown ("Neste trekning: MM:SS") faktisk tikker mellom runder.
+   *
+   * Returnerer null hvis rommet ikke har en pending restart, eller hvis
+   * tidspunktet allerede har passert (fyring skjer i neste tick — UI bør
+   * vise "—:—" da, ikke et negativt tall).
+   */
+  getNextRoundAtMs(roomCode: string): number | null {
+    const entry = this.pendingByRoom.get(roomCode);
+    if (!entry) return null;
+    if (entry.nextRoundAtMs <= Date.now()) return null;
+    return entry.nextRoundAtMs;
   }
 
   /**
