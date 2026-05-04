@@ -189,7 +189,11 @@ export class LobbyScreen extends Container {
   }
 
   showBuyPopup(ticketPrice: number, maxTickets = 30): void {
-    this.buyPopup.show(ticketPrice, maxTickets);
+    // LobbyScreen er by-definition mellom-runde (ikke RUNNING) — BuyPopup-
+    // tittel skal være "Neste spill" (default). Eksplisitt `false` for
+    // klarhet; speiler Spill 1's separasjon mellom WAITING-fase og
+    // mid-RUNNING-forhåndskjøp.
+    this.buyPopup.show(ticketPrice, maxTickets, false);
   }
 
   hideBuyPopup(): void {

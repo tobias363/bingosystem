@@ -9,8 +9,12 @@
  * Tilnærming:
  *   - Wires inn på `bingoAdapter.onGameEnded` (samme hook som Spill 2 ticket-
  *     pool-cleanup bruker). For runder i ROCKET / MONSTERBINGO scheduler vi
- *     en `setTimeout` som etter en kort delay (default 5 sek) starter en ny
- *     runde via `engine.startGame`.
+ *     en `setTimeout` som etter en konfigurerbar delay starter en ny runde
+ *     via `engine.startGame`. Delay-en styres av `PERPETUAL_LOOP_DELAY_MS`
+ *     env-var (default 5 sek; prod-Render satt til 30 sek per Tobias-
+ *     direktiv 2026-05-04 så spillerne får tid til å se vinner-overlay
+ *     og forhåndskjøpe brett før neste runde starter — speiler Spill 1's
+ *     30-sek-mellomrom).
  *   - Spill 1 (`bingo`-slug) er IKKE perpetual — Spill 1 har egen schedule-
  *     drevet master-start-flyt (`Game1MasterControlService`). Vi ignorerer
  *     alle non-Spill-2/3-rom uten side-effekter.
@@ -129,11 +133,16 @@ export interface ArmedPlayerLookup {
  *
  * Defaults speiler Tobias-direktivet "kort delay etter winner-celebration".
  * 5 sekunder er nok for at klient kan vise vinner-overlay før neste runde
- * starter, men kort nok til at "Aldri stopper"-følelsen bevares.
+ * starter; prod overrider til 30 sekunder via `PERPETUAL_LOOP_DELAY_MS=30000`
+ * for Spill 1-paritet (gir spillerne tid til å forhåndskjøpe brett).
  */
 export interface PerpetualRoundServiceConfig {
   enabled: boolean;
-  /** Delay før auto-restart trigges. Default 5 000 ms. */
+  /**
+   * Delay før auto-restart trigges. Default 5 000 ms (overrides via
+   * `PERPETUAL_LOOP_DELAY_MS` env-var; prod-Render satt til 30 000 ms
+   * for Spill 1-paritet).
+   */
   delayMs: number;
   /** Slugs som er disabled (subset av PERPETUAL_SLUGS). For test/staged rollout. */
   disabledSlugs: ReadonlySet<string>;
