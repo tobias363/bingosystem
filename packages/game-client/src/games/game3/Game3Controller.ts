@@ -222,9 +222,15 @@ class Game3Controller implements GameController {
     this.myPlayerId = joinResult.data.playerId;
     this.actualRoomCode = joinResult.data.roomCode;
 
-    // Start bridge
-    bridge.start(this.myPlayerId);
+    // Bug-fix 2026-05-04 (drawNew gap-loop, mirror Game2Controller):
+    // applySnapshot MÅ kjøre FØR bridge.start(). SpilloramaSocket bufferer
+    // broadcast-events (BIN-501) mens kanalen har 0 lyttere; første on()
+    // drainer bufferen synkront. Hvis start() kjøres først setter den
+    // lastAppliedDrawIndex til siste buffered drawIndex, deretter
+    // overskriver applySnapshot bookkeeping bakover med snapshot.length-1
+    // — som gir infinite resync-loop på etterfølgende live drawNew.
     bridge.applySnapshot(joinResult.data.snapshot);
+    bridge.start(this.myPlayerId);
 
     this.unsubs.push(
       bridge.on("stateChanged", (state) => this.onStateChanged(state)),

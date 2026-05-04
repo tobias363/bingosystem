@@ -76,6 +76,18 @@ class Game2Controller implements GameController {
 
     // Track socket stability + Tobias-direktiv 2026-05-03: vis Loading-overlay
     // ved reconnect/disconnect så kunden aldri ser en frosset eller tom skjerm.
+    //
+    // Bug-fix 2026-05-04 (Bug B — reconnect-loop): "connected"-grenen er
+    // kritisk. Server-side `detachSocket` setter kun `player.socketId =
+    // undefined` ved disconnect; ny socket må eksplisitt re-attaches via
+    // `room:resume` ellers kan server ikke route `io.to(roomCode).emit(...)`
+    // til den nye socketen. Refresh fungerte tidligere fordi det utløser
+    // `room:create`/`room:join` på nytt med ny socket.id. Nå håndteres det
+    // automatisk uten refresh.
+    //
+    // Speiler `Game1ReconnectFlow.handleReconnect` (apps/game1/logic/
+    // ReconnectFlow.ts:89) men inline her for å unngå cross-game-import
+    // (Spill 2 har egen waitForSyncReady i denne klassen).
     this.unsubs.push(
       socket.on("connectionStateChanged", (state) => {
         if (state === "reconnecting") {
@@ -85,6 +97,27 @@ class Game2Controller implements GameController {
         if (state === "disconnected") {
           telemetry.trackDisconnect("socket");
           this.loader?.setState("DISCONNECTED");
+        }
+        if (state === "connected" && this.actualRoomCode) {
+          // Re-attach + re-sync. Guarden mot tom `actualRoomCode` sikrer
+          // at FØRSTE connect (før initial join har fullført) ikke trigger
+          // resume — initial join-flyten håndterer state via createRoom-ack.
+          void socket
+            .resumeRoom({ roomCode: this.actualRoomCode })
+            .then((res) => {
+              if (res.ok && res.data?.snapshot) {
+                bridge.applySnapshot(res.data.snapshot);
+                this.loader?.hide();
+              } else {
+                console.warn(
+                  "[Game2] resumeRoom failed after reconnect:",
+                  res.error?.message ?? "no snapshot returned",
+                );
+              }
+            })
+            .catch((err) => {
+              console.error("[Game2] resumeRoom threw after reconnect:", err);
+            });
         }
       }),
     );
@@ -108,9 +141,19 @@ class Game2Controller implements GameController {
     this.actualRoomCode = joinResult.data.roomCode;
     console.log("[Game2] Joined room:", this.actualRoomCode, "playerId:", this.myPlayerId);
 
-    // Start bridge
-    bridge.start(this.myPlayerId);
+    // Bug-fix 2026-05-04 (drawNew gap-loop): applySnapshot MÅ kjøre FØR
+    // bridge.start(). SpilloramaSocket bufferer broadcast-events (BIN-501)
+    // mens kanalen har 0 lyttere; første on()-kall drainer bufferen synkront.
+    // Hvis start() kjøres først drainer den buffered drawNew-events og
+    // setter lastAppliedDrawIndex til siste buffered drawIndex. Deretter
+    // overskriver applySnapshot bookkeeping bakover med snapshot.length-1
+    // (som er ELDRE enn buffered events). Resultat: hver påfølgende
+    // live drawNew detekteres som gap → infinite resync-loop.
+    // Snu rekkefølgen: snapshot setter baseline FØRST, så start() drainer
+    // og buffered events kastes som duplikater (drawIndex < expected) —
+    // som er korrekt fordi snapshot allerede inneholder dem.
     bridge.applySnapshot(joinResult.data.snapshot);
+    bridge.start(this.myPlayerId);
 
     // Subscribe to bridge events
     this.unsubs.push(
