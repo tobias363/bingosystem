@@ -111,6 +111,14 @@ export class BongCard extends Container {
   private ticket: Ticket | null = null;
   private oneToGoTween: gsap.core.Tween | null = null;
   private bingoOverlay: Text | null = null;
+  /**
+   * Tobias-direktiv 2026-05-04 (Bug 2 — fix/spill2-bug2-bug3): pre-round-
+   * badge vises på bonger som er forhåndskjøp for neste runde — slik at
+   * spilleren ikke forveksler dem med aktive bonger i pågående runde.
+   * Lazy-mountet ved første `setPreRound(true)`-kall.
+   */
+  private preRoundBadge: Container | null = null;
+  private isPreRoundCard = false;
 
   constructor(options: BongCardOptions = {}) {
     super();
@@ -278,6 +286,75 @@ export class BongCard extends Container {
   /** Oppdater pris (kr). */
   setPrice(amount: number): void {
     this.headerPrice.text = `${amount} kr`;
+  }
+
+  /**
+   * Tobias-direktiv 2026-05-04 (Bug 2): merk denne bongen som "forhåndskjøp
+   * for neste runde". Visuelt:
+   *   - Hele kortet får 0.65 alpha (dempet) så det ikke konkurrerer med
+   *     aktive bonger i pågående runde.
+   *   - "FORHÅNDSKJØP NESTE RUNDE"-badge legges over header som klart
+   *     skiller pre-round fra aktive.
+   *
+   * Idempotent — flere kall med samme verdi gjør ingenting. Brukt fra
+   * `PlayScreen.buildTickets` etter `isPreRoundPreview`-beregningen.
+   */
+  setPreRound(isPreRound: boolean): void {
+    if (this.isPreRoundCard === isPreRound) return;
+    this.isPreRoundCard = isPreRound;
+
+    if (isPreRound) {
+      // Demp hele kortet så det leses som "ikke i live-runde".
+      this.alpha = 0.72;
+
+      if (!this.preRoundBadge) {
+        const badge = new Container();
+        const badgeBg = new Graphics();
+        const badgeText = new Text({
+          text: "FORHÅNDSKJØP – NESTE RUNDE",
+          style: {
+            fontFamily: "Inter, system-ui, Helvetica, sans-serif",
+            fontSize: 9,
+            fontWeight: "800",
+            fill: 0xffffff,
+            letterSpacing: 1.0,
+            align: "center",
+          },
+        });
+        badgeText.anchor.set(0.5);
+        // Fast badge-bredde — vi unngår `text.width` her fordi det
+        // krever en canvas/document for måling, og BongCard kan
+        // konstrueres i Node-miljø (vitest uten happy-dom).
+        // 9px Inter-700 + letterSpacing=1 ≈ 6px/tegn for store bokstaver
+        // → "FORHÅNDSKJØP – NESTE RUNDE" (28 tegn) ≈ 168px. Vi tar
+        // 180px med 8px padding på hver side for å unngå klipping.
+        const badgeW = 180;
+        const badgeH = 16;
+        badgeBg
+          .roundRect(0, 0, badgeW, badgeH, badgeH / 2)
+          .fill({ color: 0x501216, alpha: 0.92 });
+        badgeBg
+          .roundRect(0, 0, badgeW, badgeH, badgeH / 2)
+          .stroke({ color: 0xffe83d, alpha: 0.85, width: 1.0 });
+        badgeText.x = badgeW / 2;
+        badgeText.y = badgeH / 2;
+        badge.addChild(badgeBg);
+        badge.addChild(badgeText);
+        // Sentrert horisontalt; vertikalt over header (litt utenfor toppen
+        // av kortet så badge ligger som en "etikett").
+        badge.x = (this.cardW - badgeW) / 2;
+        badge.y = -badgeH / 2;
+        this.addChild(badge);
+        this.preRoundBadge = badge;
+      } else {
+        this.preRoundBadge.visible = true;
+      }
+    } else {
+      this.alpha = 1;
+      if (this.preRoundBadge) {
+        this.preRoundBadge.visible = false;
+      }
+    }
   }
 
   /** Stopp alle aktive animasjoner — kalles ved game-end. */

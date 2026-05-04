@@ -80,6 +80,13 @@ export class ComboPanel extends Container {
   private hovedspillTitle: Text;
   private buyButton: Container;
   private buyButtonBg: Graphics;
+  /**
+   * Tekst på "Kjøp flere brett"-pillen. Holdt som field så
+   * `setBuyMoreLabel` kan oppdatere den dynamisk basert på gameStatus
+   * (LOBBY/WAITING → "Kjøp flere brett", RUNNING → "Forhåndskjøp neste
+   * runde"). Speiler BuyPopup sin phase-aware tittel-logikk (PR #903).
+   */
+  private buyButtonText: Text;
   // Lykketall-kolonne (klikkbar, åpner popup).
   private lykketallCol: Container;
   private lykketallLabel: Text;
@@ -149,7 +156,7 @@ export class ComboPanel extends Container {
     this.drawBuyButton(false);
     this.buyButton.addChild(this.buyButtonBg);
 
-    const buyText = new Text({
+    this.buyButtonText = new Text({
       text: "Kjøp flere brett",
       style: {
         fontFamily: "Inter, system-ui, Helvetica, sans-serif",
@@ -159,10 +166,10 @@ export class ComboPanel extends Container {
         align: "center",
       },
     });
-    buyText.anchor.set(0.5);
-    buyText.x = PILL_W / 2;
-    buyText.y = PILL_H / 2;
-    this.buyButton.addChild(buyText);
+    this.buyButtonText.anchor.set(0.5);
+    this.buyButtonText.x = PILL_W / 2;
+    this.buyButtonText.y = PILL_H / 2;
+    this.buyButton.addChild(this.buyButtonText);
 
     this.buyButton.on("pointerover", () => this.drawBuyButton(true));
     this.buyButton.on("pointerout", () => this.drawBuyButton(false));
@@ -262,6 +269,23 @@ export class ComboPanel extends Container {
 
   setOnBuyMore(cb: () => void): void {
     this.onBuyMore = cb;
+  }
+
+  /**
+   * Tobias-direktiv 2026-05-04 (Bug 2 — fix/spill2-bug2-bug3): oppdater
+   * pill-tekst basert på gameStatus.
+   *   - LOBBY/WAITING/ENDED → "Kjøp flere brett" (default)
+   *   - RUNNING (mid-round) → "Forhåndskjøp neste runde"
+   *
+   * Speiler BuyPopup.show(forNextRound)-flagget (PR #903) slik at både
+   * trigger-pillen i ComboPanel OG popup-tittelen kommuniserer at
+   * kjøpet armer for NESTE runde, ikke pågående trekning.
+   *
+   * Idempotent: gjør ingenting om teksten allerede er korrekt.
+   */
+  setBuyMoreLabel(label: string): void {
+    if (this.buyButtonText.text === label) return;
+    this.buyButtonText.text = label;
   }
 
   /** Markér valgt lucky-number — oppdaterer tekst-display i Lykketall-kolonnen. */
