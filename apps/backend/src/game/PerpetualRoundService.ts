@@ -653,6 +653,27 @@ export class PerpetualRoundService {
   }
 
   /**
+   * Diagnostic-helper (Tobias 2026-05-04): er det en pending auto-restart
+   * for et gitt rom? Brukes av `/api/_dev/game2-state` for å la oss se om
+   * `handleGameEnded` har planlagt en `engine.startGame`-kall som ikke har
+   * fyrt ennå (typisk innen `delayMs`-vinduet).
+   *
+   * Returnerer false hvis rommet ikke finnes i pending-mapen.
+   */
+  hasPendingRestart(roomCode: string): boolean {
+    return this.pendingByRoom.has(roomCode);
+  }
+
+  /**
+   * Diagnostic-helper (Tobias 2026-05-04): hent gameId-en som trigget den
+   * pending auto-restart-en for et rom (for å verifisere at det er forrige
+   * runde sin end som har planlagt restart, ikke en stale entry).
+   */
+  pendingRestartGameId(roomCode: string): string | null {
+    return this.pendingByRoom.get(roomCode)?.gameId ?? null;
+  }
+
+  /**
    * Test-helper: avbryt alle pending restarts. Brukes typisk i `afterEach`
    * for å hindre tester i å kjøre callbacks etter at testen er ferdig.
    */
