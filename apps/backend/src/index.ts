@@ -111,6 +111,9 @@ import { createGameStartNotificationsJob } from "./jobs/gameStartNotifications.j
 import { createNotificationsRouter } from "./routes/notifications.js";
 import { createAdminNotificationsRouter } from "./routes/adminNotifications.js";
 import { createAdminSmsBroadcastRouter } from "./routes/adminSmsBroadcast.js";
+// Tobias 2026-05-04: Spill 2 (rocket) debug-telemetry — read-only diagnose
+// + force-end workaround. Token-gated via RESET_TEST_PLAYERS_TOKEN-env-var.
+import { createDevGame2StateRouter } from "./routes/devGame2State.js";
 import { LoyaltyPointsHookAdapter } from "./adapters/LoyaltyPointsHookAdapter.js";
 import { Game1HallReadyService } from "./game/Game1HallReadyService.js";
 import { Game1MasterControlService } from "./game/Game1MasterControlService.js";
@@ -1950,9 +1953,21 @@ jobScheduler.register({
 // default 30000) som draw-intervall, og samme tick-polling som Game 1
 // (`jobGame1AutoDrawIntervalMs`, default 1000 ms) som polling-rate.
 // Default ON — Spill 2/3 må trekke baller for å fungere.
+// Tobias 2026-05-04: late-bind av perpetual-spawn-callback. PerpetualRoundService
+// konstrueres lenger nede i fila (etter at vi trenger den her), så vi setter
+// closure som leser den ved hver tick i stedet for ved konstruksjon.
+let _perpetualRoundServiceLateBind:
+  | { spawnFirstRoundIfNeeded: (roomCode: string) => Promise<boolean> }
+  | null = null;
+const onStaleRoomEndedCallback = async (roomCode: string): Promise<void> => {
+  const svc = _perpetualRoundServiceLateBind;
+  if (!svc) return;
+  await svc.spawnFirstRoundIfNeeded(roomCode);
+};
 const game2AutoDrawTickService = new Game2AutoDrawTickService({
   engine,
   drawIntervalMs: autoDrawIntervalEnvOverrideMs ?? 30_000,
+  onStaleRoomEnded: onStaleRoomEndedCallback,
 });
 const game3AutoDrawTickService = new Game3AutoDrawTickService({
   engine,
@@ -2380,6 +2395,10 @@ const perpetualRoundService = new PerpetualRoundService({
     await emitRoomUpdate(roomCode);
   },
 });
+// Tobias 2026-05-04: late-bind for game2AutoDrawTickService.onStaleRoomEnded
+// (definert lenger oppe i fila, før perpetualRoundService finnes). Når tick-en
+// auto-recovers et stuck Spill 2-rom kan den nå spawne ny runde med en gang.
+_perpetualRoundServiceLateBind = perpetualRoundService;
 
 // 2026-12-06 (v2): game-end cleanup-hook. Slett pool fra in-memory cache + DB
 // når runden er over så vi ikke akkumulerer foreldede pools. Vi monkey-patcher
@@ -3325,6 +3344,20 @@ app.post("/api/_dev/reset-test-user", async (req, res) => {
     });
   }
 });
+
+// Tobias 2026-05-04: Spill 2 (rocket) debug-telemetry-route. Token-gated.
+// Mountes på samme nivå som /api/_dev/reset-test-user. To endepunkter:
+//   GET  /api/_dev/game2-state?token=...     — full diagnose
+//   POST /api/_dev/game2-force-end?token=... — force-end + spawn ny runde
+app.use(
+  createDevGame2StateRouter({
+    engine,
+    game2AutoDrawTickService,
+    perpetualRoundService,
+    spawnFirstRoundIfNeeded: (roomCode) =>
+      perpetualRoundService.spawnFirstRoundIfNeeded(roomCode),
+  })
+);
 
 // ── Socket.IO ─────────────────────────────────────────────────────────────────
 

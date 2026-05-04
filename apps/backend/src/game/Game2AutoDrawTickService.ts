@@ -88,6 +88,19 @@ export interface AutoDrawEngine {
     roomCode: string;
     actorPlayerId: string;
   }): Promise<{ number: number; drawIndex: number; gameId: string }>;
+  /**
+   * Tobias 2026-05-04: opt-in stuck-room recovery. Når tick-en finner et
+   * Spill 2-rom som er status=RUNNING med drawnNumbers.length >= 21 OG
+   * `endedReason==null`, betyr det at runden står fast (typisk kjent
+   * boot-recovery-pattern eller hook-feil i `onDrawCompleted` på siste
+   * draw). Hvis denne metoden er wired, kaller tick-en den i stedet for å
+   * bare skippe — samme contract som
+   * {@link import("./BingoEngine").BingoEngine.forceEndStaleRound}.
+   *
+   * Optional for bakoverkompatibilitet: tester og legacy-kallere som ikke
+   * har metoden får dagens skip-oppførsel.
+   */
+  forceEndStaleRound?(roomCode: string, endedReason: string): Promise<boolean>;
 }
 
 export interface Game2AutoDrawTickServiceOptions {
@@ -101,6 +114,17 @@ export interface Game2AutoDrawTickServiceOptions {
    * `DRAW_TOO_SOON`.
    */
   drawIntervalMs?: number;
+  /**
+   * Tobias 2026-05-04: callback som fyres etter at tick-en har force-endet
+   * et stuck-rom (drawnNumbers >= 21 men status fortsatt RUNNING +
+   * endedReason null). Caller kan bruke dette til å trigge
+   * `PerpetualRoundService.spawnFirstRoundIfNeeded(roomCode)` så ny runde
+   * spawnes umiddelbart i stedet for å vente på neste player-join.
+   *
+   * Optional + fail-soft — feil i callbacken logges men avbryter ikke
+   * tick-en for andre rom.
+   */
+  onStaleRoomEnded?: (roomCode: string) => Promise<void> | void;
 }
 
 export interface Game2AutoDrawTickResult {
@@ -114,6 +138,14 @@ export interface Game2AutoDrawTickResult {
   errors: number;
   /** Per-rom feilmelding for debug (opptil 10 første). */
   errorMessages?: string[];
+  /**
+   * Tobias 2026-05-04: rom som ble force-endet i denne ticken etter at de
+   * havnet i stuck-state (drawn=21, status=RUNNING, endedReason=null).
+   * Tom array når ingen rom var stuck.
+   */
+  staleRoomsEnded?: string[];
+  /** Wall-clock når ticken kjørte ferdig (ms epoch). For diagnose-route. */
+  completedAtMs?: number;
 }
 
 // ── Service ─────────────────────────────────────────────────────────────────
@@ -121,6 +153,7 @@ export interface Game2AutoDrawTickResult {
 export class Game2AutoDrawTickService {
   private readonly engine: AutoDrawEngine;
   private readonly drawIntervalMs: number;
+  private readonly onStaleRoomEnded?: (roomCode: string) => Promise<void> | void;
 
   /**
    * In-memory throttle per rom. Setter siste-draw-timestamp etter hver
@@ -138,8 +171,16 @@ export class Game2AutoDrawTickService {
    */
   private readonly currentlyProcessing = new Set<string>();
 
+  /**
+   * Tobias 2026-05-04: siste tick-resultat lagres for diagnose-routen
+   * `/api/_dev/game2-state`. Null inntil første tick har kjørt.
+   * Overskrives ved hver tick — vi vil bare ha siste run for debug.
+   */
+  private lastTickResult: Game2AutoDrawTickResult | null = null;
+
   constructor(options: Game2AutoDrawTickServiceOptions) {
     this.engine = options.engine;
+    this.onStaleRoomEnded = options.onStaleRoomEnded;
     const interval = options.drawIntervalMs;
     // 0 er gyldig (= "ingen throttle" — engine-laget håndhever sin egen
     // minDrawIntervalMs). Negativ/NaN/undefined → default 30 000 ms.
@@ -147,6 +188,15 @@ export class Game2AutoDrawTickService {
       typeof interval === "number" && Number.isFinite(interval) && interval >= 0
         ? Math.floor(interval)
         : 30_000;
+  }
+
+  /**
+   * Tobias 2026-05-04: hent siste tick-resultat for diagnose-routen
+   * `/api/_dev/game2-state`. Returnerer null hvis ticken aldri har kjørt
+   * (f.eks. boot uten cron-trigger ennå).
+   */
+  getLastTickResult(): Game2AutoDrawTickResult | null {
+    return this.lastTickResult;
   }
 
   /**
@@ -161,6 +211,7 @@ export class Game2AutoDrawTickService {
     let skipped = 0;
     let errors = 0;
     const errorMessages: string[] = [];
+    const staleRoomsEnded: string[] = [];
 
     for (const summary of summaries) {
       // Slug-filter: kun Spill 2-rom.
@@ -207,7 +258,66 @@ export class Game2AutoDrawTickService {
         continue;
       }
       if (game.drawnNumbers.length >= GAME2_MAX_BALLS) {
+        // Tobias 2026-05-04 (root-cause-fix): rom som er status=RUNNING men
+        // har trukket alle 21 baller er STUCK. Dette skjer når
+        // `Game2Engine.onDrawCompleted` ikke fikk satt status=ENDED på
+        // siste draw — typisk av to grunner:
+        //   1) Hook-feil i `onDrawCompleted` (f.eks. wallet-shortage på
+        //      sist-draw payout) ble fanget av `handleHookError` etter at
+        //      draw-bagen var tom, slik at status aldri ble mutert.
+        //   2) Process-restart etter at draw-bagen ble tømt men før
+        //      checkpoint-en ble persistert.
+        //
+        // Tidligere kode skippet bare slike rom — det blokkerte
+        // perpetual-loopen for alltid (PerpetualRoundService.handleGameEnded
+        // fyres kun når `endedReason` settes). Nå force-ender vi runden via
+        // engine-callback og lar `onStaleRoomEnded` trigge en ny runde.
+        //
+        // Bevarer dagens `skipped++` for konsistens med tidligere
+        // observability — men i tillegg flagges rommet i staleRoomsEnded
+        // og logges på warn så ops ser at recovery skjedde.
         skipped++;
+
+        if (typeof this.engine.forceEndStaleRound === "function") {
+          try {
+            const ended = await this.engine.forceEndStaleRound(
+              summary.code,
+              "STUCK_AT_MAX_BALLS_AUTO_RECOVERY"
+            );
+            if (ended) {
+              staleRoomsEnded.push(summary.code);
+              log.warn(
+                {
+                  roomCode: summary.code,
+                  drawnCount: game.drawnNumbers.length,
+                },
+                "[game2-auto-draw] auto-recovered stuck room (drawn=21, status=RUNNING, endedReason=null)"
+              );
+
+              if (this.onStaleRoomEnded) {
+                try {
+                  await this.onStaleRoomEnded(summary.code);
+                } catch (cbErr) {
+                  log.warn(
+                    { err: cbErr, roomCode: summary.code },
+                    "[game2-auto-draw] onStaleRoomEnded callback failed"
+                  );
+                }
+              }
+            }
+          } catch (err) {
+            errors++;
+            const msg = `${summary.code}: forceEndStaleRound failed: ${(err as Error).message ?? "unknown"}`;
+            if (errorMessages.length < 10) errorMessages.push(msg);
+            log.warn(
+              { err, roomCode: summary.code },
+              "[game2-auto-draw] forceEndStaleRound failed"
+            );
+          }
+        } else {
+          // Engine støtter ikke recovery (typisk i tester med fake-engine).
+          // Skip stille — same som tidligere oppførsel.
+        }
         continue;
       }
 
@@ -265,16 +375,20 @@ export class Game2AutoDrawTickService {
     }
 
     log.debug(
-      { checked, drawsTriggered, skipped, errors },
+      { checked, drawsTriggered, skipped, errors, staleRoomsEnded: staleRoomsEnded.length },
       "[game2-auto-draw] tick completed"
     );
 
-    return {
+    const result: Game2AutoDrawTickResult = {
       checked,
       drawsTriggered,
       skipped,
       errors,
       errorMessages: errorMessages.length > 0 ? errorMessages : undefined,
+      staleRoomsEnded: staleRoomsEnded.length > 0 ? staleRoomsEnded : undefined,
+      completedAtMs: Date.now(),
     };
+    this.lastTickResult = result;
+    return result;
   }
 }

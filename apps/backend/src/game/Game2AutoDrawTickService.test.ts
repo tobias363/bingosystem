@@ -369,3 +369,185 @@ test("constructor: ugyldig drawIntervalMs (negativ/NaN/undefined) → faller til
     assert.equal(drawCalls.length, 1);
   }
 });
+
+// ── Tobias 2026-05-04: stuck-room auto-recovery + diagnostic helpers ───────
+
+test("stuck-room recovery: drawn=21 + status=RUNNING + forceEndStaleRound wired → ender + callback fyrer", async () => {
+  // Replicates the prod-bug pattern: ROCKET-rom på status=RUNNING med 21
+  // baller trukket, men endedReason=null. Med forceEndStaleRound-callback
+  // wired skal tick-en force-ende rommet OG kalle onStaleRoomEnded så
+  // perpetual-loopen kan spawne ny runde.
+  const forceEndCalls: Array<{ roomCode: string; reason: string }> = [];
+  const onStaleCalls: string[] = [];
+  const drawCalls: Array<{ roomCode: string; actorPlayerId: string }> = [];
+
+  const engine: AutoDrawEngine = {
+    listRoomSummaries: () => [
+      { code: "ROCKET", gameSlug: "rocket", gameStatus: "RUNNING" },
+    ],
+    getRoomSnapshot: () => ({
+      code: "ROCKET",
+      hostPlayerId: "host",
+      gameSlug: "rocket",
+      currentGame: {
+        status: "RUNNING",
+        drawnNumbers: Array.from({ length: 21 }, (_, i) => i + 1),
+      },
+    }),
+    drawNextNumber: async (input) => {
+      drawCalls.push(input);
+      return { number: 22, drawIndex: 21, gameId: "g" };
+    },
+    forceEndStaleRound: async (roomCode, reason) => {
+      forceEndCalls.push({ roomCode, reason });
+      return true;
+    },
+  };
+
+  const service = new Game2AutoDrawTickService({
+    engine,
+    drawIntervalMs: 0,
+    onStaleRoomEnded: async (roomCode) => {
+      onStaleCalls.push(roomCode);
+    },
+  });
+  const r = await service.tick();
+
+  assert.equal(drawCalls.length, 0, "stuck rom skal IKKE trigge drawNextNumber");
+  assert.equal(forceEndCalls.length, 1);
+  assert.equal(forceEndCalls[0]!.roomCode, "ROCKET");
+  assert.equal(forceEndCalls[0]!.reason, "STUCK_AT_MAX_BALLS_AUTO_RECOVERY");
+  assert.equal(onStaleCalls.length, 1);
+  assert.equal(onStaleCalls[0], "ROCKET");
+  assert.equal(r.skipped, 1, "stuck rom telles fortsatt som skipped (bevart obs)");
+  assert.deepEqual(r.staleRoomsEnded, ["ROCKET"]);
+});
+
+test("stuck-room recovery: forceEndStaleRound MANGLER på engine → faller til legacy skip-only", async () => {
+  // Backward-compat: fake-engine i eksisterende tester har ikke
+  // forceEndStaleRound. Da skal vi bare skippe (gammel oppførsel).
+  const { engine, drawCalls } = makeEngine([
+    {
+      code: "FULL",
+      hostPlayerId: "h",
+      gameSlug: "rocket",
+      gameStatus: "RUNNING",
+      drawnNumbers: Array.from({ length: 21 }, (_, i) => i + 1),
+    },
+  ]);
+  const service = new Game2AutoDrawTickService({ engine, drawIntervalMs: 0 });
+  const r = await service.tick();
+  assert.equal(r.skipped, 1);
+  assert.equal(drawCalls.length, 0);
+  assert.equal(r.staleRoomsEnded, undefined);
+});
+
+test("stuck-room recovery: forceEndStaleRound returnerer false (allerede endet) → ingen callback", async () => {
+  let forceEndCallCount = 0;
+  let onStaleCallCount = 0;
+  const engine: AutoDrawEngine = {
+    listRoomSummaries: () => [
+      { code: "ROCKET", gameSlug: "rocket", gameStatus: "RUNNING" },
+    ],
+    getRoomSnapshot: () => ({
+      code: "ROCKET",
+      hostPlayerId: "host",
+      gameSlug: "rocket",
+      currentGame: {
+        status: "RUNNING",
+        drawnNumbers: Array.from({ length: 21 }, (_, i) => i + 1),
+      },
+    }),
+    drawNextNumber: async () => {
+      throw new Error("should not be called");
+    },
+    forceEndStaleRound: async () => {
+      forceEndCallCount++;
+      return false; // no-op (e.g., room already had endedReason)
+    },
+  };
+  const service = new Game2AutoDrawTickService({
+    engine,
+    drawIntervalMs: 0,
+    onStaleRoomEnded: async () => {
+      onStaleCallCount++;
+    },
+  });
+  const r = await service.tick();
+  assert.equal(forceEndCallCount, 1);
+  assert.equal(onStaleCallCount, 0, "callback skal ikke fyre når force-end returnerer false");
+  assert.equal(r.staleRoomsEnded, undefined);
+});
+
+test("stuck-room recovery: forceEndStaleRound kaster → telles som error, krasjer ikke tick", async () => {
+  const engine: AutoDrawEngine = {
+    listRoomSummaries: () => [
+      { code: "ROCKET", gameSlug: "rocket", gameStatus: "RUNNING" },
+    ],
+    getRoomSnapshot: () => ({
+      code: "ROCKET",
+      hostPlayerId: "host",
+      gameSlug: "rocket",
+      currentGame: {
+        status: "RUNNING",
+        drawnNumbers: Array.from({ length: 21 }, (_, i) => i + 1),
+      },
+    }),
+    drawNextNumber: async () => {
+      throw new Error("not called");
+    },
+    forceEndStaleRound: async () => {
+      throw new Error("forceEnd boom");
+    },
+  };
+  const service = new Game2AutoDrawTickService({ engine, drawIntervalMs: 0 });
+  const r = await service.tick();
+  assert.equal(r.errors, 1);
+  assert.ok(r.errorMessages?.[0]?.includes("forceEndStaleRound failed"));
+});
+
+test("getLastTickResult: returnerer null før første tick, deretter siste tick-resultat", async () => {
+  const { engine } = makeEngine([
+    { code: "R", hostPlayerId: "h", gameSlug: "rocket", gameStatus: "RUNNING" },
+  ]);
+  const service = new Game2AutoDrawTickService({ engine, drawIntervalMs: 0 });
+  assert.equal(service.getLastTickResult(), null, "før tick: null");
+
+  const r = await service.tick();
+  const last = service.getLastTickResult();
+  assert.notEqual(last, null);
+  assert.equal(last!.checked, r.checked);
+  assert.equal(last!.drawsTriggered, r.drawsTriggered);
+  assert.ok(typeof last!.completedAtMs === "number");
+});
+
+test("getLastTickResult: callback-feil i onStaleRoomEnded krasjer ikke tick + telles ikke som error", async () => {
+  const engine: AutoDrawEngine = {
+    listRoomSummaries: () => [
+      { code: "ROCKET", gameSlug: "rocket", gameStatus: "RUNNING" },
+    ],
+    getRoomSnapshot: () => ({
+      code: "ROCKET",
+      hostPlayerId: "host",
+      gameSlug: "rocket",
+      currentGame: {
+        status: "RUNNING",
+        drawnNumbers: Array.from({ length: 21 }, (_, i) => i + 1),
+      },
+    }),
+    drawNextNumber: async () => {
+      throw new Error("not called");
+    },
+    forceEndStaleRound: async () => true,
+  };
+  const service = new Game2AutoDrawTickService({
+    engine,
+    drawIntervalMs: 0,
+    onStaleRoomEnded: async () => {
+      throw new Error("callback boom");
+    },
+  });
+  const r = await service.tick();
+  assert.equal(r.errors, 0, "callback-feil teller ikke som engine-error");
+  assert.deepEqual(r.staleRoomsEnded, ["ROCKET"]);
+});
