@@ -363,8 +363,8 @@ See @docs/architecture/SPILLKATALOG.md for the definitive game catalog. Quick ma
 | Marketing | Code-name | Slug | Category | Trekning |
 |-----------|-----------|------|----------|----------|
 | Spill 1 (Hovedspill 1) | game1 | `bingo` | Hovedspill (75-ball 5×5) | Live |
-| Spill 2 (Hovedspill 2) | game2 | `rocket` | Hovedspill (60-ball 3×5) | Live |
-| Spill 3 (Hovedspill 3) | game3 | `monsterbingo` | Hovedspill (60-ball 5×5) | Live |
+| Spill 2 (Hovedspill 2) | game2 | `rocket` | Hovedspill (21-ball 3×3, full plate, ETT globalt rom) | Live |
+| Spill 3 (Hovedspill 3) | game3 | `monsterbingo` | Hovedspill (75-ball 5×5 uten free, T/X/7/Pyramide à 25%, ETT globalt rom) | Live |
 | SpinnGo (Spill 4) | game5 | `spillorama` | **Databingo** (60-ball 3×5 + roulette) | Player-startet |
 | Candy | — | `candy` | External iframe (third-party) | Tredjeparts |
 
