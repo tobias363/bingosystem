@@ -322,6 +322,13 @@ export class PlayScreen extends Container {
         ? []
         : (state.myMarks[i] ?? state.drawnNumbers);
       card.loadTicket(ticket, initialMarks);
+      // Tobias-direktiv 2026-05-04 (Bug 2 — fix/spill2-bug2-bug3): merk
+      // pre-round-bongen visuelt så den ikke forveksles med aktive bonger
+      // i pågående runde. `isPreRoundPreview` er true når vi viser
+      // preRoundTickets i stedet for live myTickets.
+      if (isPreRoundPreview) {
+        card.setPreRound(true);
+      }
       this.bongs.push(card);
       this.bongGridContainer.addChild(card);
     }
@@ -382,6 +389,13 @@ export class PlayScreen extends Container {
     // mellom snapshot-tikker. Brukes av `openBuyPopupModal` for å sette
     // riktig BuyPopup-tittel.
     this.currentGameStatus = state.gameStatus;
+    // 2026-05-04 (Bug 2): "Kjøp flere brett"-pill skal vise
+    // "Forhåndskjøp neste runde" mid-RUNNING så spilleren forstår at
+    // pågående trekning IKKE er en del av kjøpet. Speiler BuyPopup
+    // sin phase-aware tittel-logikk (PR #903).
+    this.comboPanel.setBuyMoreLabel(
+      state.gameStatus === "RUNNING" ? "Forhåndskjøp neste runde" : "Kjøp flere brett",
+    );
     this.comboPanel.setPlayerCount(state.playerCount ?? 0);
     this.ballTube.setDrawCount(state.drawnNumbers.length, state.totalDrawCapacity);
     this.startCountdown(state.millisUntilNextStart);
