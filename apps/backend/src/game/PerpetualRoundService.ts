@@ -53,6 +53,24 @@ const logger = rootLogger.child({ module: "perpetual-round" });
 export const PERPETUAL_SLUGS: ReadonlySet<string> = new Set(["rocket", "monsterbingo"]);
 
 /**
+ * 2026-05-04 (Tobias bug-fix): per-slug default entry fee for perpetual-
+ * loop-starts. Spill 2 (`rocket`) og Spill 3 (`monsterbingo`) er
+ * ekte-pengespill med 10 kr per brett som baseline.
+ *
+ * Tidligere brukte vi `runtimeBingoSettings.autoRoundEntryFee` for alle
+ * perpetual-runder; den default-en er 0 (free-play) og laget for Spill 1's
+ * dev-flow. Resultat: prod-Spill 2/3 startet med entryFee=0, prizePool=0
+ * og ingen utbetaling — bekreftet via `/api/_dev/game2-state`.
+ *
+ * Faller tilbake til `defaultEntryFee` (env-driven) for ukjente slugs slik
+ * at fremtidige perpetual-spill kan styres via env uten kode-endring.
+ */
+export const PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG: ReadonlyMap<string, number> = new Map([
+  ["rocket", 10],
+  ["monsterbingo", 10],
+]);
+
+/**
  * Engine-overflate som tjenesten trenger. Kun lese-snapshot + startGame.
  * Holdt minimal slik at tjenesten lett kan testes uten full BingoEngine.
  */
@@ -236,6 +254,22 @@ export class PerpetualRoundService {
   }
 
   /**
+   * 2026-05-04 (Tobias bug-fix): resolve default entry fee for the round
+   * about to be started. Per-slug overrides (Spill 2 / Spill 3 = 10 kr)
+   * win over `defaultEntryFee`-config so perpetual rounds start with a
+   * non-zero prizePool — the env-driven default (typically 0 for dev)
+   * is only used as a last-resort fallback for unknown slugs.
+   *
+   * Slug match is case-insensitive + trim for robustness against legacy
+   * casing inconsistencies (matches `PERPETUAL_SLUGS` membership check).
+   */
+  private resolveEntryFeeForSlug(gameSlug: string): number {
+    const normalized = (gameSlug ?? "").toLowerCase().trim();
+    const slugDefault = PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.get(normalized);
+    return slugDefault !== undefined ? slugDefault : this.config.defaultEntryFee;
+  }
+
+  /**
    * Hovedpunkt: kalles fra `bingoAdapter.onGameEnded`-wiring i index.ts.
    *
    * Fail-soft: alle feil fanges og logges. Auto-restart-tilnærmingen er
@@ -386,10 +420,16 @@ export class PerpetualRoundService {
     }
 
     const variantInfo = this.config.variantLookup.getVariantConfig(roomCode);
+    // 2026-05-04 (Tobias bug-fix): bruk slug-aware default entry fee.
+    // For Spill 2 (rocket) og Spill 3 (monsterbingo) → 10 kr/brett. For
+    // andre slugs → eksisterende `defaultEntryFee` (env-driven). Sikrer
+    // at prizePool > 0 selv når env-default er 0 (free-play-konfig laget
+    // for Spill 1 dev-flow).
+    const entryFee = this.resolveEntryFeeForSlug(snapshot.gameSlug);
     const startInput: Parameters<PerpetualEngine["startGame"]>[0] = {
       roomCode,
       actorPlayerId: snapshot.hostPlayerId,
-      entryFee: this.config.defaultEntryFee,
+      entryFee,
       ticketsPerPlayer: this.config.defaultTicketsPerPlayer,
       payoutPercent: this.config.defaultPayoutPercent,
       // 2026-05-04 (Tobias-direktiv): carry over armed players fra forrige
@@ -412,6 +452,7 @@ export class PerpetualRoundService {
           prevGameId,
           slug: snapshot.gameSlug,
           actorPlayerId: snapshot.hostPlayerId,
+          entryFee,
         },
         "perpetual: auto-restart succeeded",
       );
@@ -585,10 +626,14 @@ export class PerpetualRoundService {
     );
 
     const variantInfo = this.config.variantLookup.getVariantConfig(roomCode);
+    // 2026-05-04 (Tobias bug-fix): symmetrisk med startNextRound —
+    // slug-aware default entry fee. Spill 2/3 = 10 kr; ukjente slugs
+    // bruker env-default.
+    const entryFee = this.resolveEntryFeeForSlug(snapshot.gameSlug);
     const startInput: Parameters<PerpetualEngine["startGame"]>[0] = {
       roomCode,
       actorPlayerId: snapshot.hostPlayerId,
-      entryFee: this.config.defaultEntryFee,
+      entryFee,
       ticketsPerPlayer: this.config.defaultTicketsPerPlayer,
       payoutPercent: this.config.defaultPayoutPercent,
       // 2026-05-04 (Tobias-direktiv): symmetrisk med auto-restart —
@@ -608,6 +653,7 @@ export class PerpetualRoundService {
           slug,
           actorPlayerId: snapshot.hostPlayerId,
           playerCount: snapshot.players.length,
+          entryFee,
         },
         "perpetual: first-round spawn succeeded",
       );

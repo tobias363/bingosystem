@@ -25,7 +25,7 @@ import { BingoEngine } from "./BingoEngine.js";
 import { IdempotencyKeys } from "./idempotency.js";
 import { roundCurrency } from "../util/currency.js";
 import { logger as rootLogger } from "../util/logger.js";
-import { hasFull3x3 } from "./ticket.js";
+import { hasFull3x3, ticketContainsNumber } from "./ticket.js";
 import {
   computeJackpotList,
   resolveJackpotPrize,
@@ -126,6 +126,19 @@ export class Game2Engine extends BingoEngine {
   }): Promise<void> {
     const { room, game, lastBall, drawIndex, variantConfig } = ctx;
     if (!this.isGame2Round(variantConfig)) return;
+
+    // 2026-05-04 (Tobias bug-fix): auto-mark celler som matcher lastBall.
+    // Spill 2 er auto-claim-on-draw — engine evaluerer 9/9-completion via
+    // `findG2Winners` som bruker `drawnNumbers` direkte. Men `game.marks`
+    // ble aldri oppdatert, så debug-route + recovery + late-joiner-state
+    // viste 0 marks selv når 7/9 celler matchet trukne baller.
+    //
+    // Bivirkninger: ingen — `findG2Winners` baserer seg på `drawnNumbers`,
+    // ikke `marks`. Klient-UIet beregner egne marks via `state.myMarks[i] ??
+    // state.drawnNumbers` (PlayScreen.ts), så fallbacken fortsatte å virke
+    // før denne fixen. Auto-mark sikrer audit-paritet med Spill 1 og at
+    // hver runde har korrekt mark-state for compliance-eksport.
+    autoMarkPlayerCells(game, lastBall);
 
     const purchasedTickets = countTickets(game);
     const ticketPrice = game.entryFee;
@@ -580,4 +593,33 @@ function countTickets(game: GameState): number {
   let total = 0;
   for (const tickets of game.tickets.values()) total += tickets.length;
   return total;
+}
+
+/**
+ * 2026-05-04 (Tobias bug-fix): auto-mark celler som matcher `lastBall` på
+ * alle aktive tickets i rommet. Idempotent — Set.add() er en no-op hvis
+ * tallet allerede er markert.
+ *
+ * Brukt av Game2Engine + Game3Engine for å holde `game.marks` synkronisert
+ * med `game.drawnNumbers` selv om auto-claim-pathen ikke konsulterer
+ * marks. Krever at hver player.tickets[i] korresponderer 1:1 med
+ * player.marks[i] (engine-invariant siden BIN-244).
+ *
+ * Eksportert som intern util fordi Game3Engine.onDrawCompleted gjenbruker
+ * eksakt samme logikk; å duplikere ville være regresjons-risiko.
+ */
+export function autoMarkPlayerCells(game: GameState, lastBall: number): void {
+  for (const [playerId, ticketArray] of game.tickets) {
+    const marksByTicket = game.marks.get(playerId);
+    if (!marksByTicket) continue;
+    for (let i = 0; i < ticketArray.length; i += 1) {
+      const ticket = ticketArray[i];
+      if (!ticket) continue;
+      const tMarks = marksByTicket[i];
+      if (!tMarks) continue;
+      if (ticketContainsNumber(ticket, lastBall)) {
+        tMarks.add(lastBall);
+      }
+    }
+  }
 }
