@@ -43,7 +43,6 @@ function makeDeps(overrides: Partial<SocketActionsDeps> = {}) {
     hideBuyPopup: vi.fn(),
     reset: vi.fn(),
     update: vi.fn(),
-    resetClaimButton: vi.fn(),
   } as unknown as PlayScreen;
 
   const onError = vi.fn();
@@ -198,14 +197,18 @@ describe("Game1SocketActions", () => {
       expect(socket.submitClaim).toHaveBeenCalledWith({ roomCode: "ROOM-1", type: "BINGO" });
     });
 
-    it("surfaces server error as toast + resets button", async () => {
+    it("surfaces server error as toast (Bølge G — claim-knapp fjernet)", async () => {
+      // Bølge G (2026-05-05): tidligere kalte denne også
+      // `playScreen.resetClaimButton(type)`. Den knappen finnes ikke
+      // lenger i game1/game3-PlayScreen — server eier auto-claim-on-draw
+      // (BIN-689). Toast-error-på-NACK er fortsatt riktig kontrakt for
+      // evt. eksterne callere av `Game1SocketActions.claim()`.
       const socket = {
         submitClaim: vi.fn().mockResolvedValue({ ok: false, error: { message: "Invalid claim" } }),
       } as unknown as SpilloramaSocket;
-      const { deps, toast, playScreen } = makeDeps({ socket, getPhase: () => "PLAYING" });
+      const { deps, toast } = makeDeps({ socket, getPhase: () => "PLAYING" });
       await new Game1SocketActions(deps).claim("LINE");
       expect(toast.error).toHaveBeenCalledWith("Invalid claim");
-      expect(playScreen.resetClaimButton).toHaveBeenCalledWith("LINE");
     });
   });
 

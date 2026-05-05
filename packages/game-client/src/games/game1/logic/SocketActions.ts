@@ -123,6 +123,12 @@ export class Game1SocketActions {
    *
    * Spectator-guard: spillere uten billetter får en toast i stedet for å
    * sende et tomt claim som backend uansett avviser.
+   *
+   * Bølge G (2026-05-05): metoden beholdes for kontrakt-kompatibilitet
+   * (controller-wiring + tester), men den fyres ikke lenger av PlayScreen
+   * — server-side auto-claim-on-draw (BIN-689) eier flyten. Tidligere
+   * `playScreen.resetClaimButton(type)`-kall på NACK er fjernet siden
+   * knappene ikke lenger eksisterer i game1/game3-PlayScreen.
    */
   async claim(type: "LINE" | "BINGO"): Promise<void> {
     if (this.deps.getPhase() === "SPECTATING") {
@@ -133,7 +139,6 @@ export class Game1SocketActions {
     const result = await this.deps.socket.submitClaim({ roomCode: this.deps.getRoomCode(), type });
     if (!result.ok) {
       this.deps.toast?.error(result.error?.message ?? `Ugyldig ${type === "LINE" ? "rekke" : "bingo"}-claim`);
-      this.deps.getPlayScreen()?.resetClaimButton(type);
       console.error("[Game1] Claim failed:", result.error);
     }
   }
