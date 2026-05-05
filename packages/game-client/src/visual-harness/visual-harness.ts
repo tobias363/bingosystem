@@ -932,6 +932,19 @@ function boot(): void {
   const scenario = parseScenario();
   // Announce to Playwright which scenario was chosen (visible in the trace).
   document.title = `Spillorama Harness — ${scenario}`;
+
+  // Debug-suite (Fase 2B). When `?debug=1` is set, mount the
+  // socket-less harness variant so operators iterating on the harness
+  // get the same console + HUD experience as the live game.
+  void import("../debug/index.js")
+    .then(({ installDebugSuiteVisualOnly, isDebugEnabled }) => {
+      if (!isDebugEnabled()) return;
+      installDebugSuiteVisualOnly({ gameSlug: `harness:${scenario}` });
+    })
+    .catch(() => {
+      /* dev-only — never break the harness on debug-load failure */
+    });
+
   runScenario(scenario).catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
     const host = document.getElementById("game-container") ?? document.body;
