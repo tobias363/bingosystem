@@ -217,3 +217,106 @@ test("GET error-codes/:code: 404 for ukjent code", async () => {
     server.close();
   }
 });
+
+// ── §6.4 (Wave 3b) — db-pool endpoint ───────────────────────────────────────
+
+import type { Pool } from "pg";
+
+function makeMockPool(state: { totalCount: number; idleCount: number; waitingCount: number }): Pool {
+  return state as unknown as Pool;
+}
+
+async function startServerWithPools(
+  platformService: PlatformService,
+  pgPools: Array<{ name: string; pool: Pool; max: number }>,
+): Promise<{ port: number; server: Server }> {
+  const app = express();
+  app.use(express.json());
+  app.use(createAdminObservabilityRouter({ platformService, pgPools }));
+  return new Promise((resolve) => {
+    const server = app.listen(0, () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      resolve({ port, server });
+    });
+  });
+}
+
+test("§6.4 GET db-pool: returnerer pool-snapshot for hver registrert pool (ADMIN)", async () => {
+  const platform = makeFakePlatformService({ user: makeUser("ADMIN") });
+  const sharedPool = makeMockPool({ totalCount: 12, idleCount: 7, waitingCount: 0 });
+  const walletPool = makeMockPool({ totalCount: 18, idleCount: 2, waitingCount: 5 });
+  const { port, server } = await startServerWithPools(platform, [
+    { name: "shared", pool: sharedPool, max: 20 },
+    { name: "wallet", pool: walletPool, max: 20 },
+  ]);
+  try {
+    const { status, body } = await fetchJson(port, "/api/admin/observability/db-pool", {
+      authorization: "Bearer test-token",
+    });
+    assert.equal(status, 200);
+    const payload = body as {
+      ok: boolean;
+      data: {
+        generatedAt: string;
+        pools: Array<{
+          name: string;
+          active: number;
+          idle: number;
+          waiting: number;
+          total: number;
+          max: number;
+          utilizationPct: number;
+        }>;
+      };
+    };
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.pools.length, 2);
+
+    const shared = payload.data.pools.find((p) => p.name === "shared")!;
+    assert.equal(shared.active, 5); // 12 - 7
+    assert.equal(shared.idle, 7);
+    assert.equal(shared.waiting, 0);
+    assert.equal(shared.total, 12);
+    assert.equal(shared.max, 20);
+    assert.equal(shared.utilizationPct, 25); // 5/20 = 25%
+
+    const wallet = payload.data.pools.find((p) => p.name === "wallet")!;
+    assert.equal(wallet.active, 16); // 18 - 2
+    assert.equal(wallet.waiting, 5);
+    assert.equal(wallet.utilizationPct, 80); // 16/20 = 80%
+  } finally {
+    server.close();
+  }
+});
+
+test("§6.4 GET db-pool: 400 for PLAYER (RBAC-gating)", async () => {
+  const platform = makeFakePlatformService({ user: makeUser("PLAYER") });
+  const { port, server } = await startServerWithPools(platform, []);
+  try {
+    const { status, body } = await fetchJson(port, "/api/admin/observability/db-pool", {
+      authorization: "Bearer test-token",
+    });
+    assert.equal(status, 400);
+    const payload = body as { ok: boolean };
+    assert.equal(payload.ok, false);
+  } finally {
+    server.close();
+  }
+});
+
+test("§6.4 GET db-pool: tom liste når pgPools er undefined", async () => {
+  const platform = makeFakePlatformService({ user: makeUser("ADMIN") });
+  // pgPools undefined → router returnerer pools: []
+  const { port, server } = await startServerWithPools(platform, []);
+  try {
+    const { status, body } = await fetchJson(port, "/api/admin/observability/db-pool", {
+      authorization: "Bearer test-token",
+    });
+    assert.equal(status, 200);
+    const payload = body as { ok: boolean; data: { pools: Array<unknown> } };
+    assert.equal(payload.data.pools.length, 0);
+  } finally {
+    server.close();
+  }
+});

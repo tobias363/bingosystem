@@ -26,6 +26,7 @@
  */
 
 import express from "express";
+import type { Pool } from "pg";
 import {
   ERROR_CODES,
   listErrorCodes,
@@ -58,6 +59,16 @@ export interface AdminObservabilityRouterDeps {
    * konfig hvis en hall ikke skal se internal observability.
    */
   permission?: AdminPermission;
+  /**
+   * §6.4 (Wave 3b, 2026-05-06): pool-instanser registrert for `db-pool`-
+   * endpoint. Hver entry får navn (label) + Pool-referanse + max-størrelse.
+   * Optional — hvis undefined returnerer endpoint-en `pools: []`.
+   */
+  pgPools?: Array<{
+    name: string;
+    pool: Pool;
+    max: number;
+  }>;
 }
 
 // ── Wire-types ──────────────────────────────────────────────────────────────
@@ -216,6 +227,57 @@ export function createAdminObservabilityRouter(
         return;
       }
       apiSuccess(res, metadataToWire(codeParam as ErrorCode, meta));
+    } catch (err) {
+      apiFailure(res, err);
+    }
+  });
+
+  /**
+   * §6.4 (Wave 3b, 2026-05-06): Postgres connection-pool-snapshot.
+   *
+   * GET /api/admin/observability/db-pool
+   *
+   * Returnerer current state for hver registrert pool (typisk "shared" +
+   * "wallet"). Brukes av on-call dashboard og diagnostikk-runbook ved
+   * latency-spikes — pool-waiting > 0 i 30s er typisk root-cause for
+   * "alle queries timer ut samtidig".
+   *
+   * Felt-er per pool:
+   *   - active: leased clients (active + ute hos en query)
+   *   - idle: clients i pool men ledige
+   *   - waiting: queryer som venter på en client (pool tom)
+   *   - total: active + idle
+   *   - max: konfigurert max-størrelse (PG_POOL_MAX env-var)
+   *   - utilizationPct: active / max × 100 (rundet)
+   *
+   * Cache: ingen — pool-state endrer seg per millisekund og dashboard
+   * polling-loop trenger fersk verdier.
+   */
+  router.get("/api/admin/observability/db-pool", async (req, res) => {
+    try {
+      await requireAdmin(req);
+      const pools = (deps.pgPools ?? []).map((spec) => {
+        const total = spec.pool.totalCount;
+        const idle = spec.pool.idleCount;
+        const waiting = spec.pool.waitingCount;
+        const active = Math.max(0, total - idle);
+        const utilizationPct = spec.max > 0
+          ? Math.round((active / spec.max) * 100)
+          : 0;
+        return {
+          name: spec.name,
+          active,
+          idle,
+          waiting,
+          total,
+          max: spec.max,
+          utilizationPct,
+        };
+      });
+      apiSuccess(res, {
+        generatedAt: new Date().toISOString(),
+        pools,
+      });
     } catch (err) {
       apiFailure(res, err);
     }

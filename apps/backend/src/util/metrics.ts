@@ -229,4 +229,35 @@ export const metrics = {
       33_554_432,    // 32 MB — kritisk (skal aldri skje etter strip)
     ],
   }),
+
+  // §6.4 (Wave 3b, 2026-05-06): Postgres connection-pool-utilization-gauges.
+  // Driver alerts på pool-exhaustion FØR den blir til en latency-spike eller
+  // timeout. Etiketten `pool` skiller "shared" (platform-pool) fra "wallet"
+  // (PostgresWalletAdapter sin pool) — begge er kritiske for pilot-skala.
+  // PromQL-eksempel: `pg_pool_waiting{pool="wallet"} > 0` for 30s = pool tom.
+  pgPoolActive: new client.Gauge({
+    name: "spillorama_pg_pool_active_clients",
+    help: "Antall Postgres-clients leased fra pool akkurat nå (§6.4)",
+    labelNames: ["pool"] as const,
+  }),
+  pgPoolIdle: new client.Gauge({
+    name: "spillorama_pg_pool_idle_clients",
+    help: "Antall Postgres-clients i pool men ledige akkurat nå (§6.4)",
+    labelNames: ["pool"] as const,
+  }),
+  pgPoolWaiting: new client.Gauge({
+    name: "spillorama_pg_pool_waiting_requests",
+    help: "Antall in-flight queries som venter på en pool-client (§6.4)",
+    labelNames: ["pool"] as const,
+  }),
+  pgPoolTotal: new client.Gauge({
+    name: "spillorama_pg_pool_total_clients",
+    help: "Antall Postgres-clients i pool totalt (active + idle, §6.4)",
+    labelNames: ["pool"] as const,
+  }),
+  pgPoolMax: new client.Gauge({
+    name: "spillorama_pg_pool_max_clients",
+    help: "Konfigurert max-størrelse for Postgres pool (§6.4)",
+    labelNames: ["pool"] as const,
+  }),
 };

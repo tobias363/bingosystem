@@ -282,6 +282,10 @@ import { createAdminCmsRouter } from "./routes/adminCms.js";
 import { createPublicCmsRouter } from "./routes/publicCms.js";
 import { createPublicStatusRouter } from "./routes/publicStatus.js";
 import { bootstrapStatusPage } from "./observability/statusBootstrap.js";
+// §6.4 (Wave 3b, 2026-05-06): Postgres-pool-utilization-metrics-tick. Wires
+// pgPool* gauges på en setInterval-loop som leser `pool.totalCount`,
+// `pool.idleCount`, `pool.waitingCount` fra hver registered pool.
+import { createPoolMetricsReporter as createPgPoolMetricsReporter } from "./observability/pgPoolMetrics.js";
 import { CmsService } from "./admin/CmsService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
 // Fase 2A (2026-05-05): error-code observability admin-routes (rate-snapshot
@@ -558,6 +562,29 @@ const bingoSettingsConstraints = { fixedAutoDrawIntervalMs, bingoMinRoundInterva
 const sharedPool = initSharedPool({
   connectionString: platformConnectionString,
   ssl: pgSsl,
+});
+
+// §6.4 (Wave 3b, 2026-05-06): pool-stats-metrics-tick.
+// Sample begge pools (shared + wallet) hvert 5s. Inkrementelt ramp-opp
+// av `pgPoolWaiting` er det første signalet på pool-exhaustion. Reporter-
+// en stoppes på shutdown. Wallet-pool registreres bare hvis adapter er
+// PostgresWalletAdapter — file/http-providers har ingen pool å sample.
+const pgPoolMetricsPools: Array<import("./observability/pgPoolMetrics.js").PoolSpec> = [
+  {
+    name: "shared",
+    pool: sharedPool,
+    max: parseInt(process.env.PG_POOL_MAX ?? "20", 10) || 20,
+  },
+];
+if (walletAdapter instanceof PostgresWalletAdapter) {
+  pgPoolMetricsPools.push({
+    name: "wallet",
+    pool: walletAdapter.getPool(),
+    max: parseInt(process.env.PG_POOL_MAX ?? "20", 10) || 20,
+  });
+}
+const pgPoolMetricsReporter = createPgPoolMetricsReporter({
+  pools: pgPoolMetricsPools,
 });
 
 const localBingoAdapter = usePostgresBingoAdapter
@@ -2753,7 +2780,14 @@ app.use(createPublicStatusRouter(statusBootstrap));
 // Fase 2A (2026-05-05): admin observability — error-rates + registry. Mounts
 // `/api/admin/observability/error-rates` + `/api/admin/observability/error-codes`.
 // Bearer-auth + ADMIN_PANEL_ACCESS — driver dashboards og on-call-UI.
-app.use(createAdminObservabilityRouter({ platformService }));
+//
+// §6.4 (Wave 3b, 2026-05-06): + `/api/admin/observability/db-pool` for live
+// snapshot av Postgres pool-utilization. Wires de samme pool-spec-ene som
+// pgPoolMetricsReporter bruker.
+app.use(createAdminObservabilityRouter({
+  platformService,
+  pgPools: pgPoolMetricsPools,
+}));
 // BIN-628: admin track-spending aggregat (regulatorisk P2 — pengespill-
 // forskriften §11). Gjenbruker de samme env-var-drevne loss-limitene som
 // BingoEngine er konstruert med (`bingoDailyLossLimit` / `bingoMonthlyLossLimit`)
@@ -4257,6 +4291,9 @@ function handleShutdown(signal: string) {
   socketRateLimiter.stop();
   dailyReportScheduler.stop();
   jobScheduler.stop();
+  // §6.4 (Wave 3b): stopp pool-metrics-tick. Idempotent + ikke nødvendig
+  // for funksjonell shutdown, men holder Node-event-loopen rein.
+  pgPoolMetricsReporter.stop();
   drawScheduler.gracefulStop()
     .then(async () => {
       // BIN-761: stopp outbox-worker før øvrig rivetning, så pågående tick får
