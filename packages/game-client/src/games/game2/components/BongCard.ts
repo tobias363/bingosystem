@@ -33,8 +33,8 @@
  *
  * 2026-05-03 (Agent E, branch feat/spill2-bong-mockup-design): erstatter
  * den eksisterende `TicketCard`-bruken i Spill 2's PlayScreen for å
- * matche Bong Mockup-design. `TicketCard` beholdes uendret — den
- * brukes fortsatt på `ChooseTicketsScreen` og av tester.
+ * matche Bong Mockup-design. TicketCard beholdes for Game5Controller
+ * (PlayScreen). ChooseTicketsScreen fjernet i PR #921.
  */
 
 import { Container, Graphics, Text } from "pixi.js";

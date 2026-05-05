@@ -87,7 +87,7 @@ export class SpilloramaApi {
       // `authenticatedFetch`. På success returnerer den allerede
       // `body.data` (unwrapped). På feil kaster den en Error med
       // forklarende melding. Vi konverterer til ApiResult-konvolusjon
-      // slik at callers (ChooseTicketsScreen.refresh m.fl.) får én
+      // slik at callers (Game2 buy-flyt via Game1BuyPopup) får én
       // konsistent shape uavhengig av hvilken pathen som ble valgt.
       try {
         const result = await shellAuth.authenticatedFetch(path, init);

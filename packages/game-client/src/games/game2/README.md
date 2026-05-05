@@ -26,10 +26,10 @@ packages/game-client/src/games/
     ├── Game2Controller.ts              # State machine (LOADING→LOBBY→PLAYING→ENDED)
     ├── README.md                       # ← denne filen
     ├── screens/
-    │   ├── LobbyScreen.ts             # Vente/kjøp-skjerm med countdown + buy popup
+    │   ├── LobbyScreen.ts             # Vente/kjøp-skjerm med countdown + buy popup (Game5-only etter PR #923)
     │   ├── PlayScreen.ts              # Bong Mockup-design (2026-05-03): ComboPanel + BallTube + 2×2 BongCard
-    │   ├── ChooseTicketsScreen.ts     # 32-bretts pool-velger (PR #851 + #855)
-    │   └── EndScreen.ts               # Resultat-overlay etter game end
+    │   └── EndScreen.ts               # Resultat-overlay etter game end (Game5-only etter PR #923)
+    │   # ChooseTicketsScreen.ts fjernet i PR #921 — én popup-flyt for ticket-kjøp.
     ├── components/
     │   ├── BongCard.ts                # 2026-05-03: beige bong-kort med 3×3 grid (erstatter TicketCard for Spill 2)
     │   ├── BallTube.ts                # 2026-05-03: glass-rør med countdown + drawn-balls-rad
