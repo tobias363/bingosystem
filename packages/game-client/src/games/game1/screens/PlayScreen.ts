@@ -14,8 +14,6 @@ import { ChatPanelV2 } from "../components/ChatPanelV2.js";
 import { CalledNumbersOverlay } from "../components/CalledNumbersOverlay.js";
 import { Game1BuyPopup } from "../components/Game1BuyPopup.js";
 import { CenterBall } from "../components/CenterBall.js";
-import { ClaimButton } from "../../game2/components/ClaimButton.js";
-import { checkClaims } from "../../game2/logic/ClaimDetector.js";
 import { stakeFromState } from "../logic/StakeCalculator.js";
 import { calculateMyRoundWinnings } from "../logic/WinningsCalculator.js";
 import { TicketGridHtml } from "../components/TicketGridHtml.js";
@@ -51,12 +49,12 @@ const GAP_RIGHT_OF_CLOVER = 91;
 const CHAT_WIDTH = 265;
 const CHAT_COLLAPSED_WIDTH = 110;
 const TICKET_TOP = 239;
-/** Fast x-posisjon for ticket-grid + claim-buttons (frakoblet fra top-radens posisjon). */
+/** Fast x-posisjon for ticket-grid (frakoblet fra top-radens posisjon). */
 const TICKET_LEFT = 155;
-/** Y offset below the ticket grid for the LINE/BINGO claim buttons.
- *  0 = ticket-grid bruker full skjermhøyde; fade-masken i TicketGridHtml
- *  tonar bunnen ut slik at evt. claim-knapper (vanligvis skjult) fortsatt
- *  ser naturlige ut når de dukker opp. */
+/** Y-offset reservert under ticket-grid. Bølge G (2026-05-05) — manuell
+ *  claim-knapp er fjernet (server auto-claimer på trekning, BIN-689), så
+ *  konstanten er 0. Beholdt som no-op-buffer for evt. fremtidige overlay-
+ *  elementer i bunnen av grid-området. */
 const CLAIM_AREA = 0;
 const RING_SIZE = 170;
 const RING_TOP_Y = 18;
@@ -108,8 +106,6 @@ export class PlayScreen extends Container {
   private readonly centerBall: CenterBall;
   private readonly buyPopup: Game1BuyPopup;
   private readonly ticketGrid: TicketGridHtml;
-  private readonly lineBtn: ClaimButton;
-  private readonly bingoBtn: ClaimButton;
   private readonly audio: AudioManager;
   /** Standalone Pixi text for "X/Y" drawn-ball counter under the ring.
    * NOT a child of CenterBall so the idle-float tween doesn't move it. */
@@ -138,8 +134,6 @@ export class PlayScreen extends Container {
 
   private callbacks: Callbacks = {};
   private lastState: GameState | null = null;
-  private lineAlreadyWon = false;
-  private bingoAlreadyWon = false;
   /**
    * One-shot flag: auto-open the buy popup on the first `update()` where the
    * player lands on the screen without any armed brett and ticketTypes have
@@ -357,16 +351,14 @@ export class PlayScreen extends Container {
     this.drawCountText.y = this.centerBall.y + RING_SIZE + DRAW_COUNT_Y_OFFSET;
     this.addChild(this.drawCountText);
 
-    // ── Claim buttons (Pixi — small, self-contained, not worth HTML) ──────
-    this.lineBtn = new ClaimButton("LINE", 130, 44);
-    this.lineBtn.setOnClaim((type) => this.callbacks.onClaim?.(type));
-    this.addChild(this.lineBtn);
+    // ── Claim-flyt (Bølge G, 2026-05-05) ─────────────────────────────────
+    // Manuell LINE/BINGO-claim-knapp er fjernet. Server-side auto-claim-on-
+    // draw (BIN-689 / `patternEvalMode: "auto-claim-on-draw"`) evaluerer
+    // mønstre etter hver trekning og pusher `pattern:won` til klient når
+    // vinneren er kåret. Tobias-direktiv 2026-05-05: "auto-claim er endelig
+    // design B — det er ingen papirbonger i dette spillet og claim går
+    // automatisk til vinneren". Cleanup-audit §C.3 lukkes.
 
-    this.bingoBtn = new ClaimButton("BINGO", 130, 44);
-    this.bingoBtn.setOnClaim((type) => this.callbacks.onClaim?.(type));
-    this.addChild(this.bingoBtn);
-
-    this.positionClaimButtons();
     this.positionTicketGrid();
 
     this.setupChatLayoutSync();
@@ -450,20 +442,9 @@ export class PlayScreen extends Container {
     // from state to survive reconnects + late-joiner snapshots.
     this.syncBallHistory(state.drawnNumbers);
 
-    // Reset claim-won flags + button states when a new round starts or when
-    // we land in a non-RUNNING state.
-    if (!running) {
-      this.lineAlreadyWon = false;
-      this.bingoAlreadyWon = false;
-      this.lineBtn.reset();
-      this.bingoBtn.reset();
-    } else {
-      for (const result of state.patternResults) {
-        if (result.isWon && result.claimType === "LINE") this.lineAlreadyWon = true;
-        if (result.isWon && result.claimType === "BINGO") this.bingoAlreadyWon = true;
-      }
-      this.updateClaimButtons(state);
-    }
+    // Bølge G (2026-05-05): claim-knapp-state-håndtering fjernet. Server
+    // auto-claimer på trekning (BIN-689) — klient mottar `pattern:won` via
+    // GameBridge/socket-events og animerer vinner-overlay direkte.
 
     // Side panels.
     const totalStake = stakeFromState(state);
@@ -595,8 +576,9 @@ export class PlayScreen extends Container {
     const anyMatched = this.ticketGrid.markNumberOnAll(number);
     if (anyMatched) this.audio.playSfx("mark");
 
-    // Re-evaluate claim buttons after the new mark.
-    this.updateClaimButtons(state);
+    // Bølge G (2026-05-05): client-side claim-evaluering fjernet. Server
+    // pusher `pattern:won` direkte når mønster fullføres (BIN-689 /
+    // `patternEvalMode: "auto-claim-on-draw"`).
   }
 
   /** Spectator / WAITING ball-draw — animate ball tube but don't mark tickets. */
@@ -608,10 +590,14 @@ export class PlayScreen extends Container {
     this.audio.playNumber(number);
   }
 
-  onPatternWon(payload: PatternWonPayload): void {
-    const claimType = payload.claimType as "LINE" | "BINGO";
-    if (claimType === "LINE") { this.lineAlreadyWon = true; this.lineBtn.reset(); }
-    if (claimType === "BINGO") { this.bingoAlreadyWon = true; this.bingoBtn.reset(); }
+  /**
+   * Pattern-won broadcast — kalles fra Game1Controller / Game3Controller når
+   * server pusher `pattern:won`. Bølge G (2026-05-05): claim-knapp-reset
+   * fjernet siden auto-claim-on-draw (BIN-689) gjør manuell claim overflødig.
+   * Metoden beholdes som no-op for kontrakt-kompatibilitet med kontrollerne.
+   */
+  onPatternWon(_payload: PatternWonPayload): void {
+    // No-op — server eier claim-flyten via auto-claim-on-draw.
   }
 
   // ── Lifecycle + misc ────────────────────────────────────────────────────
@@ -623,17 +609,6 @@ export class PlayScreen extends Container {
 
   enableBuyMore(): void {
     this.centerTop.setBuyMoreDisabled(false);
-  }
-
-  /** BIN-420 G26: revert a claim button after server NACK. */
-  resetClaimButton(type: "LINE" | "BINGO"): void {
-    if (type === "LINE") {
-      this.lineAlreadyWon = false;
-      this.lineBtn.setState("ready");
-    } else {
-      this.bingoAlreadyWon = false;
-      this.bingoBtn.setState("ready");
-    }
   }
 
   /** BIN-419: Elvis replace — lets the player swap pre-round tickets for a fee.
@@ -726,10 +701,6 @@ export class PlayScreen extends Container {
     this.ballTube.clear();
     this.calledNumbers.clearNumbers();
     this.ticketGrid.clear();
-    this.lineBtn.reset();
-    this.bingoBtn.reset();
-    this.lineAlreadyWon = false;
-    this.bingoAlreadyWon = false;
     this.calledNumbers.hide();
   }
 
@@ -740,7 +711,6 @@ export class PlayScreen extends Container {
       this.bgSprite.width = width;
       this.bgSprite.height = height;
     }
-    this.positionClaimButtons();
     this.positionTicketGrid();
   }
 
@@ -861,18 +831,6 @@ export class PlayScreen extends Container {
     return this.ringCenterColumnLeft() + (RING_COLUMN_WIDTH - RING_SIZE) / 2;
   }
 
-  /** Re-pin the LINE/BINGO claim buttons over the current ticket area. */
-  private positionClaimButtons(): void {
-    const ticketAreaLeft = TICKET_LEFT;
-    const ticketAreaWidth = this.screenW - ticketAreaLeft - this.chatWidth() - 20;
-    const btnY = this.screenH - 55;
-    const btnCentreX = ticketAreaLeft + ticketAreaWidth / 2;
-    this.lineBtn.x = btnCentreX - 140;
-    this.lineBtn.y = btnY;
-    this.bingoBtn.x = btnCentreX + 10;
-    this.bingoBtn.y = btnY;
-  }
-
   destroy(): void {
     this.blinkDiagnosticDispose?.();
     this.blinkDiagnosticDispose = null;
@@ -933,12 +891,10 @@ export class PlayScreen extends Container {
     document.body.classList.remove("has-game-actions");
   }
 
-  /** Resize ticket grid + re-pin claim buttons when the chat panel
-   *  collapses / expands. */
+  /** Resize ticket grid when the chat panel collapses / expands. */
   private setupChatLayoutSync(): void {
     this.chatPanel.setOnToggle((collapsed) => {
       this.positionTicketGrid();
-      this.positionClaimButtons();
       const targetOffset = collapsed ? 0 : -80;
       this.headerShiftTween?.kill();
       const proxy = { x: this.headerBar.currentOffsetX };
@@ -949,22 +905,6 @@ export class PlayScreen extends Container {
         onUpdate: () => this.headerBar.setOffsetX(proxy.x),
       });
     });
-  }
-
-  private updateClaimButtons(state: GameState): void {
-    const { canClaimLine, canClaimBingo } = checkClaims(state.myTickets, state.myMarks, state.drawnNumbers);
-    // Auto-claim mirrors Unity: as soon as a pattern is complete we send the
-    // claim. Guarded by the already-won flags so we never double-submit.
-    if (canClaimLine && !this.lineAlreadyWon) {
-      this.lineBtn.setState("ready");
-      this.lineAlreadyWon = true;
-      this.callbacks.onClaim?.("LINE");
-    }
-    if (canClaimBingo && !this.bingoAlreadyWon) {
-      this.bingoBtn.setState("ready");
-      this.bingoAlreadyWon = true;
-      this.callbacks.onClaim?.("BINGO");
-    }
   }
 
   private syncedHistoryKey = "";
