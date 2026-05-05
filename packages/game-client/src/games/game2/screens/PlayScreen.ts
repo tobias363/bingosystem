@@ -61,8 +61,10 @@ const BONG_SCALE = 0.55;
 const BONG_GAP_X = 10;
 const BONG_GAP_Y = 8;
 const BONG_COLS = 7;
-/** Tube-høyde må matche `BallTube` sin interne TUBE_HEIGHT for layout. */
-const TUBE_HEIGHT = 85;
+// Tube-høyde leses dynamisk via `this.ballTube.getHeight()` etter at
+// BallTube ble oppdatert til å bevare PNG-ens 1:1 aspect-ratio
+// (Tobias-direktiv 2026-05-05). Hardkodet TUBE_HEIGHT-konstant er
+// fjernet — bruk getHeight() der layout under tuben skal beregnes.
 
 export class PlayScreen extends Container {
   private bgSprite: Sprite | null = null;
@@ -183,7 +185,8 @@ export class PlayScreen extends Container {
     //      └─ BongCard children (lagt ut i 7-kol grid)
     this.bongScrollViewport = new Container();
     this.bongScrollViewport.x = this.stageX;
-    this.bongScrollViewport.y = this.ballTube.y + TUBE_HEIGHT + ROW_GAP + 16;
+    this.bongScrollViewport.y =
+      this.ballTube.y + this.ballTube.getHeight() + ROW_GAP + 16;
     // Initial mask: dekker hele forventet bong-område. Refines via
     // `refreshScrollMask` etter at comboPanel er konstruert (vi vet da
     // viewport-bunn). Initial estimate: skjerm-høyde minus ~250 (tube +
@@ -223,7 +226,7 @@ export class PlayScreen extends Container {
     const popX = this.stageX + this.stageW / 2;
     // Plasser ~60px under tube så pop-ballen havner i en visuell "hot zone"
     // mellom tube og bong-grid (men over bongs).
-    const popY = this.ballTube.y + TUBE_HEIGHT + 60;
+    const popY = this.ballTube.y + this.ballTube.getHeight() + 60;
     this.centerBallPop.x = popX;
     this.centerBallPop.y = popY;
     this.addChild(this.centerBallPop);
@@ -625,7 +628,9 @@ export class PlayScreen extends Container {
    * combo-panel-topp. Brukt til scroll-clamp.
    */
   private computeBongViewportHeight(): number {
-    const tubeBottom = this.ballTube.y + TUBE_HEIGHT;
+    // Viewport-høyden er mellomrom mellom bongScrollViewport-toppen
+    // (allerede plassert under tuben i konstruktør) og combo-panel-
+    // toppen. Tube-høyden er allerede inkorporert i viewport.y.
     const comboTop = this.comboPanel.y;
     return Math.max(0, comboTop - this.bongScrollViewport.y - ROW_GAP);
   }

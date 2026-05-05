@@ -61,7 +61,8 @@ const STAGE_PADDING_TOP = 14;
 const STAGE_PADDING_BOTTOM = 24;
 const ROW_GAP = 14;
 const MAX_STAGE_WIDTH = 1100;
-const TUBE_HEIGHT = 85;
+// Tube-høyde leses dynamisk via `this.ballTube.getHeight()` — bevarer
+// PNG-ens 1:1 aspect-ratio (Tobias-direktiv 2026-05-05).
 
 export class LobbyScreen extends Container {
   private bgSprite: Sprite | null = null;
