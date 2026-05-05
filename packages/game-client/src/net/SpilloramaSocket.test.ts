@@ -1,4 +1,6 @@
 /**
+ * @vitest-environment happy-dom
+ *
  * BIN-501: event-buffer tests.
  *
  * The hard-to-reproduce bug we're fixing: the socket connects faster than
@@ -11,8 +13,12 @@
  * channel, then drains them in order. These tests exercise that logic
  * through the `__dispatchForTest` shim (simulates a raw socket.io event
  * without spinning up a real io-client).
+ *
+ * E2E v2 (2026-05-05): tests added below for the `window.online` auto-
+ * recovery handler — uses vi.mock to stub socket.io-client so we never
+ * open a real connection.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { SpilloramaSocket } from "./SpilloramaSocket.js";
 import type {
   DrawNewPayload,
@@ -190,5 +196,195 @@ describe("BIN-501: event-buffer on SpilloramaSocket", () => {
     const later: number[] = [];
     socket.on("drawNew", (p) => later.push(p.number));
     expect(later).toEqual([99]);
+  });
+});
+
+/**
+ * E2E v2 (2026-05-05): klient-auto-recovery via `window.online`.
+ *
+ * Bug: når browseren går offline 10 s og kommer tilbake online, fanget
+ * Socket.io's interne reconnect-løkke ikke alltid opp at nettverket var
+ * tilbake. UI hang på "FÅR IKKE KOBLET TIL ROM. TRYKK HER" til brukeren
+ * klikket og redirectet til lobby.
+ *
+ * Fix: SpilloramaSocket lytter nå på `window.online` og tvinger
+ * reconnect-syklus når eventet fyrer. Disse testene mocker socket.io-
+ * client så vi aldri åpner en reell forbindelse.
+ */
+describe("E2E v2: window.online auto-recovery", () => {
+  type FakeSocket = {
+    connected: boolean;
+    auth: { accessToken: string };
+    io: { on: ReturnType<typeof vi.fn> };
+    on: ReturnType<typeof vi.fn>;
+    connect: ReturnType<typeof vi.fn>;
+    disconnect: ReturnType<typeof vi.fn>;
+    removeAllListeners: ReturnType<typeof vi.fn>;
+  };
+
+  let fakeSocket: FakeSocket;
+  let ioMock: ReturnType<typeof vi.fn>;
+  let SocketCtor: typeof SpilloramaSocket;
+
+  beforeEach(async () => {
+    fakeSocket = {
+      connected: false,
+      auth: { accessToken: "" },
+      io: { on: vi.fn() },
+      on: vi.fn(),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      removeAllListeners: vi.fn(),
+    };
+    ioMock = vi.fn(() => fakeSocket);
+
+    vi.resetModules();
+    vi.doMock("socket.io-client", () => ({ io: ioMock }));
+
+    // Re-import under the active mock so the constructor closure captures
+    // the mocked `io`.
+    const mod = await import("./SpilloramaSocket.js");
+    SocketCtor = mod.SpilloramaSocket;
+  });
+
+  afterEach(() => {
+    vi.doUnmock("socket.io-client");
+    vi.resetModules();
+  });
+
+  function newConnectedSocket(): InstanceType<typeof SpilloramaSocket> {
+    const s = new SocketCtor("ws://localhost:0");
+    s.connect();
+    return s;
+  }
+
+  function fireWindowOnline(): void {
+    window.dispatchEvent(new Event("online"));
+  }
+
+  it("triggers socket.connect() when window.online fires while disconnected", () => {
+    const s = newConnectedSocket();
+    // Simulate the socket dropping (we never call the fake "connect"
+    // handler so connectionState remains "connecting", which is treated
+    // as not-connected by the online handler).
+    fakeSocket.connect.mockClear(); // ignore the initial connect() call
+
+    fireWindowOnline();
+
+    expect(fakeSocket.connect).toHaveBeenCalledTimes(1);
+    s.disconnect();
+  });
+
+  it("no-ops on window.online when already connected", () => {
+    const s = newConnectedSocket();
+
+    // Capture the registered "connect" handler from socket.on(...) and
+    // fire it so connectionState becomes "connected".
+    const connectHandler = (fakeSocket.on.mock.calls.find((c) => c[0] === "connect") ?? [])[1] as
+      | (() => void)
+      | undefined;
+    connectHandler?.();
+    expect(s.isConnected()).toBe(true);
+
+    fakeSocket.connect.mockClear();
+    fireWindowOnline();
+
+    expect(fakeSocket.connect).not.toHaveBeenCalled();
+    s.disconnect();
+  });
+
+  it("debounces rapid window.online events within the retry window", () => {
+    const s = newConnectedSocket();
+    fakeSocket.connect.mockClear();
+
+    fireWindowOnline();
+    fireWindowOnline();
+    fireWindowOnline();
+
+    // Only the first event reaches socket.connect — the rest are debounced.
+    expect(fakeSocket.connect).toHaveBeenCalledTimes(1);
+    s.disconnect();
+  });
+
+  it("caps at AUTO_RETRY_LIMIT (3) — further events are no-ops", () => {
+    vi.useFakeTimers();
+    const s = newConnectedSocket();
+    fakeSocket.connect.mockClear();
+
+    // Fire 5 online events with enough spacing to clear the debounce
+    // window. Only the first 3 should reach socket.connect; the rest
+    // are budget-exceeded no-ops.
+    for (let i = 0; i < 5; i += 1) {
+      fireWindowOnline();
+      vi.advanceTimersByTime(2000); // > AUTO_RETRY_WINDOW_MS (1000)
+    }
+
+    expect(fakeSocket.connect).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+    s.disconnect();
+  });
+
+  it("resets the auto-retry budget when the socket actually connects", () => {
+    vi.useFakeTimers();
+    const s = newConnectedSocket();
+    fakeSocket.connect.mockClear();
+
+    // Burn the budget.
+    for (let i = 0; i < 4; i += 1) {
+      fireWindowOnline();
+      vi.advanceTimersByTime(2000);
+    }
+    expect(fakeSocket.connect).toHaveBeenCalledTimes(3);
+
+    // Simulate a successful connect — should reset the counter so future
+    // online events can trigger again.
+    const connectHandler = (fakeSocket.on.mock.calls.find((c) => c[0] === "connect") ?? [])[1] as
+      | (() => void)
+      | undefined;
+    connectHandler?.();
+
+    // Now drop again (a hypothetical re-disconnect via the disconnect-
+    // event handler).
+    const disconnectHandler = (fakeSocket.on.mock.calls.find((c) => c[0] === "disconnect") ?? [])[1] as
+      | (() => void)
+      | undefined;
+    disconnectHandler?.();
+
+    fakeSocket.connect.mockClear();
+    fireWindowOnline();
+
+    // Budget reset → call goes through again.
+    expect(fakeSocket.connect).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    s.disconnect();
+  });
+
+  it("ignores window.online when navigator.onLine reports false", () => {
+    const s = newConnectedSocket();
+    fakeSocket.connect.mockClear();
+
+    // Override navigator.onLine to false (e.g. browser fired a stale event).
+    const originalOnLine = Object.getOwnPropertyDescriptor(window.navigator, "onLine");
+    Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => false });
+
+    fireWindowOnline();
+
+    expect(fakeSocket.connect).not.toHaveBeenCalled();
+
+    if (originalOnLine) {
+      Object.defineProperty(window.navigator, "onLine", originalOnLine);
+    }
+    s.disconnect();
+  });
+
+  it("removes the window.online listener on disconnect() to avoid leaks", () => {
+    const s = newConnectedSocket();
+    fakeSocket.connect.mockClear();
+    s.disconnect();
+
+    fireWindowOnline();
+
+    // disconnect() detached the handler — no further connect() calls.
+    expect(fakeSocket.connect).not.toHaveBeenCalled();
   });
 });
