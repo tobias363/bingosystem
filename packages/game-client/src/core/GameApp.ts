@@ -7,6 +7,7 @@ import { telemetry } from "../telemetry/Telemetry.js";
 import { initSentry, captureClientMessage } from "../telemetry/Sentry.js";
 import { LoadingOverlay } from "../components/LoadingOverlay.js";
 import { WebGLContextGuard } from "./WebGLContextGuard.js";
+import { installDebugSuite, setDebugStateGetter, isDebugEnabled } from "../debug/index.js";
 
 export interface GameMountConfig {
   gameSlug: string;
@@ -108,6 +109,27 @@ export class GameApp {
     this.socket = new SpilloramaSocket(config.serverUrl);
     this.bridge = new GameBridge(this.socket);
     this.audio = new AudioManager();
+
+    // Debug suite (Fase 2B). Activation gate inside `installDebugSuite`
+    // — when `?debug=1` (or localStorage flag) is missing, the call is a
+    // no-op and tree-shakes nothing extra into the prod bundle. We
+    // install BEFORE the controller starts so socket events the bridge
+    // emits during start() are captured by the buffer.
+    if (isDebugEnabled()) {
+      const installed = installDebugSuite(this.socket, {
+        gameSlug: config.gameSlug,
+        hallId: config.hallId,
+        // We only ever pass first-8 of accessToken upstream — never log
+        // the full JWT.
+        playerId: config.accessToken?.slice(0, 8),
+      });
+      if (installed) {
+        // Register the bridge state-getter so HUD/inspector can read
+        // current GameState. The bridge exposes `getState()` already.
+        const bridgeRef = this.bridge;
+        setDebugStateGetter(() => bridgeRef?.getState() ?? null);
+      }
+    }
 
     // Wait for all game controllers to be registered before creating one
     await registryReady;
