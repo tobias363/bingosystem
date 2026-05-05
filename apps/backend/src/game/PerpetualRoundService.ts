@@ -50,16 +50,44 @@ import { resolveRoundPauseMs } from "./variantConfig.js";
 // Fase 2A (2026-05-05): structured-logger for error-code-tagging på BIN-RKT-
 // {006,007,008}. PoC — eksisterende info/debug-calls beholdes.
 import { logWarn } from "../observability/structuredLogger.js";
+import { GAME2_SLUGS } from "./Game2AutoDrawTickService.js";
+import { GAME3_SLUGS } from "./Game3AutoDrawTickService.js";
 
 const logger = rootLogger.child({ module: "perpetual-round" });
 const MODULE_NAME = "PerpetualRoundService";
 
 /**
- * Slugs som er perpetual. Match (case-insensitive) mot `room.gameSlug` —
- * IKKE mot canonical roomCode, fordi en slug-til-roomCode-mapping kunne
- * endre seg uten at vi merker.
+ * Slugs som er perpetual (Spill 2 + Spill 3). Match (case-insensitive) mot
+ * `room.gameSlug` — IKKE mot canonical roomCode, fordi en slug-til-roomCode-
+ * mapping kunne endre seg uten at vi merker.
+ *
+ * Kilden er `GAME2_SLUGS` og `GAME3_SLUGS` fra de respektive auto-draw-
+ * tjenestene, slik at vi har én sannhets-kilde. Tidligere hardkodet vi kun
+ * `["rocket", "monsterbingo"]` — det dekket ikke aliaser som
+ * `tallspill`/`game_2` (Spill 2) og `mønsterbingo`/`game_3` (Spill 3),
+ * som brukes i markedsføring og legacy-rom. Audit §2.7 (2026-05-05).
  */
-export const PERPETUAL_SLUGS: ReadonlySet<string> = new Set(["rocket", "monsterbingo"]);
+export const PERPETUAL_SLUGS: ReadonlySet<string> = new Set<string>([
+  ...GAME2_SLUGS,
+  ...GAME3_SLUGS,
+]);
+
+/**
+ * Returnerer true hvis `slug` er en perpetual-slug (Spill 2/3, alle aliaser).
+ *
+ * Brukes som single-source-of-truth for slug-conditional logikk i
+ * `BingoEngine.assertHost`, socket-handlers (slug-gates), og
+ * `DrawOrchestrationService`. Tidligere hadde vi spredt `slug === "rocket"
+ * || slug === "monsterbingo"`-checks som kun dekket de to canonical-formene
+ * og IKKE aliasene `tallspill`/`game_2`/`mønsterbingo`/`game_3`. Audit §2.7.
+ *
+ * Match-en er case-insensitive og whitespace-tolerant — slug fra DB/seed
+ * kan være lagret med trailing-space eller upper-case casing.
+ */
+export function isPerpetualSlug(slug: string | undefined | null): boolean {
+  if (slug == null) return false;
+  return PERPETUAL_SLUGS.has(slug.toLowerCase().trim());
+}
 
 /**
  * 2026-05-04 (Tobias bug-fix): per-slug default entry fee for perpetual-
@@ -75,8 +103,14 @@ export const PERPETUAL_SLUGS: ReadonlySet<string> = new Set(["rocket", "monsterb
  * at fremtidige perpetual-spill kan styres via env uten kode-endring.
  */
 export const PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG: ReadonlyMap<string, number> = new Map([
+  // Spill 2 — alle aliaser har samme baseline (10 kr/brett).
   ["rocket", 10],
+  ["game_2", 10],
+  ["tallspill", 10],
+  // Spill 3 — alle aliaser har samme baseline (10 kr/brett).
   ["monsterbingo", 10],
+  ["mønsterbingo", 10],
+  ["game_3", 10],
 ]);
 
 /**

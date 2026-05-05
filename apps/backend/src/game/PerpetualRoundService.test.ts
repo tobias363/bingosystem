@@ -205,10 +205,17 @@ function makeService(args: {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-test("PERPETUAL_SLUGS dekker rocket og monsterbingo", () => {
-  assert.equal(PERPETUAL_SLUGS.size, 2);
+test("PERPETUAL_SLUGS dekker alle Spill 2/3-aliaser (audit §2.7)", () => {
+  // Etter audit §2.7-fixen (2026-05-05) inkluderer PERPETUAL_SLUGS alle
+  // aliaser fra GAME2_SLUGS + GAME3_SLUGS — ikke bare canonical-slug.
+  // 3 aliaser per spill × 2 spill = 6 totalt.
+  assert.equal(PERPETUAL_SLUGS.size, 6);
   assert.ok(PERPETUAL_SLUGS.has("rocket"));
+  assert.ok(PERPETUAL_SLUGS.has("game_2"));
+  assert.ok(PERPETUAL_SLUGS.has("tallspill"));
   assert.ok(PERPETUAL_SLUGS.has("monsterbingo"));
+  assert.ok(PERPETUAL_SLUGS.has("mønsterbingo"));
+  assert.ok(PERPETUAL_SLUGS.has("game_3"));
 });
 
 test("NATURAL_END_REASONS inkluderer G2_WINNER, G2_NO_WINNER og G3_FULL_HOUSE", () => {
@@ -981,11 +988,18 @@ test("spawn: dobbel-call innen samme tick — andre call no-ops på RUNNING", as
 
 // ── Slug-aware entry-fee resolution (Tobias bug-fix 2026-05-04) ────────────────
 
-test("PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG har 10 kr for rocket og monsterbingo", () => {
-  // Sanity: konstanten må eksportere riktige verdier for begge perpetual-slugs.
+test("PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG har 10 kr for alle Spill 2/3-slug-aliaser", () => {
+  // Sanity: konstanten må eksportere riktige verdier for alle perpetual-
+  // slugs inkludert aliaser. Audit §2.7 (2026-05-05) — slug-bypass må dekke
+  // ALLE aliaser, ikke bare canonical-slug.
   assert.equal(PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.get("rocket"), 10);
+  assert.equal(PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.get("game_2"), 10);
+  assert.equal(PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.get("tallspill"), 10);
   assert.equal(PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.get("monsterbingo"), 10);
-  assert.equal(PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.size, 2);
+  assert.equal(PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.get("mønsterbingo"), 10);
+  assert.equal(PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.get("game_3"), 10);
+  // 3 aliaser per spill × 2 spill = 6 totalt.
+  assert.equal(PERPETUAL_DEFAULT_ENTRY_FEE_BY_SLUG.size, 6);
 });
 
 test("auto-restart Spill 2: entryFee=10 selv når defaultEntryFee=0 (slug-default)", async () => {
