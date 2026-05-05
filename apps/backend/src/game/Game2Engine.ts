@@ -25,6 +25,7 @@ import { BingoEngine } from "./BingoEngine.js";
 import { IdempotencyKeys } from "./idempotency.js";
 import { roundCurrency } from "../util/currency.js";
 import { logger as rootLogger } from "../util/logger.js";
+import { metrics } from "../util/metrics.js";
 import { hasFull3x3, ticketContainsNumber } from "./ticket.js";
 import {
   computeJackpotList,
@@ -332,6 +333,14 @@ export class Game2Engine extends BingoEngine {
    * the same player multiple times if they hold >1 completed ticket.
    *
    * Legacy ref: GameProcess.js:280-312 (ticket chunking + matched > 8 check).
+   *
+   * 2026-05-06 (audit §3.4 fix): snapshot iterator FØR vi går inn i payout-
+   * loopen. Pre-fix muterte parallell `room:join`-handler `room.players` Map
+   * via `assertWalletNotInRunningGame` mens denne iteratoren kjørte (1500-
+   * spillere-skala + ~50 join/min ≈ 100% sannsynlighet daglig). Snapshot
+   * eliminerer iterator-state-korrupsjon; defensiv `room.players.has(...)`-
+   * sjekk inne i loop fanger spillere som ble evicted under iteration og
+   * inkrementerer race-detector-metric.
    */
   private findG2Winners(room: RoomState, game: GameState): Array<{
     player: Player;
@@ -340,7 +349,35 @@ export class Game2Engine extends BingoEngine {
   }> {
     const drawnSet = new Set(game.drawnNumbers);
     const winners: Array<{ player: Player; ticketIndex: number; ticketId?: string }> = [];
-    for (const player of room.players.values()) {
+
+    // 2026-05-06 (audit §3.4): snapshot iterator FØR await-er. Kritisk for
+    // 1500-spillere-skala der parallel room:join-handler kan slette
+    // spillere fra room.players Map mid-iteration via
+    // assertWalletNotInRunningGame.
+    const playerSnapshot = [...room.players.values()];
+
+    for (const player of playerSnapshot) {
+      // Defense-in-depth: re-sjekk player er fortsatt i rommet. Hvis evicted
+      // mellom snapshot og denne iterasjonen, skip + log race-event.
+      if (!room.players.has(player.id)) {
+        try {
+          metrics.spill23RoomPlayersRaceDetected.inc({ slug: "rocket" });
+        } catch {
+          // metric-failure er aldri kritisk for game-flow
+        }
+        logger.warn(
+          {
+            event: "G2_ROOM_PLAYERS_RACE_DETECTED",
+            roomCode: room.code,
+            gameId: game.id,
+            playerId: player.id,
+            walletId: player.walletId,
+          },
+          "Player evicted between snapshot and findG2Winners iteration — skipping",
+        );
+        continue;
+      }
+
       const tickets = game.tickets.get(player.id);
       if (!tickets) continue;
       for (let i = 0; i < tickets.length; i += 1) {

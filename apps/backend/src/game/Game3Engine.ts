@@ -66,6 +66,7 @@ import type { PatternMask } from "@spillorama/shared-types";
 import { uses5x5NoCenterTicket } from "./ticket.js";
 import { roundCurrency } from "../util/currency.js";
 import { logger as rootLogger } from "../util/logger.js";
+import { metrics } from "../util/metrics.js";
 import type {
   ClaimRecord,
   GameState,
@@ -384,14 +385,50 @@ export class Game3Engine extends Game2Engine {
     return records;
   }
 
-  /** Build `{ playerId → Array<{ticketIndex, ticketId, mask}>}` for all room players. */
+  /**
+   * Build `{ playerId → Array<{ticketIndex, ticketId, mask}>}` for all room
+   * players.
+   *
+   * 2026-05-06 (audit §3.4 fix): snapshot iterator FØR vi går inn i payout-
+   * loopen. Pre-fix muterte parallell `room:join`-handler `room.players` Map
+   * via `assertWalletNotInRunningGame` mens denne iteratoren kjørte. På
+   * 1500-spillere-skala med ~50 join/min ≈ 100% sannsynlighet daglig.
+   * Defensiv `room.players.has(...)`-sjekk + race-detector-metric.
+   */
   private buildTicketMasksByPlayer(
     room: RoomState,
     game: GameState,
     drawnSet: Set<number>,
   ): Map<string, Array<{ ticketIndex: number; ticketId?: string; mask: PatternMask }>> {
     const out = new Map<string, Array<{ ticketIndex: number; ticketId?: string; mask: PatternMask }>>();
-    for (const player of room.players.values()) {
+
+    // 2026-05-06 (audit §3.4): snapshot iterator FØR await-er. Selv om
+    // mask-bygging er synkron, beskytter dette mot fremtidig refaktor som
+    // legger inn await + er konsistent med findG2Winners.
+    const playerSnapshot = [...room.players.values()];
+
+    for (const player of playerSnapshot) {
+      // Defense-in-depth: re-sjekk player er fortsatt i rommet. Hvis evicted
+      // mellom snapshot og denne iterasjonen, skip + log race-event.
+      if (!room.players.has(player.id)) {
+        try {
+          metrics.spill23RoomPlayersRaceDetected.inc({ slug: "monsterbingo" });
+        } catch {
+          // metric-failure er aldri kritisk for game-flow
+        }
+        logger.warn(
+          {
+            event: "G3_ROOM_PLAYERS_RACE_DETECTED",
+            roomCode: room.code,
+            gameId: game.id,
+            playerId: player.id,
+            walletId: player.walletId,
+          },
+          "Player evicted between snapshot and buildTicketMasksByPlayer iteration — skipping",
+        );
+        continue;
+      }
+
       const tickets = game.tickets.get(player.id);
       if (!tickets || tickets.length === 0) continue;
       const entries = tickets.map((t, i) => ({
@@ -404,14 +441,43 @@ export class Game3Engine extends Game2Engine {
     return out;
   }
 
-  /** Find every (player, ticket) whose mask satisfies the pattern. */
+  /**
+   * Find every (player, ticket) whose mask satisfies the pattern.
+   *
+   * 2026-05-06 (audit §3.4 fix): defensive lookup for players who may have
+   * been evicted between mask-build and pattern-evaluation. Pre-fix
+   * `requirePlayerById` ville thrown og krasjet hele Spill 3 onDrawCompleted
+   * for runden — nå skipper vi den evicted spilleren og inkrementerer
+   * race-detector-metric.
+   */
   private findPatternMatches(
     ticketMasksByPlayer: Map<string, Array<{ ticketIndex: number; ticketId?: string; mask: PatternMask }>>,
     pattern: PatternSpec,
   ): Array<{ player: Player; ticketIndex: number; ticketId?: string }> {
     const matches: Array<{ player: Player; ticketIndex: number; ticketId?: string }> = [];
     for (const [playerId, entries] of ticketMasksByPlayer) {
-      const roomPlayer = this.requirePlayerById(playerId);
+      let roomPlayer: Player;
+      try {
+        roomPlayer = this.requirePlayerById(playerId);
+      } catch {
+        // Player evicted mellom mask-build og pattern-eval — skip uten
+        // å krasje hele runden. Logger via metric så vi kan tracke
+        // hyppighet i prod.
+        try {
+          metrics.spill23RoomPlayersRaceDetected.inc({ slug: "monsterbingo" });
+        } catch {
+          // metric-failure er aldri kritisk for game-flow
+        }
+        logger.warn(
+          {
+            event: "G3_PATTERN_MATCH_PLAYER_EVICTED",
+            playerId,
+            patternId: pattern.id,
+          },
+          "Player no longer found in any room during pattern matching — skipping (race with assertWalletNotInRunningGame)",
+        );
+        continue;
+      }
       for (const e of entries) {
         if (matchesAny(e.mask, pattern.masks)) {
           matches.push({ player: roomPlayer, ticketIndex: e.ticketIndex, ticketId: e.ticketId });
