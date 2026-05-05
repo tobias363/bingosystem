@@ -13,13 +13,12 @@ export interface CreateTicketInput {
   /** Ticket type code for variant logic: "small", "large", "elvis", "traffic-red", etc. */
   type?: string;
   /**
-   * Spill 2 v2 (2026-12-06): pre-selected ticket grid (e.g. from
-   * Game2TicketPoolService.getPurchasedGrids). When provided, the adapter
-   * MUST use this grid verbatim instead of generating a random ticket via
-   * `generateTicketForGame`. The caller is responsible for providing a grid
-   * compatible with the gameSlug (3×3 for rocket, 5×5 for bingo, etc.) —
-   * adapter does no shape validation. Default behaviour (no `presetGrid`)
-   * is unchanged.
+   * Spill 2 v2 (2026-12-06): pre-selected ticket grid. When provided, the
+   * adapter MUST use this grid verbatim instead of generating a random
+   * ticket via `generateTicketForGame`. The caller is responsible for
+   * providing a grid compatible with the gameSlug (3×3 for rocket, 5×5 for
+   * bingo, etc.) — adapter does no shape validation. Default behaviour (no
+   * `presetGrid`) is unchanged.
    */
   presetGrid?: number[][];
 }

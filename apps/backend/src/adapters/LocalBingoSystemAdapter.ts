@@ -13,7 +13,6 @@ import type {
 export class LocalBingoSystemAdapter implements BingoSystemAdapter {
   async createTicket(input: CreateTicketInput): Promise<Ticket> {
     // Spill 2 v2 (2026-12-06): preset-grid takes priority — the caller
-    // (typically the bet:arm/startGame flow with Game2TicketPoolService grids)
     // has already chosen the ticket numbers, so we wrap them as-is and
     // attach color/type. No shape validation here — caller's responsibility.
     if (input.presetGrid) {

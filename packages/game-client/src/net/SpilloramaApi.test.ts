@@ -3,12 +3,12 @@
  *
  * Tester for SpilloramaApi.request response-shape-håndtering.
  *
- * Pilot-bug 2026-05-04 (ChooseTickets fetch error):
+ * Pilot-bug 2026-05-04 (auth.js shell-fetch unwrapping):
  *   `window.SpilloramaAuth.authenticatedFetch` (definert i
  *   apps/backend/public/web/auth.js linje 159-161) returnerer ALLEREDE
  *   det inner-unwrappede `body.data`-objektet — ikke en Response. Tidligere
  *   kalte SpilloramaApi.request `.json()` på resultatet → TypeError og
- *   ChooseTickets-popup sto tom.
+ *   data-fetch sto tom.
  *
  * Disse testene verifiserer at:
  *   1) Når shellAuth.authenticatedFetch returnerer en unwrapped data-payload,
@@ -62,17 +62,13 @@ describe("SpilloramaApi.request — shellAuth response-shape (pilot-bug 2026-05-
 
   it("pakker unwrapped data fra shellAuth.authenticatedFetch i ok:true-konvolusjon", async () => {
     // auth.js sin authenticatedFetch returnerer body.data direkte (ikke Response).
-    const unwrappedData = {
-      tickets: [{ id: "t1" }, { id: "t2" }],
-      purchasedIndices: [0],
-      pickAnyNumber: 7,
-    };
+    const unwrappedData = [{ slug: "bingo" }, { slug: "rocket" }];
     setShellAuth({
       authenticatedFetch: vi.fn().mockResolvedValue(unwrappedData),
     });
 
     const api = new SpilloramaApi("");
-    const result = await api.getGame2ChooseTickets("ROCKET");
+    const result = await api.getGames();
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -109,7 +105,7 @@ describe("SpilloramaApi.request — shellAuth response-shape (pilot-bug 2026-05-
     });
 
     const api = new SpilloramaApi("");
-    const result = await api.getGame2ChooseTickets("ROCKET");
+    const result = await api.getGames();
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -120,21 +116,19 @@ describe("SpilloramaApi.request — shellAuth response-shape (pilot-bug 2026-05-
 
   it("regresjon: TypeError 'json is not a function' kastes ikke ved unwrapped data", async () => {
     // Eksakt prod-bug: minified bygget kastet
-    // `TypeError: i.json is not a function` ved
-    // `Game2Controller-CT4xg2f7.js:719:132`. Dette skjedde når
+    // `TypeError: i.json is not a function`. Dette skjedde når
     // request kalte `.json()` på det unwrappede data-objektet fra
     // authenticatedFetch. Etter fix skal vi få en ApiResult i stedet.
     setShellAuth({
-      authenticatedFetch: vi.fn().mockResolvedValue({
+      authenticatedFetch: vi.fn().mockResolvedValue([
         // Et plain objekt UTEN `.json` — speiler hva `body.data` er i auth.js.
-        roomCode: "ROCKET",
-        tickets: [],
-      }),
+        { slug: "bingo" },
+      ]),
     });
 
     const api = new SpilloramaApi("");
     // Skal IKKE kaste — uten fix kastet denne TypeError.
-    const result = await api.getGame2ChooseTickets("ROCKET");
+    const result = await api.getGames();
 
     expect(result.ok).toBe(true);
   });
