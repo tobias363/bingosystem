@@ -2,14 +2,21 @@
  * Spill 2 Bong Mockup design — horisontalt glass-rør med countdown +
  * draw-counter på venstre side og en rad trukne baller til høyre.
  *
- * 2026-05-05 (Tobias-direktiv): TUBE-PNG-ASSET ERSTATTER GRAPHICS.
- *   Bakgrunnen er nå en `Sprite` av `tube.png` (1993×231) i stedet for
+ * 2026-05-05 (Tobias-direktiv revidert): 1:1 ASPECT-RATIO PÅ TUBE-PNG.
+ *   Tidligere strekket vi PNG-en til 85px høyde uavhengig av bredde,
+ *   noe som ga faktisk render-aspect ~15+ vs PNG-ens egne 8.63 → flat
+ *   utseende. Nå beregner vi høyden dynamisk fra `TUBE_PNG_ASPECT`
+ *   (1993/231) clampa mellom TUBE_HEIGHT_MIN (110) og TUBE_HEIGHT_MAX
+ *   (160) for å unngå urimelige ekstremer ved svært små eller svært
+ *   brede stages. Konsumenter (PlayScreen, LobbyScreen) leser faktisk
+ *   høyde via `getHeight()` så layout under tuben følger med.
+ *
+ * 2026-05-05 (Tobias-direktiv original): TUBE-PNG-ASSET ERSTATTER GRAPHICS.
+ *   Bakgrunnen er en `Sprite` av `tube.png` (1993×231) i stedet for
  *   prosedural Graphics. PNG-en har innebygd gull-ramme + rødt
- *   glass-fyll og er mockup-paritet med Tobias-leveransen. Sprite-en
- *   strekkes til (`width`, TUBE_HEIGHT) — aspect-distortion er
- *   akseptabelt for et glass-tube-effekt og var beslutning av Tobias.
- *   Hvis PNG ikke kan lastes faller vi tilbake til en transparent
- *   placeholder så testene fortsatt kan instansiere komponenten.
+ *   glass-fyll og er mockup-paritet med Tobias-leveransen. Hvis PNG
+ *   ikke kan lastes faller vi tilbake til transparent placeholder så
+ *   testene fortsatt kan instansiere komponenten.
  *
  * 2026-05-04 (Tobias-direktiv): SPILL 1-PARITET PÅ DESIGN OG ANIMASJON.
  *   - Bruker samme ball-PNG-er som Spill 1 (`/web/games/assets/game1/
@@ -33,7 +40,9 @@
  *     mønster som Spill 1's `BallTube.createBall`).
  *
  * Kontrakt mot `PlayScreen`:
- *   - `setSize(width)` setter tube-størrelse.
+ *   - `setSize(width)` setter tube-størrelse (høyde beregnes automatisk).
+ *   - `getHeight()` returnerer faktisk render-høyde — bruk for layout
+ *     av elementer under tuben.
  *   - `setDrawCount(current, total)` oppdaterer "Trekk"-raden.
  *   - `setCountdown(milliseconds)` oppdaterer countdown.
  *   - `setRunning(running)` viser/skjuler "Neste trekning"-raden.
@@ -45,21 +54,44 @@
 import { Container, Graphics, Text, Sprite, Assets, type Texture } from "pixi.js";
 import gsap from "gsap";
 
-const TUBE_HEIGHT = 85;
+/**
+ * tube.png er 1993×231 (aspect 8.6234). Brukes til å beregne riktig
+ * render-høyde fra runtime-bredde slik at PNG-en ikke flat-strekkes.
+ */
+const TUBE_PNG_ASPECT = 1993 / 231;
+/** Minimumshøyde — sikrer plass til counter-tekst og 64px-baller. */
+const TUBE_HEIGHT_MIN = 110;
+/** Maksimumshøyde — hindrer urimelig høy tube ved svært brede stages. */
+const TUBE_HEIGHT_MAX = 160;
 const COUNTER_WIDTH = 230;
 const BALLS_GAP = 6;
 const BALLS_PADDING_X = 18;
 /** Tobias-direktiv 2026-05-04: 9 → 12 baller (tre flere) for å fylle tuben. */
 const MAX_VISIBLE_BALLS = 12;
 /** Ball-størrelse i tuben — matcher Spill 1's BallTube `BALL_SIZE` (70px)
- *  skalert ned til tube-høyde. Tuben er 85px så vi setter 64 for litt
- *  padding rundt og dermed plass til 12 baller jevnt fordelt. */
+ *  skalert ned til tube-høyde. Verdien beholdes 64 selv når tube-høyden
+ *  vokser dynamisk; ballene sentreres vertikalt via `ballsContainer.y`. */
 const BALL_SIZE = 64;
 /** Tobias-direktiv 2026-05-05: PNG-asset (gull-rammet rødt glass-rør)
  *  erstatter prosedural Graphics-tube. PNG er 1993×231 (aspect 8.63);
- *  strekkes til runtime-bredde × TUBE_HEIGHT med akseptabel horisontal
- *  distortion (gull-rim-illusjon holder seg). */
+ *  strekkes til runtime-bredde × dynamisk-høyde slik at originalt
+ *  aspect-forhold beholdes. */
 const TUBE_PNG_URL = "/web/games/assets/game2/design/tube.png";
+
+/**
+ * Beregn riktig tube-høyde for en gitt bredde. Holder originalt
+ * aspect (8.63) men clampes mellom TUBE_HEIGHT_MIN/MAX for å unngå
+ * urimelige verdier ved ekstreme bredder.
+ *
+ * Eksempler:
+ *   - 640px  → 640/8.63  = 74.2  → clampes til 110
+ *   - 1100px → 1100/8.63 = 127.5 → 128 (innen min/max)
+ *   - 1700px → 1700/8.63 = 197.1 → clampes til 160
+ */
+function computeTubeHeight(width: number): number {
+  const ideal = width / TUBE_PNG_ASPECT;
+  return Math.min(TUBE_HEIGHT_MAX, Math.max(TUBE_HEIGHT_MIN, ideal));
+}
 
 /**
  * PNG-ball-mapping (port av Spill 1's `getBallAssetPath`). Spill 2 har
@@ -157,12 +189,17 @@ export class BallTube extends Container {
   private ballsContainer: Container;
   private balls: Ball[] = [];
   private tubeWidth: number;
+  /** Faktisk render-høyde, beregnet fra width via `computeTubeHeight`.
+   *  Eksponert via `getHeight()` så PlayScreen/LobbyScreen kan posisjonere
+   *  elementer rett under tuben. */
+  private tubeHeight: number;
   /** Tobias-direktiv 2026-05-04: skjul "Neste trekning" under aktiv runde. */
   private isRunning: boolean = false;
 
   constructor(width: number) {
     super();
     this.tubeWidth = width;
+    this.tubeHeight = computeTubeHeight(width);
 
     // 1) Glass-tube bakgrunn — PNG-Sprite (Tobias 2026-05-05).
     //    Lazy-loadet via `Assets.load` så Pixi-cache deler texture på
@@ -178,8 +215,6 @@ export class BallTube extends Container {
     this.counter.y = 0;
     this.addChild(this.counter);
 
-    const counterRowH = TUBE_HEIGHT / 2;
-
     // ── "Neste trekning"-raden (kan skjules) ────────────────────────────
     this.countdownRow = new Container();
     const countdownLabel = new Text({
@@ -193,7 +228,6 @@ export class BallTube extends Container {
     });
     countdownLabel.anchor.set(0.5, 0.5);
     countdownLabel.x = COUNTER_WIDTH * 0.40;
-    countdownLabel.y = counterRowH / 2;
     this.countdownRow.addChild(countdownLabel);
 
     this.countdownValue = new Text({
@@ -208,7 +242,6 @@ export class BallTube extends Container {
     });
     this.countdownValue.anchor.set(0.5, 0.5);
     this.countdownValue.x = COUNTER_WIDTH * 0.78;
-    this.countdownValue.y = counterRowH / 2;
     this.countdownRow.addChild(this.countdownValue);
     this.counter.addChild(this.countdownRow);
 
@@ -229,7 +262,6 @@ export class BallTube extends Container {
     });
     this.drawCountValue.anchor.set(0.5, 0.5);
     this.drawCountValue.x = COUNTER_WIDTH * 0.5;
-    this.drawCountValue.y = counterRowH * 1.5;
     this.drawCountRow.addChild(this.drawCountValue);
     this.counter.addChild(this.drawCountRow);
 
@@ -237,25 +269,40 @@ export class BallTube extends Container {
     // er borte siden vi viser kun én rad (Trekk eller Neste trekning).
     this.divider = new Graphics();
     this.addChild(this.divider);
-    this.drawDividers();
-
-    // Initial state: !RUNNING (mellom runder / før første state-update).
-    // Vis countdown-rad sentrert, skjul Trekk-rad. Match setRunning(false).
-    this.drawCountRow.visible = false;
-    this.countdownRow.y = counterRowH * 0.5;
 
     // 3) Ball-container.
     this.ballsContainer = new Container();
     this.ballsContainer.x = COUNTER_WIDTH + BALLS_PADDING_X;
-    this.ballsContainer.y = (TUBE_HEIGHT - BALL_SIZE) / 2;
     this.addChild(this.ballsContainer);
+
+    // Initial layout — posisjonerer counter-rader og baller iht
+    // beregnet tubeHeight + setter divider. Matcher `setRunning(false)`-
+    // start-state (countdown-rad synlig, Trekk-rad skjult).
+    this.drawCountRow.visible = false;
+    this.layoutCounterRows();
+    this.drawDividers();
   }
 
-  /** Endre tube-bredden. Counter-bredden holdes fast på 230px. */
+  /**
+   * Faktisk render-høyde av tuben (px). Brukes av PlayScreen/LobbyScreen
+   * for å posisjonere elementer rett under tuben. Holdes synkron med
+   * `tubeWidth` via `computeTubeHeight`-formelen.
+   */
+  getHeight(): number {
+    return this.tubeHeight;
+  }
+
+  /**
+   * Endre tube-bredden. Counter-bredden holdes fast på 230px. Høyden
+   * re-beregnes automatisk fra `computeTubeHeight(width)` for å bevare
+   * 1:1 aspect på PNG-bakgrunnen.
+   */
   setSize(width: number): void {
     if (width === this.tubeWidth) return;
     this.tubeWidth = width;
+    this.tubeHeight = computeTubeHeight(width);
     this.applyTubeSize();
+    this.layoutCounterRows();
     this.drawDividers();
     this.layoutBalls(false);
   }
@@ -295,18 +342,16 @@ export class BallTube extends Container {
   setRunning(running: boolean): void {
     if (running === this.isRunning) return;
     this.isRunning = running;
-    const counterRowH = TUBE_HEIGHT / 2;
     if (running) {
-      // Aktiv runde: skjul countdown, sentrer Trekk-rad.
+      // Aktiv runde: skjul countdown, vis Trekk-rad sentrert.
       this.countdownRow.visible = false;
       this.drawCountRow.visible = true;
-      this.drawCountRow.y = -counterRowH * 0.5;
     } else {
-      // Mellom runder: skjul Trekk, sentrer countdown-rad.
+      // Mellom runder: skjul Trekk, vis countdown-rad sentrert.
       this.countdownRow.visible = true;
       this.drawCountRow.visible = false;
-      this.countdownRow.y = counterRowH * 0.5;
     }
+    this.layoutCounterRows();
     this.drawDividers();
   }
 
@@ -412,15 +457,37 @@ export class BallTube extends Container {
     this.applyTubeSize();
   }
 
-  /** Sett størrelsen på tube-PNG til (tubeWidth × TUBE_HEIGHT). Strekker
-   *  PNG-en horisontalt — gull-rammen og glass-effekten holder seg
-   *  visuelt akseptabelt for typiske runtime-bredder (1000–1700px). */
+  /** Sett størrelsen på tube-PNG til (tubeWidth × tubeHeight). Holder
+   *  PNG-ens originale 8.63-aspect så lenge `tubeHeight` ikke clampes —
+   *  ved svært små eller svært brede stages strekkes/krympes høyden
+   *  litt for å holde seg innen TUBE_HEIGHT_MIN/MAX. */
   private applyTubeSize(): void {
     if (!this.bgSprite) return;
     this.bgSprite.x = 0;
     this.bgSprite.y = 0;
     this.bgSprite.width = this.tubeWidth;
-    this.bgSprite.height = TUBE_HEIGHT;
+    this.bgSprite.height = this.tubeHeight;
+  }
+
+  /**
+   * Re-posisjoner counter-rader (Neste trekning / Trekk N/M) og ball-
+   * containeren basert på gjeldende `tubeHeight`. Kalles fra konstruktør,
+   * `setSize` og `setRunning`.
+   *
+   * Vi viser kun ÉN rad om gangen (per Tobias-direktiv 2026-05-04) og
+   * sentrerer den valgte raden vertikalt på hele tuben. Text-elementer
+   * inni hver rad har anchor 0.5 og y=0 (default) så de sitter på
+   * Container-ankerlinjen — vi trenger kun å sette container.y.
+   */
+  private layoutCounterRows(): void {
+    const centerY = this.tubeHeight / 2;
+    if (this.isRunning) {
+      this.drawCountRow.y = centerY;
+    } else {
+      this.countdownRow.y = centerY;
+    }
+    // Ball-container plassert sentrert vertikalt.
+    this.ballsContainer.y = (this.tubeHeight - BALL_SIZE) / 2;
   }
 
   private drawDividers(): void {
@@ -435,7 +502,7 @@ export class BallTube extends Container {
     // PNG-aksenten og ball-raden. Senket alpha 0.55 → 0.35 så den
     // harmoniserer med PNG i stedet for å kreve oppmerksomhet.
     this.divider
-      .rect(COUNTER_WIDTH, 6, 1.5, TUBE_HEIGHT - 12)
+      .rect(COUNTER_WIDTH, 6, 1.5, this.tubeHeight - 12)
       .fill({ color: 0xffffff, alpha: 0.35 });
   }
 
