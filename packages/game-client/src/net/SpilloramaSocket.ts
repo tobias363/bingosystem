@@ -187,6 +187,31 @@ export class SpilloramaSocket {
     connectionStateChanged: [],
   };
 
+  /**
+   * E2E v2 (2026-05-05): klient-auto-recovery på `window.online`.
+   *
+   * Bug: når brukerens nettverk dropper i 10 s og kommer tilbake, fanger
+   * Socket.io's interne reconnect-løkke ikke alltid opp at network er live
+   * igjen — særlig på mobile/captive nett der TCP-stacken sitter fast i
+   * "død" tilstand. Resultat: klient blir hengende på "FÅR IKKE KOBLET TIL
+   * ROM. TRYKK HER" til brukeren klikker (reload + redirect til lobby).
+   *
+   * Fix: lytt på browser-`online`-event. Når det fyrer:
+   *   - Hvis socket ikke allerede er koblet: tving en reconnect-syklus.
+   *   - Debounce: maks ett auto-reconnect-forsøk per WINDOW_MS.
+   *   - Maks AUTO_RETRY_LIMIT forsøk før vi gir opp og lar TRYKK HER-
+   *     fallback ta over (unngår evig spinning hvis serveren er nede,
+   *     ikke nettverket).
+   *   - Counteren nullstilles ved suksessfull connect.
+   *
+   * Gjelder Spill 1, 2 og 3 — alle tre bruker samme socket-instans.
+   */
+  private static readonly AUTO_RETRY_WINDOW_MS = 1000;
+  private static readonly AUTO_RETRY_LIMIT = 3;
+  private autoRetryCount = 0;
+  private lastAutoRetryAt = 0;
+  private onlineHandler: (() => void) | null = null;
+
   constructor(serverUrl: string) {
     this.serverUrl = serverUrl;
   }
@@ -272,6 +297,10 @@ export class SpilloramaSocket {
     });
 
     this.socket.on("connect", () => {
+      // E2E v2: nullstill auto-retry-budgetet når connect lykkes — gir
+      // brukeren et nytt sett forsøk neste gang nettverket dropper.
+      this.autoRetryCount = 0;
+      this.lastAutoRetryAt = 0;
       this.setConnectionState("connected");
     });
 
@@ -286,6 +315,11 @@ export class SpilloramaSocket {
       }
       this.setConnectionState("reconnecting");
     });
+
+    // E2E v2 (2026-05-05): browser-`online`-event-handler. Se kommentaren
+    // på AUTO_RETRY_WINDOW_MS-feltet for full begrunnelse. Idempotent —
+    // hvis allerede koblet eller nylig forsøkt, no-op.
+    this.installOnlineHandler();
 
     this.socket.io.on("reconnect", () => {
       this.setConnectionState("connected");
@@ -409,6 +443,11 @@ export class SpilloramaSocket {
     for (const channel of Object.keys(this.bufferedEvents) as Array<keyof SpilloramaSocketListeners>) {
       this.bufferedEvents[channel].length = 0;
     }
+    // E2E v2: rydd `window.online`-listener så vi ikke lekker handlers
+    // mellom mount/unmount-sykluser av game-controllerne.
+    this.uninstallOnlineHandler();
+    this.autoRetryCount = 0;
+    this.lastAutoRetryAt = 0;
     this.setConnectionState("disconnected");
   }
 
@@ -630,5 +669,98 @@ export class SpilloramaSocket {
     if (this.connectionState === state) return;
     this.connectionState = state;
     this.listeners.connectionStateChanged.forEach((fn) => fn(state));
+  }
+
+  /**
+   * E2E v2 (2026-05-05): registrer `window.online`-handler. Idempotent —
+   * trygt å kalle flere ganger; bare første kall installerer listener.
+   *
+   * Kjøres som no-op i ikke-DOM-miljøer (test-runner uten happy-dom og
+   * SSR) ved å sjekke `typeof window`. Vitest med happy-dom har
+   * window-objekt og `addEventListener`, så testene dekker den vanlige
+   * pathen.
+   */
+  private installOnlineHandler(): void {
+    if (this.onlineHandler) return;
+    if (typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+
+    this.onlineHandler = () => this.handleBrowserOnline();
+    window.addEventListener("online", this.onlineHandler);
+  }
+
+  private uninstallOnlineHandler(): void {
+    if (!this.onlineHandler) return;
+    if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+      window.removeEventListener("online", this.onlineHandler);
+    }
+    this.onlineHandler = null;
+  }
+
+  /**
+   * Når browseren rapporterer at nettverket er tilbake:
+   *   1. Sjekk `navigator.onLine` for å filtrere ut falske triggers.
+   *   2. Hvis socket allerede er koblet → no-op (Socket.io håndterte det
+   *      selv før vi rakk å reagere).
+   *   3. Hvis vi nylig forsøkte (< AUTO_RETRY_WINDOW_MS) → debounce.
+   *   4. Hvis vi har brukt opp AUTO_RETRY_LIMIT → la TRYKK HER-fallback ta
+   *      over (unngår evig spinning når serveren faktisk er nede).
+   *   5. Ellers: tving en reconnect-syklus via `socket.connect()`. Hvis
+   *      socket er null (mellom mount/unmount), instansier en ny socket.
+   *
+   * Selve resync-flyten (snapshot-restoration) håndteres av controller-
+   * lagene via deres eksisterende `connectionStateChanged: "connected"`-
+   * handlere — de detekterer at loader er synlig og kjører `handleReconnect`
+   * eller `resumeRoom`. Vi trenger ikke duplisere det her.
+   */
+  private handleBrowserOnline(): void {
+    // Falskt online-event (browser sa det, men `navigator.onLine` er false):
+    // ignorer. Sjelden, men trygt å sjekke.
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return;
+    }
+
+    // Socket.io ordnet det selv før eventet rakk frem til oss.
+    if (this.connectionState === "connected") {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastAutoRetryAt < SpilloramaSocket.AUTO_RETRY_WINDOW_MS) {
+      // Debounce parallelle/duplikate triggers (f.eks. `online` + Socket.io
+      // sin egen `reconnect_attempt` som fyrer i samme tick).
+      return;
+    }
+
+    if (this.autoRetryCount >= SpilloramaSocket.AUTO_RETRY_LIMIT) {
+      console.debug(
+        `[SpilloramaSocket] auto-retry budget brukt opp (${SpilloramaSocket.AUTO_RETRY_LIMIT}). ` +
+          "TRYKK HER-fallback overtar — bruker må reload manuelt.",
+      );
+      return;
+    }
+
+    this.lastAutoRetryAt = now;
+    this.autoRetryCount += 1;
+
+    console.debug(
+      `[SpilloramaSocket] window.online → auto-reconnect-forsøk ${this.autoRetryCount}/${SpilloramaSocket.AUTO_RETRY_LIMIT}`,
+    );
+
+    // Hvis socket er null (mellom mount/unmount-sykluser, f.eks. game-bytte),
+    // instansier ny socket via connect(). Hvis socket finnes men er
+    // disconnected, bruk eksisterende manager til å starte ny reconnect-
+    // syklus — beholder eventListeners og dispatching-pipelinen.
+    if (!this.socket) {
+      this.connect();
+      return;
+    }
+
+    // Tving Socket.io's manager til å starte ny reconnect-runde nå.
+    // .connect() er trygg å kalle på allerede-tilkoblet socket (no-op).
+    try {
+      this.socket.connect();
+    } catch (err) {
+      console.warn("[SpilloramaSocket] forced reconnect threw:", err);
+    }
   }
 }
