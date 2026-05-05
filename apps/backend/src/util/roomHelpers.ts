@@ -10,6 +10,42 @@ import type { GameVariantConfig, TicketTypeConfig } from "../game/variantConfig.
 import { expandSelectionsToTicketColors, getDefaultVariantConfig, patternConfigToDefinitions } from "../game/variantConfig.js";
 import { roundCurrency } from "./currency.js";
 
+// ── Perpetual-slug detection (Wave 3b — §6.1) ──────────────────────────────────
+//
+// Spill 2 (rocket) og Spill 3 (monsterbingo) er "perpetual rooms": ÉN globalt
+// rom, automatisk runde-restart via PerpetualRoundService, ingen master.
+// Disse rommene kan ha 1500+ samtidige spillere — derfor må vi strippe per-
+// spiller-state fra `room:update` for å unngå 450 MB-emit (audit §6.1).
+//
+// Slug-listen er duplisert fra Game2AutoDrawTickService.GAME2_SLUGS og
+// Game3AutoDrawTickService.GAME3_SLUGS for å unngå sirkulær import (game/
+// importerer ikke fra util/, men util/roomHelpers leses av game-engine).
+// Hvis nye perpetual-spill legges til må listen oppdateres begge steder.
+const PERPETUAL_GAME_SLUGS: ReadonlySet<string> = new Set([
+  // Spill 2 — Rocket / Tallspill
+  "rocket",
+  "game_2",
+  "tallspill",
+  // Spill 3 — Monsterbingo
+  "monsterbingo",
+  "mønsterbingo",
+  "game_3",
+]);
+
+/**
+ * Returnerer `true` hvis room-slug-en tilhører Spill 2 eller Spill 3 og
+ * payload-en derfor skal strippes for å holde 1500-spillere-skala innenfor
+ * Render-bandwidth-budsjettet.
+ *
+ * Case-insensitiv — tar `gameSlug` som det er lagret på rommet (kan være
+ * "Rocket"/"rocket" avhengig av admin-input). Ukjent eller `undefined` slug
+ * returnerer `false` (default-trygt: full payload sendes).
+ */
+export function isPerpetualGameSlug(slug: string | null | undefined): boolean {
+  if (!slug) return false;
+  return PERPETUAL_GAME_SLUGS.has(slug.toLowerCase().trim());
+}
+
 // ── Room priority ──────────────────────────────────────────────────────────────
 
 export function compareRoomPriority(a: RoomSummary, b: RoomSummary): number {
@@ -130,6 +166,14 @@ export type RoomUpdatePayload = RoomSnapshot & {
   armedPlayerIds: string[];
   luckyNumbers: Record<string, number>;
   serverTimestamp: number;
+  /**
+   * §6.1 fix (Wave 3b, 2026-05-06): authoritative connected-player count
+   * for perpetual rooms whose `players[]` array was stripped on the wire.
+   * Always populated by `stripPlayersForWire` when stripping; otherwise
+   * `undefined`. Klient bør foretrekke `playerCount` over `players.length`
+   * fordi `players` kan være `[]` for Spill 2/3.
+   */
+  playerCount?: number;
   /**
    * Server-authoritative ACTIVE-ROUND stake per player (in kroner).
    * Clients display this directly — no client-side calculation needed.
@@ -480,6 +524,110 @@ export function buildRoomUpdatePayload(
     scheduler: buildRoomSchedulerState(snapshot, nowMs, opts),
     serverTimestamp: nowMs,
     gameVariant,
+  };
+}
+
+// ── Wire-payload-stripping for perpetual rooms (Wave 3b — §6.1) ────────────────
+//
+// Audit-context: Spill 2/3 har ÉT globalt rom per spill (rocket / monsterbingo)
+// med opp til 1500 samtidige spillere. Standard `room:update` inkluderer hele
+// `players[]` (~200 bytes/player) + per-spiller-`tickets`/`marks`/`preRoundTickets`
+// — total ~300 KB. `io.to(roomCode).emit(...)` itererer over alle 1500 sockets
+// → 450 MB pr. emit, 225 MB/s sustained. Render-bandwidth-budsjett er ~5 MB/s.
+//
+// Klient-impact: Spill 2/3-klienten bruker BARE `playerCount` (combo-panel +
+// lobby-chip). Den iterer aldri `players[]` for å rendere noe. `tickets` /
+// `marks` brukes kun for `myPlayerId` (egen spiller). Resten av spillerne kan
+// derfor strippes uten observerbar UI-effekt.
+//
+// Game1 (bingo) er IKKE perpetual og har ~5-50 spillere/rom — der trenger
+// klienten hele `players[]` for "Topp 5"-leaderboarden + chat-roster, så
+// vi MÅ ikke strippe der.
+
+/**
+ * Returner en wire-payload der `players[]`, `currentGame.tickets`, og
+ * `currentGame.marks` er strippet til kun den oppgitte mottakeren. Brukes
+ * ved per-socket-emit for Spill 2/3 så payload-størrelsen blir bounded ved
+ * 1500-spillere-skala.
+ *
+ * Hvis `recipientPlayerId` er null (admin-display, observatør, etc.) blir
+ * tickets/marks satt til tomme records, og `players` til `[]`.
+ *
+ * `playerCount` settes alltid fra source-payload-en så klient kan vise
+ * antall tilkoblede spillere uavhengig av om listen er strippet.
+ *
+ * Source-payload-en muteres IKKE — vi returnerer en ny payload per call.
+ * Det er trygt å holde sources i memory og strippe lazily per socket.
+ */
+export function stripPerpetualPayloadForRecipient(
+  payload: RoomUpdatePayload,
+  recipientPlayerId: string | null,
+): RoomUpdatePayload {
+  // playerCount settes fra fullt payload — det er den eneste informasjonen
+  // klient skal lese, så vi MÅ alltid populere det her uavhengig av om
+  // recipient-player matcher noen i room.
+  const playerCount = payload.players.length;
+
+  // Filter players[] til kun mottakeren (eller tom om ingen mottaker).
+  // Mottakeren trenger fortsatt sin egen `Player`-rad fordi GameBridge
+  // henter `me.balance` fra `payload.players.find(p => p.id === myPlayerId)`
+  // som backwards-fallback når wallet:state ennå ikke har landet.
+  const me = recipientPlayerId
+    ? payload.players.find((p) => p.id === recipientPlayerId)
+    : undefined;
+  const trimmedPlayers = me ? [me] : [];
+
+  // Filter currentGame.tickets / marks til kun mottakerens egne — alt annet
+  // blir uleselig for klienten uansett (myTickets/myMarks-pattern i
+  // GameBridge.applyGameSnapshot).
+  let trimmedCurrentGame = payload.currentGame;
+  if (payload.currentGame) {
+    const myTickets =
+      recipientPlayerId && payload.currentGame.tickets[recipientPlayerId]
+        ? { [recipientPlayerId]: payload.currentGame.tickets[recipientPlayerId] }
+        : {};
+    const myMarks =
+      recipientPlayerId && payload.currentGame.marks[recipientPlayerId]
+        ? { [recipientPlayerId]: payload.currentGame.marks[recipientPlayerId] }
+        : {};
+    trimmedCurrentGame = {
+      ...payload.currentGame,
+      tickets: myTickets,
+      marks: myMarks,
+    };
+  }
+
+  // Filter preRoundTickets / luckyNumbers / playerStakes / playerPendingStakes
+  // til kun mottakerens nøkkel — disse er per-spiller record-objekter som er
+  // uleselige for andre spillere.
+  function pickForRecipient<T>(map: Record<string, T>): Record<string, T> {
+    if (!recipientPlayerId) return {};
+    if (map[recipientPlayerId] === undefined) return {};
+    return { [recipientPlayerId]: map[recipientPlayerId] };
+  }
+
+  // armedPlayerIds: klient bruker KUN `armedPlayerIds.includes(myPlayerId)`
+  // for å avgjøre om mottakeren selv er armed. Vi reduserer til kun
+  // mottakerens ID hvis den er armed; ellers tom array. Det gir samme
+  // klient-observert oppførsel uten å bære alle 1500 IDer på wire-en.
+  const armedPlayerIds: string[] =
+    recipientPlayerId && payload.armedPlayerIds.includes(recipientPlayerId)
+      ? [recipientPlayerId]
+      : [];
+
+  return {
+    ...payload,
+    players: trimmedPlayers,
+    playerCount,
+    currentGame: trimmedCurrentGame,
+    armedPlayerIds,
+    preRoundTickets: pickForRecipient(payload.preRoundTickets),
+    luckyNumbers: pickForRecipient(payload.luckyNumbers),
+    playerStakes: pickForRecipient(payload.playerStakes),
+    playerPendingStakes: pickForRecipient(payload.playerPendingStakes),
+    // gameHistory er irrelevant for klient (brukes ikke i Spill 2/3 UI) men
+    // beholdes intakt så admin-snapshot fortsatt kan rendere historikk.
+    // gameHistory.tickets/marks er allerede komprimert siden runde-end.
   };
 }
 

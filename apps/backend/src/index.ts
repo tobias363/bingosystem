@@ -58,7 +58,7 @@ import {
   parsePositiveIntEnv,
 } from "./util/httpHelpers.js";
 import { parseBingoSettingsPatch, normalizeBingoSchedulerSettings } from "./util/bingoSettings.js";
-import { getPrimaryRoomForHall, findPlayerInRoomByWallet, buildRoomUpdatePayload as buildRoomUpdatePayloadHelper, buildLeaderboard as buildLeaderboardHelper, type RoomUpdatePayload } from "./util/roomHelpers.js";
+import { getPrimaryRoomForHall, findPlayerInRoomByWallet, buildRoomUpdatePayload as buildRoomUpdatePayloadHelper, buildLeaderboard as buildLeaderboardHelper, isPerpetualGameSlug, stripPerpetualPayloadForRecipient, type RoomUpdatePayload } from "./util/roomHelpers.js";
 import { RoomStateManager } from "./util/roomState.js";
 import {
   buildRoomLifecycleStoreSync,
@@ -1335,7 +1335,58 @@ function buildRoomUpdatePayload(snapshot: RoomSnapshot, nowMs = Date.now()): Roo
 
 async function emitRoomUpdate(roomCode: string): Promise<RoomUpdatePayload> {
   const payload = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
-  io.to(roomCode).emit("room:update", payload);
+
+  // §6.1 (Wave 3b, 2026-05-06): per-spiller-payload for perpetual rooms.
+  //
+  // Standard `io.to(roomCode).emit(...)` itererer over alle 1500 sockets
+  // og sender hele snapshot-en (~300 KB) til hver. Med Spill 2/3 kan det
+  // bli 450 MB pr. emit, 225 MB/s sustained → bruker opp Render-bandwidth
+  // på minutter. Stripping reduserer payload til ~5 KB/spiller = 7.5 MB
+  // pr. emit (60× mindre). Klient leser kun `myTickets/myMarks/playerCount`
+  // fra Spill 2/3-payloader, så stripping er observasjons-nøytral.
+  //
+  // Game1 (`bingo`) er IKKE perpetual — der har klient behov for full
+  // `players[]` (top-5-leaderboard + chat-roster) så vi sender uendret.
+  if (isPerpetualGameSlug(payload.gameSlug)) {
+    let recipients = 0;
+    let strippedTotalBytes = 0;
+    for (const player of payload.players) {
+      if (!player.socketId) continue;
+      const stripped = stripPerpetualPayloadForRecipient(payload, player.id);
+      // `volatile` ville droppet emits ved congestion — vi vil hellere ha
+      // backpressure-feedback enn tap, så vi bruker normal emit her.
+      io.to(player.socketId).emit("room:update", stripped);
+      recipients += 1;
+      // Best-effort byte-tracking for metrics (JSON.stringify én gang
+      // per emit — ikke billig, men gir oss reelle bytes-on-the-wire-tall
+      // for å validere bandwidth-besparelser i prod).
+      strippedTotalBytes += JSON.stringify(stripped).length;
+    }
+    // Emit også et fullt-payload til admin-display-rommet hvis det finnes
+    // (samme rom-code, men admin-display joiner et separat rom). For nå
+    // sender vi en tom-recipient-strippet versjon til selve roomCode-rommet
+    // så observatører/admin-clients som joinet uten en player-ID ikke får
+    // 0 events. De får et lite payload med playerCount + ingen per-spiller-
+    // data (alle felter strippet til {}).
+    if (recipients === 0) {
+      // Edge: ingen socket-bound players (test-rom, admin-only). Send
+      // stripped null-payload til selve roomCode så admin-display ikke
+      // venter på events.
+      const observerPayload = stripPerpetualPayloadForRecipient(payload, null);
+      io.to(roomCode).emit("room:update", observerPayload);
+    }
+    promMetrics.perpetualRoomUpdateBroadcasts.inc(
+      { slug: (payload.gameSlug ?? "unknown").toLowerCase() },
+    );
+    if (strippedTotalBytes > 0) {
+      promMetrics.perpetualRoomUpdateBytes.observe(
+        { slug: (payload.gameSlug ?? "unknown").toLowerCase() },
+        strippedTotalBytes,
+      );
+    }
+  } else {
+    io.to(roomCode).emit("room:update", payload);
+  }
   return payload;
 }
 

@@ -201,4 +201,32 @@ export const metrics = {
     help: "room.players mutated mid-iteration (defensive snapshot detected stale entry)",
     labelNames: ["slug"] as const,
   }),
+  // §6.1 (Wave 3b, 2026-05-06): per-spiller-broadcast for perpetual rooms.
+  // Inkrementeres hver gang `emitRoomUpdate` strippet payload-en og sendte
+  // én emit pr. socket istedenfor full broadcast. Bør være == antall
+  // `room:update`-trigger på Spill 2/3-rom (bekrefter at strip-veien er
+  // tatt, ikke gammel full-broadcast).
+  perpetualRoomUpdateBroadcasts: new client.Counter({
+    name: "spillorama_perpetual_room_update_broadcasts_total",
+    help: "Antall room:update-broadcasts som ble strippet til per-spiller-payload (§6.1)",
+    labelNames: ["slug"] as const,
+  }),
+
+  // §6.1: total bytes-on-the-wire (sum over alle sockets) per emit. Driver
+  // alert hvis vi nærmer oss bandwidth-budsjett. Histogram så vi får p50/p95
+  // og kan baseline-validere "5 KB/spiller × 1500 = 7.5 MB"-prognosen.
+  perpetualRoomUpdateBytes: new client.Histogram({
+    name: "spillorama_perpetual_room_update_bytes",
+    help: "Total bytes sendt over alle sockets i én room:update-emit etter stripping (§6.1)",
+    labelNames: ["slug"] as const,
+    buckets: [
+      8_192,         // 8 KB
+      32_768,        // 32 KB
+      131_072,       // 128 KB
+      524_288,       // 512 KB
+      2_097_152,     // 2 MB
+      8_388_608,     // 8 MB — alarmnivå (1500 spillere × 5.5 KB)
+      33_554_432,    // 32 MB — kritisk (skal aldri skje etter strip)
+    ],
+  }),
 };
