@@ -45,7 +45,8 @@ import { BallTube } from "../components/BallTube.js";
 import { CenterBallPop } from "../components/CenterBallPop.js";
 import { ComboPanel } from "../components/ComboPanel.js";
 import type { JackpotSlotData } from "../components/JackpotsRow.js";
-import { BuyPopup } from "../components/BuyPopup.js";
+import { Game1BuyPopup } from "../../game1/components/Game1BuyPopup.js";
+import { HtmlOverlayManager } from "../../game1/components/HtmlOverlayManager.js";
 import { LykketallPopup } from "../components/LykketallPopup.js";
 
 const BG_URL = "/web/games/assets/game2/design/bong-bg.png";
@@ -85,7 +86,20 @@ export class PlayScreen extends Container {
    * så den dekker bong-tallene mens den vises.
    */
   private centerBallPop: CenterBallPop;
-  private buyPopup: BuyPopup;
+  /**
+   * Tobias-direktiv 2026-05-04: byttet fra Pixi-`BuyPopup` til Spill 1's
+   * `Game1BuyPopup` (HTML-overlay). Identisk popup-design som Spill 3 (som
+   * også bruker Game1BuyPopup via Game1 PlayScreen).
+   */
+  private buyPopup: Game1BuyPopup;
+  private overlayManager: HtmlOverlayManager;
+  /** Sist kjente snapshot — brukes til å rebuilde Game1BuyPopup med
+   *  ticketTypes + alreadyPurchased ved `showBuyPopupForNextRound`. */
+  private lastState: GameState | null = null;
+  /** Tobias-direktiv 2026-05-04: track buyPopup-visibilitet manuelt fordi
+   *  Game1BuyPopup er HTML-overlay og har ikke `.visible`-flag som Pixi-
+   *  Container. Brukes av controller til å gate trigger-events. */
+  private buyPopupVisible = false;
   // 2026-05-03 (Agent Y): popup som åpnes ved klikk på Lykketall-kolonnen
   // i ComboPanel. Erstatter inline LykketallGrid i ComboPanel per
   // Tobias-direktiv ("velg lykketall skal være en popup").
@@ -105,7 +119,9 @@ export class PlayScreen extends Container {
   // er fjernet i v2. Auto-claim på Fullt Hus drives av backend (PR #855).
   private onClaim: ((type: "LINE" | "BINGO") => void) | null = null;
   private onLuckyNumber: ((n: number) => void) | null = null;
-  private onBuyForNextRound: ((count: number) => void) | null = null;
+  /** Tobias-direktiv 2026-05-04: callback nå tar selections-array (Game1-
+   *  paritet) i stedet for flat count, så server-armBet får riktig shape. */
+  private onBuyForNextRound: ((selections: Array<{ type: string; qty: number; name?: string }>) => void) | null = null;
   /** Siste kjente entryFee fra state — brukes av `openBuyPopupModal` så
    *  popup viser korrekt billettpris uavhengig av når brukeren klikker. */
   private currentEntryFee = 20;
@@ -226,17 +242,23 @@ export class PlayScreen extends Container {
     this.comboPanel.setOnBuyMore(() => this.openBuyPopupModal());
     this.addChild(this.comboPanel);
 
-    // 2026-05-03 (Agent S, v2): mellom-runde buy-popup. Vises auto når
-    // `state.millisUntilNextStart` <= 30 s mens forrige runde fortsatt
-    // pågår (PLAYING/SPECTATING). Eksplisitt beholdt per Tobias-direktiv:
-    // "kun disse elementene samt popup av kjøp av biletter".
-    const popupW = 320;
-    const popupH = 220;
-    this.buyPopup = new BuyPopup(popupW, popupH);
-    this.buyPopup.x = (screenWidth - popupW) / 2;
-    this.buyPopup.y = (screenHeight - popupH) / 2;
-    this.buyPopup.setOnBuy((count) => this.onBuyForNextRound?.(count));
-    this.addChild(this.buyPopup);
+    // Tobias-direktiv 2026-05-04: Game1BuyPopup (HTML-overlay) — identisk
+    // popup-design som Spill 3 (som også bruker Game1BuyPopup via Game1
+    // PlayScreen). HtmlOverlayManager mounter en DOM-div over canvas.
+    const overlayContainer =
+      typeof document !== "undefined" ? document.body : null;
+    if (overlayContainer) {
+      this.overlayManager = new HtmlOverlayManager(overlayContainer);
+    } else {
+      // SSR/test fallback — overlayManager må eksistere. Disse env-ene
+      // har ikke document, men game-client kjøres alltid i nettleser.
+      this.overlayManager = new HtmlOverlayManager(undefined as unknown as HTMLElement);
+    }
+    this.buyPopup = new Game1BuyPopup(this.overlayManager);
+    this.buyPopup.setOnBuy((selections) => {
+      this.buyPopupVisible = false;
+      this.onBuyForNextRound?.(selections);
+    });
 
     // 2026-05-03 (Agent Y): lykketall-popup. Klikk på Lykketall-kolonnen i
     // ComboPanel åpner denne; valg av nummer fyrer onLuckyNumber-callback
@@ -272,8 +294,9 @@ export class PlayScreen extends Container {
   /**
    * Sett callback for mellom-runde buy-popup-kjøp. Kalles når spilleren
    * trykker "Kjøp" i popup-en — controller skal armBet for neste runde.
+   * Tobias-direktiv 2026-05-04: callback tar `selections` (Game1-paritet).
    */
-  setOnBuyForNextRound(cb: (count: number) => void): void {
+  setOnBuyForNextRound(cb: (selections: Array<{ type: string; qty: number; name?: string }>) => void): void {
     this.onBuyForNextRound = cb;
   }
 
@@ -287,35 +310,46 @@ export class PlayScreen extends Container {
    * popup-tittelen "Forhåndskjøp – neste runde" så spilleren forstår at
    * trekningen IKKE er en del av kjøpet (mirror Spill 1).
    */
-  showBuyPopupForNextRound(ticketPrice: number, maxTickets = 30): void {
-    if (this.buyPopup.visible) return;
-    const forNextRound = this.currentGameStatus === "RUNNING";
-    this.buyPopup.show(ticketPrice, maxTickets, forNextRound);
+  showBuyPopupForNextRound(_ticketPrice?: number, _maxTickets = 30): void {
+    if (this.buyPopupVisible) return;
+    const ref = this.lastState;
+    if (!ref) return;
+    const fee = ref.entryFee || this.currentEntryFee || 10;
+    // Spill 2 har KUN én ticket-type ("Standard" / "game2-3x3"). Hvis
+    // server ikke har sendt ticketTypes ennå, bygg en synthetic så
+    // popup-en kan vises uten å vente på initial state-update.
+    const types = ref.ticketTypes && ref.ticketTypes.length > 0
+      ? ref.ticketTypes
+      : [{ type: "game2-3x3", name: "Standard", price: fee, ticketCount: 1 }];
+    const alreadyPurchased = ref.preRoundTickets?.length ?? 0;
+    this.buyPopup.showWithTypes(fee, types as Parameters<Game1BuyPopup["showWithTypes"]>[1], alreadyPurchased);
+    this.buyPopupVisible = true;
   }
 
   /** Skjul mellom-runde buy-popup. Idempotent. */
   hideBuyPopupForNextRound(): void {
-    if (!this.buyPopup.visible) return;
+    if (!this.buyPopupVisible) return;
     this.buyPopup.hide();
+    this.buyPopupVisible = false;
   }
 
   /**
-   * 2026-05-03 (Agent T, fix/spill2-pixel-match-design-v2): åpne
-   * BuyPopup som modal overlay når brukeren klikker "Kjøp flere brett"
-   * i Hovedspill-kolonnen i ComboPanel. Bruker siste kjente entryFee
-   * fra `currentEntryFee` så popup viser korrekt billettpris.
+   * Tobias-direktiv 2026-05-04: åpne Game1BuyPopup som modal når brukeren
+   * klikker "Kjøp flere brett". Bruker siste state-snapshot (`lastState`)
+   * så ticketTypes + entryFee + alreadyPurchased er ferskt.
    */
   private openBuyPopupModal(): void {
-    this.showBuyPopupForNextRound(this.currentEntryFee);
+    this.showBuyPopupForNextRound();
   }
 
   /** Returner true hvis popup er synlig. Brukes av controller for trigger-gating. */
   isBuyPopupVisible(): boolean {
-    return this.buyPopup.visible;
+    return this.buyPopupVisible;
   }
 
   /** Bygg bong-kort fra game state. Erstatter forrige sett. */
   buildTickets(state: GameState): void {
+    this.lastState = state;
     this.clearBongs();
     if (state.entryFee != null && state.entryFee > 0) {
       this.currentEntryFee = state.entryFee;
@@ -419,6 +453,7 @@ export class PlayScreen extends Container {
 
   /** State-oppdatering (player count, prize pool osv.). */
   updateInfo(state: GameState): void {
+    this.lastState = state;
     if (state.myLuckyNumber != null) {
       this.currentLuckyNumber = state.myLuckyNumber;
       this.comboPanel.setLuckyNumber(state.myLuckyNumber);
@@ -512,6 +547,10 @@ export class PlayScreen extends Container {
       this.countdownInterval = null;
     }
     this.clearBongs();
+    // Tobias-direktiv 2026-05-04: rydd opp HtmlOverlayManager + popup-DOM
+    // før Pixi-destroy så DOM-noder ikke henger igjen ved screen-bytte.
+    this.buyPopup.hide();
+    this.overlayManager.destroy();
     super.destroy(options);
   }
 

@@ -396,14 +396,15 @@ class Game2Controller implements GameController {
   }
 
   /**
-   * 2026-05-03 (Agent L → Agent T): kjøp utløst fra BuyPopup som åpnes
-   * eksplisitt via "Kjøp flere brett"-pill i ComboPanel. Auto-trigger er
-   * fjernet — popup er nå en ren modal som spilleren selv åpner. Samme
-   * bet:arm-flyt som lobby-kjøp.
+   * Tobias-direktiv 2026-05-04: BuyPopup nå Game1BuyPopup (HTML-overlay)
+   * som matcher Spill 3. Callback gir selections direkte i riktig shape
+   * for `bet:arm` — ingen `buildSpill2Selections`-konvertering nødvendig.
    */
-  private async handleBuyForNextRound(count: number): Promise<void> {
-    const selections = this.buildSpill2Selections(count);
-    console.log("[Game2] Arming bet for next round (modal popup), roomCode:", this.actualRoomCode, "count:", selections[0].qty);
+  private async handleBuyForNextRound(
+    selections: Array<{ type: string; qty: number; name?: string }>,
+  ): Promise<void> {
+    if (selections.length === 0) return;
+    console.log("[Game2] Arming bet for next round, selections:", selections);
     const result = await this.deps.socket.armBet({
       roomCode: this.actualRoomCode,
       armed: true,
@@ -411,10 +412,10 @@ class Game2Controller implements GameController {
     });
 
     if (result.ok) {
-      console.log("[Game2] Armed successfully (modal popup)");
+      console.log("[Game2] Armed successfully");
       this.playScreen?.hideBuyPopupForNextRound();
     } else {
-      console.error("[Game2] Arm failed (modal popup):", result.error);
+      console.error("[Game2] Arm failed:", result.error);
       this.showError(result.error?.message || "Kunne ikke kjøpe billetter");
     }
   }
