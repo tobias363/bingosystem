@@ -251,6 +251,15 @@ const GameVariantSchema = z.object({
  * Zod doesn't model TS intersections directly, so we inline the RoomSnapshot
  * shape via .extend() on RoomSnapshotSchema. Any new field on RoomSnapshot
  * therefore flows through automatically.
+ *
+ * §6.1 fix (Wave 3, 2026-05-06): for perpetual rooms (Spill 2/3) the
+ * `players[]` array is intentionally stripped on the wire to keep the
+ * payload bounded at 1500-spillere-skala. `playerCount` carries the count
+ * the client UI needs (combo/lobby chip), and `players` is set to `[]`.
+ * Older clients see the empty array and continue without crashing — they
+ * only ever rendered counts anyway. Game1 (non-perpetual) keeps the full
+ * `players[]` array because Game1's UI iterates the list to render the
+ * "Topp 5"-leaderboard and chat-panel-rosters.
  */
 export const RoomUpdatePayloadSchema = RoomSnapshotSchema.extend({
   scheduler: z.record(z.string(), z.unknown()),
@@ -259,6 +268,14 @@ export const RoomUpdatePayloadSchema = RoomSnapshotSchema.extend({
   luckyNumbers: z.record(z.string(), z.number().int()),
   serverTimestamp: z.number().int(),
   playerStakes: z.record(z.string(), z.number()),
+  /**
+   * §6.1 fix (Wave 3, 2026-05-06): authoritative connected-player count for
+   * perpetual rooms whose `players[]` array was stripped to save bandwidth.
+   * Always populated by the server when we strip `players`; non-perpetual
+   * rooms send the full `players[]` and may omit `playerCount`. Clients
+   * MUST prefer `playerCount` over `players.length` when both are present.
+   */
+  playerCount: z.number().int().nonnegative().optional(),
   /**
    * Round-state-isolation (Tobias 2026-04-25): per-player NEXT-round
    * commitment when a player has armed pre-round tickets during a
