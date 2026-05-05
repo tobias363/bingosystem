@@ -8,21 +8,7 @@ import type {
   Transaction,
   PlayerComplianceSnapshot,
 } from "@spillorama/shared-types/api";
-import type { RoomSnapshot, RoomSummary, Ticket } from "@spillorama/shared-types/game";
-
-/**
- * 2026-05-02 (Tobias UX, PDF 17 wireframe side 5): Spill 2 Choose Tickets
- * pool-snapshot — 32 deterministisk forhåndsgenererte 3×3-brett per
- * (roomCode, playerId, gameId).
- */
-export interface Game2ChooseTicketsSnapshot {
-  roomCode: string;
-  playerId: string;
-  gameId: string;
-  tickets: Ticket[];
-  purchasedIndices: number[];
-  pickAnyNumber: number | null;
-}
+import type { RoomSnapshot, RoomSummary } from "@spillorama/shared-types/game";
 
 const TOKEN_KEY = "spillorama.accessToken";
 
@@ -52,17 +38,14 @@ export class SpilloramaApi {
   ): Promise<ApiResult<T>> {
     // Prefer web shell's authenticatedFetch (auto-refresh on 401).
     //
-    // Pilot-bug 2026-05-04 (ChooseTickets fetch error): web-shellens
+    // Pilot-bug 2026-05-04: web-shellens
     // `window.SpilloramaAuth.authenticatedFetch` returnerer det INNER-
     // unwrappede `body.data`-objektet (`auth.js` linje 159-161), IKKE
     // en Response. Tidligere kode kalte `res.json()` på resultatet → kast
-    // `TypeError: i.json is not a function` (synlig i bygget som
-    // `Game2Controller-CT4xg2f7.js:719:132`). Resultat: ChooseTickets-
-    // refresh feilet og popup-en sto tom (ingen brett, "Brett 0 / Beløp 0
-    // kr"-state). Fix: detekterer Response vs. unwrapped data og
-    // konstruerer ApiResult-konvolusjonen begge veier. Direkte fetch-
-    // pathen (uten shell-auth) leverer fortsatt en ekte Response som
-    // `.json()` plukker fra.
+    // `TypeError: i.json is not a function`. Fix: detekterer Response vs.
+    // unwrapped data og konstruerer ApiResult-konvolusjonen begge veier.
+    // Direkte fetch-pathen (uten shell-auth) leverer fortsatt en ekte
+    // Response som `.json()` plukker fra.
     const shellAuth = (window as unknown as Record<string, unknown>).SpilloramaAuth as
       | {
           authenticatedFetch?: (
@@ -87,8 +70,8 @@ export class SpilloramaApi {
       // `authenticatedFetch`. På success returnerer den allerede
       // `body.data` (unwrapped). På feil kaster den en Error med
       // forklarende melding. Vi konverterer til ApiResult-konvolusjon
-      // slik at callers (Game2 buy-flyt via Game1BuyPopup) får én
-      // konsistent shape uavhengig av hvilken pathen som ble valgt.
+      // slik at callers får én konsistent shape uavhengig av hvilken
+      // pathen som ble valgt.
       try {
         const result = await shellAuth.authenticatedFetch(path, init);
         // Defensive: noen miljøer (eldre auth.js-versjoner under
@@ -175,21 +158,5 @@ export class SpilloramaApi {
 
   getTransactions(limit = 50): Promise<ApiResult<Transaction[]>> {
     return this.get(`/api/wallet/me/transactions?limit=${limit}`);
-  }
-
-  // ── Spill 2 Choose Tickets (PDF 17 wireframe side 5) ──────────────────
-
-  getGame2ChooseTickets(roomCode: string): Promise<ApiResult<Game2ChooseTicketsSnapshot>> {
-    return this.get(`/api/agent/game2/choose-tickets/${encodeURIComponent(roomCode)}`);
-  }
-
-  buyGame2ChooseTickets(
-    roomCode: string,
-    indices: number[],
-    pickAnyNumber?: number | null,
-  ): Promise<ApiResult<Game2ChooseTicketsSnapshot>> {
-    const body: { indices: number[]; pickAnyNumber?: number | null } = { indices };
-    if (pickAnyNumber !== undefined) body.pickAnyNumber = pickAnyNumber;
-    return this.post(`/api/agent/game2/choose-tickets/${encodeURIComponent(roomCode)}/buy`, body);
   }
 }
