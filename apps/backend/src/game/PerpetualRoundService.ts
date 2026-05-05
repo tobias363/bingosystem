@@ -52,6 +52,7 @@ import { resolveRoundPauseMs } from "./variantConfig.js";
 import { logWarn } from "../observability/structuredLogger.js";
 import { GAME2_SLUGS } from "./Game2AutoDrawTickService.js";
 import { GAME3_SLUGS } from "./Game3AutoDrawTickService.js";
+import { SYSTEM_ACTOR_ID } from "./SystemActor.js";
 
 const logger = rootLogger.child({ module: "perpetual-round" });
 const MODULE_NAME = "PerpetualRoundService";
@@ -513,9 +514,21 @@ export class PerpetualRoundService {
     // at prizePool > 0 selv når env-default er 0 (free-play-konfig laget
     // for Spill 1 dev-flow).
     const entryFee = this.resolveEntryFeeForSlug(snapshot.gameSlug);
+    // Audit-fix 2026-05-06 (SPILL2_3_CASINO_GRADE_AUDIT_2026-05-05 §2.6):
+    // Tidligere brukte vi `snapshot.hostPlayerId` direkte. For perpetual-rom
+    // settes hostPlayerId KUN ved `RoomLifecycleService.createRoom` og
+    // reassignes ALDRI ved disconnect. Hvis original-host fane-refresher
+    // eller drar, ville `snapshot.hostPlayerId` peke på en spiller som
+    // ikke lenger er i rommet — og selv om assertHost passerte (slug-bypass
+    // / system-actor), ville framtidige call-sites som faktisk bruker
+    // host-id (f.eks. wallet-checks i andre flows) feilet med stale id.
+    // SYSTEM_ACTOR_ID er semantisk korrekt: perpetual-loop er server-driven,
+    // ikke en spiller-handling. assertHost tillater sentinel-en for
+    // perpetual-rom (BingoEngine.assertHost). Spill 1 (`bingo`) er ikke
+    // berørt — Spill 1 bruker Game1MasterControlService, ikke denne tjenesten.
     const startInput: Parameters<PerpetualEngine["startGame"]>[0] = {
       roomCode,
-      actorPlayerId: snapshot.hostPlayerId,
+      actorPlayerId: SYSTEM_ACTOR_ID,
       entryFee,
       ticketsPerPlayer: this.config.defaultTicketsPerPlayer,
       payoutPercent: this.config.defaultPayoutPercent,
@@ -538,7 +551,7 @@ export class PerpetualRoundService {
           roomCode,
           prevGameId,
           slug: snapshot.gameSlug,
-          actorPlayerId: snapshot.hostPlayerId,
+          actorPlayerId: SYSTEM_ACTOR_ID,
           entryFee,
         },
         "perpetual: auto-restart succeeded",
@@ -723,7 +736,7 @@ export class PerpetualRoundService {
         slug,
         currentStatus: currentStatus ?? "NONE",
         playerCount: snapshot.players.length,
-        actorPlayerId: snapshot.hostPlayerId,
+        actorPlayerId: SYSTEM_ACTOR_ID,
       },
       "perpetual: attempting first-round spawn",
     );
@@ -733,9 +746,13 @@ export class PerpetualRoundService {
     // slug-aware default entry fee. Spill 2/3 = 10 kr; ukjente slugs
     // bruker env-default.
     const entryFee = this.resolveEntryFeeForSlug(snapshot.gameSlug);
+    // Audit-fix 2026-05-06 (audit §2.6): symmetrisk med startNextRound —
+    // bruk SYSTEM_ACTOR_ID istedenfor potensielt-stale `hostPlayerId`.
+    // First-round-spawn er server-driven (kalles fra room:join-handler
+    // etter at en spiller har joined et tomt perpetual-rom).
     const startInput: Parameters<PerpetualEngine["startGame"]>[0] = {
       roomCode,
-      actorPlayerId: snapshot.hostPlayerId,
+      actorPlayerId: SYSTEM_ACTOR_ID,
       entryFee,
       ticketsPerPlayer: this.config.defaultTicketsPerPlayer,
       payoutPercent: this.config.defaultPayoutPercent,
@@ -754,7 +771,7 @@ export class PerpetualRoundService {
         {
           roomCode,
           slug,
-          actorPlayerId: snapshot.hostPlayerId,
+          actorPlayerId: SYSTEM_ACTOR_ID,
           playerCount: snapshot.players.length,
           entryFee,
         },

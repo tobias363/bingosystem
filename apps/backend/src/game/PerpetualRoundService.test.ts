@@ -253,7 +253,13 @@ test("happy path Spill 2: schedulerer og kjører auto-restart etter G2_WINNER", 
   assert.equal(state.startGameCalls.length, 1, "startGame kalt én gang");
   const call = state.startGameCalls[0]!;
   assert.equal(call.roomCode, "ROCKET");
-  assert.equal(call.actorPlayerId, "player-1");
+  // Audit-fix 2026-05-06 (audit §2.6): perpetual-loop bruker SYSTEM_ACTOR_ID
+  // istedenfor potensielt-stale `room.hostPlayerId`. Tidligere asserterte vi
+  // "player-1" (snapshot-host), men hostPlayerId reassignes ALDRI ved
+  // disconnect — så vi ville fått stale id og PLAYER_NOT_FOUND når original-
+  // host hadde forlatt rommet. SYSTEM_ACTOR_ID er semantisk korrekt:
+  // server-driven, ikke en spiller-handling.
+  assert.equal(call.actorPlayerId, "__system_actor__");
   assert.equal(call.payoutPercent, 80);
   assert.equal(call.ticketsPerPlayer, 4);
   assert.deepEqual(call.armedPlayerIds, []);
@@ -697,7 +703,10 @@ test("spawn: Spill 2 (rocket) første runde startes umiddelbart ved join", async
   assert.equal(timer.pendingCount(), 0, "ingen pending timer for first-round spawn");
   const call = state.startGameCalls[0]!;
   assert.equal(call.roomCode, "ROCKET");
-  assert.equal(call.actorPlayerId, "player-1");
+  // Audit-fix 2026-05-06 (audit §2.6): symmetrisk med startNextRound —
+  // first-round-spawn er server-driven (kalles fra room:join-handler) og
+  // bruker SYSTEM_ACTOR_ID istedenfor potensielt-stale hostPlayerId.
+  assert.equal(call.actorPlayerId, "__system_actor__");
   assert.deepEqual(call.armedPlayerIds, [], "ingen carry-over av armed players");
 });
 
