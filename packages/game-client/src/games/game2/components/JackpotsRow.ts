@@ -80,12 +80,12 @@ const PNG_ASPECT = PNG_ORIG_W / PNG_ORIG_H; // ~4.201
 
 /**
  * Maksimal rendret høyde for jackpots-raden. Tobias-direktiv 2026-05-06
- * (4. iterasjon): redusert fra 200 → 160 i kombinasjon med
- * LYKKETALL_COL_HEIGHT=170 (panelH=202) for tightere layout uten
- * tomrom under rektanglene. Balls + rectangles + label-overflow
- * passer komfortabelt i 160px.
+ * (5. iterasjon): redusert til 140 i kombinasjon med
+ * LYKKETALL_COL_HEIGHT=200 (panelH=232) og LABEL_GAP_PX=30 — labels
+ * ligger like over balls, hele jackpot-blokk sentreres i panelet med
+ * komfortabel margin top/bottom så elementene ikke ligger ved kantene.
  */
-const MAX_RENDERED_HEIGHT = 160;
+const MAX_RENDERED_HEIGHT = 140;
 
 /**
  * Slot-koordinater (ratio av PNG-dimensjoner) — håndmålt med en alpha-
@@ -123,7 +123,7 @@ const RECT_HEIGHT_RATIO = 0.250;     // rektangel-høyde ratio
  * 60-70px buffer). Hvis labels klippes, øk panelH-padding eller
  * reduser LABEL_GAP_PX.
  */
-const LABEL_GAP_PX = 110;
+const LABEL_GAP_PX = 30;
 
 /** Active-slot glow-ring stroke-farger (gull). */
 const ACTIVE_GLOW_COLOR = 0xffd97a;
