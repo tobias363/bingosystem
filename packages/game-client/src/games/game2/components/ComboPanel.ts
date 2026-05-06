@@ -66,11 +66,14 @@ const BORDER_COPPER = 0xc98a3a;
 //   (gikk tidligere ut på begge sider).
 //   .lykketall-col { width: 160px }
 //   .player-col { width: 110px }
-// Tobias-direktiv 2026-05-06: bredde redusert fra 230 → 200 for å gi
-// mer plass til JackpotsRow (bredere bar = bedre spacing mellom balls).
-const HOVEDSPILL_INNER_W = 200;
+// Tobias-direktiv 2026-05-06 (iter 5): bredde redusert fra 230 → 180 for
+// å gi mer plass til JackpotsRow (bredere bar = bedre spacing mellom balls
+// + plass for "14-21"-ballen til høyre).
+const HOVEDSPILL_INNER_W = 180;
 const HOVEDSPILL_COL_W = HOVEDSPILL_INNER_W + PANEL_PADDING_X * 2;
-const LYKKETALL_INNER_W = 160;
+// Tobias-direktiv 2026-05-06 (iter 5): redusert 160 → 120 for ekstra
+// plass til JackpotsRow.
+const LYKKETALL_INNER_W = 120;
 const LYKKETALL_COL_W = LYKKETALL_INNER_W + PANEL_PADDING_X * 2;
 // Pill-knapp: padding 8px 16px, border-radius 6px. Bredden økt 160 → 210
 // så "Forhåndskjøp neste runde"-tekst (23 chars × 13px Inter) får plass.
@@ -78,10 +81,10 @@ const PILL_W = 210;
 const PILL_H = 32;
 const PILL_RADIUS = 6;
 // Lykketall-kolonne: clover 44px + label sentrert. Tobias-direktiv 2026-05-06
-// (4. iterasjon): bytt fra 220 → 170 — fjerner tomrom under
-// JackpotsRow-rektanglene. JackpotsRow MAX_RENDERED_HEIGHT er også
-// redusert til 160 for å passe i tighter panel.
-const LYKKETALL_COL_HEIGHT = 170;
+// (5. iterasjon): bytt fra 170 → 200 — gir mer vertikal breathing-room
+// så labels ikke ligger ved panel-toppen, og jackpot-blokk er sentrert
+// med komfortabel margin top/bottom.
+const LYKKETALL_COL_HEIGHT = 200;
 const CLOVER_SIZE = 44;
 const CLOVER_URL = "/web/games/assets/game2/design/lucky-clover.png";
 
