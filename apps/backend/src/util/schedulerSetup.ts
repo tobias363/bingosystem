@@ -120,6 +120,11 @@ export function createSchedulerCallbacks(deps: SchedulerCallbackDeps) {
       }
     },
     onShutdown: async (activeRoomCodes: string[]) => {
+      // §6.1 (Wave 3b, 2026-05-06): shutdown er en sjelden ett-skudd-event.
+      // Vi sender full payload her — bandwidth-kost er trivielt vs. et
+      // kontrollert deploy-vindu der klienter trenger maks-info for å
+      // gjøre en clean reconnect. Per-spiller-stripping er bare verdt
+      // å betale for repeterende emits (auto-draw-tick), ikke shutdown.
       for (const roomCode of activeRoomCodes) {
         deps.io.to(roomCode).emit("room:update", {
           ...deps.buildRoomUpdatePayload(deps.engine.getRoomSnapshot(roomCode)),

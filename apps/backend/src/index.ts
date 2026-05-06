@@ -58,7 +58,7 @@ import {
   parsePositiveIntEnv,
 } from "./util/httpHelpers.js";
 import { parseBingoSettingsPatch, normalizeBingoSchedulerSettings } from "./util/bingoSettings.js";
-import { getPrimaryRoomForHall, findPlayerInRoomByWallet, buildRoomUpdatePayload as buildRoomUpdatePayloadHelper, buildLeaderboard as buildLeaderboardHelper, type RoomUpdatePayload } from "./util/roomHelpers.js";
+import { getPrimaryRoomForHall, findPlayerInRoomByWallet, buildRoomUpdatePayload as buildRoomUpdatePayloadHelper, buildLeaderboard as buildLeaderboardHelper, isPerpetualGameSlug, stripPerpetualPayloadForRecipient, type RoomUpdatePayload } from "./util/roomHelpers.js";
 import { RoomStateManager } from "./util/roomState.js";
 import {
   buildRoomLifecycleStoreSync,
@@ -282,6 +282,10 @@ import { createAdminCmsRouter } from "./routes/adminCms.js";
 import { createPublicCmsRouter } from "./routes/publicCms.js";
 import { createPublicStatusRouter } from "./routes/publicStatus.js";
 import { bootstrapStatusPage } from "./observability/statusBootstrap.js";
+// §6.4 (Wave 3b, 2026-05-06): Postgres-pool-utilization-metrics-tick. Wires
+// pgPool* gauges på en setInterval-loop som leser `pool.totalCount`,
+// `pool.idleCount`, `pool.waitingCount` fra hver registered pool.
+import { createPoolMetricsReporter as createPgPoolMetricsReporter } from "./observability/pgPoolMetrics.js";
 import { CmsService } from "./admin/CmsService.js";
 import { createAdminTrackSpendingRouter } from "./routes/adminTrackSpending.js";
 // Fase 2A (2026-05-05): error-code observability admin-routes (rate-snapshot
@@ -558,6 +562,29 @@ const bingoSettingsConstraints = { fixedAutoDrawIntervalMs, bingoMinRoundInterva
 const sharedPool = initSharedPool({
   connectionString: platformConnectionString,
   ssl: pgSsl,
+});
+
+// §6.4 (Wave 3b, 2026-05-06): pool-stats-metrics-tick.
+// Sample begge pools (shared + wallet) hvert 5s. Inkrementelt ramp-opp
+// av `pgPoolWaiting` er det første signalet på pool-exhaustion. Reporter-
+// en stoppes på shutdown. Wallet-pool registreres bare hvis adapter er
+// PostgresWalletAdapter — file/http-providers har ingen pool å sample.
+const pgPoolMetricsPools: Array<import("./observability/pgPoolMetrics.js").PoolSpec> = [
+  {
+    name: "shared",
+    pool: sharedPool,
+    max: parseInt(process.env.PG_POOL_MAX ?? "20", 10) || 20,
+  },
+];
+if (walletAdapter instanceof PostgresWalletAdapter) {
+  pgPoolMetricsPools.push({
+    name: "wallet",
+    pool: walletAdapter.getPool(),
+    max: parseInt(process.env.PG_POOL_MAX ?? "20", 10) || 20,
+  });
+}
+const pgPoolMetricsReporter = createPgPoolMetricsReporter({
+  pools: pgPoolMetricsPools,
 });
 
 const localBingoAdapter = usePostgresBingoAdapter
@@ -1335,7 +1362,58 @@ function buildRoomUpdatePayload(snapshot: RoomSnapshot, nowMs = Date.now()): Roo
 
 async function emitRoomUpdate(roomCode: string): Promise<RoomUpdatePayload> {
   const payload = buildRoomUpdatePayload(engine.getRoomSnapshot(roomCode));
-  io.to(roomCode).emit("room:update", payload);
+
+  // §6.1 (Wave 3b, 2026-05-06): per-spiller-payload for perpetual rooms.
+  //
+  // Standard `io.to(roomCode).emit(...)` itererer over alle 1500 sockets
+  // og sender hele snapshot-en (~300 KB) til hver. Med Spill 2/3 kan det
+  // bli 450 MB pr. emit, 225 MB/s sustained → bruker opp Render-bandwidth
+  // på minutter. Stripping reduserer payload til ~5 KB/spiller = 7.5 MB
+  // pr. emit (60× mindre). Klient leser kun `myTickets/myMarks/playerCount`
+  // fra Spill 2/3-payloader, så stripping er observasjons-nøytral.
+  //
+  // Game1 (`bingo`) er IKKE perpetual — der har klient behov for full
+  // `players[]` (top-5-leaderboard + chat-roster) så vi sender uendret.
+  if (isPerpetualGameSlug(payload.gameSlug)) {
+    let recipients = 0;
+    let strippedTotalBytes = 0;
+    for (const player of payload.players) {
+      if (!player.socketId) continue;
+      const stripped = stripPerpetualPayloadForRecipient(payload, player.id);
+      // `volatile` ville droppet emits ved congestion — vi vil hellere ha
+      // backpressure-feedback enn tap, så vi bruker normal emit her.
+      io.to(player.socketId).emit("room:update", stripped);
+      recipients += 1;
+      // Best-effort byte-tracking for metrics (JSON.stringify én gang
+      // per emit — ikke billig, men gir oss reelle bytes-on-the-wire-tall
+      // for å validere bandwidth-besparelser i prod).
+      strippedTotalBytes += JSON.stringify(stripped).length;
+    }
+    // Emit også et fullt-payload til admin-display-rommet hvis det finnes
+    // (samme rom-code, men admin-display joiner et separat rom). For nå
+    // sender vi en tom-recipient-strippet versjon til selve roomCode-rommet
+    // så observatører/admin-clients som joinet uten en player-ID ikke får
+    // 0 events. De får et lite payload med playerCount + ingen per-spiller-
+    // data (alle felter strippet til {}).
+    if (recipients === 0) {
+      // Edge: ingen socket-bound players (test-rom, admin-only). Send
+      // stripped null-payload til selve roomCode så admin-display ikke
+      // venter på events.
+      const observerPayload = stripPerpetualPayloadForRecipient(payload, null);
+      io.to(roomCode).emit("room:update", observerPayload);
+    }
+    promMetrics.perpetualRoomUpdateBroadcasts.inc(
+      { slug: (payload.gameSlug ?? "unknown").toLowerCase() },
+    );
+    if (strippedTotalBytes > 0) {
+      promMetrics.perpetualRoomUpdateBytes.observe(
+        { slug: (payload.gameSlug ?? "unknown").toLowerCase() },
+        strippedTotalBytes,
+      );
+    }
+  } else {
+    io.to(roomCode).emit("room:update", payload);
+  }
   return payload;
 }
 
@@ -2702,7 +2780,14 @@ app.use(createPublicStatusRouter(statusBootstrap));
 // Fase 2A (2026-05-05): admin observability — error-rates + registry. Mounts
 // `/api/admin/observability/error-rates` + `/api/admin/observability/error-codes`.
 // Bearer-auth + ADMIN_PANEL_ACCESS — driver dashboards og on-call-UI.
-app.use(createAdminObservabilityRouter({ platformService }));
+//
+// §6.4 (Wave 3b, 2026-05-06): + `/api/admin/observability/db-pool` for live
+// snapshot av Postgres pool-utilization. Wires de samme pool-spec-ene som
+// pgPoolMetricsReporter bruker.
+app.use(createAdminObservabilityRouter({
+  platformService,
+  pgPools: pgPoolMetricsPools,
+}));
 // BIN-628: admin track-spending aggregat (regulatorisk P2 — pengespill-
 // forskriften §11). Gjenbruker de samme env-var-drevne loss-limitene som
 // BingoEngine er konstruert med (`bingoDailyLossLimit` / `bingoMonthlyLossLimit`)
@@ -4206,6 +4291,9 @@ function handleShutdown(signal: string) {
   socketRateLimiter.stop();
   dailyReportScheduler.stop();
   jobScheduler.stop();
+  // §6.4 (Wave 3b): stopp pool-metrics-tick. Idempotent + ikke nødvendig
+  // for funksjonell shutdown, men holder Node-event-loopen rein.
+  pgPoolMetricsReporter.stop();
   drawScheduler.gracefulStop()
     .then(async () => {
       // BIN-761: stopp outbox-worker før øvrig rivetning, så pågående tick får
