@@ -248,8 +248,24 @@ export class PlayScreen extends Container {
     // Tobias-direktiv 2026-05-04: Game1BuyPopup (HTML-overlay) — identisk
     // popup-design som Spill 3 (som også bruker Game1BuyPopup via Game1
     // PlayScreen). HtmlOverlayManager mounter en DOM-div over canvas.
+    //
+    // BUG-FIX 2026-05-06 (MED-7, smoke-test): tidligere mountet vi på
+    // `document.body` (z-index: auto i body's stacking-kontekst → effektivt
+    // 0). Web-shell sin `#web-game-container` har `z-index: 900` og lager
+    // en NY stacking-kontekst — så canvas + alle dens descendants ligger
+    // OVER body-mountede overlays. Resultat: g1-overlay-root (z-index: 10)
+    // ble usynlig BAK Pixi-canvas, og Tobias så ingenting når han klikket
+    // "Forhåndskjøp neste runde".
+    //
+    // Fix: prøv først `#web-game-container` (matcher Spill 1's pattern via
+    // `container`-arg til PlayScreen-constructor). Da deler overlay og canvas
+    // samme stacking-kontekst og z-index virker som forventet. Fall back
+    // til `document.body` for visual-harness / SSR-tester der container
+    // ikke finnes.
     const overlayContainer =
-      typeof document !== "undefined" ? document.body : null;
+      typeof document !== "undefined"
+        ? document.getElementById("web-game-container") ?? document.body
+        : null;
     if (overlayContainer) {
       this.overlayManager = new HtmlOverlayManager(overlayContainer);
     } else {
