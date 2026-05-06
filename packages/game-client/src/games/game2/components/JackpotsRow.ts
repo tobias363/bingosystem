@@ -1,56 +1,38 @@
 /**
- * Spill 2 — 6 jackpot/gain-slots i en horisontal rad. Rendres nå som ett
- * stort PNG-asset (`jackpots.png`) der ball-grafikken med tall-9/10/11/
- * 12/13/14-21 OG de røde premie-rektanglene under er innebygd. Premie-
- * beløp og active-slot-glow legges som Pixi-overlays oppå PNG.
+ * Spill 2 — 6 jackpot/gain-slots i en horisontal rad.
  *
- * 2026-05-05 (Tobias-direktiv): JACKPOTS-PNG-ASSET ERSTATTER GRAPHICS.
- *   PNG er 1672×398 (aspect 4.20:1) og inneholder 6 røde baller med
- *   tall (sentrene ved x-ratio ~0.093, 0.256, 0.421, 0.582, 0.747,
- *   0.910 av total bredde) + 6 mørke-røde rektangler under for premie-
- *   tall. Vi måler ikke koordinater dynamisk — bruker hardkodede
- *   ratio-konstanter som ble håndmålt fra PNG-asset.
+ * 2026-05-06 (Tobias-direktiv — handoff redesign): byttet fra ETT samlet
+ * `jackpots.png` (1672×398 med alle 6 baller + 6 amount-rektangler innebygd)
+ * til SEKS individuelle ball-PNG-er + image-baserte labels + dynamisk
+ * CSS-stylet amount-tekst.
  *
- *   Ball-tallene (9, 10, ...) ER nå i PNG, så `numberText`-overlay er
- *   fjernet.
+ * **Rendering-arkitektur:**
+ *   - Pixi Sprite per slot (jackpot-1.png ... jackpot-6.png) — ball-grafikk
+ *     med tall (9, 10, 11, 12, 13, 14-21) ferdig-bakt inn i hver PNG.
+ *   - HTML-overlay per slot (via `HtmlOverlayManager`):
+ *       • Topp: <img> med label-jackpot.png ELLER label-gain.png
+ *       • Bunn: dynamisk CSS-stylet amount-tekst (5000 / 100 % / etc)
+ *   - Active-glow-ring (Graphics) rundt current slot.
  *
- *   Active-slot-highlight implementeres som en gull-glow-Graphics-ring
- *   plassert rundt aktiv ball. Posisjonen følger ball-x-ratiene oppgitt
- *   over.
+ * **Hvorfor HTML-amount-tekst i stedet for ferdig-rendrete amount-PNG-er
+ * fra mockup?** Admin kan sette ALLE jackpot-verdier fritt via
+ * GameManagement (PR #971-#973). Statiske amount-bilder ville låse oss
+ * til 5000/2500/1000/100/0. CSS-tekst gir full fleksibilitet og kan
+ * styles for å matche mockupens visuelle stil.
  *
- *   PNG skaleres med "fit-within"-strategi: skalerer til full bar-bredde,
- *   men cap'ed til en max-høyde så raden ikke vokser ut av ComboPanel.
- *   Hvis tilgjengelig bredde overskrider hva max-høyde × aspect tillater,
- *   sentreres PNG-en horisontalt med tomme marginer på begge sider.
+ * **Slot-mapping:**
+ *   Index 0 = "9"     → jackpot-1.png + label-jackpot.png
+ *   Index 1 = "10"    → jackpot-2.png + label-jackpot.png
+ *   Index 2 = "11"    → jackpot-3.png + label-jackpot.png
+ *   Index 3 = "12"    → jackpot-4.png + label-jackpot.png
+ *   Index 4 = "13"    → jackpot-5.png + label-gain.png
+ *   Index 5 = "14-21" → jackpot-6.png + label-gain.png
  *
- * 2026-05-05 (Tobias-direktiv 2): "Jackpot"/"Gain"-labels OVER hver ball.
- *   PR #940 fjernet labels feilaktig — de skulle være med (i CSS, ikke
- *   Pixi). Re-implementert som HTML-overlay-DIVer over Pixi-canvas, lik
- *   mønsteret `Game1BuyPopup` bruker. Stil: italic-bold gull-gradient
- *   med drop-shadow + tekst-stroke for lesbarhet mot mørk bakgrunn.
- *
- *   Slot 9/10/11/12 → "Jackpot", slot 13/14-21 → "Gain".
- *
- *   Mounting: `attachLabels(canvas, overlayManager)` kalles av PlayScreen/
- *   LobbyScreen etter at JackpotsRow er lagt til Pixi-stage. Labels
- *   re-posisjoneres ved hver `applyLayout` (bredde-endring fra ComboPanel)
- *   OG ved window-resize (canvas kan flytte seg på viewport-resize).
- *
- * Kontrakt (uendret fra forrige versjon):
- *   - `update(list)` — full prize-liste fra `g2:jackpot:list-update`-event.
- *   - `setCurrentDrawCount(n)` — markerer aktiv slot med glow-ring.
- *   - `setBarWidth(w)` — sett tilgjengelig bredde, PNG skaleres innenfor.
- *   - `barWidth` — get returnerer current allotted bredde.
- *   - `barHeight` — get returnerer faktisk rendret høyde (kan være < panel
- *     pga aspect-cap).
- *
- * Ny kontrakt:
- *   - `attachLabels(canvas, overlayManager)` — mount HTML-labels over
- *     Pixi-canvas. Idempotent — kan kalles flere ganger med samme refs.
- *   - `detachLabels()` — fjern HTML-labels (kalles fra destroy-flow).
+ * Tobias-direktiv 2026-05-06: KUN slot 0-3 har "Jackpot"-label;
+ * slot 4-5 har "Gain"-label.
  */
 
-import { Container, Graphics, Sprite, Text, Assets, type Texture } from "pixi.js";
+import { Container, Graphics, Sprite, Assets, type Texture } from "pixi.js";
 import type { HtmlOverlayManager } from "../../game1/components/HtmlOverlayManager.js";
 
 export interface JackpotSlotData {
@@ -64,132 +46,97 @@ export interface JackpotSlotData {
 
 const SLOT_KEYS = ["9", "10", "11", "12", "13", "14-21"] as const;
 
-/**
- * Label-tekst over hver ball. Tobias-direktiv 2026-05-05 (referansebilde):
- * 9, 10, 11, 12 → "Jackpot"; 13, 14-21 → "Gain".
- *
- * Indekser matcher `SLOT_KEYS`-rekkefølgen.
- */
-const LABEL_TEXTS = ["Jackpot", "Jackpot", "Jackpot", "Jackpot", "Gain", "Gain"] as const;
+/** Hvilken label-PNG som brukes per slot (Jackpot vs Gain). */
+const SLOT_IS_JACKPOT = [true, true, true, true, false, false] as const;
 
-/** PNG-asset (1672×398). Aspect = 4.20:1. */
-const JACKPOTS_PNG_URL = "/web/games/assets/game2/design/jackpots.png";
-const PNG_ORIG_W = 1672;
-const PNG_ORIG_H = 398;
-const PNG_ASPECT = PNG_ORIG_W / PNG_ORIG_H; // ~4.201
+/** Asset-URLer for de 6 ball-PNG-ene (jackpot-1 til jackpot-6). */
+const JACKPOT_PNG_URLS = [
+  "/web/games/assets/game2/design/jackpot-1.png",
+  "/web/games/assets/game2/design/jackpot-2.png",
+  "/web/games/assets/game2/design/jackpot-3.png",
+  "/web/games/assets/game2/design/jackpot-4.png",
+  "/web/games/assets/game2/design/jackpot-5.png",
+  "/web/games/assets/game2/design/jackpot-6.png",
+] as const;
 
-/**
- * Maksimal rendret høyde for jackpots-raden. Tobias-direktiv 2026-05-06
- * (5. iterasjon): redusert til 140 i kombinasjon med
- * LYKKETALL_COL_HEIGHT=200 (panelH=232) og LABEL_GAP_PX=30 — labels
- * ligger like over balls, hele jackpot-blokk sentreres i panelet med
- * komfortabel margin top/bottom så elementene ikke ligger ved kantene.
- */
-const MAX_RENDERED_HEIGHT = 140;
+/** Asset-URLer for de 2 label-PNG-ene. */
+const LABEL_JACKPOT_URL = "/web/games/assets/game2/design/label-jackpot.png";
+const LABEL_GAIN_URL = "/web/games/assets/game2/design/label-gain.png";
+
+/** Naturlig PNG-aspect (alle 6 jackpot-N.png er 278×240). */
+const SLOT_PNG_ASPECT = 278 / 240;
 
 /**
- * Slot-koordinater (ratio av PNG-dimensjoner) — håndmålt med en alpha-
- * scan på den faktiske PNG-asset 2026-05-05. Verdier brukes for å
- * plassere amount-text-overlays + active-glow-ring relativt til Sprite-en.
+ * Tile-størrelse: bredde + høyde + total-høyde for slot (inkl. label + amount).
+ *
+ * Layout per slot (top to bottom):
+ *   - Label-image:  ~26px høy
+ *   - Gap:           4px
+ *   - Ball-sprite:  ~78px aspect-justert (78 × 67 ved aspect 278/240)
+ *   - Gap:           8px
+ *   - Amount-tekst: ~28px høy
+ *
+ * Total slot-høyde: ~145px ved BALL_WIDTH=78. ComboPanel.panelH må være
+ * minst dette + padding for å unngå klipping.
  */
-const BALL_X_RATIOS = [0.0933, 0.2563, 0.4208, 0.5822, 0.7470, 0.9103] as const;
-const BALL_Y_RATIO = 0.307;          // ball-senter ratio (av PNG-høyde)
-const BALL_RADIUS_RATIO = 0.288;     // ball-radius ratio (av PNG-høyde)
-const RECT_Y_RATIO = 0.872;          // rektangel-senter ratio
-const RECT_WIDTH_RATIO = 0.131;      // rektangel-bredde ratio (per slot)
-const RECT_HEIGHT_RATIO = 0.250;     // rektangel-høyde ratio
-/**
- * Label posisjon-offset over ball-topp. Tobias-direktiv 2026-05-06
- * (referansebilde 2): label skal være TYDELIG over ballene med
- * konsistent visuell luft, uavhengig av spriteH-skalering.
- *
- * Tidligere ratio-baserte tilnærming (-0.125, -0.30) ga inkonsistent
- * gap fordi spriteH varierer med viewport-bredde. Live-debug 2026-05-06
- * via chrome-devtools-mcp viste at -0.30 plasserte labels OPPÅ ballene
- * (label-y=780, ball-top=~775), mens manuell +80px-offset ga riktig
- * visuell plassering (label-y=700).
- *
- * Ny tilnærming: regn ut label-y direkte fra ball-topp + fixed gap.
- * Dette gir samme visuelle gap uansett spriteH.
- *
- *   ball_top = (BALL_Y_RATIO - BALL_RADIUS_RATIO) * spriteH ≈ 0.019 * spriteH
- *   label_y_local = ball_top - LABEL_GAP_PX - labelHalfHeight
- *
- * `LABEL_GAP_PX = 50` gir ~50px ren luft mellom label-bunn og ball-topp,
- * matcher referansebildets visuelle proporsjoner.
- *
- * NB: Dette overflower JackpotsRow's top-edge med ~50-60px. ComboPanel
- * må reservere plass over JackpotsRow for label-overflow (typisk
- * 60-70px buffer). Hvis labels klippes, øk panelH-padding eller
- * reduser LABEL_GAP_PX.
- */
-const LABEL_GAP_PX = 60;
+const BALL_WIDTH_DEFAULT = 78;
+const LABEL_HEIGHT = 26;
+const LABEL_GAP = 4;
+const AMOUNT_GAP = 8;
+const AMOUNT_HEIGHT = 28;
+
+/** Max høyde av hele tile (brukt av `barHeight`-getter for ComboPanel-layout). */
+const MAX_RENDERED_HEIGHT =
+  LABEL_HEIGHT + LABEL_GAP + Math.round(BALL_WIDTH_DEFAULT / SLOT_PNG_ASPECT) + AMOUNT_GAP + AMOUNT_HEIGHT;
 
 /** Active-slot glow-ring stroke-farger (gull). */
 const ACTIVE_GLOW_COLOR = 0xffd97a;
 const ACTIVE_GLOW_ALPHA = 1.0;
 
 /**
- * CSS-stil for "Jackpot"/"Gain"-labels. Tobias-direktiv 2026-05-06
- * (oppdatert):
- * Bold sans-serif gull (ikke serif italic) — matcher referansebilde
- * Tobias sendte 2026-05-06 med tydeligere/feitere typografi enn
- * forrige Georgia-italic-iterasjon. Bevart gull-gradient,
- * drop-shadow og text-stroke som tidligere.
- *
- * Implementeres som DIV-overlay over Pixi-canvas via `HtmlOverlayManager`
- * (samme mønster som `Game1BuyPopup`). Plasseres med `position: absolute`
- * på root-DIV-en (som ligger inne i `web-game-container` etter MED-7-fix);
- * koordinater regnes som document-pixler.
- *
- * Gull-gradient bruker `background-clip: text` med transparent fill
- * så glyfene viser gradienten. `filter: drop-shadow` gir skygge på
- * faktiske glyf-pikslene (ikke bounding-box). `-webkit-text-stroke`
- * gir mørk-rød kontur for ekstra lesbarhet.
- *
- * Font-valg: Inter er allerede preloaded fra Google Fonts via
- * `index.html` (vekter 400/500/600/700/800), så vi unngår en ekstra
- * font-fetch ved bruk av "Inter, system-ui, sans-serif". Vekt 800
- * gir tydelig "casino-jackpot"-uttrykk uten å være cartoon-tykk.
- * Italic beholdt for å beholde dynamikk i utrykket.
+ * CSS-stil for amount-tekst (under hver ball). Tobias-direktiv 2026-05-06:
+ * dynamisk tekst som matcher mockupens visuelle stil — gull-gradient på
+ * mørk-rød rektangel-bg, bold sans-serif med drop-shadow.
  */
-const LABEL_BASE_STYLES: Partial<CSSStyleDeclaration> = {
+const AMOUNT_BASE_STYLES: Partial<CSSStyleDeclaration> = {
   position: "absolute",
   fontFamily: "Inter, system-ui, sans-serif",
-  // Tobias-direktiv 2026-05-06 (referansebilde 2): UPRIGHT (ikke italic).
-  // Tidligere iterasjon hadde italic for dynamikk, men referansen viser
-  // ren bold sans-serif uten slant — matcher klassisk casino-jackpot-look.
-  fontStyle: "normal",
   fontWeight: "800",
+  fontSize: "16px",
   letterSpacing: "0.02em",
-  // Gull-gradient: lysere topp, mørkere bunn (matcher Tobias' referanse).
-  background: "linear-gradient(180deg, #ffe066 0%, #ffd700 50%, #b8860b 100%)",
-  backgroundClip: "text",
-  // Webkit-spesifikk for Safari/Chrome (Pixi-target).
-  webkitBackgroundClip: "text",
-  webkitTextFillColor: "transparent",
-  color: "transparent",
-  // Tobias-direktiv 2026-05-06: rød tekst-stroke fjernet — glyfene
-  // skal være rent gull uten kontur. Drop-shadow gir nok kontrast
-  // mot mørk bakgrunn.
-  // Drop-shadow på glyf-pikslene (ikke bounding-box).
-  filter: "drop-shadow(2px 2px 3px rgba(0,0,0,0.7))",
-  // Beskytt mot å fange klikk/scroll — labels er rent dekorative.
+  color: "#fff5d6",
+  textShadow: "0 1px 2px rgba(0,0,0,0.7), 0 0 4px rgba(255,200,80,0.3)",
+  background: "linear-gradient(180deg, #5a1010 0%, #3a0808 100%)",
+  border: "1px solid #c98a3a",
+  borderRadius: "4px",
+  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.15), 0 2px 4px rgba(0,0,0,0.5)",
+  padding: "2px 8px",
+  textAlign: "center" as CSSStyleDeclaration["textAlign"],
   pointerEvents: "none",
   userSelect: "none",
-  // Sentrer tekst på koordinaten via translate.
-  transform: "translate(-50%, -50%)",
+  transform: "translate(-50%, 0)",
   whiteSpace: "nowrap",
-  // Z-index over Pixi-canvas; HtmlOverlayManager sin root har zIndex: "10",
-  // labels arver dette og rendres over PNG-en.
+  minWidth: "44px",
+};
+
+/** CSS-stil for label-image (over hver ball). */
+const LABEL_IMG_BASE_STYLES: Partial<CSSStyleDeclaration> = {
+  position: "absolute",
+  height: `${LABEL_HEIGHT}px`,
+  width: "auto",
+  pointerEvents: "none",
+  userSelect: "none",
+  transform: "translate(-50%, 0)",
+  filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.5))",
 };
 
 interface SlotVisual {
-  /** Pixi Text-overlay for premie-beløpet under hver ball. */
-  amountText: Text;
-  /** HTML-DIV for "Jackpot"/"Gain"-label over ballen. Mountes via
-   *  `attachLabels()`; null før mount eller etter detach. */
-  labelEl: HTMLDivElement | null;
+  /** Pixi Sprite for ball-PNG (jackpot-N.png). */
+  sprite: Sprite | null;
+  /** HTML-IMG for label-PNG (label-jackpot.png eller label-gain.png). */
+  labelEl: HTMLImageElement | null;
+  /** HTML-DIV for amount-tekst. */
+  amountEl: HTMLDivElement | null;
 }
 
 export class JackpotsRow extends Container {
@@ -198,43 +145,30 @@ export class JackpotsRow extends Container {
   private activeSlotKey: string | null = null;
   private rowWidth: number;
   private rowHeight: number;
-  /** PNG-bakgrunn (Sprite av jackpots.png). Lazy-loadet. */
-  private bgSprite: Sprite | null = null;
-  /** Container som holder amount-text-overlay'ene; posisjoneres etter
-   *  Sprite-skalering. Lar oss reposisjonere alle overlays atomisk. */
-  private overlays: Container;
-  /** Glow-ring rundt aktiv ball. Re-tegnes når aktiv slot endrer seg. */
   private activeGlow: Graphics;
-  /** Har vi noen gang rendert? Brukes for å vite om vi må trigge layout
-   *  etter at PNG-texture er lastet. */
-  private spriteReady: boolean = false;
+  private spritesLoadedCount = 0;
 
-  // ── HTML-label-overlay (Tobias 2026-05-05 — "Jackpot"/"Gain") ───────────
-  /** Canvas-ref for å regne ut DOM-koordinater. Null før `attachLabels()`. */
+  // ── HTML-overlay-state (labels + amounts) ────────────────────────────────
   private labelCanvas: HTMLCanvasElement | null = null;
-  /** Overlay-manager-ref for å oppretthold lifecycle (vi rydder labels via
-   *  egen `detachLabels()` som fjerner DIVer fra root). */
   private labelOverlay: HtmlOverlayManager | null = null;
-  /** Window-resize-handler — trigget når viewport endres så labels følger
-   *  canvas (typisk når devtools åpnes/lukkes eller browser-vindu rezises).
-   *  Null før attach, ryddet i detach. */
   private windowResizeHandler: (() => void) | null = null;
 
   constructor() {
     super();
-    // Default: minimum bredde basert på en rimelig minimum stride. ComboPanel
-    // kaller `setBarWidth` like etter konstruksjon så slots distribueres jevnt.
+    // Default: ComboPanel kaller `setBarWidth` etter konstruksjon så slots
+    // distribueres jevnt over tilgjengelig bredde.
     this.rowWidth = 540;
     this.rowHeight = MAX_RENDERED_HEIGHT;
-
-    this.overlays = new Container();
     this.activeGlow = new Graphics();
+    this.addChild(this.activeGlow);
 
-    // Lazy-load PNG-bakgrunn. Mens vi venter rendrer vi fortsatt overlays
-    // (de er bare "tall over tomhet" til PNG kommer på plass).
-    this.loadBackground();
+    // Lazy-load alle 6 ball-sprites parallelt.
+    this.loadAllSprites();
 
-    this.buildOverlays();
+    // Initialiser slot-data-strukturer (sprites mountes asynkront).
+    SLOT_KEYS.forEach((key) => {
+      this.slots.set(key, { sprite: null, labelEl: null, amountEl: null });
+    });
   }
 
   /** Bredde av hele raden (brukt av `ComboPanel` for layout). */
@@ -242,16 +176,14 @@ export class JackpotsRow extends Container {
     return this.rowWidth;
   }
 
-  /** Høyde av hele raden — faktisk rendret høyde av PNG (kan være < bar-
-   *  bredde / aspect dersom cap'et til MAX_RENDERED_HEIGHT). */
+  /** Høyde av hele raden — fast verdi (label + ball + amount + gaps). */
   get barHeight(): number {
     return this.rowHeight;
   }
 
   /**
-   * Sett tilgjengelig bredde. PNG-en skaleres til `width` med aspect-
-   * preservation, men cap'ed til MAX_RENDERED_HEIGHT. Dersom cap'en
-   * trer i kraft, sentrerer vi PNG-en horisontalt innenfor `width`.
+   * Sett tilgjengelig bredde. 6 slots distribueres jevnt — ball-bredden
+   * skaleres slik at de fyller raden uten å overlappe.
    *
    * Idempotent — gjør ingenting hvis bredden ikke endret.
    */
@@ -265,13 +197,9 @@ export class JackpotsRow extends Container {
    * Backend-driver: oppdater prize-listen.
    *
    * Tobias-direktiv 2026-05-04: under nedtelling til ny runde sender
-   * server prize=0 for alle slots fordi forrige rundes prizePool er
-   * resetet og ny runde ikke har armed-spillere ennå. Skjul disse
-   * "alle-null"-oppdateringene så premiene fra forrige runde fortsatt
-   * vises gjennom countdown-fasen — gir bedre UX.
-   *
-   * Hvis vi ALDRI har hatt non-zero verdier (helt nytt rom), tillater
-   * vi 0-update så slots viser "0" som default.
+   * server prize=0 for alle slots — vi behold forrige rundes priser
+   * gjennom countdown for bedre UX. Hvis vi aldri har hatt non-zero,
+   * tillater vi 0-update.
    */
   update(list: JackpotSlotData[]): void {
     const allZero = list.every((entry) => !entry.prize || entry.prize <= 0);
@@ -279,7 +207,6 @@ export class JackpotsRow extends Container {
       (e) => e.prize > 0,
     );
     if (allZero && haveExistingValues) {
-      // Behold forrige rundes priser under countdown.
       return;
     }
     for (const entry of list) {
@@ -307,28 +234,11 @@ export class JackpotsRow extends Container {
   }
 
   /**
-   * Mount HTML-labels ("Jackpot"/"Gain") over Pixi-canvas. Tobias-direktiv
-   * 2026-05-05 (referansebilde): labels skal være over hver ball med gull-
-   * italic CSS-stil, IKKE Pixi-Text. Implementeres som DIVer i `overlayManager`
-   * sin root.
-   *
-   * Idempotent — kan kalles flere ganger. Re-mount oppretter ikke duplikate
-   * DIVer; eksisterende DIVer reposisjoneres bare. Dette gjør det trygt å
-   * kalle ved screen-bytte eller resize uten ekstra tear-down.
-   *
-   * Lifecycle:
-   *   1. PlayScreen/LobbyScreen kaller `attachLabels(canvas, overlayManager)`
-   *      etter at JackpotsRow er lagt til Pixi-stage.
-   *   2. `repositionLabels()` regner ut DOM-koordinater fra Pixi-globalpos
-   *      + `canvas.getBoundingClientRect()` (med autoDensity matcher stage-
-   *      koords CSS-pixler 1:1).
-   *   3. Window-resize-handler trigger reposisjonering ved viewport-endring.
-   *   4. `detachLabels()` (eller Container.destroy) rydder DIVer + handler.
+   * Mount HTML-elementer (label-img + amount-text) over Pixi-canvas.
+   * Idempotent — kan kalles flere ganger.
    */
   attachLabels(canvas: HTMLCanvasElement, overlayManager: HtmlOverlayManager): void {
     if (!canvas || !overlayManager) return;
-    // Skip i SSR/test der document mangler — JackpotsRow rendrer fortsatt
-    // Pixi-overlays uten labels (testen sjekker ikke DOM-noder).
     if (typeof document === "undefined") return;
 
     this.labelCanvas = canvas;
@@ -337,42 +247,58 @@ export class JackpotsRow extends Container {
     const overlayRoot = overlayManager.getRoot();
     if (!overlayRoot) return;
 
-    // Opprett label-DIVer hvis de ikke allerede eksisterer.
     SLOT_KEYS.forEach((key, idx) => {
       const slot = this.slots.get(key);
       if (!slot) return;
-      if (slot.labelEl) return; // Allerede mount-ed.
-      const div = document.createElement("div");
-      div.className = `g2-jackpot-label g2-jackpot-label-${idx}`;
-      div.textContent = LABEL_TEXTS[idx];
-      Object.assign(div.style, LABEL_BASE_STYLES);
-      overlayRoot.appendChild(div);
-      slot.labelEl = div;
+
+      // Label-image (idempotent — opprett kun én gang per slot).
+      if (!slot.labelEl) {
+        const img = document.createElement("img");
+        img.className = `g2-jackpot-label g2-jackpot-label-${idx}`;
+        img.alt = SLOT_IS_JACKPOT[idx] ? "Jackpot" : "Gain";
+        img.src = SLOT_IS_JACKPOT[idx] ? LABEL_JACKPOT_URL : LABEL_GAIN_URL;
+        Object.assign(img.style, LABEL_IMG_BASE_STYLES);
+        overlayRoot.appendChild(img);
+        slot.labelEl = img;
+      }
+
+      // Amount-tekst (idempotent).
+      if (!slot.amountEl) {
+        const div = document.createElement("div");
+        div.className = `g2-jackpot-amount g2-jackpot-amount-${idx}`;
+        Object.assign(div.style, AMOUNT_BASE_STYLES);
+        overlayRoot.appendChild(div);
+        slot.amountEl = div;
+      }
     });
 
     // Window-resize-handler: viewport-endring kan flytte canvas-rect.
     if (!this.windowResizeHandler) {
       this.windowResizeHandler = () => {
         if (this.destroyed) return;
-        this.repositionLabels();
+        this.repositionOverlays();
       };
       window.addEventListener("resize", this.windowResizeHandler);
     }
 
-    // Reposisjoner umiddelbart slik at labels havner riktig fra første frame.
-    this.repositionLabels();
+    // Render verdier + reposisjoner umiddelbart.
+    this.renderValues();
+    this.repositionOverlays();
   }
 
-  /**
-   * Fjern HTML-labels og clean-up window-resize-handler. Idempotent.
-   * Kalles fra PlayScreen.destroy / LobbyScreen.destroy via parent-cascade.
-   */
+  /** Fjern HTML-elementer + cleanup. Idempotent. */
   detachLabels(): void {
     SLOT_KEYS.forEach((key) => {
       const slot = this.slots.get(key);
-      if (!slot || !slot.labelEl) return;
-      slot.labelEl.remove();
-      slot.labelEl = null;
+      if (!slot) return;
+      if (slot.labelEl) {
+        slot.labelEl.remove();
+        slot.labelEl = null;
+      }
+      if (slot.amountEl) {
+        slot.amountEl.remove();
+        slot.amountEl = null;
+      }
     });
     if (this.windowResizeHandler) {
       window.removeEventListener("resize", this.windowResizeHandler);
@@ -383,262 +309,194 @@ export class JackpotsRow extends Container {
   }
 
   /**
-   * Override Container.destroy så vi rydder DOM-labels før Pixi-destroy.
-   * Pixi-Container.destroy fjerner ikke HTML-elementer som lever i
-   * HtmlOverlayManager.root — vi må selv detache.
+   * Override Container.destroy så HTML-elementer ryddes før Pixi-destroy.
+   * Pixi-Container.destroy fjerner ikke HTML-DOM-elementer.
    */
   destroy(options?: Parameters<Container["destroy"]>[0]): void {
     this.detachLabels();
     super.destroy(options);
   }
 
-  // ── interne tegne-rutiner ─────────────────────────────────────────────────
+  // ── Interne tegne-rutiner ────────────────────────────────────────────────
 
   /**
-   * Last `jackpots.png` lazy. Hvis cachen har den allerede (typisk for
-   * andre JackpotsRow-instanser i samme sesjon — eks. preview-mode)
-   * hopper vi direkte til attach.
+   * Last alle 6 ball-sprites parallelt. Hver sprite mountes så snart
+   * dens texture er klar. applyLayout kalles per mount så posisjoner
+   * progressivt oppdateres etter hvert.
    */
-  private loadBackground(): void {
-    const cached = Assets.cache.get(JACKPOTS_PNG_URL) as Texture | undefined;
-    if (cached) {
-      this.attachBgSprite(cached);
-      return;
-    }
-    void Assets.load(JACKPOTS_PNG_URL)
-      .then((tex: Texture) => {
-        if (this.destroyed) return;
-        this.attachBgSprite(tex);
-      })
-      .catch(() => {
-        // Stille fallback — testene kjører uten WebGL-renderer og kan
-        // fortsatt instansiere komponenten via overlays.
-      });
+  private loadAllSprites(): void {
+    SLOT_KEYS.forEach((key, idx) => {
+      const url = JACKPOT_PNG_URLS[idx];
+      const cached = Assets.cache.get(url) as Texture | undefined;
+      if (cached) {
+        this.attachSprite(key, cached);
+        return;
+      }
+      void Assets.load(url)
+        .then((tex: Texture) => {
+          if (this.destroyed) return;
+          this.attachSprite(key, tex);
+        })
+        .catch(() => {
+          // Stille fallback — testene kjører uten WebGL-renderer.
+        });
+    });
   }
 
-  private attachBgSprite(texture: Texture): void {
+  /**
+   * Mount én sprite for en gitt slot. Triggrer applyLayout når alle 6
+   * sprites er klare — først da kan vi distribuere dem jevnt.
+   */
+  private attachSprite(key: string, texture: Texture): void {
     enableMipmaps(texture);
     const sprite = new Sprite(texture);
-    this.bgSprite = sprite;
-    this.spriteReady = true;
-    // Z-orden: bakgrunn → glow-ring → amount-tekst.
-    this.addChildAt(sprite, 0);
+    const slot = this.slots.get(key);
+    if (!slot) return;
+    slot.sprite = sprite;
+    this.addChild(sprite);
+    this.spritesLoadedCount++;
+    // Re-layout etter hver sprite-mount så de allerede-lastet får riktig
+    // posisjon umiddelbart, mens senere-laster bare faller i sin slot.
     this.applyLayout();
   }
 
   /**
-   * Bygg amount-text-objektene (én per slot). Posisjon settes i
-   * `applyLayout` etter at sprite-størrelse er kjent. Glow-ring + overlays
-   * legges til som children for korrekt z-orden.
-   */
-  private buildOverlays(): void {
-    // Glow-ring under amount-overlays (slik at amount-text er klikkbar/
-    // synlig over glow). I praksis er glow-ring kun visuell — hverken
-    // har eventer eller overlapper med amount-rektangelet.
-    this.addChild(this.activeGlow);
-    this.addChild(this.overlays);
-
-    SLOT_KEYS.forEach((key) => {
-      const amountText = new Text({
-        text: "0",
-        style: {
-          fontFamily: "Inter, system-ui, Helvetica, sans-serif",
-          fontSize: 16,
-          fontWeight: "700",
-          fill: 0xffffff,
-          align: "center",
-        },
-      });
-      amountText.anchor.set(0.5, 0.5);
-      this.overlays.addChild(amountText);
-      // labelEl mountes lazy via `attachLabels()` etter at JackpotsRow
-      // er lagt til Pixi-stage og parent screen har en canvas-ref.
-      this.slots.set(key, { amountText, labelEl: null });
-    });
-
-    this.renderValues();
-  }
-
-  /**
-   * Skaleringsstrategi: PNG skal fylle `rowWidth` × MAX_RENDERED_HEIGHT-
-   * rektangelet, med aspect-preservation. To muligheter:
-   *   1. Width-bound:  rowWidth / PNG_ASPECT ≤ MAX_RENDERED_HEIGHT
-   *      → spriteW = rowWidth, spriteH = rowWidth / PNG_ASPECT
-   *      → spriteX = 0
-   *   2. Height-bound: rowWidth / PNG_ASPECT > MAX_RENDERED_HEIGHT
-   *      → spriteH = MAX_RENDERED_HEIGHT, spriteW = MAX_RENDERED_HEIGHT × PNG_ASPECT
-   *      → spriteX = (rowWidth - spriteW) / 2  (center)
-   *
-   * `barHeight` er alltid den faktiske rendret høyde — ComboPanel bruker
-   * den for vertikal centering.
+   * Plasser alle 6 sprites + overlays. Kalles når:
+   *   - Bredde endres (setBarWidth)
+   *   - Ny sprite mountes (attachSprite)
+   *   - Window resizes (via repositionOverlays)
    */
   private applyLayout(): void {
-    const widthBoundH = this.rowWidth / PNG_ASPECT;
-    let spriteW: number;
-    let spriteH: number;
-    let spriteX: number;
-    if (widthBoundH <= MAX_RENDERED_HEIGHT) {
-      spriteW = this.rowWidth;
-      spriteH = widthBoundH;
-      spriteX = 0;
-    } else {
-      spriteH = MAX_RENDERED_HEIGHT;
-      spriteW = spriteH * PNG_ASPECT;
-      spriteX = (this.rowWidth - spriteW) / 2;
-    }
-    this.rowHeight = spriteH;
+    // Distribuer 6 slots jevnt over rowWidth. Slot-bredde er rowWidth/6,
+    // ball-bredde er litt mindre så det blir luft mellom slots.
+    const slotWidth = this.rowWidth / 6;
+    const ballWidth = Math.min(BALL_WIDTH_DEFAULT, slotWidth * 0.85);
+    const ballHeight = ballWidth / SLOT_PNG_ASPECT;
 
-    if (this.bgSprite) {
-      this.bgSprite.x = spriteX;
-      this.bgSprite.y = 0;
-      this.bgSprite.width = spriteW;
-      this.bgSprite.height = spriteH;
-    }
+    // Vertikal layout per slot (top to bottom):
+    //   label (LABEL_HEIGHT) + LABEL_GAP + ball (ballHeight) + AMOUNT_GAP + amount (AMOUNT_HEIGHT)
+    const ballY = LABEL_HEIGHT + LABEL_GAP;
+    const amountY = ballY + ballHeight + AMOUNT_GAP;
 
-    // Plasser amount-text relativt til scaled sprite. Positions er
-    // ratio-baserte så de skalerer automatisk med PNG-størrelse.
+    this.rowHeight = amountY + AMOUNT_HEIGHT;
+
     SLOT_KEYS.forEach((key, idx) => {
       const slot = this.slots.get(key);
       if (!slot) return;
-      const cx = spriteX + BALL_X_RATIOS[idx] * spriteW;
-      const cy = RECT_Y_RATIO * spriteH;
-      slot.amountText.x = cx;
-      slot.amountText.y = cy;
-      // Skaler font-size proporsjonalt med rektangelet — bredere PNG
-      // gir større tekst. Cap'er nedover for lesbarhet ved svært små.
-      const rectH = RECT_HEIGHT_RATIO * spriteH;
-      const fontSize = Math.max(11, Math.min(20, Math.round(rectH * 0.55)));
-      slot.amountText.style.fontSize = fontSize;
+      const slotCenterX = (idx + 0.5) * slotWidth;
+      const ballX = slotCenterX - ballWidth / 2;
+
+      if (slot.sprite) {
+        slot.sprite.x = ballX;
+        slot.sprite.y = ballY;
+        slot.sprite.width = ballWidth;
+        slot.sprite.height = ballHeight;
+      }
     });
 
     this.renderActiveGlow();
-    // Reposisjoner HTML-labels ved hver layout-endring (typisk når ComboPanel
-    // re-distribuerer JackpotsRow ved screen-resize). No-op hvis labels ikke
-    // er mountet ennå.
-    this.repositionLabels();
+    this.repositionOverlays();
   }
 
   /**
-   * Re-posisjoner HTML-labels (DIVer) over Pixi-canvas. Beregner DOM-
-   * koordinater basert på:
-   *   - JackpotsRow's globale Pixi-posisjon (`getGlobalPosition`)
-   *   - Canvas' viewport-rect (`getBoundingClientRect`) + page-scroll
-   *   - Sprite-skaleringen (BALL_X_RATIOS gir x i lokal sprite-space)
-   *   - LABEL_Y_RATIO posisjonerer over ballen
-   *
-   * Med Pixi `autoDensity: true` + `resolution: dpr` matcher stage-coords
-   * CSS-pikslene 1:1 (canvas-style.width = stage-width). Med harness
-   * `resolution: 1, autoDensity: false` matcher de også 1:1.
-   *
-   * No-op hvis labels ikke er mountet (canvas/overlay null) eller hvis
-   * sprite ikke er ready (PNG ikke lastet).
+   * Re-posisjoner HTML-elementer (label-img + amount-text) til å følge
+   * sin sprite. Beregner DOM-koordinater fra Pixi global-pos +
+   * canvas-rect.
    */
-  private repositionLabels(): void {
+  private repositionOverlays(): void {
     if (!this.labelCanvas) return;
     if (this.destroyed) return;
-    const sprite = this.bgSprite;
-    // Selv før sprite er lastet kan vi posisjonere labels mot row-bredden;
-    // det er kun fontSize-skaleringen som krever sprite-høyden.
-    const spriteW = sprite ? sprite.width : this.rowWidth;
-    const spriteH = sprite ? sprite.height : this.rowHeight;
-    const spriteX = sprite ? sprite.x : 0;
-    if (spriteW <= 0 || spriteH <= 0) return;
 
-    // Canvas viewport-position. `getBoundingClientRect` gir rect i viewport-
-    // space; pluss page-scroll for absolute-positioned DIVer i body.
-    //
-    // Pixi stage-coords matcher CSS-coords 1:1 i begge konfigurasjoner:
-    //   - Produksjon: `autoDensity: true, resolution: dpr` → canvas.style.width
-    //     = stage-bredde (CSS-pikler), backing-buffer = stage * dpr.
-    //   - Visual-harness: `autoDensity: false, resolution: 1` → canvas.style
-    //     er ikke satt; clientWidth = stage-bredde.
-    // Begge gir stage-coords = CSS-pikler, så vi trenger ingen ekstra skalering.
+    const slotWidth = this.rowWidth / 6;
+    const ballWidth = Math.min(BALL_WIDTH_DEFAULT, slotWidth * 0.85);
+    const ballHeight = ballWidth / SLOT_PNG_ASPECT;
+
     const rect = this.labelCanvas.getBoundingClientRect();
     const pageOffsetX = rect.left + window.scrollX;
     const pageOffsetY = rect.top + window.scrollY;
 
-    // JackpotsRow's globale Pixi-posisjon.
     const globalPos = this.getGlobalPosition();
 
-    // Beregn font-size så "Jackpot" passer innenfor ball-spacing-en
-    // (avstand mellom to ball-sentre). PNG har 6 balls; minimum ball-
-    // spacing ~ spriteW * (BALL_X_RATIOS[1] - BALL_X_RATIOS[0]) ≈ 0.163 * spriteW.
-    // Ved typisk spriteW=489 → ~80px per slot. "Jackpot" (7 tegn) i
-    // italic Georgia trenger ~0.55 * fontSize per char → 7 * 0.55 * fs.
-    // Solving for fs: fs ≈ slot-bredde / (7 * 0.55) = slot * 0.26.
-    // Gir ~21 ved slot=80 men det overlapper 5-7px med naboene.
-    // Reduser til 0.22 så vi har 1-2px margin: fs ≈ slot * 0.22.
-    const slotW = spriteW * 0.163; // ball-spacing approx
-    const fontSize = Math.max(10, Math.min(18, Math.round(slotW * 0.22)));
+    // Label-image-bredde skaleres etter slot-bredde (max 80px for ikke å
+    // overlappe nabo-slots ved svært små rader).
+    const labelImgMaxW = Math.min(80, slotWidth * 0.85);
 
-    // Beregn ball-topp-posisjon i lokal sprite-space:
-    // `ball_top = (BALL_Y_RATIO - BALL_RADIUS_RATIO) * spriteH ≈ 0.019 * spriteH`
-    // Label-bunn skal sitte LABEL_GAP_PX over ball-topp; siden labels
-    // bruker `transform: translate(-50%, -50%)` er positionsy = label-senter.
-    // Vi trekker derfor halv label-høyde (≈ fontSize / 2) i tillegg.
-    const ballTopLocal = (BALL_Y_RATIO - BALL_RADIUS_RATIO) * spriteH;
-    const labelHalfHeight = fontSize * 0.6; // ≈ font-size × line-height-half
-    const localY = ballTopLocal - LABEL_GAP_PX - labelHalfHeight;
     SLOT_KEYS.forEach((key, idx) => {
       const slot = this.slots.get(key);
-      if (!slot || !slot.labelEl) return;
-      // Lokal x i JackpotsRow-space.
-      const localX = spriteX + BALL_X_RATIOS[idx] * spriteW;
-      // DOM-koordinat = page-offset + canvas-offset + global-pos + local.
-      const domX = pageOffsetX + globalPos.x + localX;
-      const domY = pageOffsetY + globalPos.y + localY;
-      slot.labelEl.style.left = `${domX}px`;
-      slot.labelEl.style.top = `${domY}px`;
-      slot.labelEl.style.fontSize = `${fontSize}px`;
+      if (!slot) return;
+      const slotCenterX = (idx + 0.5) * slotWidth;
+      const ballY = LABEL_HEIGHT + LABEL_GAP;
+      const amountY = ballY + ballHeight + AMOUNT_GAP;
+
+      const domX = pageOffsetX + globalPos.x + slotCenterX;
+      const labelDomY = pageOffsetY + globalPos.y; // label sitter på top
+      const amountDomY = pageOffsetY + globalPos.y + amountY;
+
+      if (slot.labelEl) {
+        slot.labelEl.style.left = `${domX}px`;
+        slot.labelEl.style.top = `${labelDomY}px`;
+        slot.labelEl.style.maxWidth = `${labelImgMaxW}px`;
+      }
+      if (slot.amountEl) {
+        slot.amountEl.style.left = `${domX}px`;
+        slot.amountEl.style.top = `${amountDomY}px`;
+      }
     });
   }
 
   /** Tegn glow-ring rundt aktiv ball (eller skjul hvis ingen aktiv). */
   private renderActiveGlow(): void {
     this.activeGlow.clear();
-    if (!this.activeSlotKey || !this.spriteReady) return;
+    if (!this.activeSlotKey) return;
     const idx = SLOT_KEYS.indexOf(this.activeSlotKey as (typeof SLOT_KEYS)[number]);
     if (idx < 0) return;
-    const sprite = this.bgSprite;
-    if (!sprite) return;
-    const spriteW = sprite.width;
-    const spriteH = sprite.height;
-    const spriteX = sprite.x;
-    const cx = spriteX + BALL_X_RATIOS[idx] * spriteW;
-    const cy = BALL_Y_RATIO * spriteH;
-    const radius = BALL_RADIUS_RATIO * spriteH;
-    // Tegn én kraftig gull-ring litt utenfor PNG-ballen, og en svakere
-    // ytre glød. Det gir en synlig "selected"-aksent uten å overstyre
-    // ball-grafikken som allerede er i PNG.
+    const slot = this.slots.get(this.activeSlotKey);
+    if (!slot?.sprite) return;
+    const sprite = slot.sprite;
+    const cx = sprite.x + sprite.width / 2;
+    const cy = sprite.y + sprite.height / 2;
+    // Avrundet rektangel som matcher ball-aspect (jackpot-PNG-er er
+    // 278×240 — litt høyere enn brede, ikke perfekt sirkel).
+    const radiusX = sprite.width / 2 + 4;
+    const radiusY = sprite.height / 2 + 4;
     this.activeGlow
-      .circle(cx, cy, radius + 4)
+      .ellipse(cx, cy, radiusX, radiusY)
       .stroke({ color: ACTIVE_GLOW_COLOR, alpha: ACTIVE_GLOW_ALPHA, width: 3 });
     this.activeGlow
-      .circle(cx, cy, radius + 9)
+      .ellipse(cx, cy, radiusX + 5, radiusY + 5)
       .stroke({ color: ACTIVE_GLOW_COLOR, alpha: 0.35, width: 4 });
   }
 
-  /** Skriv premie-beløp inn i amount-overlay-Text-objektene. */
+  /** Skriv premie-beløp inn i amount-overlay-divene. */
   private renderValues(): void {
     for (const key of SLOT_KEYS) {
       const slot = this.slots.get(key);
-      if (!slot) continue;
+      if (!slot?.amountEl) continue;
       const data = this.latestData.get(key);
-      slot.amountText.text = data ? formatPrize(data.prize) : "0";
+      slot.amountEl.textContent = formatPrize(data?.prize ?? 0, data?.type);
     }
   }
 }
 
-function formatPrize(prize: number): string {
-  if (!Number.isFinite(prize) || prize <= 0) return "0";
-  if (Number.isInteger(prize)) return String(prize);
-  return prize.toFixed(0);
+/**
+ * Format premie for visning. Fast cash → "5000 kr". Prosent (rolle uklart
+ * fra entry alone — sjekker type via JackpotSlotData.type) → samme som cash
+ * format hvis backend leverer som kr-tall. Default 0 → "0 kr".
+ *
+ * NB: backend's resolveJackpotPrize konverterer prosent → kr ved utbetaling,
+ * så `prize`-feltet i JackpotSlotData er ALLTID kr-tall (uansett om kilde-
+ * konfigurasjonen var isCash:true eller isCash:false). Vi viser derfor
+ * alltid "X kr".
+ */
+function formatPrize(prize: number, _type?: "gain" | "jackpot"): string {
+  if (!Number.isFinite(prize) || prize <= 0) return "0 kr";
+  if (Number.isInteger(prize)) return `${prize} kr`;
+  return `${prize.toFixed(0)} kr`;
 }
 
 /**
- * Speilet av Spill 1's `enableMipmaps`. Uten mipmaps får skalert PNG-
- * tekstur stygg aliasing. Pixi støtter ikke mipmaps før vi eksplisitt
- * slår det på per-source.
+ * Mipmaps-aktivering for skalerte sprites — uten dette får
+ * skalering-ned aliasing-artifakter.
  */
 function enableMipmaps(texture: Texture): void {
   const src = texture.source as unknown as {
