@@ -80,12 +80,12 @@ const PNG_ASPECT = PNG_ORIG_W / PNG_ORIG_H; // ~4.201
 
 /**
  * Maksimal rendret høyde for jackpots-raden. Tobias-direktiv 2026-05-06
- * (3. iterasjon): balls skal FYLLE hele containeren — referansebildet
- * viser store balls som dominerer panel-høyden. Settes til 200 så
- * width-bound vinner i typiske layouts (rowWidth/aspect ≈ 167-200).
- * ComboPanel auto-tilpasser via LYKKETALL_COL_HEIGHT-økning.
+ * (4. iterasjon): redusert fra 200 → 160 i kombinasjon med
+ * LYKKETALL_COL_HEIGHT=170 (panelH=202) for tightere layout uten
+ * tomrom under rektanglene. Balls + rectangles + label-overflow
+ * passer komfortabelt i 160px.
  */
-const MAX_RENDERED_HEIGHT = 200;
+const MAX_RENDERED_HEIGHT = 160;
 
 /**
  * Slot-koordinater (ratio av PNG-dimensjoner) — håndmålt med en alpha-
