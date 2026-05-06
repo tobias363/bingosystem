@@ -66,7 +66,9 @@ const BORDER_COPPER = 0xc98a3a;
 //   (gikk tidligere ut på begge sider).
 //   .lykketall-col { width: 160px }
 //   .player-col { width: 110px }
-const HOVEDSPILL_INNER_W = 230;
+// Tobias-direktiv 2026-05-06: bredde redusert fra 230 → 200 for å gi
+// mer plass til JackpotsRow (bredere bar = bedre spacing mellom balls).
+const HOVEDSPILL_INNER_W = 200;
 const HOVEDSPILL_COL_W = HOVEDSPILL_INNER_W + PANEL_PADDING_X * 2;
 const LYKKETALL_INNER_W = 160;
 const LYKKETALL_COL_W = LYKKETALL_INNER_W + PANEL_PADDING_X * 2;
@@ -75,10 +77,11 @@ const LYKKETALL_COL_W = LYKKETALL_INNER_W + PANEL_PADDING_X * 2;
 const PILL_W = 210;
 const PILL_H = 32;
 const PILL_RADIUS = 6;
-// Lykketall-kolonne: clover 44px + label sentrert. Tobias-direktiv 2026-05-06:
-// økt fra 110 → 220 så ComboPanel blir høyere og JackpotsRow med
-// MAX_RENDERED_HEIGHT=200 + label-overflow får plass innenfor panelet.
-const LYKKETALL_COL_HEIGHT = 220;
+// Lykketall-kolonne: clover 44px + label sentrert. Tobias-direktiv 2026-05-06
+// (4. iterasjon): bytt fra 220 → 170 — fjerner tomrom under
+// JackpotsRow-rektanglene. JackpotsRow MAX_RENDERED_HEIGHT er også
+// redusert til 160 for å passe i tighter panel.
+const LYKKETALL_COL_HEIGHT = 170;
 const CLOVER_SIZE = 44;
 const CLOVER_URL = "/web/games/assets/game2/design/lucky-clover.png";
 
